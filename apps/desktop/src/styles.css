@@ -1,0 +1,16 @@
+.editor-host .cm-content { font-family: -apple-system, "PingFang SC", sans-serif; }
+.editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
+.editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
+.editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
+.editor-host .omd-h4, .editor-host .omd-h5, .editor-host .omd-h6 { font-weight: 700; }
+.editor-host .omd-strong { font-weight: 700; }
+.editor-host .omd-em { font-style: italic; }
+.editor-host .omd-del { text-decoration: line-through; }
+.editor-host .omd-link { color: #0969da; }
+.editor-host .omd-inline-code { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
+.editor-host .omd-blockquote { border-left: 3px solid #d0d0d0; padding-left: 1em; color: #555; }
+.editor-host .omd-hr { border-top: 1px solid #d0d0d0; }
+.editor-host .omd-checkbox { margin-right: 0.4em; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
+.editor-host { flex: 1; overflow: auto; }
