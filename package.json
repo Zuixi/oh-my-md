@@ -1,0 +1,8 @@
+{
+  "name": "oh-my-md",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @omd/desktop tauri dev",
+    "test": "pnpm --filter @omd/engine test"
+  }
+}

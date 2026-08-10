@@ -1,0 +1,18 @@
+{
+  "name": "@omd/engine",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": { "test": "vitest run" },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@lezer/markdown": "^1.4.0"
+  },
+  "devDependencies": {
+    "happy-dom": "^16.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
