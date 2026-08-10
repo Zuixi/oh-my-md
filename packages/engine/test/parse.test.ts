@@ -6,7 +6,16 @@ describe("markdown parsing", () => {
   it("parses ATX heading", () => {
     const state = makeState("# Hello")
     const names: string[] = []
-    syntaxTree(state).iterate({ enter: n => names.push(n.name) })
+    syntaxTree(state).iterate({ enter: n => { names.push(n.name) } })
     expect(names).toContain("ATXHeading1")
+  })
+
+  it("parses GFM table / task list / strikethrough", () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n\n~~del~~"
+    const names: string[] = []
+    syntaxTree(makeState(doc)).iterate({ enter: n => { names.push(n.name) } })
+    expect(names).toContain("Table")
+    expect(names).toContain("TaskMarker")   // real node name (plan said TaskMark — actual is TaskMarker)
+    expect(names).toContain("Strikethrough")
   })
 })
