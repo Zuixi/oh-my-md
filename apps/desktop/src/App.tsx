@@ -48,15 +48,21 @@ export default function App() {
   }
 
   // Cmd/Ctrl+O and Cmd/Ctrl+S (window-level). CM6's own keymap handles editing keys.
+  // Use a stable ref so the effect is registered only once (empty dep array),
+  // while the handler always sees the latest `path` and `viewRef` values.
+  const openFileRef = useRef(openFile)
+  const saveFileRef = useRef(saveFile)
+  useEffect(() => { openFileRef.current = openFile })
+  useEffect(() => { saveFileRef.current = saveFile })
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return
-      if (e.key === "o") { e.preventDefault(); openFile() }
-      else if (e.key === "s") { e.preventDefault(); saveFile() }
+      if (e.key === "o") { e.preventDefault(); openFileRef.current() }
+      else if (e.key === "s") { e.preventDefault(); saveFileRef.current() }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  })
+  }, [])
 
   return (
     <div className="app">
