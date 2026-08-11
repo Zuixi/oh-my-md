@@ -12,7 +12,11 @@ describe("block syntax", () => {
   })
 
   it("styles blockquote lines and hides the QuoteMark", () => {
-    const t = tags("> quoted")
+    // Cursor must be off the blockquote line for QuoteMark to be folded.
+    const doc = "> quoted\n\nnormal"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.length } }).state  // cursor on 'normal' line
+    const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
     expect(t).toContain("line:omd-blockquote")
     expect(t).toContain("replace:QuoteMark")
   })

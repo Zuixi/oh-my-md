@@ -52,7 +52,6 @@ describe("fixture snapshots", () => {
     expect(specsFor("cjk.md")).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
-        "replace:HeaderMark@0-2",
         "replace:EmphasisMark@17-19",
         "replace:EmphasisMark@21-23",
         "mark:omd-strong@17-23",
@@ -83,8 +82,6 @@ describe("fixture snapshots", () => {
   it("code-inline.md", () => {
     expect(specsFor("code-inline.md")).toMatchInlineSnapshot(`
       [
-        "replace:CodeMark@4-5",
-        "replace:CodeMark@16-17",
         "mark:omd-inline-code@4-17",
         "replace:CodeMark@91-93",
         "replace:CodeMark@110-112",
@@ -108,11 +105,7 @@ describe("fixture snapshots", () => {
   it("emphasis.md", () => {
     expect(specsFor("emphasis.md")).toMatchInlineSnapshot(`
       [
-        "replace:EmphasisMark@6-7",
-        "replace:EmphasisMark@13-14",
         "mark:omd-em@6-14",
-        "replace:EmphasisMark@19-21",
-        "replace:EmphasisMark@25-27",
         "mark:omd-strong@19-27",
         "replace:EmphasisMark@42-44",
         "replace:EmphasisMark@51-53",
@@ -148,8 +141,6 @@ describe("fixture snapshots", () => {
   it("footnote.md", () => {
     expect(specsFor("footnote.md")).toMatchInlineSnapshot(`
       [
-        "replace:LinkMark@20-21",
-        "replace:LinkMark@23-24",
         "mark:omd-link@20-24",
         "replace:LinkMark@70-71",
         "replace:LinkMark@78-79",
@@ -168,7 +159,6 @@ describe("fixture snapshots", () => {
     expect(specsFor("heading.md")).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
-        "replace:HeaderMark@0-2",
         "line:omd-h2@12-12",
         "replace:HeaderMark@12-15",
         "line:omd-h3@25-25",
@@ -197,7 +187,6 @@ describe("fixture snapshots", () => {
     expect(specsFor("large.md")).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
-        "replace:HeaderMark@0-2",
         "line:omd-h2@11-11",
         "replace:HeaderMark@11-14",
         "replace:EmphasisMark@37-39",
@@ -685,11 +674,6 @@ describe("fixture snapshots", () => {
   it("links.md", () => {
     expect(specsFor("links.md")).toMatchInlineSnapshot(`
       [
-        "replace:LinkMark@18-19",
-        "replace:LinkMark@26-27",
-        "replace:LinkMark@27-28",
-        "replace:LinkMark@63-64",
-        "replace:URL@28-47",
         "mark:omd-link@18-64",
         "replace:LinkMark@98-99",
         "replace:LinkMark@102-103",
