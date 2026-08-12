@@ -11,7 +11,8 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.36.0",
     "@lezer/common": "^1.5.2",
-    "@lezer/markdown": "^1.4.0"
+    "@lezer/markdown": "^1.4.0",
+    "shiki": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

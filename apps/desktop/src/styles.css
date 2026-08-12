@@ -40,6 +40,10 @@
   border: 1px solid #d0d0d0; padding: 4px 10px;
 }
 .editor-host .omd-table th { background: rgba(0,0,0,0.03); }
+.editor-host .omd-code pre {
+  margin: 0; padding: 10px 12px; border-radius: 6px;
+  font-size: 0.9em; overflow-x: auto;
+}
 .app { display: flex; flex-direction: column; height: 100vh; }
 .statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
 .editor-host { flex: 1; overflow: auto; }
