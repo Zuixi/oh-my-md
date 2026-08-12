@@ -1,4 +1,4 @@
-import { type EditorState, type Range, StateField } from "@codemirror/state"
+import { type EditorState, StateField } from "@codemirror/state"
 import { syntaxTree } from "@codemirror/language"
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
 import { inlineRules } from "./inline"
