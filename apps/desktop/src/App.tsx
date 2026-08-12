@@ -9,11 +9,13 @@ export default function App() {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const [path, setPath] = useState<string | null>(null)
+  const pathRef = useRef<string | null>(null)
+  useEffect(() => { pathRef.current = path })
   const [dirty, setDirty] = useState(false)
 
   useEffect(() => {
     if (!host.current) return
-    const view = createEditor(host.current)
+    const view = createEditor(host.current, "", () => pathRef.current)
     viewRef.current = view
     view.dom.addEventListener("input", () => setDirty(true))
     return () => { view.destroy(); viewRef.current = null }

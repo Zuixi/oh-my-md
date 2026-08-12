@@ -2,8 +2,13 @@ import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine } fr
 import { EditorState } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import { editorExtensions } from "@omd/engine"
+import { imagePasteHandler } from "./imagePaste"
 
-export function createEditor(parent: HTMLElement, doc = ""): EditorView {
+export function createEditor(
+  parent: HTMLElement,
+  doc = "",
+  getDocPath: () => string | null = () => null,
+): EditorView {
   return new EditorView({
     state: EditorState.create({
       doc,
@@ -17,6 +22,7 @@ export function createEditor(parent: HTMLElement, doc = ""): EditorView {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         // Engine: markdown language + live-preview decorations + mode toggle.
         editorExtensions(),
+        imagePasteHandler(getDocPath),
         // Base editor theme: fill the host, sensible line height.
         EditorView.theme({
           "&": { height: "100%", fontSize: "15px" },
