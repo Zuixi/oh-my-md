@@ -1,4 +1,3 @@
-import { tags as t } from "@lezer/highlight"
 import type { MarkdownConfig } from "@lezer/markdown"
 
 // ponytail: definitions consume a single line only (`[^id]: body`); continuation
@@ -6,9 +5,9 @@ import type { MarkdownConfig } from "@lezer/markdown"
 // LinkReference's nextLine accumulation) when multi-line footnotes matter.
 export const Footnotes: MarkdownConfig = {
   defineNodes: [
-    { name: "FootnoteReference", style: t.link },
+    "FootnoteReference",
     { name: "FootnoteDefinition", block: true },
-    { name: "FootnoteMark", style: t.processingInstruction },
+    "FootnoteMark",
   ],
   parseBlock: [{
     name: "FootnoteDefinition",
@@ -17,8 +16,7 @@ export const Footnotes: MarkdownConfig = {
       const m = /^\[\^([^\]\s][^\]]*)\]:[ \t]?/.exec(line.text.slice(line.pos))
       if (!m) return false
       const start = cx.lineStart + line.pos
-      const trailing = m[0].endsWith(" ") || m[0].endsWith("\t") ? 1 : 0
-      const markTo = start + m[0].length - trailing
+      const markTo = start + m[1].length + 4  // "[^" + label + "]:" is fixed-width
       const bodyFrom = start + m[0].length
       const body = line.text.slice(line.pos + m[0].length)
       cx.addElement(cx.elt("FootnoteDefinition", start, cx.lineStart + line.text.length, [
