@@ -1,3 +1,5 @@
+@import "katex/dist/katex.min.css";
+
 .editor-host .cm-content { font-family: -apple-system, "PingFang SC", sans-serif; }
 .editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
@@ -44,6 +46,8 @@
   margin: 0; padding: 10px 12px; border-radius: 6px;
   font-size: 0.9em; overflow-x: auto;
 }
+.editor-host .omd-math { overflow-x: auto; padding: 4px 0; }
+.editor-host .omd-inline-math { padding: 0 2px; }
 .app { display: flex; flex-direction: column; height: 100vh; }
 .statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
 .editor-host { flex: 1; overflow: auto; }

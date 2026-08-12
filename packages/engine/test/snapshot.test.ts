@@ -683,6 +683,15 @@ describe("fixture snapshots", () => {
     `)
   })
 
+  it("math.md", () => {
+    expect(specsFor("math.md")).toMatchInlineSnapshot(`
+      [
+        "widget:block:math@62-81",
+        "widget:block:math@107-135",
+      ]
+    `)
+  })
+
   it("links.md", () => {
     expect(specsFor("links.md")).toMatchInlineSnapshot(`
       [
@@ -765,6 +774,7 @@ describe("fixture coverage", () => {
       "large.md",
       "links.md",
       "list-tasks.md",
+      "math.md",
       "table.md",
     ]
     expect(files.sort()).toEqual([...covered].sort())

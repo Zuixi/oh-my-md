@@ -6,6 +6,7 @@ import { CheckboxWidget, BulletWidget } from "./widgets"
 import { blockSelected } from "./blockWidget"
 import { TableWidget } from "./widgets/table"
 import { CodeWidget } from "./widgets/code"
+import { MathBlockWidget } from "./widgets/math"
 
 // Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
 // unless the cursor is on that line.
@@ -72,6 +73,17 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         pos = line.to + 1
       }
       return false
+    }
+    case "MathBlock": {
+      if (blockSelected(state, node.from, node.to)) return false
+      out.push({
+        from: node.from, to: node.to, tag: "widget:block:math",
+        deco: Decoration.replace({
+          widget: new MathBlockWidget(state.doc.sliceString(node.from, node.to), node.from),
+          block: true,
+        }),
+      })
+      return true
     }
     case "Table": {
       if (blockSelected(state, node.from, node.to)) return false

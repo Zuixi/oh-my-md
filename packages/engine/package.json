@@ -12,9 +12,11 @@
     "@codemirror/view": "^6.36.0",
     "@lezer/common": "^1.5.2",
     "@lezer/markdown": "^1.4.0",
+    "katex": "^0.18.4",
     "shiki": "^4.4.3"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.8",
     "@types/node": "^26.2.0",
     "happy-dom": "^16.0.0",
     "typescript": "^5.7.0",
