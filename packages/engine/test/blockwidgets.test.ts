@@ -36,6 +36,13 @@ describe("block widget pipeline", () => {
     expect(t).toContain("line:omd-codeblock")  // 编辑态退回 M1 行样式
   })
 
+  it("mermaid fenced block becomes a mermaid widget, not code", () => {
+    const doc = "intro\n\n```mermaid\ngraph TD; A-->B\n```\n"
+    const t = collectDecorationSpecs(makeState(doc), 0, doc.length).map(d => d.tag)
+    expect(t).toContain("widget:block:mermaid")
+    expect(t).not.toContain("widget:block:code")
+  })
+
   it("widget decorations are atomic ranges spec-able (sanity: replace deco exists)", () => {
     const deco = Decoration.replace({ widget: new ProbeWidget("x", 0), block: true })
     expect(deco).toBeTruthy()

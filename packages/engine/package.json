@@ -13,6 +13,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/markdown": "^1.4.0",
     "katex": "^0.18.4",
+    "mermaid": "^11.16.1",
     "shiki": "^4.4.3"
   },
   "devDependencies": {

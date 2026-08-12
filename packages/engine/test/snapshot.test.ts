@@ -747,6 +747,14 @@ describe("fixture snapshots", () => {
     `)
   })
 
+  it("mermaid.md", () => {
+    expect(specsFor("mermaid.md")).toMatchInlineSnapshot(`
+      [
+        "widget:block:mermaid@14-80",
+      ]
+    `)
+  })
+
   it("table.md", () => {
     expect(specsFor("table.md")).toMatchInlineSnapshot(`
       [
@@ -775,6 +783,7 @@ describe("fixture coverage", () => {
       "links.md",
       "list-tasks.md",
       "math.md",
+      "mermaid.md",
       "table.md",
     ]
     expect(files.sort()).toEqual([...covered].sort())

@@ -7,6 +7,7 @@ import { blockSelected } from "./blockWidget"
 import { TableWidget } from "./widgets/table"
 import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
+import { MermaidWidget } from "./widgets/mermaid"
 
 // Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
 // unless the cursor is on that line.
@@ -40,31 +41,35 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       break
     }
     case "FencedCode": {
-      if (!blockSelected(state, node.from, node.to)) {
-        const info = node.node.getChild("CodeInfo")
-        const lang = info ? state.doc.sliceString(info.from, info.to).trim().split(/\s/)[0] : ""
-        // mermaid 块归 Task 6 的 MermaidWidget；此分支只处理普通代码
-        if (lang !== "mermaid") {
-          // 内容 = 全部 CodeText 子节点合并区间
-          let cFrom = -1, cTo = -1
-          for (let c = node.node.firstChild; c; c = c.nextSibling) {
-            if (c.name === "CodeText") { if (cFrom < 0) cFrom = c.from; cTo = c.to }
-          }
-          const src = cFrom >= 0 ? state.doc.sliceString(cFrom, cTo) : ""
-          out.push({
-            from: node.from, to: node.to, tag: "widget:block:code",
-            deco: Decoration.replace({ widget: new CodeWidget(src, node.from, lang), block: true }),
-          })
-          return true
+      if (blockSelected(state, node.from, node.to)) {
+        // 编辑态：退回 M1 行样式
+        for (let pos = node.from; pos <= node.to; ) {
+          const line = state.doc.lineAt(pos)
+          out.push({ from: line.from, to: line.from, tag: "line:omd-codeblock", deco: Decoration.line({ class: "omd-codeblock" }) })
+          pos = line.to + 1
         }
+        return false
       }
-      // 编辑态（或 mermaid 未接管前）：退回 M1 行样式
-      for (let pos = node.from; pos <= node.to; ) {
-        const line = state.doc.lineAt(pos)
-        out.push({ from: line.from, to: line.from, tag: "line:omd-codeblock", deco: Decoration.line({ class: "omd-codeblock" }) })
-        pos = line.to + 1
+      const info = node.node.getChild("CodeInfo")
+      const lang = info ? state.doc.sliceString(info.from, info.to).trim().split(/\s/)[0] : ""
+      // 内容 = 全部 CodeText 子节点合并区间
+      let cFrom = -1, cTo = -1
+      for (let c = node.node.firstChild; c; c = c.nextSibling) {
+        if (c.name === "CodeText") { if (cFrom < 0) cFrom = c.from; cTo = c.to }
       }
-      return false
+      const src = cFrom >= 0 ? state.doc.sliceString(cFrom, cTo) : ""
+      if (lang === "mermaid") {
+        out.push({
+          from: node.from, to: node.to, tag: "widget:block:mermaid",
+          deco: Decoration.replace({ widget: new MermaidWidget(src, node.from), block: true }),
+        })
+      } else {
+        out.push({
+          from: node.from, to: node.to, tag: "widget:block:code",
+          deco: Decoration.replace({ widget: new CodeWidget(src, node.from, lang), block: true }),
+        })
+      }
+      return true
     }
     case "CodeBlock": {   // 缩进代码块保持行样式（无语言信息，不值得 widget）
       for (let pos = node.from; pos <= node.to; ) {
