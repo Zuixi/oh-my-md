@@ -65,5 +65,9 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Strikethrough":  return foldPair(node, state, out, "StrikethroughMark", "omd-del")
     case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
     case "Link":           return foldLink(node, state, out)
+    case "FootnoteReference":
+      out.push({ from: node.from, to: node.to, tag: "mark:omd-footnote",
+                 deco: Decoration.mark({ class: "omd-footnote" }) })
+      return
   }
 }
