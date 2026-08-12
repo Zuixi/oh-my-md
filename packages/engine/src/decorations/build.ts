@@ -1,6 +1,6 @@
-import { type EditorState, type Range } from "@codemirror/state"
+import { type EditorState, type Range, StateField } from "@codemirror/state"
 import { syntaxTree } from "@codemirror/language"
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view"
+import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import type { DecoSpec } from "./types"
@@ -26,23 +26,38 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
     !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
 }
 
-export function buildLiveDecorations(state: EditorState, from: number, to: number): DecorationSet {
-  const ranges: Range<Decoration>[] = collectDecorationSpecs(state, from, to)
-    .map(s => s.deco.range(s.from, s.to))
-  return Decoration.set(ranges, true)
+// 原子区间只收 replace 类装饰（折叠的语法标记 + widget）。
+// mark/line 装饰若进原子区间，光标移动和删除会被锁死在样式文本外（root cause B）。
+function isAtomicTag(tag: string) {
+  return tag.startsWith("replace:") || tag.startsWith("widget:")
 }
 
-export const livePreviewPlugin = ViewPlugin.fromClass(class {
-  decorations: DecorationSet
-  constructor(view: EditorView) {
-    this.decorations = buildLiveDecorations(view.state, view.viewport.from, view.viewport.to)
+export interface LiveDeco { deco: DecorationSet; atomic: DecorationSet }
+
+// ponytail: 全量重建（StateField 拿不到 viewport，且 viewport 裁剪对块 widget
+// 的高度计算有害）；large.md 级文档实测毫秒级，真成瓶颈再做 dirty 区间增量。
+export function buildLiveDecorations(state: EditorState): LiveDeco {
+  const specs = collectDecorationSpecs(state, 0, state.doc.length)
+  return {
+    deco: Decoration.set(specs.map(s => s.deco.range(s.from, s.to)), true),
+    atomic: Decoration.set(
+      specs.filter(s => isAtomicTag(s.tag)).map(s => Decoration.replace({}).range(s.from, s.to)), true),
   }
-  update(u: ViewUpdate) {
-    if (u.docChanged || u.viewportChanged || u.selectionSet)
-      this.decorations = buildLiveDecorations(u.view.state, u.view.viewport.from, u.view.viewport.to)
-  }
-}, {
-  decorations: v => v.decorations,
-  // 光标运动整体跳过 replace 装饰（块 widget + 行内折叠），不会有半个光标进折叠区
-  provide: plugin => EditorView.atomicRanges.of(view => view.plugin(plugin)?.decorations ?? Decoration.none),
+}
+
+// block: true 的 widget 只能由 StateField 提供——经 ViewPlugin 提供会在 measure
+// 阶段抛 "Block decorations may not be specified via plugins"（root cause A，
+// 真实 app 中所有含块 widget 的文档全崩，但纯函数测试完全测不到）。
+export const livePreviewField = StateField.define<LiveDeco>({
+  create: state => buildLiveDecorations(state),
+  update: (value, tr) =>
+    (tr.docChanged || !tr.startState.selection.eq(tr.newSelection)) ? buildLiveDecorations(tr.state) : value,
+  provide: field => [
+    EditorView.decorations.from(field, v => v.deco),
+    // atomicRanges facet 的值类型是函数，包一层闭包
+    EditorView.atomicRanges.compute([field], state => {
+      const atomic = state.field(field).atomic
+      return () => atomic
+    }),
+  ],
 })
