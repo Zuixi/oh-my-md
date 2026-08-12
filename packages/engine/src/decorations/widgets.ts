@@ -1,5 +1,15 @@
 import { EditorView, WidgetType } from "@codemirror/view"
 
+export class BulletWidget extends WidgetType {
+  eq() { return true }
+  toDOM() {
+    const el = document.createElement("span")
+    el.textContent = "•"
+    el.className = "omd-bullet"
+    return el
+  }
+}
+
 export class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean, readonly pos: number) { super() }
   eq(other: CheckboxWidget) { return this.checked === other.checked }

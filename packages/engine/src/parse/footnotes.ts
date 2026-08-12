@@ -1,8 +1,8 @@
 import type { MarkdownConfig } from "@lezer/markdown"
 
-// ponytail: definitions consume a single line only (`[^id]: body`); continuation
-// lines degrade to a plain paragraph. Upgrade to a LeafBlockParser (like
-// LinkReference's nextLine accumulation) when multi-line footnotes matter.
+// ponytail: continuation lines must be indented >= 4 and directly adjacent;
+// a blank line still ends the definition (full CommonMark allows lazy/blank
+// continuations — upgrade if multi-paragraph footnotes matter).
 export const Footnotes: MarkdownConfig = {
   defineNodes: [
     "FootnoteReference",
@@ -17,13 +17,21 @@ export const Footnotes: MarkdownConfig = {
       if (!m) return false
       const start = cx.lineStart + line.pos
       const markTo = start + m[1].length + 4  // "[^" + label + "]:" is fixed-width
-      const bodyFrom = start + m[0].length
-      const body = line.text.slice(line.pos + m[0].length)
-      cx.addElement(cx.elt("FootnoteDefinition", start, cx.lineStart + line.text.length, [
+      const children = [
         cx.elt("FootnoteMark", start, markTo),
-        ...cx.parser.parseInline(body, bodyFrom),
-      ]))
-      cx.nextLine()
+        ...cx.parser.parseInline(line.text.slice(line.pos + m[0].length), start + m[0].length),
+      ]
+      let to = cx.lineStart + line.text.length
+      // Consume continuation lines indented >= 4 (same loop shape as IndentedCode;
+      // Line.depth exists at runtime but is missing from the public typings)
+      while (cx.nextLine() && (line as unknown as { depth: number }).depth >= cx.depth) {
+        if (line.pos == line.text.length || line.indent < line.baseIndent + 4) break
+        const cFrom = cx.lineStart + line.findColumn(line.baseIndent + 4)
+        to = cx.lineStart + line.text.length
+        if (cFrom < to)
+          children.push(...cx.parser.parseInline(line.text.slice(cFrom - cx.lineStart), cFrom))
+      }
+      cx.addElement(cx.elt("FootnoteDefinition", start, to, children))
       return true
     },
   }],

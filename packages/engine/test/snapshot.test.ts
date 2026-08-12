@@ -75,6 +75,28 @@ describe("fixture snapshots", () => {
         "replace:EmphasisMark@93-95",
         "replace:EmphasisMark@99-101",
         "mark:omd-strong@93-101",
+        "line:omd-li-1@123-123",
+        "mark:omd-list-mark@123-125",
+        "line:omd-li-1@130-130",
+        "mark:omd-list-mark@130-132",
+        "line:omd-li-1@152-152",
+        "mark:omd-list-mark@152-154",
+      ]
+    `)
+  })
+
+  it("code-fenced.md", () => {
+    expect(specsFor("code-fenced.md")).toMatchInlineSnapshot(`
+      [
+        "line:omd-codeblock@28-28",
+        "line:omd-codeblock@34-34",
+        "line:omd-codeblock@46-46",
+        "line:omd-codeblock@74-74",
+        "line:omd-codeblock@110-110",
+        "line:omd-codeblock@114-114",
+        "line:omd-codeblock@125-125",
+        "line:omd-codeblock@152-152",
+        "line:omd-codeblock@174-174",
       ]
     `)
   })
@@ -682,11 +704,39 @@ describe("fixture snapshots", () => {
   it("list-tasks.md", () => {
     expect(specsFor("list-tasks.md")).toMatchInlineSnapshot(`
       [
+        "line:omd-li-1@17-17",
+        "replace:ListMark@17-18",
+        "line:omd-li-1@30-30",
+        "replace:ListMark@30-31",
+        "line:omd-li-1@44-44",
+        "replace:ListMark@44-45",
         "replace:EmphasisMark@62-64",
         "replace:EmphasisMark@68-70",
         "mark:omd-strong@62-70",
+        "line:omd-li-1@87-87",
+        "mark:omd-list-mark@87-89",
+        "line:omd-li-1@94-94",
+        "mark:omd-list-mark@94-96",
+        "line:omd-li-1@101-101",
+        "mark:omd-list-mark@101-103",
+        "line:omd-li-1@125-125",
+        "replace:ListMark@125-126",
+        "line:omd-li-2@133-133",
+        "replace:ListIndent@133-135",
+        "replace:ListMark@135-136",
+        "line:omd-li-2@145-145",
+        "replace:ListIndent@145-147",
+        "replace:ListMark@147-148",
+        "line:omd-li-3@157-157",
+        "replace:ListIndent@157-161",
+        "replace:ListMark@161-162",
+        "line:omd-li-1@175-175",
+        "replace:ListMark@175-176",
+        "line:omd-li-1@204-204",
         "widget:checkbox@206-209",
+        "line:omd-li-1@225-225",
         "widget:checkbox@227-230",
+        "line:omd-li-1@247-247",
         "widget:checkbox@249-252",
       ]
     `)
@@ -704,6 +754,7 @@ describe("fixture coverage", () => {
     const covered = [
       "blockquote.md",
       "cjk.md",
+      "code-fenced.md",
       "code-inline.md",
       "emphasis.md",
       "footnote.md",
