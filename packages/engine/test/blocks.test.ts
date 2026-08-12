@@ -68,10 +68,13 @@ describe("block syntax", () => {
     expect(collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)).not.toContain("replace:ListIndent")
   })
 
-  it("styles fenced code block lines", () => {
-    const t = tags("```js\nconst x = **not bold**\n```")
+  it("styles fenced code block lines in edit state (cursor inside)", () => {
+    const doc = "```js\nconst x = **not bold**\n```"
+    // 光标在块内 → 编辑态：行样式 + 无 widget；行内语法不折叠
+    const s = makeState(doc).update({ selection: { anchor: 10 } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
     expect(t.filter(x => x === "line:omd-codeblock")).toHaveLength(3)
-    // no inline folding inside code
+    expect(t).not.toContain("widget:block:code")
     expect(t).not.toContain("replace:EmphasisMark")
   })
 })
