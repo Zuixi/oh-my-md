@@ -12,7 +12,7 @@ const tags = (doc: string, sel?: number) => {
 describe("footnotes", () => {
   it("parses reference and definition nodes", () => {
     const names: string[] = []
-    syntaxTree(makeState("text[^1]\n\n[^1]: note")).iterate({ enter: n => names.push(n.name) })
+    syntaxTree(makeState("text[^1]\n\n[^1]: note")).iterate({ enter: n => { names.push(n.name) } })
     expect(names).toContain("FootnoteReference")
     expect(names).toContain("FootnoteDefinition")
     expect(names).toContain("FootnoteMark")
