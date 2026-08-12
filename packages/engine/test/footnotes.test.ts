@@ -33,4 +33,19 @@ describe("footnotes", () => {
     const t = tags("[link](http://x.com)")
     expect(t).not.toContain("mark:omd-footnote")
   })
+
+  it("absorbs 4-space-indented continuation lines into the definition", () => {
+    const doc = "[^1]: body\n    continued **bold**\n\nprose"
+    const names: string[] = []
+    let defTo = -1
+    syntaxTree(makeState(doc)).iterate({
+      enter: n => { names.push(n.name); if (n.name === "FootnoteDefinition") defTo = n.to },
+    })
+    expect(names).not.toContain("CodeBlock")
+    // definition spans the continuation line; prose is outside it
+    expect(defTo).toBe(doc.indexOf("**bold**") + 8)
+    // inline marks inside the continuation still fold
+    const t = tags(doc)
+    expect(t).toContain("mark:omd-strong")
+  })
 })

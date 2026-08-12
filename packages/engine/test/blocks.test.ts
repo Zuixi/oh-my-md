@@ -24,4 +24,54 @@ describe("block syntax", () => {
   it("styles horizontal rule", () => {
     expect(tags("---")).toContain("line:omd-hr")
   })
+
+  it("replaces bullet marks, keeps ordered numbers", () => {
+    const doc = "- a\n- b\n\n1. first\n"
+    const state = makeState(doc)
+    // cursor far away so marks fold
+    const s = state.update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(t.filter(x => x === "replace:ListMark")).toHaveLength(2)
+    expect(t).toContain("mark:omd-list-mark")
+    expect(t).not.toContain("widget:checkbox")
+  })
+
+  it("does not bullet task list items (checkbox owns the mark)", () => {
+    const t = tags("- [x] done")
+    expect(t).toContain("widget:checkbox")
+    expect(t).not.toContain("replace:ListMark")
+  })
+
+  it("expands bullet mark when cursor is on it", () => {
+    const doc = "- item"
+    const state = makeState(doc).update({ selection: { anchor: 0 } }).state
+    expect(collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)).not.toContain("replace:ListMark")
+  })
+
+  it("tags list items with nesting depth classes", () => {
+    const t = tags("- outer\n  - inner\n      - deep")
+    expect(t).toContain("line:omd-li-1")
+    expect(t).toContain("line:omd-li-2")
+    expect(t).toContain("line:omd-li-3")
+  })
+
+  it("hides source indent spaces when cursor is off the line", () => {
+    const doc = "- outer\n  - inner\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(t).toContain("replace:ListIndent@8-10")
+  })
+
+  it("reveals indent spaces on the cursor's line", () => {
+    const doc = "- outer\n  - inner"
+    const s = makeState(doc).update({ selection: { anchor: 12 } }).state  // cursor on inner line
+    expect(collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)).not.toContain("replace:ListIndent")
+  })
+
+  it("styles fenced code block lines", () => {
+    const t = tags("```js\nconst x = **not bold**\n```")
+    expect(t.filter(x => x === "line:omd-codeblock")).toHaveLength(3)
+    // no inline folding inside code
+    expect(t).not.toContain("replace:EmphasisMark")
+  })
 })
