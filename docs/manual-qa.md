@@ -31,16 +31,21 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 行内代码 背景等宽字体
 - [ ] 链接 蓝色，URL 折叠，光标进入展开
 - [ ] 任务复选框可点切换，状态写回源码（`[ ]`⇄`[x]`）
+- [ ] 无序列表 marker 折叠为 `•`，有序列表保留数字；任务项不叠 bullet
+- [ ] 嵌套列表逐级缩进，换行的续行对齐到正文（悬挂缩进）；光标进入该行时源码缩进显露
+- [ ] 围栏/缩进代码块整行等宽底色；块内 `**` 等行内语法不折叠；高亮属 M2
 - [ ] 引用块左边框，`>` 折叠
 - [ ] 水平线样式
+- [ ] 脚注引用上标；脚注定义的 `[^id]:` 标记折叠；4 空格缩进的续行归入定义（不显示为代码块）
 
 ## 已知限制（M1 范围，非缺陷）
 - 表格：仅解析，不渲染表格 widget（M2 实现 TableWidget）
-- 脚注：未实现自定义解析扩展（`[^id]` 当前作为文本/链接引用处理；自定义脚注解析在 v1 前补齐）
+- 脚注：空行仍会结束定义（跨空行的多段脚注暂不合并，见 footnotes.ts 的 ponytail 注记）
 - 图片 / 数学公式 / Mermaid / 代码高亮：M2
 - 文件树侧边栏 / 大纲 / 全局搜索 / 导出 / 主题切换 UI：M3
 
 ## 自动化测试基线（已通过）
-- 引擎单测：`pnpm --filter @omd/engine test` → 27 个测试全绿
+- 引擎单测：`pnpm test`（tsc --noEmit + vitest）→ 40 个测试全绿
 - 前端构建：`pnpm --filter @omd/desktop build` → 成功
+- Rust 侧：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` → 2 个测试全绿
 - Rust 构建：`cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml` → `Finished`

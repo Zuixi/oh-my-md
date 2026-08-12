@@ -149,6 +149,7 @@ App
 ## 里程碑（全部属 v1，每步都是可用版本）
 
 - **M1 引擎**：CM6 装配 + Lezer 装饰管线 + live/source 切换 + GFM 全量 + IME/撤销正确性 ← 最难，先啃
+  - 注：M1 的"GFM 全量"指解析全量；表格在 M1 只做解析验证，TableWidget 渲染归 M2（见 M1 plan 范围边界）
 - **M2 块渲染**：KaTeX / Mermaid / 代码高亮 / 图片粘贴
 - **M3 产品壳**：标签页、文件树、大纲、全局搜索、导出 HTML/PDF、主题、Typewriter/Focus
 - **M4 AI + 发布**：AI provider 层 + 打磨 + GitHub 开源发布 + 自动更新
