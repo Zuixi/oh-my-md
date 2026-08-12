@@ -14,23 +14,28 @@ export class TableWidget extends BlockWidget {
       /^:-/.test(c) && /-:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : /^:-/.test(c) ? "left" : "")
 
     const table = document.createElement("table")
-    const thead = table.createTHead()
-    const hr = thead.insertRow()
+    const thead = document.createElement("thead")
+    const hr = document.createElement("tr")
     for (const [i, c] of cells(rows[0]).entries()) {
       const th = document.createElement("th")
       th.textContent = c
       if (aligns[i]) th.style.textAlign = aligns[i] as "left"
       hr.appendChild(th)
     }
-    const tbody = table.createTBody()
+    thead.appendChild(hr)
+    table.appendChild(thead)
+    const tbody = document.createElement("tbody")
     for (const row of rows.slice(2)) {
-      const tr = tbody.insertRow()
+      const tr = document.createElement("tr")
       for (const [i, c] of cells(row).entries()) {
-        const td = tr.insertCell()
+        const td = document.createElement("td")
         td.textContent = c
         if (aligns[i]) td.style.textAlign = aligns[i] as "left"
+        tr.appendChild(td)
       }
+      tbody.appendChild(tr)
     }
+    table.appendChild(tbody)
     el.appendChild(table)
   }
 }

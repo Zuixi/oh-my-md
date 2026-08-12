@@ -1,15 +1,18 @@
 import { EditorView, WidgetType } from "@codemirror/view"
 import type { EditorState } from "@codemirror/state"
 
-// 光标/选区与 [from, to) 严格重叠 → 块处于编辑态（显示源码）
+// 光标/选区与 [from, to] 重叠（含边界）→ 块处于编辑态（显示源码）。
+// 边界算块内（root cause C）：敲完 closing fence 光标恰停在 node.to，
+// 若算块外，widget 会在打字中途吞掉整块、光标被卡死在边界。
+// 光标彻底离开块后才渲染 widget（Typora 行为）。
 export function blockSelected(state: EditorState, from: number, to: number) {
   const { from: sf, to: st } = state.selection.main
-  return sf < to && st > from
+  return sf <= to && st >= from
 }
 
 // 统一块 widget 生命周期：创建(src) → toDOM/renderInto(可异步)
-// → eq 按 src 比较（块文本 hash 缓存，未变不重渲染） → 点击 ✎ 把光标放进块内
-// → 装饰重建、widget 消失（销毁态由 CM 回收）。渲染失败显示错误+原文。
+// → eq 按 src 比较（块文本 hash 缓存，未变不重渲染） → 点击任意处把光标放进
+// 块内 → 装饰重建、widget 消失（销毁态由 CM 回收）。渲染失败显示错误+原文。
 export abstract class BlockWidget extends WidgetType {
   constructor(readonly src: string, readonly pos: number) { super() }
 
@@ -21,16 +24,18 @@ export abstract class BlockWidget extends WidgetType {
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
     wrap.className = `omd-block ${this.cssClass}`
-
-    const editBtn = document.createElement("button")
-    editBtn.className = "omd-block-edit"
-    editBtn.textContent = "✎"
-    editBtn.title = "Edit source"
-    editBtn.addEventListener("mousedown", e => {
+    wrap.title = "Click to edit source"
+    // 整块点击即回源码（root cause D：只放行 ✎ 时块是砖，用户进不去）
+    wrap.addEventListener("mousedown", e => {
       e.preventDefault()
       view.dispatch({ selection: { anchor: this.pos + 1 }, scrollIntoView: true })
       view.focus()
     })
+
+    const editBtn = document.createElement("button")
+    editBtn.className = "omd-block-edit"
+    editBtn.textContent = "✎"
+    editBtn.tabIndex = -1
     wrap.appendChild(editBtn)
 
     const body = document.createElement("div")
@@ -46,8 +51,8 @@ export abstract class BlockWidget extends WidgetType {
     return wrap
   }
 
-  // ✎ 按钮的事件由 widget 自己处理，其余事件交给 CM（点 body 不进入编辑，避免误触）
+  // mousedown 全部由 widget 自己处理（进编辑态）；其余事件交给 CM
   ignoreEvent(event: Event) {
-    return event.target instanceof HTMLElement && event.target.classList.contains("omd-block-edit")
+    return event.type === "mousedown"
   }
 }

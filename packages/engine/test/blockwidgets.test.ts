@@ -22,9 +22,12 @@ describe("block widget pipeline", () => {
     expect(blockSelected(state, 7, 19)).toBe(false)
     const inside = state.update({ selection: { anchor: 10 } }).state
     expect(blockSelected(inside, 7, 19)).toBe(true)
-    // 光标恰好在块结束后 → 不算选中（块恢复渲染态）
+    // 光标恰在块结束边界 → 仍算块内（打字到块尾不被 widget 吞掉；彻底离开才渲染）
     const atEnd = state.update({ selection: { anchor: 19 } }).state
-    expect(blockSelected(atEnd, 7, 19)).toBe(false)
+    expect(blockSelected(atEnd, 7, 19)).toBe(true)
+    // 光标越过边界 → 块恢复渲染态
+    const past = state.update({ selection: { anchor: 21 } }).state
+    expect(blockSelected(past, 7, 19)).toBe(false)
   })
 
   it("fenced code becomes a code widget off-cursor, line styles on-cursor", () => {

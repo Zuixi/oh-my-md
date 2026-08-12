@@ -1,9 +1,9 @@
 import { Compartment, StateEffect, StateField, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap } from "@codemirror/view"
-import { livePreviewPlugin } from "../decorations/build"
+import { livePreviewField } from "../decorations/build"
 
 export function livePreviewExt() {
-  return [livePreviewPlugin]   // decorations only; styling comes from the desktop theme
+  return [livePreviewField]   // decorations via StateField；block widgets 只能走 field
 }
 
 export const livePreviewCompartment = new Compartment()
