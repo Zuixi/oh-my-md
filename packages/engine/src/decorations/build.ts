@@ -11,9 +11,19 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
   const out: DecoSpec[] = []
   syntaxTree(state).iterate({
     from, to,
-    enter(node) { inlineRules(node, state, out); blockRules(node, state, out) },
+    enter(node) {
+      inlineRules(node, state, out)
+      // blockRules 返回 true = 产出了覆盖整个节点的块 widget → 跳过子树，
+      // 否则子树内的行内装饰会与块 replace 范围重叠，Decoration.set 直接抛错
+      if (blockRules(node, state, out)) return false
+    },
   })
-  return out
+  // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃
+  const blockWidgets = out.filter(s => s.tag.startsWith("widget:block:"))
+  if (!blockWidgets.length) return out
+  return out.filter(s =>
+    s.tag.startsWith("widget:block:") ||
+    !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
 }
 
 export function buildLiveDecorations(state: EditorState, from: number, to: number): DecorationSet {
@@ -31,4 +41,8 @@ export const livePreviewPlugin = ViewPlugin.fromClass(class {
     if (u.docChanged || u.viewportChanged || u.selectionSet)
       this.decorations = buildLiveDecorations(u.view.state, u.view.viewport.from, u.view.viewport.to)
   }
-}, { decorations: v => v.decorations })
+}, {
+  decorations: v => v.decorations,
+  // 光标运动整体跳过 replace 装饰（块 widget + 行内折叠），不会有半个光标进折叠区
+  provide: plugin => EditorView.atomicRanges.of(view => view.plugin(plugin)?.decorations ?? Decoration.none),
+})

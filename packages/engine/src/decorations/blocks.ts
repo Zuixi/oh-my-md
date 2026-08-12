@@ -13,7 +13,7 @@ function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], 
     out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
 }
 
-export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
+export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
   switch (node.name) {
     case "ListMark": {
       const line = state.doc.lineAt(node.from)
@@ -61,10 +61,11 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       }
       break
     }
-    case "QuoteMark":    return foldLineMark(node, state, out, "QuoteMark")
-    case "FootnoteMark": return foldLineMark(node, state, out, "FootnoteMark")
+    case "QuoteMark":    { foldLineMark(node, state, out, "QuoteMark"); return false }
+    case "FootnoteMark": { foldLineMark(node, state, out, "FootnoteMark"); return false }
     case "HorizontalRule":
       out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
       break
   }
+  return false
 }
