@@ -38,14 +38,23 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 水平线样式
 - [ ] 脚注引用上标；脚注定义的 `[^id]:` 标记折叠；4 空格缩进的续行归入定义（不显示为代码块）
 
-## 已知限制（M1 范围，非缺陷）
-- 表格：仅解析，不渲染表格 widget（M2 实现 TableWidget）
+## M2 块渲染
+- [ ] 表格渲染为 HTML 表格，对齐正确；点 ✎ 回源码
+- [ ] 代码块高亮（js/ts/rust 各试一个）；未知语言降级纯文本；光标进入显源码
+- [ ] `$$` 块公式与 `$` 行内公式渲染；错误公式显示错误+原文不白屏
+- [ ] ```mermaid 块渲染图表；语法错时显示错误+原文
+- [ ] 截图粘贴生成 assets/ 文件并渲染为图片；图片加载失败显示占位文本
+- [ ] 表格/代码块在 blockquote 内不炸（冲突过滤兜底）
+
+## 已知限制（当前范围，非缺陷）
+- 表格单元格内的行内格式渲染为纯文本（block replace 内叠不了行内装饰）
+- 代码块编辑态无高亮（光标进入即源码形态；Typora 式就地高亮成本高，v2 再议）
+- math 仅支持 `$$`/`$` 定界符
 - 脚注：空行仍会结束定义（跨空行的多段脚注暂不合并，见 footnotes.ts 的 ponytail 注记）
-- 图片 / 数学公式 / Mermaid / 代码高亮：M2
 - 文件树侧边栏 / 大纲 / 全局搜索 / 导出 / 主题切换 UI：M3
 
 ## 自动化测试基线（已通过）
-- 引擎单测：`pnpm test`（tsc --noEmit + vitest）→ 40 个测试全绿
+- 引擎单测：`pnpm test`（tsc --noEmit + vitest）→ 57 个测试全绿
 - 前端构建：`pnpm --filter @omd/desktop build` → 成功
-- Rust 侧：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` → 2 个测试全绿
+- Rust 侧：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` → 4 个测试全绿
 - Rust 构建：`cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml` → `Finished`
