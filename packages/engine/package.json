@@ -3,7 +3,7 @@
   "private": true,
   "main": "src/index.ts",
   "scripts": {
-    "test": "vitest run"
+    "test": "tsc --noEmit && vitest run"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.0",
