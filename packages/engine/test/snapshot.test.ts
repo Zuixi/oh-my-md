@@ -81,6 +81,7 @@ describe("fixture snapshots", () => {
         "mark:omd-list-mark@130-132",
         "line:omd-li-1@152-152",
         "mark:omd-list-mark@152-154",
+        "widget:block:table@160-217",
       ]
     `)
   })
@@ -743,7 +744,13 @@ describe("fixture snapshots", () => {
   })
 
   it("table.md", () => {
-    expect(specsFor("table.md")).toMatchInlineSnapshot(`[]`)
+    expect(specsFor("table.md")).toMatchInlineSnapshot(`
+      [
+        "widget:block:table@14-105",
+        "widget:block:table@123-226",
+        "widget:block:table@251-286",
+      ]
+    `)
   })
 })
 

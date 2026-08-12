@@ -3,6 +3,8 @@ import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget } from "./widgets"
+import { blockSelected } from "./blockWidget"
+import { TableWidget } from "./widgets/table"
 
 // Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
 // unless the cursor is on that line.
@@ -43,6 +45,17 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         pos = line.to + 1
       }
       break
+    }
+    case "Table": {
+      if (blockSelected(state, node.from, node.to)) return false
+      out.push({
+        from: node.from, to: node.to, tag: "widget:block:table",
+        deco: Decoration.replace({
+          widget: new TableWidget(state.doc.sliceString(node.from, node.to), node.from),
+          block: true,
+        }),
+      })
+      return true
     }
     case "TaskMarker": {
       const text = state.doc.sliceString(node.from, node.to)
