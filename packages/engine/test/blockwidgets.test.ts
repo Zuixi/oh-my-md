@@ -9,6 +9,10 @@ class ProbeWidget extends BlockWidget {
   protected renderInto(el: HTMLElement) { el.textContent = "probe" }
 }
 
+import { imageResolver } from "../src/decorations/widgets/image"
+
+const imageResolverTestFacet = imageResolver.of((s: string) => `/resolved/${s}`)
+
 describe("block widget pipeline", () => {
   it("blockSelected strict-overlap logic", async () => {
     const { blockSelected } = await import("../src/decorations/blockWidget")
@@ -41,6 +45,13 @@ describe("block widget pipeline", () => {
     const t = collectDecorationSpecs(makeState(doc), 0, doc.length).map(d => d.tag)
     expect(t).toContain("widget:block:mermaid")
     expect(t).not.toContain("widget:block:code")
+  })
+
+  it("image becomes inline widget off-cursor, resolves src via facet", () => {
+    const doc = "intro\n\n![alt](assets/pic.png)"
+    const state = makeState(doc, [imageResolverTestFacet])
+    const t = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(t).toContain("widget:image")
   })
 
   it("widget decorations are atomic ranges spec-able (sanity: replace deco exists)", () => {

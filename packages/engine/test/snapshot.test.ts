@@ -195,6 +195,15 @@ describe("fixture snapshots", () => {
     `)
   })
 
+  it("image.md", () => {
+    expect(specsFor("image.md")).toMatchInlineSnapshot(`
+      [
+        "widget:image@11-45",
+        "widget:image@55-92",
+      ]
+    `)
+  })
+
   it("large.md", () => {
     expect(specsFor("large.md")).toMatchInlineSnapshot(`
       [
@@ -779,6 +788,7 @@ describe("fixture coverage", () => {
       "footnote.md",
       "heading.md",
       "hr.md",
+      "image.md",
       "large.md",
       "links.md",
       "list-tasks.md",

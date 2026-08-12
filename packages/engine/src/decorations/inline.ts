@@ -3,6 +3,7 @@ import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
 import { InlineMathWidget } from "./widgets/math"
+import { imageResolver, ImageWidget } from "./widgets/image"
 
 const HEADING_CLASS: Record<string, string> = {
   ATXHeading1: "omd-h1", ATXHeading2: "omd-h2", ATXHeading3: "omd-h3",
@@ -66,6 +67,23 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Strikethrough":  return foldPair(node, state, out, "StrikethroughMark", "omd-del")
     case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
     case "Link":           return foldLink(node, state, out)
+    case "Image": {
+      if (nearCursor(state, node.from, node.to)) return
+      const urlNode = node.node.getChild("URL")
+      if (!urlNode) return
+      const src = state.doc.sliceString(urlNode.from, urlNode.to)
+      // alt 文本 = "![" 与 "](" 之间
+      const head = state.doc.sliceString(node.from, urlNode.from)
+      const altEnd = head.indexOf("](")
+      const alt = altEnd > 1 ? head.slice(2, altEnd) : ""
+      out.push({
+        from: node.from, to: node.to, tag: "widget:image",
+        deco: Decoration.replace({
+          widget: new ImageWidget(src, alt, state.facet(imageResolver)(src)),
+        }),
+      })
+      return
+    }
     case "InlineMath": {
       if (nearCursor(state, node.from, node.to)) return
       // 剥掉两侧 $，内容为 node.from+1 .. node.to-1
