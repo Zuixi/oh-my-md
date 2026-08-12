@@ -3,6 +3,18 @@ import { EditorState } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import { editorExtensions } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
+import { convertFileSrc } from "@tauri-apps/api/core"
+
+// markdown 图片 src → 可加载 URL：远程/data 原样；相对路径按文档目录 resolve
+function makeResolver(getDocPath: () => string | null) {
+  return (src: string) => {
+    if (/^(https?:|data:|asset:)/.test(src)) return src
+    const docPath = getDocPath()
+    if (!docPath) return src
+    const dir = docPath.slice(0, docPath.replace(/\\/g, "/").lastIndexOf("/") + 1)
+    return convertFileSrc(dir + src)
+  }
+}
 
 export function createEditor(
   parent: HTMLElement,
@@ -21,7 +33,7 @@ export function createEditor(
         highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         // Engine: markdown language + live-preview decorations + mode toggle.
-        editorExtensions(),
+        editorExtensions({ resolveImageSrc: makeResolver(getDocPath) }),
         imagePasteHandler(getDocPath),
         // Base editor theme: fill the host, sensible line height.
         EditorView.theme({

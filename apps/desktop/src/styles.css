@@ -48,6 +48,11 @@
 }
 .editor-host .omd-math { overflow-x: auto; padding: 4px 0; }
 .editor-host .omd-inline-math { padding: 0 2px; }
+.editor-host .omd-image { max-width: 100%; border-radius: 4px; }
+.editor-host .omd-image-broken {
+  font-size: 0.85em; color: #a00; background: #fff5f5;
+  padding: 2px 6px; border-radius: 4px;
+}
 .app { display: flex; flex-direction: column; height: 100vh; }
 .statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
 .editor-host { flex: 1; overflow: auto; }
