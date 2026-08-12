@@ -141,16 +141,10 @@ describe("fixture snapshots", () => {
   it("footnote.md", () => {
     expect(specsFor("footnote.md")).toMatchInlineSnapshot(`
       [
-        "mark:omd-link@20-24",
-        "replace:LinkMark@70-71",
-        "replace:LinkMark@78-79",
-        "mark:omd-link@70-79",
-        "replace:LinkMark@95-96",
-        "replace:LinkMark@98-99",
-        "mark:omd-link@95-99",
-        "replace:LinkMark@133-134",
-        "replace:LinkMark@141-142",
-        "mark:omd-link@133-142",
+        "mark:omd-footnote@20-24",
+        "mark:omd-footnote@70-79",
+        "replace:FootnoteMark@95-101",
+        "replace:FootnoteMark@133-144",
       ]
     `)
   })

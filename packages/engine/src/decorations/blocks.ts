@@ -30,6 +30,13 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         out.push({ from: node.from, to: end, tag: "replace:QuoteMark", deco: Decoration.replace({}) })
       break
     }
+    case "FootnoteMark": {
+      const line = state.doc.lineAt(node.from)
+      const end = Math.min(node.to + 1, line.to)
+      if (!nearCursor(state, node.from, end))
+        out.push({ from: node.from, to: end, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
+      break
+    }
     case "HorizontalRule":
       out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
       break
