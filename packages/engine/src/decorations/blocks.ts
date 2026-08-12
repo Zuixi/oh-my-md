@@ -4,6 +4,15 @@ import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
 import { CheckboxWidget } from "./widgets"
 
+// Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
+// unless the cursor is on that line.
+function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
+  const line = state.doc.lineAt(node.from)
+  const end = Math.min(node.to + 1, line.to)
+  if (!nearCursor(state, node.from, end))
+    out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
+}
+
 export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   switch (node.name) {
     case "TaskMarker": {
@@ -23,20 +32,8 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       }
       break
     }
-    case "QuoteMark": {
-      const line = state.doc.lineAt(node.from)
-      const end = Math.min(node.to + 1, line.to)  // include the trailing space after '>'
-      if (!nearCursor(state, node.from, end))
-        out.push({ from: node.from, to: end, tag: "replace:QuoteMark", deco: Decoration.replace({}) })
-      break
-    }
-    case "FootnoteMark": {
-      const line = state.doc.lineAt(node.from)
-      const end = Math.min(node.to + 1, line.to)
-      if (!nearCursor(state, node.from, end))
-        out.push({ from: node.from, to: end, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
-      break
-    }
+    case "QuoteMark":    return foldLineMark(node, state, out, "QuoteMark")
+    case "FootnoteMark": return foldLineMark(node, state, out, "FootnoteMark")
     case "HorizontalRule":
       out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
       break
