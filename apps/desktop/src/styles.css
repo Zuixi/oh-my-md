@@ -21,6 +21,25 @@
 .editor-host .omd-li-2 { padding-left: 2.4em; text-indent: -1.2em; }
 .editor-host .omd-li-3 { padding-left: 3.6em; text-indent: -1.2em; }
 .editor-host .omd-li-4 { padding-left: 4.8em; text-indent: -1.2em; }
+
+/* M2 block widgets */
+.editor-host .omd-block { position: relative; margin: 0.5em 0; }
+.editor-host .omd-block-edit {
+  position: absolute; top: 2px; right: 4px; z-index: 1;
+  border: none; background: transparent; color: #999; cursor: pointer;
+  font-size: 12px; opacity: 0; transition: opacity 0.15s;
+}
+.editor-host .omd-block:hover .omd-block-edit { opacity: 1; }
+.editor-host .omd-block-error {
+  font-family: ui-monospace, monospace; font-size: 0.85em;
+  background: #fff5f5; border: 1px solid #f0c0c0; border-radius: 4px;
+  padding: 8px; white-space: pre-wrap; color: #a00;
+}
+.editor-host .omd-table table { border-collapse: collapse; }
+.editor-host .omd-table th, .editor-host .omd-table td {
+  border: 1px solid #d0d0d0; padding: 4px 10px;
+}
+.editor-host .omd-table th { background: rgba(0,0,0,0.03); }
 .app { display: flex; flex-direction: column; height: 100vh; }
 .statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
 .editor-host { flex: 1; overflow: auto; }
