@@ -1,4 +1,4 @@
-import { BlockWidget } from "../blockWidget"
+import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 
@@ -141,7 +141,9 @@ export function resolveCodeLanguage(lang: string): string | null {
 }
 
 export class CodeWidget extends BlockWidget {
-  constructor(src: string, pos: number, readonly lang: string) { super(src, pos) }
+  constructor(src: string, pos: number, readonly lang: string, embed?: BlockEmbed) {
+    super(src, pos, embed)
+  }
   eq(other: CodeWidget) { return super.eq(other) && this.lang === other.lang }
 
   protected get cssClass() { return "omd-code" }

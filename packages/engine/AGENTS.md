@@ -17,7 +17,7 @@ packages/engine/
 ├── src/
 │   ├── index.ts                 # Public editorExtensions(options) entrypoint
 │   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
-│   ├── parse/                   # Lezer Markdown, math, and footnote extensions
+│   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
 │   └── decorations/
 │       ├── build.ts             # StateField live decorations and incremental updates
@@ -42,11 +42,11 @@ packages/engine/
 
 1. Decorations must be sorted and non-overlapping where CodeMirror requires it.
 2. When a block widget replaces a syntax node, skip that node's subtree and filter enclosed outer decorations; overlapping replace ranges can make `Decoration.set` throw.
-3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization.
+3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization. Rebuild ranges end at `endLine.to + 1` (exclusive). Treat removal overlap as half-open so the next line's point decorations stay put; dedupe additions against retained specs. Empty ranges stay closed.
 4. Preserve the source document, except for live-preview ordered-list marker normalization in `lists/ordered.ts`. A preview widget renders a projection and enters editing mode by moving selection into the source range.
 5. Treat a block as editable when the selection overlaps its source range **including both boundaries**. Do not replace selected source with a widget.
-6. Fold `QuoteMark` unless the selection is inside `>` / `> ` itself. Do not reuse line-based `nearCursor` for quote markers; the cursor stays on the quote line while typing content.
-7. `BlockWidget.eq` compares source text and `pos`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
+6. Fold `QuoteMark` unless the selection is inside `>` / `> ` itself. Do not reuse line-based `nearCursor` for quote markers; the cursor stays on the quote line while typing content. Inline marks inside a quote (`**`, links, images) also use `cursorInside`, so clicking quote content does not unfold syntax. A whole-line selection (triple-click) is not "inside" a mark. Nested quotes emit one `omd-blockquote-N` class per line from the innermost quote. List indent inside a quote starts after `> `, never from `line.from`. A list inside a quote keeps `omd-li-N` (hanging indent, quote bar at x=0). A quote inside a list item emits `omd-quote-in-li-N` instead, so the bar starts at the list indent and hanging indent stays off. Fold leading spaces before `>` as `QuoteIndent`. Ordinary fenced code inside a quote stays as `omd-codeblock` line styles (fold `CodeMark` / `CodeInfo` with `cursorInside`) so a block widget does not split the quote. Mermaid/table/math still use block widgets and inherit quote/list depth via `BlockWidget.embed`.
+7. `BlockWidget.eq` compares source text and `embed`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
 8. Async widget failures must be contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
 9. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
 
@@ -81,7 +81,7 @@ pnpm test
 - CodeMirror widgets create real DOM even though the package has no React dependency.
 - CSS regressions cannot usually be fixed in this package because engine tests assert structure and ranges, not final desktop appearance.
 - Mermaid, Shiki, and KaTeX may render asynchronously or throw on invalid source; preserve the original Markdown in error output.
-- Do not add `indentOnInput`, `closeBrackets`, or `autocompletion` to compensate for preview behavior. Fix the underlying parse/decoration interaction.
+- Do not add `indentOnInput`, `closeBrackets`, or generic `autocompletion` to compensate for preview behavior. Fix the underlying parse/decoration interaction. A `:`-only emoji completion override in `parse/emojiComplete.ts` is the exception; keep it in the engine and do not turn on default word completion in `createEditor`.
 
 ## Documentation Maintenance
 

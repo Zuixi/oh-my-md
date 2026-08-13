@@ -1,4 +1,5 @@
 import { markdownLanguageSupport } from "./parse/markdown"
+import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
 import { imageResolver } from "./decorations/widgets/image"
 
@@ -10,6 +11,7 @@ export interface EngineOptions {
 export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
+    emojiCompletion,
     livePreviewCompartment.of(livePreviewExt()),
     isLivePreview,
     toggleKeymap,

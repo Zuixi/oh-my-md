@@ -37,7 +37,7 @@ apps/desktop/
 
 ## CodeMirror Host Rules
 
-- Do not enable `indentOnInput`, `closeBrackets`, or `autocompletion`; current live-preview decorations conflict with them.
+- Do not enable `indentOnInput`, `closeBrackets`, or generic `autocompletion`; current live-preview decorations conflict with them. Emoji `:` completion comes from `editorExtensions`.
 - Preserve history, selection drawing, drop cursor, active-line highlighting, and standard editing keymaps unless the task explicitly changes host behavior.
 - Pass host-dependent behavior through engine options, such as resolving Markdown image sources to loadable URLs.
 - Destroy `EditorView` during React cleanup and clear retained references.

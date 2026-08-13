@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { syntaxTree } from "@codemirror/language"
+import { decodeHtmlEntity } from "../src/parse/entities"
 import { makeState } from "./helpers"
 
 describe("markdown parsing", () => {
@@ -43,5 +44,30 @@ describe("markdown parsing", () => {
     expect(names).toContain("Underline")
     expect(names).toContain("UnderlineMark")
     expect(names).not.toContain("HTMLTag")
+  })
+
+  it("parses HTML character references as Entity", () => {
+    const names: string[] = []
+    syntaxTree(makeState("hello &#x1f4da; &#128218; &amp; world")).iterate({
+      enter: n => { names.push(n.name) },
+    })
+    expect(names.filter(n => n === "Entity")).toHaveLength(3)
+  })
+
+  it("decodes numeric emoji and named HTML entities", () => {
+    expect(decodeHtmlEntity("&#x1f4da;")).toBe("📚")
+    expect(decodeHtmlEntity("&#128218;")).toBe("📚")
+    expect(decodeHtmlEntity("&copy;")).toBe("©")
+    expect(decodeHtmlEntity("&amp;")).toBe("&")
+    expect(decodeHtmlEntity("&notanentity;")).toBeNull()
+    expect(decodeHtmlEntity("<script>")).toBeNull()
+  })
+
+  it("does not parse incomplete entities or HTML tags as Entity", () => {
+    const names: string[] = []
+    syntaxTree(makeState("hello &notanentity <script>alert(1)</script>")).iterate({
+      enter: n => { names.push(n.name) },
+    })
+    expect(names).not.toContain("Entity")
   })
 })

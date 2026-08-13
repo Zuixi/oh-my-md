@@ -14,7 +14,87 @@
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
 .editor-host .omd-u { text-decoration: underline; }
 .editor-host .omd-inline-code { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
-.editor-host .omd-blockquote { border-left: 3px solid #d0d0d0; padding-left: 1em; color: #555; }
+.editor-host .omd-blockquote,
+.editor-host .omd-blockquote-1,
+.editor-host .omd-blockquote-2,
+.editor-host .omd-blockquote-3,
+.editor-host .omd-blockquote-4,
+.editor-host .omd-li-1,
+.editor-host .omd-li-2,
+.editor-host .omd-li-3,
+.editor-host .omd-li-4,
+.editor-host .omd-quote-in-li-1,
+.editor-host .omd-quote-in-li-2,
+.editor-host .omd-quote-in-li-3,
+.editor-host .omd-quote-in-li-4 {
+  padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px));
+  text-indent: var(--omd-li-hang, 0px);
+}
+.editor-host .omd-blockquote,
+.editor-host .omd-blockquote-1 {
+  --omd-bq-pad: 1em;
+  --omd-bq-bar: 0px;
+  color: #555;
+  background-image: linear-gradient(to right,
+    transparent var(--omd-bq-bar),
+    #d0d0d0 var(--omd-bq-bar),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 3px));
+}
+.editor-host .omd-blockquote-2 {
+  --omd-bq-pad: 2em;
+  --omd-bq-bar: 0px;
+  color: #555;
+  background-image: linear-gradient(to right,
+    transparent var(--omd-bq-bar),
+    #d0d0d0 var(--omd-bq-bar),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em + 3px));
+}
+.editor-host .omd-blockquote-3 {
+  --omd-bq-pad: 3em;
+  --omd-bq-bar: 0px;
+  color: #555;
+  background-image: linear-gradient(to right,
+    transparent var(--omd-bq-bar),
+    #d0d0d0 var(--omd-bq-bar),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em + 3px),
+    transparent calc(var(--omd-bq-bar) + 2em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 2em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 2em + 3px),
+    transparent calc(var(--omd-bq-bar) + 2em + 3px));
+}
+.editor-host .omd-blockquote-4 {
+  --omd-bq-pad: 4em;
+  --omd-bq-bar: 0px;
+  color: #555;
+  background-image: linear-gradient(to right,
+    transparent var(--omd-bq-bar),
+    #d0d0d0 var(--omd-bq-bar),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 1em + 3px),
+    transparent calc(var(--omd-bq-bar) + 1em + 3px),
+    transparent calc(var(--omd-bq-bar) + 2em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 2em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 2em + 3px),
+    transparent calc(var(--omd-bq-bar) + 2em + 3px),
+    transparent calc(var(--omd-bq-bar) + 3em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3em),
+    #d0d0d0 calc(var(--omd-bq-bar) + 3em + 3px),
+    transparent calc(var(--omd-bq-bar) + 3em + 3px));
+}
 .editor-host .omd-hr { border-top: 1px solid #d0d0d0; }
 .editor-host .omd-hr-block { margin: 0.4em 0; }
 .editor-host .omd-hr-block .omd-block-body { padding: 0; }
@@ -23,13 +103,21 @@
 .editor-host .omd-bullet { color: #0969da; }
 .editor-host .omd-list-mark { color: #0969da; }
 .editor-host .omd-ordered-mark { color: #0969da; }
-.editor-host .omd-codeblock { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
+.editor-host .omd-codeblock { font-family: ui-monospace, monospace; background-color: rgba(0,0,0,0.04); }
 /* Nested list hanging indent: padding shifts the whole line, negative
    text-indent pulls the first line back so wrapped lines align to the text. */
-.editor-host .omd-li-1 { padding-left: 1.2em; text-indent: -1.2em; }
-.editor-host .omd-li-2 { padding-left: 2.4em; text-indent: -1.2em; }
-.editor-host .omd-li-3 { padding-left: 3.6em; text-indent: -1.2em; }
-.editor-host .omd-li-4 { padding-left: 4.8em; text-indent: -1.2em; }
+.editor-host .omd-li-1 { --omd-li-pad: 1.2em; --omd-li-hang: -1.2em; }
+.editor-host .omd-li-2 { --omd-li-pad: 2.4em; --omd-li-hang: -1.2em; }
+.editor-host .omd-li-3 { --omd-li-pad: 3.6em; --omd-li-hang: -1.2em; }
+.editor-host .omd-li-4 { --omd-li-pad: 4.8em; --omd-li-hang: -1.2em; }
+.editor-host .omd-quote-in-li-1 { --omd-li-pad: 1.2em; --omd-bq-bar: 1.2em; --omd-li-hang: 0; }
+.editor-host .omd-quote-in-li-2 { --omd-li-pad: 2.4em; --omd-bq-bar: 2.4em; --omd-li-hang: 0; }
+.editor-host .omd-quote-in-li-3 { --omd-li-pad: 3.6em; --omd-bq-bar: 3.6em; --omd-li-hang: 0; }
+.editor-host .omd-quote-in-li-4 { --omd-li-pad: 4.8em; --omd-bq-bar: 4.8em; --omd-li-hang: 0; }
+.editor-host .omd-block.omd-li-1,
+.editor-host .omd-block.omd-li-2,
+.editor-host .omd-block.omd-li-3,
+.editor-host .omd-block.omd-li-4 { --omd-li-hang: 0; }
 
 /* M2 block widgets */
 .editor-host .omd-block { position: relative; margin: 0.5em 0; }
@@ -59,6 +147,10 @@
 .editor-host .omd-image-broken {
   font-size: 0.85em; color: #a00; background: #fff5f5;
   padding: 2px 6px; border-radius: 4px;
+}
+.editor-host .cm-tooltip-autocomplete > ul {
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; }
 .statusbar { padding: 4px 12px; border-bottom: 1px solid #eee; font-size: 12px; color: #666; }
