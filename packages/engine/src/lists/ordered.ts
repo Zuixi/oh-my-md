@@ -258,6 +258,9 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
 
   private apply() {
     if (this.isDestroyed || this.view.composing) return
+    // Single-batch semantics: an empty first pass (syntax tree not yet covering the lists) still
+    // consumes the flag, so tree-progress rewrites record nothing. Classifying tree progress as
+    // preview entry, separately from user edits, is Task 2's work.
     const isPreviewEntry = this.isPreviewEntry
     this.isPreviewEntry = false
     const state = this.view.state

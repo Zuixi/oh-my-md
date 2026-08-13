@@ -94,44 +94,64 @@ describe("ordered list source rewrite in the editor", () => {
   })
 
   it("creates one pending notice for preview-entry normalization", async () => {
-    const { view } = makeView("1. a\n3. b\n7. c")
+    const { view, errors } = makeView("1. a\n3. b\n7. c")
     await tick()
+    expect(errors.map(String)).toEqual([])
     expect(getPendingOrderedListNormalization(view.state)?.markerCount).toBe(2)
     view.destroy()
   })
 
   it("rejects stale command ids without changing the document", async () => {
-    const { view } = makeView("1. a\n3. b")
+    const { view, errors } = makeView("1. a\n3. b")
     await tick()
     const notice = getPendingOrderedListNormalization(view.state)!
     const stale = (Number(notice.id) + 1) as typeof notice.id
     expect(acceptOrderedListNormalization(view.state, stale).kind).toBe("stale")
     expect(rejectOrderedListNormalization(view.state, stale).kind).toBe("stale")
+    expect(errors.map(String)).toEqual([])
     expect(view.state.doc.toString()).toBe("1. a\n2. b")
     view.destroy()
   })
 
   it("accepts the matching pending id without changing source", async () => {
-    const { view } = makeView("1. a\n3. b")
+    const { view, errors } = makeView("1. a\n3. b")
     await tick()
     const notice = getPendingOrderedListNormalization(view.state)!
     const before = view.state.doc.toString()
     const result = acceptOrderedListNormalization(view.state, notice.id)
     expect(result.kind).toBe("accepted")
     if (result.kind === "accepted") view.dispatch(result.transaction)
+    expect(errors.map(String)).toEqual([])
     expect(view.state.doc.toString()).toBe(before)
     expect(getPendingOrderedListNormalization(view.state)).toBeNull()
     view.destroy()
   })
 
   it("does not create a notice for normalization that follows a user edit", async () => {
-    const { view } = makeView("1. a\n2. b")
+    const { view, errors } = makeView("1. a\n2. b")
     await tick()
     const line2 = view.state.doc.line(2)
     view.dispatch({ changes: { from: line2.from, to: line2.from + 2, insert: "5." } })
     await tick()
+    expect(errors.map(String)).toEqual([])
     expect(view.state.doc.toString()).toBe("1. a\n2. b")
     expect(getPendingOrderedListNormalization(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it("restores markers whose width changed during normalization", async () => {
+    const { view, errors } = makeView("1. a\n10. b\n11. c")
+    await tick()
+    expect(view.state.doc.toString()).toBe("1. a\n2. b\n3. c")
+    const notice = getPendingOrderedListNormalization(view.state)!
+    expect(notice.markerCount).toBe(2)
+    const result = rejectOrderedListNormalization(view.state, notice.id)
+    expect(result.kind === "reverted" && result.restoredMarkers).toBe(2)
+    expect(result.kind === "reverted" && result.skippedMarkers).toBe(0)
+    if (result.kind === "reverted") view.dispatch(result.transaction)
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe("1. a\n10. b\n11. c")
     view.destroy()
   })
 
