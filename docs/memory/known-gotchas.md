@@ -175,6 +175,8 @@ PDF and image export cannot use a hidden iframe `print()` or `html-to-image`. Ta
 
 Autosave (about 1.5s, pathed documents only) and Cmd+S share the same save queue. Untitled buffers go to recovery files only. Startup recovery must prompt; never silently overwrite. External file changes poll `read_file`: clean tabs reload, dirty tabs ask. StatusBar path + dirty ` •` must stay one text node so session tests can `getByText` the exact path.
 
+`services.reportError` is `window.alert` in production, so anything on a per-document-change path must not report every failure. Recovery writes run on every change: `recoveryWriter.ts` reports the first failure per tab, logs the rest with key and path, and re-arms after a successful write or when the tab closes. Swallowing the rejection instead hides a broken recovery directory; reporting each one makes the editor unusable.
+
 ## Dirty state needs a saved-content baseline
 
 `App.tsx` receives every document change through `EditorView.updateListener` and compares the current text with the last successfully opened or saved snapshot. A one-way boolean ("a change happened") is insufficient because undo can return to the clean baseline.

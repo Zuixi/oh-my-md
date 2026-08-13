@@ -61,6 +61,16 @@ function edit(harness: ReturnType<typeof makeAppHarness>, tabId: number, doc: st
   harness.editorForTab(tabId).emit({ doc, docChanged: true, pendingNormalization: null })
 }
 
+/** Lets the recovery write settle, since its failure is handled off the update callback. */
+async function editAndSettle(
+  harness: ReturnType<typeof makeAppHarness>,
+  tabId: number,
+  doc: string,
+) {
+  edit(harness, tabId, doc)
+  await act(async () => { await Promise.resolve() })
+}
+
 describe("App harness ordered-list fake", () => {
   it("counts every rewritten marker in the pending notice", () => {
     const harness = makeAppHarness()
@@ -278,6 +288,45 @@ describe("App document session", () => {
     edit(harness, 1, "edited")
 
     expect(screen.getByText("untitled •")).toBeTruthy()
+  })
+
+  it("reports a failing recovery write once per tab and keeps editing", async () => {
+    const harness = makeAppHarness()
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    vi.mocked(harness.services.writeRecovery).mockRejectedValue(new Error("disk full"))
+    harness.renderApp()
+
+    await editAndSettle(harness, 1, "first")
+    await editAndSettle(harness, 1, "second")
+    await editAndSettle(harness, 1, "one two three")
+
+    expect(harness.services.reportError).toHaveBeenCalledOnce()
+    expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
+    expect(logged).toHaveBeenCalledTimes(2)
+    expect(screen.getByText("3 words")).toBeTruthy()
+    expect(screen.getByText("untitled •")).toBeTruthy()
+    logged.mockRestore()
+  })
+
+  it("reports a recovery failure again once a write has succeeded", async () => {
+    const harness = makeAppHarness()
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    vi.mocked(harness.services.writeRecovery)
+      .mockRejectedValueOnce(new Error("first outage"))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("second outage"))
+    harness.renderApp()
+
+    await editAndSettle(harness, 1, "first")
+    await editAndSettle(harness, 1, "second")
+    await editAndSettle(harness, 1, "third")
+
+    expect(vi.mocked(harness.services.reportError).mock.calls).toEqual([
+      ["Recovery write failed: first outage"],
+      ["Recovery write failed: second outage"],
+    ])
+    expect(logged).not.toHaveBeenCalled()
+    logged.mockRestore()
   })
 
   it("clears dirty when undo returns to the loaded document baseline", async () => {

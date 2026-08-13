@@ -16,6 +16,7 @@ import {
 import {
   clearTabNormalization, projectNormalizationNotice, type NormalizationByTab,
 } from "./normalizationState"
+import { createRecoveryWriter } from "./recoveryWriter"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
@@ -81,6 +82,7 @@ export default function App({
   const pendingJumpRef = useRef<number | null>(null)
   const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
   const normalizationRef = useRef(normalizationByTab)
+  const recoveryWriterRef = useRef(createRecoveryWriter())
   const dirty = sessionDirty(session, doc)
 
   function commitWorkspace(next: Workspace) {
@@ -130,10 +132,15 @@ export default function App({
     setDoc(value)
   }
 
+  function reportUserError(message: string) {
+    if (mountedRef.current) services.reportError(message)
+  }
+
   function saveRecovery(tab: EditorSession, contents: string) {
-    void services.writeRecovery?.(recoveryKey(tab), contents)?.catch(error => {
-      if (mountedRef.current) services.reportError(errorMessage("Recovery write failed", error))
-    })
+    void recoveryWriterRef.current.save(
+      { tabId: tab.id, key: recoveryKey(tab), path: tab.path, contents },
+      { write: services.writeRecovery, reportError: reportUserError },
+    )
   }
 
   /** Applies an update to the tab it was built for, or drops it if that binding is gone. */
@@ -159,9 +166,7 @@ export default function App({
       getDocPath: () => tabById(tabId)?.path ?? null,
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
       onDocumentUpdate: handleDocumentUpdate,
-      onError: (message) => {
-        if (mountedRef.current) services.reportError(message)
-      },
+      onError: reportUserError,
     }
   }
 
@@ -417,12 +422,15 @@ export default function App({
     if (!tab) return
     const contents = docsRef.current.get(id) ?? ""
     if (sessionDirty(tab, contents) && !(services.confirmClose ?? services.confirmDiscard)()) return
-    if (workspaceRef.current.tabs.length > 1) {
+    // Per-tab state is dropped when the tab really disappears; closeTab keeps a lone tab open.
+    const closed = closeTab(workspaceRef.current, id)
+    if (!closed.tabs.some(item => item.id === id)) {
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
+      recoveryWriterRef.current.forget(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
-    commitWorkspace(closeTab(workspaceRef.current, id))
+    commitWorkspace(closed)
     const active = activeSession(workspaceRef.current)
     viewRef.current = viewsRef.current.get(active.id) ?? viewRef.current
     syncDoc(docsRef.current.get(active.id) ?? "", active.id)
