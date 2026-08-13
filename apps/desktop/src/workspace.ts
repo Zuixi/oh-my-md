@@ -24,6 +24,14 @@ export function replaceActive(workspace: Workspace, session: EditorSession): Wor
   }
 }
 
+export function replaceTabSession(workspace: Workspace, session: EditorSession): Workspace {
+  if (!workspace.tabs.some(tab => tab.id === session.id)) return workspace
+  return {
+    ...workspace,
+    tabs: workspace.tabs.map(tab => tab.id === session.id ? session : tab),
+  }
+}
+
 export function addTab(workspace: Workspace, session?: EditorSession): Workspace {
   const tab = session ?? createSession(workspace.nextId)
   return {

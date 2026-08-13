@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createSession, openSession } from "../src/session"
+import { createSession, markSaved, openSession } from "../src/session"
 import {
   activeSession,
   addTab,
@@ -11,6 +11,7 @@ import {
   openFolder,
   parentDir,
   replaceActive,
+  replaceTabSession,
 } from "../src/workspace"
 
 describe("workspace tabs", () => {
@@ -46,6 +47,18 @@ describe("workspace tabs", () => {
     expect(next.tabs).toHaveLength(1)
     expect(next.activeId).toBe(1)
     expect(activeSession(next).path).toBe("/notes/a.md")
+  })
+
+  it("replaces a background session without changing activeId", () => {
+    const workspace = focusTab(addTab(createWorkspace(), createSession(2)), 1)
+    const next = replaceTabSession(workspace, markSaved(workspace.tabs[1], "/b.md", "b"))
+    expect(next.activeId).toBe(1)
+    expect(next.tabs.find(tab => tab.id === 2)?.savedContents).toBe("b")
+  })
+
+  it("ignores a session whose tab is already closed", () => {
+    const workspace = createWorkspace()
+    expect(replaceTabSession(workspace, createSession(7, "/gone.md", "gone"))).toBe(workspace)
   })
 
   it("finds an open tab by path and focuses it", () => {
