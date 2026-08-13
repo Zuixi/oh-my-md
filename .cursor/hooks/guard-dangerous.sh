@@ -1,6 +1,6 @@
 #!/bin/bash
-# Gate dangerous shell commands behind a Cursor approval prompt.
-# Delimiter is "::" because "|" appears inside several regexes.
+# Gate dangerous shell commands. Cursor 3.15 does not enforce permission:"ask",
+# so matches return deny. Delimiter is "::" because "|" appears in several regexes.
 
 find_jq() {
   if command -v jq >/dev/null 2>&1; then
@@ -48,10 +48,10 @@ for rule in "${rules[@]}"; do
   pattern="${rule%%::*}"
   reason="${rule#*::}"
   if [[ "$command" =~ $pattern ]]; then
-    "$JQ" -n --arg r "$reason" '{
-      permission: "ask",
-      user_message: ("危险命令（" + $r + "），请确认后执行"),
-      agent_message: ("Hook 拦截：命中「" + $r + "」规则，等待用户批准")
+    "$JQ" -nc --arg r "$reason" '{
+      permission: "deny",
+      user_message: ("已拦截危险命令（" + $r + "）。若确认要执行，请在集成终端中自行运行（人工终端不会触发 hook）。"),
+      agent_message: ("Hook 已拒绝该命令：命中「" + $r + "」。不要绕过 hook；等待用户在集成终端自行执行，或请用户明确改写命令。")
     }'
     exit 0
   fi

@@ -2,7 +2,7 @@ use super::ExportFormat;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, ClassType, DefinedClass, MainThreadOnly, Message};
+use objc2::{define_class, msg_send, AnyThread, ClassType, DefinedClass, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSWindow,
     NSWindowStyleMask,
@@ -12,8 +12,7 @@ use objc2_foundation::{
     MainThreadMarker, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
 };
 use objc2_web_kit::{
-    WKNavigation, WKNavigationDelegate, WKPDFConfiguration, WKSnapshotConfiguration, WKWebView,
-    WKWebViewConfiguration,
+    WKNavigation, WKNavigationDelegate, WKPDFConfiguration, WKWebView, WKWebViewConfiguration,
 };
 use std::cell::RefCell;
 use std::sync::mpsc;
@@ -182,7 +181,10 @@ fn unpark(delegate: &ExportDelegate) {
 }
 
 fn after_load(delegate: Retained<ExportDelegate>, webview: Retained<WKWebView>) {
-    let script = NSString::from_str(&measure_script());
+    let script = NSString::from_str(&super::measure_export_script(
+        MIN_PAGE_HEIGHT as i32,
+        MAX_PAGE_HEIGHT as i32,
+    ));
     let eval_view = webview.clone();
     let block = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
         if let Some(message) = ns_error(error) {
@@ -195,22 +197,18 @@ fn after_load(delegate: Retained<ExportDelegate>, webview: Retained<WKWebView>) 
     unsafe { eval_view.evaluateJavaScript_completionHandler(&script, Some(&block)) };
 }
 
-fn measure_script() -> String {
-    format!(
-        "(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve())\
-         .then(function(){{var r=document.documentElement,b=document.body;\
-         var h=Math.max(r?r.scrollHeight:0,b?b.scrollHeight:0,{min});\
-         return Math.min(h,{max});}})",
-        min = MIN_PAGE_HEIGHT as i32,
-        max = MAX_PAGE_HEIGHT as i32,
-    )
-}
-
-fn resize_and_capture(delegate: Retained<ExportDelegate>, webview: Retained<WKWebView>, height: f64) {
+fn resize_and_capture(
+    delegate: Retained<ExportDelegate>,
+    webview: Retained<WKWebView>,
+    height: f64,
+) {
     let height = height.clamp(MIN_PAGE_HEIGHT, MAX_PAGE_HEIGHT);
     let size = CGSize::new(PAGE_WIDTH, height);
     if let Some(window) = delegate.ivars().window.borrow().as_ref() {
-        window.setFrame_display(CGRect::new(CGPoint::new(OFFSCREEN_X, OFFSCREEN_Y), size), true);
+        window.setFrame_display(
+            CGRect::new(CGPoint::new(OFFSCREEN_X, OFFSCREEN_Y), size),
+            true,
+        );
     }
     webview.setFrame(CGRect::new(CGPoint::ZERO, size));
     match delegate.ivars().format {
@@ -229,15 +227,25 @@ fn capture_pdf(delegate: Retained<ExportDelegate>, webview: Retained<WKWebView>)
 }
 
 fn capture_png(delegate: Retained<ExportDelegate>, webview: Retained<WKWebView>) {
-    let config = unsafe { WKSnapshotConfiguration::new(main_thread()) };
-    unsafe {
-        config.setRect(webview.bounds());
-        config.setAfterScreenUpdates(true);
-    }
-    let block = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
-        delegate.complete(png_bytes(image, error));
+    let config = unsafe { WKPDFConfiguration::new(main_thread()) };
+    unsafe { config.setRect(webview.bounds()) };
+    let block = RcBlock::new(move |data: *mut NSData, error: *mut NSError| {
+        delegate.complete(png_from_pdf_data(data, error));
     });
-    unsafe { webview.takeSnapshotWithConfiguration_completionHandler(Some(&config), &block) };
+    unsafe { webview.createPDFWithConfiguration_completionHandler(Some(&config), &block) };
+}
+
+fn png_from_pdf_data(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> {
+    rasterize_pdf_to_png(&pdf_bytes(data, error)?)
+}
+
+fn rasterize_pdf_to_png(pdf: &[u8]) -> Result<Vec<u8>, String> {
+    if !pdf.starts_with(b"%PDF") {
+        return Err("PDF export did not produce a PDF".into());
+    }
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(pdf))
+        .ok_or("failed to rasterize exported PDF")?;
+    encode_png(&image)
 }
 
 fn pdf_bytes(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> {
@@ -252,26 +260,13 @@ fn pdf_bytes(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> 
     }
 }
 
-fn png_bytes(image: *mut NSImage, error: *mut NSError) -> Result<Vec<u8>, String> {
-    if let Some(message) = ns_error(error) {
-        return Err(message);
-    }
-    if image.is_null() {
-        return Err("image export produced no snapshot".into());
-    }
-    encode_png(unsafe { &*image })
-}
-
 fn encode_png(image: &NSImage) -> Result<Vec<u8>, String> {
     let tiff = image
         .TIFFRepresentation()
         .ok_or("snapshot produced no image")?;
     let rep = NSBitmapImageRep::imageRepWithData(&tiff).ok_or("snapshot is not a bitmap")?;
     let png = unsafe {
-        rep.representationUsingType_properties(
-            NSBitmapImageFileType::PNG,
-            &NSDictionary::new(),
-        )
+        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
     }
     .ok_or("failed to encode PNG")?;
     let bytes = png.to_vec();
@@ -307,4 +302,58 @@ fn js_number(value: *mut AnyObject) -> Option<f64> {
     unsafe { &*value }
         .downcast_ref::<NSNumber>()
         .map(NSNumber::doubleValue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TINY_PDF: &[u8] = b"%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 80 40] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 31 >>
+stream
+BT /F1 12 Tf 8 16 Td (Hi) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000239 00000 n 
+0000000320 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+390
+%%EOF
+";
+
+    #[test]
+    fn rasterize_pdf_to_png_emits_png_signature() {
+        let png = rasterize_pdf_to_png(TINY_PDF).expect("pdf should rasterize");
+        assert!(
+            png.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "expected PNG signature, got {} bytes",
+            png.len()
+        );
+        assert!(png.len() > 32);
+    }
+
+    #[test]
+    fn rasterize_pdf_to_png_rejects_non_pdf() {
+        assert!(rasterize_pdf_to_png(b"not-a-pdf").is_err());
+    }
 }

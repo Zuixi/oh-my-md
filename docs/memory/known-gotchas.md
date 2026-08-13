@@ -169,7 +169,7 @@ Adding changing React values to the listener effect can cause repeated registrat
 
 Cmd+O replaces the active tab. File-tree / search open in a new tab, or focus an existing tab with the same path. Switching tabs hides hosts; do not stuff multiple documents into one `EditorState`. The Files sidebar is always mounted; opening a file also `ensureFolder`s its parent so the tree is not gated on an explicit Open folder command. Expanding a directory lists that folder in place and must not replace `workspace.folder`. Open / Open Folder / Save / Save As / Export live in the native File menu and Cmd+K, not in a chrome export panel.
 
-PDF and image export cannot use a hidden iframe `print()` or `html-to-image`. Tauri on macOS is WKWebView/Safari: `display:none` iframes do not print, and `html-to-image` depends on SVG `foreignObject`, which WebKit does not rasterize. Load the HTML projection in an offscreen `WKWebView` and call `createPDFWithConfiguration` / `takeSnapshotWithConfiguration`, then write the bytes in Rust. Do not capture the live CodeMirror widget DOM.
+PDF and image export cannot use a hidden iframe `print()` or `html-to-image`. Tauri on macOS is WKWebView/Safari: `display:none` iframes do not print, and `html-to-image` depends on SVG `foreignObject`, which WebKit does not rasterize. Load the HTML projection in an offscreen `WKWebView` and call `createPDFWithConfiguration`, then write the bytes in Rust. PNG is that PDF rasterized with `NSImage` — do not use `takeSnapshotWithConfiguration` with `afterScreenUpdates` on an offscreen window; WindowServer never presents it, the completion never fires, and no file is written. Save panels often omit the extension; append `.png`/`.pdf` when missing. Do not capture the live CodeMirror widget DOM.
 
 Autosave (about 1.5s, pathed documents only) and Cmd+S share the same save queue. Untitled buffers go to recovery files only. Startup recovery must prompt; never silently overwrite. External file changes poll `read_file`: clean tabs reload, dirty tabs ask. StatusBar path + dirty ` •` must stay one text node so session tests can `getByText` the exact path.
 
@@ -190,3 +190,11 @@ Pattern used in `parse/footnotes.ts` and `parse/math.ts`: cast `(line as unknown
 `docs/manual-qa.md` is valuable for IME, undo/redo, scrolling, and file workflows, but embedded test counts and milestone labels are snapshots of the time they were written.
 
 Treat its interaction checklist as guidance and obtain current automated counts from command output. Update the document when supported behavior changes.
+
+## Cursor hook `permission: ask` is not enforced
+
+As of Cursor 3.15, `beforeShellExecution` returning `permission: "ask"` does not prompt; the command still runs (sandbox and autorun included). Only `deny` reliably blocks. The project guard in `.cursor/hooks/guard-dangerous.sh` therefore denies dangerous commands. Commands typed in the integrated terminal do not go through hooks.
+
+## `.githooks/` does nothing until `core.hooksPath` is set
+
+The repo stores hooks in `.githooks/`, not `.git/hooks`. Git ignores that directory unless `core.hooksPath=.githooks`. The root `prepare` script sets this on `pnpm install`. A clone that never ran install still uses the sample hooks under `.git/hooks`, so `commit-msg` will not strip Cursor co-author trailers.

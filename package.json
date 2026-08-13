@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @omd/desktop tauri dev",
-    "test": "pnpm --filter @omd/engine test"
+    "test": "pnpm --filter @omd/engine test",
+    "prepare": "git config core.hooksPath .githooks"
   }
 }

@@ -66,7 +66,7 @@ Current Rust commands are:
 - `search_markdown(root, query)` — scan `.md` files under the folder for a string.
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
-- `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (`takeSnapshot`). `format` is `"pdf"` or `"png"`; the path extension must match. macOS only.
+- `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
 - `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
 
 The native File menu (New, Open, Open Folder, Open Recent, Close, Save, Save As, Export HTML/PDF/Image) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
@@ -122,7 +122,7 @@ Use `pnpm dev` for manual interaction checks. Review the relevant sections of `d
 - Tauri dialog cancellation is a normal result, not an error.
 - Image writing and Markdown insertion are asynchronous; inserting before a successful write or allowing concurrent operations to race creates broken or orphaned assets.
 - Static window values in `tauri.conf.json` and runtime window behavior can drift if both are later used.
-- Hidden iframe `print()` and `html-to-image` fail in WKWebView; PDF/PNG export must go through `export_preview`.
+- Hidden iframe `print()` and `html-to-image` fail in WKWebView; PDF/PNG export must go through `export_preview`. Do not use `takeSnapshot` with `afterScreenUpdates` on an offscreen window — WindowServer never presents it, so the completion never fires and no file is written.
 
 ## Documentation Maintenance
 
