@@ -1,5 +1,5 @@
-import { type EditorState, StateField } from "@codemirror/state"
-import { syntaxTree } from "@codemirror/language"
+import { type ChangeDesc, type EditorState, StateField, type Transaction } from "@codemirror/state"
+import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
@@ -19,9 +19,10 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
     },
   })
   // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃
-  const blockWidgets = out.filter(s => s.tag.startsWith("widget:block:"))
-  if (!blockWidgets.length) return out
-  return out.filter(s =>
+  const scoped = out.filter(s => s.from <= to && s.to >= from)
+  const blockWidgets = scoped.filter(s => s.tag.startsWith("widget:block:"))
+  if (!blockWidgets.length) return scoped
+  return scoped.filter(s =>
     s.tag.startsWith("widget:block:") ||
     !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
 }
@@ -32,16 +33,186 @@ function isAtomicTag(tag: string) {
   return tag.startsWith("replace:") || tag.startsWith("widget:")
 }
 
-export interface LiveDeco { deco: DecorationSet; atomic: DecorationSet }
+interface RebuildRange { from: number; to: number }
 
-// ponytail: 全量重建（StateField 拿不到 viewport，且 viewport 裁剪对块 widget
-// 的高度计算有害）；large.md 级文档实测毫秒级，真成瓶颈再做 dirty 区间增量。
-export function buildLiveDecorations(state: EditorState): LiveDeco {
-  const specs = collectDecorationSpecs(state, 0, state.doc.length)
+export interface LiveDeco {
+  deco: DecorationSet
+  atomic: DecorationSet
+  specs: DecoSpec[]
+  treeLength: number
+}
+
+function decorationSets(specs: DecoSpec[]) {
   return {
     deco: Decoration.set(specs.map(s => s.deco.range(s.from, s.to)), true),
     atomic: Decoration.set(
-      specs.filter(s => isAtomicTag(s.tag)).map(s => Decoration.replace({}).range(s.from, s.to)), true),
+      specs.filter(s => isAtomicTag(s.tag)).map(s => Decoration.replace({}).range(s.from, s.to)),
+      true,
+    ),
+  }
+}
+
+export function buildLiveDecorations(state: EditorState): LiveDeco {
+  const specs = collectDecorationSpecs(state, 0, state.doc.length)
+  const sets = decorationSets(specs)
+  return {
+    ...sets,
+    specs,
+    treeLength: syntaxTree(state).length,
+  }
+}
+
+function mergeRanges(ranges: RebuildRange[]): RebuildRange[] {
+  const sorted = ranges
+    .filter(range => range.from <= range.to)
+    .sort((a, b) => a.from - b.from || a.to - b.to)
+  const merged: RebuildRange[] = []
+  for (const range of sorted) {
+    const previous = merged[merged.length - 1]
+    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to)
+    else merged.push({ ...range })
+  }
+  return merged
+}
+
+const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table"])
+
+function expandRange(
+  state: EditorState,
+  from: number,
+  to: number,
+  blocks?: Set<string>,
+): RebuildRange {
+  const length = state.doc.length
+  const start = Math.max(0, Math.min(from, length))
+  const end = Math.max(start, Math.min(to, length))
+  const startLine = state.doc.lineAt(start)
+  const endLine = state.doc.lineAt(end)
+  let safeFrom = startLine.from
+  let safeTo = Math.min(length, endLine.to + 1)
+  if (!syntaxTreeAvailable(state, safeTo)) return { from: safeFrom, to: safeTo }
+  const tree = syntaxTree(state)
+
+  for (const pos of [start, end]) {
+    let node = tree.resolve(pos, pos === length ? -1 : 1)
+    if (blocks) {
+      for (; node; node = node.parent!) {
+        if (blocks.has(node.name)) {
+          safeFrom = Math.min(safeFrom, node.from)
+          safeTo = Math.max(safeTo, node.to)
+          break
+        }
+        if (!node.parent) break
+      }
+    } else {
+      while (node.parent?.parent) node = node.parent
+      safeFrom = Math.min(safeFrom, node.from)
+      safeTo = Math.max(safeTo, node.to)
+    }
+  }
+  return { from: safeFrom, to: safeTo }
+}
+
+function intersects(from: number, to: number, range: RebuildRange) {
+  return from <= range.to && to >= range.from
+}
+
+function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
+  if (spec.from === spec.to) {
+    const pos = changes.mapPos(spec.from, 1)
+    return { ...spec, from: pos, to: pos }
+  }
+  const from = changes.mapPos(spec.from, 1)
+  const to = changes.mapPos(spec.to, -1)
+  return from <= to ? { ...spec, from, to } : null
+}
+
+function rebuildRanges(value: LiveDeco, tr: Transaction) {
+  const ranges: RebuildRange[] = []
+
+  if (tr.docChanged) {
+    tr.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+      const oldRange = expandRange(tr.startState, fromA, toA)
+      ranges.push({
+        from: tr.changes.mapPos(oldRange.from, -1),
+        to: tr.changes.mapPos(oldRange.to, 1),
+      })
+      ranges.push(expandRange(tr.state, fromB, toB))
+    })
+  }
+
+  if (!tr.startState.selection.eq(tr.newSelection)) {
+    const oldSelection = tr.startState.selection.main
+    const newSelection = tr.newSelection.main
+    const oldRange = expandRange(tr.startState, oldSelection.from, oldSelection.to, SELECTION_BLOCKS)
+    ranges.push({
+      from: tr.changes.mapPos(oldRange.from, -1),
+      to: tr.changes.mapPos(oldRange.to, 1),
+    })
+    ranges.push(expandRange(tr.state, newSelection.from, newSelection.to, SELECTION_BLOCKS))
+  }
+
+  const treeLength = syntaxTree(tr.state).length
+  const selectionChanged = !tr.startState.selection.eq(tr.newSelection)
+  if (!tr.docChanged && !selectionChanged && treeLength > value.treeLength) {
+    ranges.push(expandRange(tr.state, value.treeLength, treeLength))
+  }
+  return mergeRanges(ranges)
+}
+
+function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
+  if (tr.reconfigured) return buildLiveDecorations(tr.state)
+  const ranges = rebuildRanges(value, tr)
+  const selectionChanged = !tr.startState.selection.eq(tr.newSelection)
+  const treeLength = !tr.docChanged && selectionChanged
+    ? value.treeLength
+    : syntaxTree(tr.state).length
+  if (!ranges.length) {
+    return treeLength === value.treeLength ? value : { ...value, treeLength }
+  }
+
+  // 先让 CodeMirror 用 ChangeDesc 精确映射未受影响的装饰，再替换语法安全脏区。
+  const mappedDeco = value.deco.map(tr.changes)
+  const mappedAtomic = value.atomic.map(tr.changes)
+  const mappedSpecs = value.specs
+    .map(spec => mapSpec(spec, tr.changes))
+    .filter((spec): spec is DecoSpec => spec !== null)
+  const rebuilt = ranges.flatMap(range =>
+    collectDecorationSpecs(tr.state, range.from, range.to))
+  // 新块 widget 可能从脏区内开始、却吞并后续旧块；移除范围必须覆盖它的完整 replace 区间。
+  const removalRanges = mergeRanges([
+    ...ranges,
+    ...rebuilt
+      .filter(spec => spec.tag.startsWith("widget:block:"))
+      .map(spec => ({ from: spec.from, to: spec.to })),
+  ])
+  const retained = mappedSpecs.filter(spec =>
+    !removalRanges.some(range => intersects(spec.from, spec.to, range)))
+  const seen = new Set<string>()
+  const additions = rebuilt.filter(spec => {
+    const key = `${spec.tag}:${spec.from}:${spec.to}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  const keep = (from: number, to: number) =>
+    !removalRanges.some(range => intersects(from, to, range))
+
+  return {
+    deco: mappedDeco.update({
+      filter: keep,
+      add: additions.map(spec => spec.deco.range(spec.from, spec.to)),
+      sort: true,
+    }),
+    atomic: mappedAtomic.update({
+      filter: keep,
+      add: additions
+        .filter(spec => isAtomicTag(spec.tag))
+        .map(spec => Decoration.replace({}).range(spec.from, spec.to)),
+      sort: true,
+    }),
+    specs: [...retained, ...additions].sort((a, b) => a.from - b.from || a.to - b.to),
+    treeLength,
   }
 }
 
@@ -50,8 +221,7 @@ export function buildLiveDecorations(state: EditorState): LiveDeco {
 // 真实 app 中所有含块 widget 的文档全崩，但纯函数测试完全测不到）。
 export const livePreviewField = StateField.define<LiveDeco>({
   create: state => buildLiveDecorations(state),
-  update: (value, tr) =>
-    (tr.docChanged || !tr.startState.selection.eq(tr.newSelection)) ? buildLiveDecorations(tr.state) : value,
+  update: updateLiveDecorations,
   provide: field => [
     EditorView.decorations.from(field, v => v.deco),
     // atomicRanges facet 的值类型是函数，包一层闭包

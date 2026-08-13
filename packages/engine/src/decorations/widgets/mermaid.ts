@@ -15,12 +15,12 @@ export class MermaidWidget extends BlockWidget {
 
   protected async renderInto(el: HTMLElement) {
     // spec 性能底线：mermaid 重编译 debounce 500ms。widget 只在文本稳定后渲染；
-    // 若渲染前元素已被 CM 回收（继续打字 → 回到源码态），直接放弃。
+    // 若渲染前 widget 已被 CM 销毁（继续打字 → 回到源码态），直接放弃。
     await new Promise(r => setTimeout(r, 500))
-    if (!el.isConnected) return
+    if (!this.isActive(el)) return
     const mermaid = await getMermaid()
-    if (!el.isConnected) return
+    if (!this.isActive(el)) return
     const { svg } = await mermaid.render(`omd-mmd-${++counter}`, this.src)
-    if (el.isConnected) el.innerHTML = svg
+    if (this.isActive(el)) el.innerHTML = svg
   }
 }

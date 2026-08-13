@@ -9,7 +9,11 @@ export const imageResolver = Facet.define<(src: string) => string, (src: string)
 
 export class ImageWidget extends WidgetType {
   constructor(readonly src: string, readonly alt: string, readonly resolvedSrc: string) { super() }
-  eq(other: ImageWidget) { return this.src === other.src && this.resolvedSrc === other.resolvedSrc }
+  eq(other: ImageWidget) {
+    return this.src === other.src &&
+      this.alt === other.alt &&
+      this.resolvedSrc === other.resolvedSrc
+  }
   toDOM() {
     const img = document.createElement("img")
     img.src = this.resolvedSrc

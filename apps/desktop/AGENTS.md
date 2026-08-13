@@ -43,14 +43,16 @@ apps/desktop/
 - Destroy `EditorView` during React cleanup and clear retained references.
 - Window-level shortcuts must use stable listeners and refs to observe current mutable state without re-registering on each render.
 - CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save.
+- Replace an opened document with a fresh `EditorState`; synchronize the document path first so initial image resolution is correct and undo history cannot cross files.
 
 ## Tauri and File Rules
 
 Current Rust commands are:
 
 - `read_file(path)` — read Markdown as UTF-8 text.
-- `write_file(path, contents)` — write the current document.
-- `write_image(path, base64)` — decode pasted image data, create parent directories, and write bytes.
+- `write_file(path, contents)` — atomically replace the current document.
+- `write_image(path, base64, documentPath)` — decode pasted image data into the current document's `assets/` directory. `documentPath` is required.
+- `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
 
 When adding or changing a command:
 
@@ -69,6 +71,9 @@ Do not silently overwrite in-memory content after a failed read/write. Preserve 
 - Write image bytes successfully before inserting Markdown into the document.
 - Keep the stored Markdown path relative; resolve it for display through the engine host callback rather than rewriting source to an absolute file URL.
 - Path handling must continue to account for slash normalization on supported desktop paths.
+- Capture path, document identity, document value, and selection before asynchronous work. Serialize concurrent pastes and revalidate before writing and dispatching.
+- Pass the current Markdown path as `documentPath` so Rust can bind the write to that document's `assets/` directory. The command rejects writes that omit it.
+- After a successful open or save, call `allow_document_assets` before the first local image load.
 
 ## Verification
 
@@ -95,10 +100,10 @@ Use `pnpm dev` for manual interaction checks. Review the relevant sections of `d
 ## Common Pitfalls
 
 - React state captured by a one-time window listener becomes stale; route changing handlers through refs.
-- An `input` DOM listener is not equivalent to every possible CodeMirror transaction. Revisit dirty-state tracking when adding programmatic edits.
+- Dirty state is transaction-driven and compared with the last saved/opened text, so undoing to that baseline becomes clean again.
 - Engine class names without matching CSS appear structurally correct in tests but broken in the desktop.
 - Tauri dialog cancellation is a normal result, not an error.
-- Image writing and Markdown insertion are asynchronous; inserting the reference before a successful write creates broken documents.
+- Image writing and Markdown insertion are asynchronous; inserting before a successful write or allowing concurrent operations to race creates broken or orphaned assets.
 - Static window values in `tauri.conf.json` and runtime window behavior can drift if both are later used.
 
 ## Documentation Maintenance

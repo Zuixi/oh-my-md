@@ -5,44 +5,76 @@ import { editorExtensions } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
-// markdown 图片 src → 可加载 URL：远程/data 原样；相对路径按文档目录 resolve
-function makeResolver(getDocPath: () => string | null) {
+export interface CreateEditorOptions {
+  doc: string
+  getDocPath: () => string | null
+  getDocumentId: () => number
+  onDocChanged: (doc: string) => void
+  onError: (message: string) => void
+}
+
+export function makeImageResolver(
+  getDocPath: () => string | null,
+  convert: (path: string) => string = convertFileSrc,
+) {
   return (src: string) => {
-    if (/^(https?:|data:|asset:)/.test(src)) return src
+    if (/^(https?:|data:|asset:)/i.test(src)) return src
     const docPath = getDocPath()
     if (!docPath) return src
-    const dir = docPath.slice(0, docPath.replace(/\\/g, "/").lastIndexOf("/") + 1)
-    return convertFileSrc(dir + src)
+    const normalizedPath = docPath.replace(/\\/g, "/")
+    const dir = normalizedPath.slice(0, normalizedPath.lastIndexOf("/") + 1)
+    return convert(dir + src)
   }
+}
+
+function createEditorState(options: CreateEditorOptions): EditorState {
+  return EditorState.create({
+    doc: options.doc,
+    extensions: [
+      history(),
+      drawSelection(),
+      dropCursor(),
+      highlightActiveLine(),
+      keymap.of([...defaultKeymap, ...historyKeymap]),
+      editorExtensions({
+        resolveImageSrc: makeImageResolver(options.getDocPath),
+      }),
+      imagePasteHandler({
+        getDocPath: options.getDocPath,
+        getDocumentId: options.getDocumentId,
+        onError: options.onError,
+      }),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          options.onDocChanged(update.state.doc.toString())
+        }
+      }),
+      EditorView.theme({
+        "&": { height: "100%", fontSize: "15px" },
+        ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
+        ".cm-content": {
+          padding: "16px 24px",
+          maxWidth: "780px",
+          margin: "0 auto",
+        },
+      }),
+    ],
+  })
 }
 
 export function createEditor(
   parent: HTMLElement,
-  doc = "",
-  getDocPath: () => string | null = () => null,
+  options: CreateEditorOptions,
 ): EditorView {
   return new EditorView({
-    state: EditorState.create({
-      doc,
-      extensions: [
-        // Core editing behaviour — chosen carefully to avoid conflicts with
-        // Markdown live-preview (no indentOnInput, no closeBrackets, no autocompletion).
-        history(),
-        drawSelection(),
-        dropCursor(),
-        highlightActiveLine(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        // Engine: markdown language + live-preview decorations + mode toggle.
-        editorExtensions({ resolveImageSrc: makeResolver(getDocPath) }),
-        imagePasteHandler(getDocPath),
-        // Base editor theme: fill the host, sensible line height.
-        EditorView.theme({
-          "&": { height: "100%", fontSize: "15px" },
-          ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
-          ".cm-content": { padding: "16px 24px", maxWidth: "780px", margin: "0 auto" },
-        }),
-      ],
-    }),
+    state: createEditorState(options),
     parent,
   })
+}
+
+export function resetEditorDocument(
+  view: EditorView,
+  options: CreateEditorOptions,
+): void {
+  view.setState(createEditorState(options))
 }
