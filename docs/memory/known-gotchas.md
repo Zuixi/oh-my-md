@@ -62,7 +62,7 @@ Lezer parsing is incremental. Directly creating an `EditorState` does not guaran
 
 Use `packages/engine/test/helpers.ts::makeState` for parser/decoration tests that require the complete tree. It calls `ensureSyntaxTree` synchronously.
 
-Note: production decorations are computed whole-document inside a `StateField` (viewport culling is incompatible with field-provided block decorations, and block heights must be known at state time). This is acceptable at current document sizes; revisit with dirty-range increments only if profiling says so.
+Note: production decorations are provided by a `StateField` and updated incrementally from changed ranges, selection, and syntax-tree progress. Tests that inspect a complete tree should still use `makeState`.
 
 ## Structure and appearance live in different packages
 
@@ -83,7 +83,13 @@ Mermaid, Shiki, and other renderers may resolve after CodeMirror has replaced or
 
 Check `el.isConnected` after meaningful awaits and before writing DOM. Keep errors inside the widget fallback instead of allowing rejected promises to escape into the editor.
 
-`BlockWidget.eq` currently compares source text. If output depends on theme, resolver, or another option, include that dependency in equality or trigger an explicit rebuild.
+`BlockWidget.eq` compares source text only (not `pos`). The `pos` field was removed from equality after the click handler was switched from a captured constructor offset to `view.posAtCoords`, making the captured position no longer load-bearing for correct click behavior. Removing `pos` prevents spurious Shiki/KaTeX/Mermaid re-renders when text is inserted before a widget (pos shifts, src unchanged). `ImageWidget` never included `pos` in `eq`; `BlockWidget` now follows the same rule.
+
+If rendering depends on an input beyond `src` (e.g., `lang` for `CodeWidget`, cell data for `TableWidget`, resolver output for `ImageWidget`), that input must still participate in the subclass `eq` override.
+
+If output also depends on theme, resolver, or another option, include that dependency in equality or trigger an explicit rebuild.
+
+Valid Mermaid diagrams can stall inside `mermaid.render` under `happy-dom` without producing SVG or an error. Cover success SVG with a mocked `mermaid` module; keep the real library for the invalid-syntax view test.
 
 ## Relative image source and filesystem path are different concerns
 
@@ -97,7 +103,7 @@ Keep the Markdown source relative; resolve only for preview display.
 
 `imagePaste.ts` first calls the Rust `write_image` command, then inserts the Markdown reference. Reversing this order can leave a document pointing to a file that was never written.
 
-The operation also requires a saved document path. Clipboard content that is not an image must fall through to CodeMirror's default paste behavior.
+The operation also requires a saved document path. It captures the path, document identity/value, and selection before asynchronous work, then passes that path to `write_image` as required `documentPath`. Paste operations for one view are serialized and revalidated before filesystem writes and editor dispatches; do not remove that queue without replacing its race guarantees. Clipboard content that is not an image must fall through to CodeMirror's default paste behavior. Local preview URLs require `allow_document_assets` for the opened/saved document directory; the static asset protocol scope stays empty.
 
 ## Window listeners can capture stale React state
 
@@ -105,11 +111,11 @@ Open/save shortcuts are registered once at window scope. The stable listener mus
 
 Adding changing React values to the listener effect can cause repeated registration; capturing them with an empty dependency array causes stale behavior.
 
-## Dirty state is not yet transaction-driven
+## Dirty state needs a saved-content baseline
 
-`App.tsx` currently marks the document dirty from a DOM `input` listener. Programmatic CodeMirror transactions are not guaranteed to have the same semantics as user DOM input.
+`App.tsx` receives every document change through `EditorView.updateListener` and compares the current text with the last successfully opened or saved snapshot. A one-way boolean ("a change happened") is insufficient because undo can return to the clean baseline.
 
-When adding commands that modify the document programmatically, verify dirty-state behavior explicitly. A future migration to `EditorView.updateListener` should distinguish content changes from selection-only transactions.
+Opening a document creates a new `EditorState` after synchronizing its path. This both resets undo history and lets relative-image resolution use the correct path during the first decoration build. Save completion may update the clean baseline only for the same document session; edits made during a pending save must remain dirty.
 
 ## Lezer has runtime-only internals missing from the typings
 
