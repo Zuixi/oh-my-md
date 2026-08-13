@@ -1,4 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view"
+import { BlockWidget } from "./blockWidget"
 
 export class BulletWidget extends WidgetType {
   eq() { return true }
@@ -33,4 +34,11 @@ export class CheckboxWidget extends WidgetType {
     return el
   }
   ignoreEvent() { return false }
+}
+
+export class HrWidget extends BlockWidget {
+  protected get cssClass() { return "omd-hr-block" }
+  protected renderInto(el: HTMLElement) {
+    el.appendChild(document.createElement("hr"))
+  }
 }

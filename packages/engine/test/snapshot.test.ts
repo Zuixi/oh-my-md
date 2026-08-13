@@ -160,8 +160,13 @@ describe("fixture snapshots", () => {
     expect(specsFor("footnote.md")).toMatchInlineSnapshot(`
       [
         "mark:omd-footnote@20-24",
+        "replace:FootnoteMark@70-72",
+        "replace:FootnoteMark@78-79",
         "mark:omd-footnote@70-79",
+        "line:omd-footnote-def@95-95",
         "replace:FootnoteMark@95-101",
+        "line:omd-footnote-def@133-133",
+        "line:omd-footnote-def@176-176",
         "replace:FootnoteMark@133-144",
       ]
     `)
@@ -192,9 +197,9 @@ describe("fixture snapshots", () => {
   it("hr.md", () => {
     expect(specsFor("hr.md")).toMatchInlineSnapshot(`
       [
-        "line:omd-hr@20-20",
-        "line:omd-hr@52-52",
-        "line:omd-hr@89-89",
+        "widget:block:hr@20-23",
+        "widget:block:hr@52-55",
+        "widget:block:hr@89-92",
       ]
     `)
   })

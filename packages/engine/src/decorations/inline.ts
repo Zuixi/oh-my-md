@@ -76,6 +76,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "StrongEmphasis": return foldPair(node, state, out, "EmphasisMark", "omd-strong")
     case "Emphasis":       return foldPair(node, state, out, "EmphasisMark", "omd-em")
     case "Strikethrough":  return foldPair(node, state, out, "StrikethroughMark", "omd-del")
+    case "Highlight":      return foldPair(node, state, out, "HighlightMark", "omd-highlight")
     case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
     case "Link":           return foldLink(node, state, out)
     case "Image": {
@@ -105,9 +106,14 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       })
       return
     }
-    case "FootnoteReference":
+    case "FootnoteReference": {
+      if (!nearCursor(state, node.from, node.to)) {
+        out.push({ from: node.from, to: node.from + 2, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
+        out.push({ from: node.to - 1, to: node.to, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
+      }
       out.push({ from: node.from, to: node.to, tag: "mark:omd-footnote",
                  deco: Decoration.mark({ class: "omd-footnote" }) })
       return
+    }
   }
 }
