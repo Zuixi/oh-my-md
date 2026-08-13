@@ -82,6 +82,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
 - Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
 - Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.
+- Dangerous shell commands are gated by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh).
 
 
 

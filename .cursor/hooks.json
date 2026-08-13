@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/guard-dangerous.sh",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ]
+  }
+}

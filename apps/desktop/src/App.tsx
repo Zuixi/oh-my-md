@@ -28,6 +28,7 @@ import {
 } from "./workspace"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
+import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, wordCount, type DesktopServices } from "./desktopServices"
 import { StatusBar } from "./StatusBar"
 import { TabBar } from "./TabBar"
@@ -84,6 +85,7 @@ export default function App({
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
+  const recentsRef = useRef<string[]>([])
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const pendingJumpRef = useRef<number | null>(null)
   const dirty = sessionDirty(session, doc)
@@ -99,6 +101,19 @@ export default function App({
   function commitTree(next: FileTreeModel) {
     treeModelRef.current = next
     setTreeModel(next)
+  }
+
+  function rememberRecent(path: string) {
+    const next = rememberPath(recentsRef.current, path)
+    recentsRef.current = next
+    services.saveRecents?.(next)
+    void services.setRecentMenu?.(next)
+  }
+
+  function clearRecents() {
+    recentsRef.current = []
+    services.saveRecents?.([])
+    void services.setRecentMenu?.([])
   }
 
   function commitSession(next: EditorSession) {
@@ -255,6 +270,7 @@ export default function App({
     const existing = findTabByPath(workspaceRef.current, nextPath)
     if (existing) {
       activateTab(existing.id)
+      rememberRecent(nextPath)
       return
     }
     const contents = await services.readFile(nextPath)
@@ -262,6 +278,7 @@ export default function App({
     await services.allowDocumentAssets(nextPath)
     lastDiskRef.current.set(nextPath, contents)
     revealFolder(nextPath)
+    rememberRecent(nextPath)
     if (inNewTab) {
       const tab = openSession(createSession(workspaceRef.current.nextId), nextPath, contents)
       docsRef.current.set(tab.id, contents)
@@ -276,6 +293,23 @@ export default function App({
     commitSession(openSession(sessionRef.current, nextPath, contents))
     syncDoc(contents)
     void services.clearRecovery?.(recoveryKey(sessionRef.current))
+  }
+
+  async function openRecent(path: string) {
+    const request = ++openRequestRef.current
+    await saveQueueRef.current.catch(() => undefined)
+    if (request !== openRequestRef.current || !mountedRef.current) return
+    openingRef.current = true
+    try {
+      if (sessionDirty(sessionRef.current, docRef.current) && !services.confirmDiscard()) return
+      await openPath(path, false, request)
+    } catch (error) {
+      if (request === openRequestRef.current && mountedRef.current) {
+        services.reportError(errorMessage("Open failed", error))
+      }
+    } finally {
+      if (request === openRequestRef.current) openingRef.current = false
+    }
   }
 
   async function openFile() {
@@ -297,7 +331,7 @@ export default function App({
     }
   }
 
-  async function saveFile() {
+  async function saveFile(saveAs = false) {
     if (openingRef.current) return
     const view = viewRef.current
     if (!view) return
@@ -308,7 +342,9 @@ export default function App({
     const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
         if (!sameSession(documentId, view)) return
-        const targetPath = sessionRef.current.path ?? (await services.pickSavePath())
+        const targetPath = saveAs || !sessionRef.current.path
+          ? await services.pickSavePath()
+          : sessionRef.current.path
         if (!targetPath || !sameSession(documentId, view)) return
         await services.writeFile(targetPath, snapshot)
         if (!sameSession(documentId, view)) return
@@ -316,6 +352,7 @@ export default function App({
         if (!sameSession(documentId, view)) return
         commitSession(markSaved(sessionRef.current, targetPath, snapshot))
         revealFolder(targetPath)
+        rememberRecent(targetPath)
         lastDiskRef.current.set(targetPath, snapshot)
         syncDoc(view.state.doc.toString(), tabId)
         void services.clearRecovery?.(recoveryKey(sessionRef.current))
@@ -415,17 +452,22 @@ export default function App({
     syncDoc(disk)
   }
 
-  async function exportCurrent(kind: "html" | "pdf") {
+  async function exportCurrent(kind: "html" | "pdf" | "png") {
     const view = viewRef.current
     if (!view) return
     try {
       const html = exportHtml(view.state)
-      if (kind === "pdf") {
-        await services.printHtml?.(html)
+      if (kind === "html") {
+        const path = await services.pickExportPath?.("html")
+        if (path) await services.writeFile(path, html)
         return
       }
-      const path = await services.pickExportPath?.()
-      if (path) await services.writeFile(path, html)
+      if (!services.exportPreview) {
+        throw new Error("PDF and image export are only available in the desktop app")
+      }
+      const format = kind === "pdf" ? "pdf" : "png"
+      const path = await services.pickExportPath?.(format)
+      if (path) await services.exportPreview(html, path, format)
     } catch (error) {
       services.reportError(errorMessage("Export failed", error))
     }
@@ -445,15 +487,23 @@ export default function App({
   const openFileRef = useRef(openFile)
   const saveFileRef = useRef(saveFile)
   const checkExternalRef = useRef(checkExternal)
+  const newTabRef = useRef(newTab)
+  const openRecentRef = useRef(openRecent)
+  const closeActiveRef = useRef(() => requestCloseTab(workspaceRef.current.activeId))
   openFileRef.current = openFile
   saveFileRef.current = saveFile
   checkExternalRef.current = checkExternal
+  newTabRef.current = newTab
+  openRecentRef.current = openRecent
+  closeActiveRef.current = () => requestCloseTab(workspaceRef.current.activeId)
 
   const commands: AppCommand[] = [
-    { id: "open", label: "Open file", shortcut: "⌘O", run: () => void openFile() },
+    { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
     { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile() },
-    { id: "folder", label: "Open folder", run: () => void chooseFolder() },
-    { id: "tab", label: "New tab", run: newTab },
+    { id: "save-as", label: "Save As…", shortcut: "⇧⌘S", run: () => void saveFile(true) },
+    { id: "folder", label: "Open Folder…", run: () => void chooseFolder() },
+    { id: "tab", label: "New", shortcut: "⌘N", run: newTab },
+    { id: "close", label: "Close", shortcut: "⌘W", run: () => requestCloseTab(workspaceRef.current.activeId) },
     { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: "Load custom CSS", run: () => void loadCustomCss() },
     { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
@@ -465,13 +515,22 @@ export default function App({
     { id: "search", label: "Search in folder", run: () => setSearchOpen(true) },
     { id: "export-html", label: "Export HTML", run: () => void exportCurrent("html") },
     { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent("pdf") },
+    { id: "export-image", label: "Export Image", run: () => void exportCurrent("png") },
+    { id: "clear-recents", label: "Clear Recents", run: clearRecents },
   ]
   const commandsRef = useRef(commands)
   commandsRef.current = commands
 
   useEffect(() => {
+    recentsRef.current = services.loadRecents?.() ?? []
+    void services.setRecentMenu?.(recentsRef.current)
+  }, [services])
+
+  useEffect(() => {
     if (!services.listenMenu) return
-    return services.listenMenu(id => runMenuCommand(id, commandsRef.current))
+    return services.listenMenu(id => runMenuCommand(id, commandsRef.current, {
+      openRecent: path => { void openRecentRef.current(path) },
+    }))
   }, [services])
 
   useEffect(() => {
@@ -485,9 +544,15 @@ export default function App({
       if (e.key === "o") {
         e.preventDefault()
         void openFileRef.current()
+      } else if (e.key === "n") {
+        e.preventDefault()
+        newTabRef.current()
+      } else if (e.key === "w") {
+        e.preventDefault()
+        closeActiveRef.current()
       } else if (e.key === "s") {
         e.preventDefault()
-        void saveFileRef.current()
+        void saveFileRef.current(e.shiftKey)
       }
     }
     window.addEventListener("keydown", handler)

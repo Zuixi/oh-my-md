@@ -1,3 +1,4 @@
+mod export;
 mod menu;
 mod workspace;
 
@@ -6,6 +7,9 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_ENCODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
+const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
+const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
+const MAX_RECENT_FILES: usize = 10;
 
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
@@ -15,6 +19,72 @@ fn read_file(path: String) -> Result<String, String> {
 #[tauri::command]
 fn write_file(path: String, contents: String) -> Result<(), String> {
     atomic_write(Path::new(&path), contents.as_bytes())
+}
+
+#[tauri::command]
+fn write_png(path: String, base64: String) -> Result<(), String> {
+    reject_export_png_path(&path)?;
+    if base64.len() > MAX_ENCODED_EXPORT_PNG_BYTES {
+        return Err(format!(
+            "encoded export image exceeds the {} byte size limit",
+            MAX_ENCODED_EXPORT_PNG_BYTES
+        ));
+    }
+    let bytes = decode_png_base64(&base64)?;
+    atomic_write(Path::new(&path), &bytes)
+}
+
+fn decode_png_base64(base64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64)
+        .map_err(|e| format!("invalid image base64: {e}"))?;
+    if bytes.len() > MAX_EXPORT_PNG_BYTES {
+        return Err(format!(
+            "export image exceeds the {} byte size limit",
+            MAX_EXPORT_PNG_BYTES
+        ));
+    }
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("export image must be PNG".into());
+    }
+    Ok(bytes)
+}
+
+fn reject_export_png_path(path: &str) -> Result<(), String> {
+    let target = Path::new(path);
+    if target
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err("path must not contain traversal".into());
+    }
+    let png = target
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    if png {
+        Ok(())
+    } else {
+        Err("export image must use a .png extension".into())
+    }
+}
+
+#[tauri::command]
+fn set_recent_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    if paths.len() > MAX_RECENT_FILES {
+        return Err("too many recent files".into());
+    }
+    for path in &paths {
+        if path.is_empty()
+            || Path::new(path)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+        {
+            return Err("recent path is invalid".into());
+        }
+    }
+    menu::set_recent_files(&app, &paths).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -103,7 +173,7 @@ fn allow_document_assets(app: tauri::AppHandle, document_path: String) -> Result
         .map_err(|e| format!("failed to allow document assets: {e}"))
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -246,6 +316,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_file,
             write_file,
+            write_png,
             write_image,
             allow_document_assets,
             list_dir,
@@ -254,7 +325,9 @@ pub fn run() {
             list_recoveries,
             read_recovery,
             clear_recovery,
-            allow_workspace_dir
+            allow_workspace_dir,
+            set_recent_files,
+            export::export_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running oh-my-md");
@@ -302,6 +375,21 @@ mod tests {
         write_file(path_string(&path), contents.clone()).unwrap();
         assert_eq!(read_file(path_string(&path)).unwrap(), contents);
         fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn write_png_accepts_png_payload() {
+        let path = tmp_path("export.png");
+        write_png(path_string(&path), encoded(PNG_BYTES)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), PNG_BYTES);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn write_png_rejects_traversal_and_non_png() {
+        assert!(write_png("/tmp/../etc/x.png".into(), encoded(PNG_BYTES)).is_err());
+        assert!(write_png(path_string(&tmp_path("export.jpg")), encoded(PNG_BYTES)).is_err());
+        assert!(write_png(path_string(&tmp_path("export.png")), encoded(b"not-png")).is_err());
     }
 
     #[cfg(unix)]

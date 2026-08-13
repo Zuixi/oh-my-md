@@ -111,7 +111,7 @@ onDocChanged: (doc: string) => void
 
 1. 用户点击 `Keep original numbers`。
 2. Engine 只恢复仍保持自动规范化结果的 marker。
-3. 如果用户已经手动修改某个受影响 marker，该 marker 不被覆盖，并计入 skipped 数量。
+3. 如果用户在 Source 模式手动修改某个受影响 marker，该 marker 不被覆盖，并计入 skipped 数量；Live 模式下 marker 编辑会继续触发自动规范化，不作为 skipped 场景。
 4. 普通正文、选择和点击提示前发生的后续编辑全部保留。
 5. Engine 清除 pending 记录，并禁止当前 EditorState 生命周期继续自动规范化。
 6. 如果拒绝后文档等于 saved baseline，dirty 变为 false。
@@ -124,7 +124,8 @@ onDocChanged: (doc: string) => void
 1. 用户在已打开的 Live Preview 文档中新增、删除或修改列表项。
 2. 插件按照现有规则自动规范化编号。
 3. 该规范化不创建 pending 提示，因为它由用户 doc transaction 触发。
-4. 文档按普通 dirty、recovery 和 autosave 规则处理。
+4. 如果 follow-up 再次改写 pending 已记录的 marker，保留首次 `original`、更新最新 `normalized`；不新增 marker、不增加 markerCount。
+5. 文档按普通 dirty、recovery 和 autosave 规则处理。
 
 ### 流程 E：进入 Source 模式再返回
 
@@ -218,7 +219,7 @@ restoredMarkers + skippedMarkers === notice.markerCount
 - 第一批创建新的 `NormalizationId`。
 - 后续批次保留该 id。
 - 新 marker 追加到可逆记录。
-- 同一已映射 marker 被再次改写时，保留第一次记录的 `original`，把 `normalized` 更新为最后一次写入值，且不重复增加 `markerCount`。
+- 同一已映射 marker 被 preview-entry 或 user-followup 再次改写时，保留第一次记录的 `original`，把 `normalized` 更新为最后一次写入值，且不重复增加 `markerCount`。
 - `markerCount` 是当前可逆记录总数，不是最后一批数量。
 - Banner 不因增量解析生成新 id 或闪烁。
 - accept/reject 始终解决该 id 下的全部批次。
@@ -233,6 +234,7 @@ ViewPlugin 维护 `hasUserDocChange`：
 - `applyToggle` 从 Source 重新挂载 Live Preview 扩展时，新插件实例的第一次变换同样属于 preview-entry。
 - 第一条用户或宿主 doc transaction 之后执行的变换属于 user-followup。
 - 只有 preview-entry 创建或扩展 pending 状态。
+- 大文档初始 Lezer tree 尚未覆盖完整文档时，即使用户已输入，后续 tree-progress 批次仍归 preview-entry；完整 tree 可用后才关闭 preview-entry latch。
 - 规范化自身 transaction 不得把 `hasUserDocChange` 设为 true。
 - StateField 已 suppression 时，`apply()` 必须在遍历 Lezer tree 前立即返回。
 - `view.composing` 时继续跳过规范化，避免破坏 IME。
@@ -295,6 +297,8 @@ onDocumentUpdate: (update: EditorDocumentUpdate) => void
 
 `editorOptions(contents, tabId, documentId)` 必须把 `tabId` 与明确传入的 `documentId` 绑定到 EditorView callback。后台 EditorView 不得通过 `sessionRef.current` 猜测自己的标签或文档身份。
 
+`getDocPath` 与 `getDocumentId` 也必须按 `tabId` 查询 workspace 中的目标 tab；它们供图片解析/粘贴异步校验使用，不能回读活动 `sessionRef.current`。
+
 所有 reset 路径使用统一顺序：
 
 1. 先从目标 tab 计算 documentId 已递增的新 session。
@@ -305,6 +309,8 @@ onDocumentUpdate: (update: EditorDocumentUpdate) => void
 6. 同步新文档内容。
 
 不得沿用当前“先 reset、后 `openSession` 递增 documentId”的顺序，否则 preview-entry microtask 会被误判为 stale。
+
+Reset helper 必须捕获旧 session、旧 UI 投影和旧文档。`resetEditorDocument` 抛错时立即恢复旧 session/投影，并保留旧 EditorState；失败路径不得留下 documentId 不匹配的断连编辑器。
 
 `session.ts` 为不改变 path/saved baseline 的恢复场景提供：
 
@@ -549,13 +555,16 @@ normalizationReviewRequired: boolean
 - Modify: `apps/desktop/src/App.tsx`
 - Create: `apps/desktop/src/NormalizationBanner.tsx`
 - Create: `apps/desktop/src/normalizationState.ts`
+- Create: `apps/desktop/src/normalizationCoordinator.ts`
 - Modify: `apps/desktop/src/workspace.ts`
 - Modify: `apps/desktop/src/StatusBar.tsx`
 - Modify: `apps/desktop/src/styles.css`
 - Modify: `apps/desktop/test/App.test.tsx`
+- Create: `apps/desktop/test/appHarness.ts`
 - Modify: `apps/desktop/test/Editor.test.ts`
 - Create: `apps/desktop/test/NormalizationBanner.test.tsx`
 - Create: `apps/desktop/test/normalizationState.test.ts`
+- Create: `apps/desktop/test/normalizationCoordinator.test.ts`
 - Modify: `apps/desktop/test/session.test.ts`
 - Modify: `apps/desktop/test/workspace.test.ts`
 
@@ -582,7 +591,7 @@ normalizationReviewRequired: boolean
 9. accept 匹配 id 时返回可 dispatch transaction，清 pending 且不改文档。
 10. accept/reject stale id 返回 discriminated stale 结果且不修改状态。
 11. reject 恢复所有未变化 marker，并保留普通正文编辑。
-12. reject 跳过已被用户再次修改的 marker。
+12. pending 时切到 Source 修改 marker，reject 跳过该 marker。
 13. reject 后跨 Source/Live 切换仍保持 suppression。
 14. 新 EditorState 恢复默认自动规范化。
 15. pending ranges 经前置、内部和后置插入后仍能正确映射。
@@ -591,13 +600,15 @@ normalizationReviewRequired: boolean
 18. reject 后源码保留跳号，但预览 marker 仍显示连续编号。
 19. composing 期间不规范化。
 20. 真实 EditorView exception sink 保持为空。
+21. 大文档 tree 未完整时发生用户输入，后续 tree-progress 规范化仍进入原 pending。
 
 ### Desktop 状态测试
 
 1. pending update 使已打开文档显示 dirty 和提示条。
 2. callback 携带创建时绑定的 tabId/documentId，而不是当前活动标签。
 3. reset helper 先递增并提交 documentId，再用新 id reset；打开文件的 preview-entry update 不会被误判 stale。
-4. 后台 EditorView 的 microtask update 只更新自己的 tab。
+4. reset 抛错会恢复旧 session/投影，旧 EditorView 后续更新仍被接受。
+5. 后台 EditorView 的 path/documentId getter 与 callback 都只读取自己的 tab。
 5. `advanceDocumentIdentity` 只递增 documentId，不改变 path 或 savedContents。
 6. `replaceTabSession` 更新指定 tab baseline 且不改变 activeId。
 7. `normalizationState` 纯函数拒绝 stale id/action，并在 resync 时原子更新 notice 与 idle。
@@ -645,7 +656,7 @@ git diff --check
 3. 点击保存规范化后，磁盘变为连续编号且提示消失。
 4. 点击保留原编号后，磁盘和编辑器恢复跳号。
 5. 提示出现后先编辑正文，再保留原编号；正文编辑不丢。
-6. 提示出现后修改一个编号，再保留原编号；手动编号不被覆盖。
+6. 提示出现后切到 Source 修改一个编号，再保留原编号；手动编号不被覆盖。
 7. 保留原编号后继续编辑当前文件，并来回切换 Source/Live，均不再自动规范化。
 8. 关闭重开后自动规范化策略恢复。
 9. Pending 时切到 Source，提示仍在；返回 Live 后 id 不变，新 marker 合并。

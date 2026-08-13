@@ -71,13 +71,13 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 
 ## M3 产品壳
 - [ ] 多标签各有独立撤销；脏点显示；关脏标签会确认；`+` 新建标签
-- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单可打开文件/目录并导出 HTML/PDF；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问
+- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问
 - [ ] 右侧只有 Outline，没有 Export 面板；导出走 File 菜单或 Cmd+K
 - [ ] 大纲点击跳转到标题；状态栏显示字数、光标行列、live/source
 - [ ] Cmd+K 能打开/保存/切主题/Focus/导出；File 菜单与命令面板共用同一命令
 - [ ] 当前文件夹搜索 `.md`，点结果打开并定位
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
-- [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF 走打印对话框
+- [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框，由离屏 WKWebView 生成 `.pdf` / `.png`（不是系统打印对话框，也不是把编辑器 DOM 截屏）
 - [ ] 亮/暗主题与自定义 CSS；Typewriter 当前行居中；Focus 非当前行降透明度
 - [ ] 打开 `large.md` 后多标签切换与文件树刷新时滚动仍流畅
 

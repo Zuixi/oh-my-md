@@ -553,6 +553,102 @@ describe("App product shell", () => {
     })
   })
 
+  it("exports a PNG through native WebView capture", async () => {
+    const harness = makeHarness()
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.pickExportPath = vi.fn(async () => "/tmp/out.png")
+    harness.renderApp()
+    act(() => send?.("export-image"))
+    await waitFor(() => {
+      expect(harness.services.pickExportPath).toHaveBeenCalledWith("png")
+      expect(harness.services.exportPreview).toHaveBeenCalledWith(
+        "<!doctype html><html>exported</html>",
+        "/tmp/out.png",
+        "png",
+      )
+    })
+  })
+
+  it("exports a PDF through native WebView capture", async () => {
+    const harness = makeHarness()
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.pickExportPath = vi.fn(async () => "/tmp/out.pdf")
+    harness.renderApp()
+    act(() => send?.("export-pdf"))
+    await waitFor(() => {
+      expect(harness.services.pickExportPath).toHaveBeenCalledWith("pdf")
+      expect(harness.services.exportPreview).toHaveBeenCalledWith(
+        "<!doctype html><html>exported</html>",
+        "/tmp/out.pdf",
+        "pdf",
+      )
+    })
+  })
+
+  it("saves as a new path from the File menu even when a file is already open", async () => {
+    const harness = makeHarness()
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
+    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    vi.mocked(harness.services.pickSavePath).mockResolvedValue("/notes/copy.md")
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    act(() => send?.("save-as"))
+    await waitFor(() => {
+      expect(harness.services.pickSavePath).toHaveBeenCalled()
+      expect(harness.services.writeFile).toHaveBeenCalledWith("/notes/copy.md", "saved")
+    })
+  })
+
+  it("creates and closes tabs from the File menu", async () => {
+    const harness = makeHarness()
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    harness.renderApp()
+    act(() => send?.("new"))
+    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    act(() => send?.("close"))
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /untitled/ })).toHaveLength(1))
+  })
+
+  it("remembers opened files and reopens them from the File menu", async () => {
+    const harness = makeHarness()
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    harness.services.setRecentMenu = vi.fn(async () => undefined)
+    harness.services.saveRecents = vi.fn()
+    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
+    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await waitFor(() => expect(harness.services.setRecentMenu).toHaveBeenCalledWith(["/notes/doc.md"]))
+    fireEvent.click(screen.getByRole("button", { name: "+" }))
+    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    act(() => send?.("recent:/notes/doc.md"))
+    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+  })
+
   it("fills the file tree from the parent folder after opening a file", async () => {
     const harness = makeHarness()
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
@@ -570,7 +666,6 @@ describe("App product shell", () => {
   it("exports HTML through the save service", async () => {
     const harness = makeHarness()
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.html")
-    harness.services.printHtml = vi.fn(async () => undefined)
     harness.renderApp()
     fireEvent.keyDown(window, { key: "k", metaKey: true })
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
@@ -583,5 +678,15 @@ describe("App product shell", () => {
         "<!doctype html><html>exported</html>",
       )
     })
+  })
+
+  it("creates a tab with Cmd+N and save-as with Cmd+Shift+S", async () => {
+    const harness = makeHarness()
+    vi.mocked(harness.services.pickSavePath).mockResolvedValue("/notes/copy.md")
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "n", metaKey: true })
+    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    fireEvent.keyDown(window, { key: "s", metaKey: true, shiftKey: true })
+    await waitFor(() => expect(harness.services.pickSavePath).toHaveBeenCalled())
   })
 })
