@@ -32,12 +32,16 @@ const { editor } = vi.hoisted(() => ({
   },
 }))
 
-vi.mock("../src/Editor", () => ({
-  createEditor: (parent: HTMLElement, options: CreateEditorOptions) =>
-    editor.create(parent, options),
-  resetEditorDocument: (view: EditorView, options: CreateEditorOptions) =>
-    editor.reset(view, options),
-}))
+vi.mock("../src/Editor", async importOriginal => {
+  const actual = await importOriginal<typeof import("../src/Editor")>()
+  return {
+    ...actual,
+    createEditor: (parent: HTMLElement, options: CreateEditorOptions) =>
+      editor.create(parent, options),
+    resetEditorDocument: (view: EditorView, options: CreateEditorOptions) =>
+      editor.reset(view, options),
+  }
+})
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -82,6 +86,187 @@ describe("App harness ordered-list fake", () => {
 
     harness.editorForTab(1).setContents("1. a\n\n3. b")
     expect(() => harness.emitPending(1, normalizationId(1))).toThrow(/blank line/)
+  })
+})
+
+describe("App normalization wiring", () => {
+  it("keeps one live region mounted before any notice appears", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+
+    const region = screen.getByRole("status")
+    expect(region.textContent).toBe("")
+
+    harness.editorForTab(1).setContents("1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+
+    expect(screen.getByRole("status")).toBe(region)
+    expect(region.textContent).toContain("1 item was renumbered.")
+  })
+
+  it("routes background pending to its bound tab", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openInNewTab("/notes/b.md", "1. a\n3. b")
+    harness.activateTab(1)
+
+    harness.editorForTab(2).emit({
+      doc: "1. a\n2. b",
+      docChanged: true,
+      pendingNormalization: { id: normalizationId(1), markerCount: 1 },
+    })
+
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    const active = document.querySelectorAll(".tabbar .tab.is-active")
+    expect(active).toHaveLength(1)
+    expect(active[0]?.textContent).toContain("untitled")
+    harness.activateTab(2)
+    expect(screen.getByRole("status").textContent).toContain("1")
+  })
+
+  it("ignores an update stamped with a replaced documentId", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const stale = harness.editorForTab(1).getOptions()
+    await harness.openIntoActive("/notes/fresh.md", "fresh")
+
+    act(() => stale.onDocumentUpdate({
+      tabId: 1,
+      documentId: stale.documentId,
+      doc: "zombie",
+      docChanged: true,
+      pendingNormalization: { id: normalizationId(9), markerCount: 3 },
+    }))
+
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    expect(screen.getByText("/notes/fresh.md")).toBeTruthy()
+    expect(harness.services.writeRecovery).not.toHaveBeenCalled()
+  })
+
+  it("does not write recovery for a pending-only update", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    harness.editorForTab(1).emit({
+      doc: "",
+      docChanged: false,
+      pendingNormalization: { id: normalizationId(1), markerCount: 1 },
+    })
+    expect(harness.services.writeRecovery).not.toHaveBeenCalled()
+  })
+
+  it("commits bumped documentId before resetting an active view", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const before = harness.editorForTab(1).getOptions().documentId
+    const identityDuringReset: number[] = []
+    const rebind = editor.reset.getMockImplementation()
+    editor.reset.mockImplementationOnce((view: EditorView, options: CreateEditorOptions) => {
+      identityDuringReset.push(options.getDocumentId())
+      rebind?.(view, options)
+    })
+
+    await harness.requestOpen("/notes/new.md", "1. a\n3. b")
+
+    expect(identityDuringReset).toEqual([before + 1])
+  })
+
+  it("binds reset options to the bumped document identity", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const before = harness.editorForTab(1).getOptions().documentId
+    await harness.requestOpen("/notes/new.md", "1. a\n3. b")
+    expect(harness.editorForTab(1).getOptions().documentId).toBe(before + 1)
+  })
+
+  it("keeps path and document identity bound to a background tab", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openInNewTab("/notes/background.md", "body")
+
+    const options = harness.editorForTab(2).getOptions()
+    harness.activateTab(1)
+
+    expect(options.getDocPath()).toBe("/notes/background.md")
+    expect(options.getDocumentId()).toBe(options.documentId)
+  })
+
+  it("clears old projection before open, external reload, and draft restore", async () => {
+    const harness = makeAppHarness()
+    const read = deferred<string>()
+    harness.services.listRecoveries = vi.fn(async () => [
+      { key: "untitled_1", label: "untitled_1" },
+    ])
+    harness.services.readRecovery = vi.fn(() => read.promise)
+    harness.services.confirmRestore = vi.fn(() => true)
+    harness.renderApp()
+
+    harness.editorForTab(1).setContents("1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+    read.resolve("restored draft")
+    await act(async () => { await read.promise })
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+
+    harness.editorForTab(1).setContents("1. a\n3. b")
+    harness.emitPending(1, normalizationId(2))
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+    await harness.openIntoActive("/notes/one.md", "1. a\n3. b")
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+
+    harness.emitPending(1, normalizationId(3))
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+    vi.mocked(harness.services.readFile).mockResolvedValueOnce("disk version")
+    await harness.runExternalCheck()
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+  })
+
+  it("removes a closed tab projection before reusing the workspace", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openInNewTab("/notes/b.md", "1. a\n3. b")
+    harness.emitPending(2, normalizationId(1))
+    harness.requestCloseTab(2)
+    await harness.openInNewTab("/notes/c.md", "body")
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+  })
+
+  it("confirms before closing a pending-only dirty tab", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    harness.requestCloseTab(1)
+    expect(harness.services.confirmClose).toHaveBeenCalledOnce()
+  })
+
+  it("restores session identity and projection when reset throws", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    harness.failNextReset(new Error("reset failed"))
+
+    await harness.requestOpen("/notes/new.md", "1. a\n3. b")
+
+    // Scoped to the status bar: an untitled tab button carries the same text.
+    expect(screen.getByText("untitled", { selector: ".statusbar span" })).toBeTruthy()
+    harness.editorForTab(1).emit({
+      doc: "still editable",
+      docChanged: true,
+      pendingNormalization: null,
+    })
+    expect(screen.getByText("untitled •")).toBeTruthy()
+  })
+
+  it("restores the old projection when reset throws", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    harness.editorForTab(1).setContents("1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    harness.failNextReset(new Error("reset failed"))
+
+    await harness.requestOpen("/notes/new.md", "body")
+
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+    expect(screen.getByText("untitled •")).toBeTruthy()
   })
 })
 

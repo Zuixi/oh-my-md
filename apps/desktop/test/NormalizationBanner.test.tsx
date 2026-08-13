@@ -64,6 +64,13 @@ describe("NormalizationBanner", () => {
     expect(onKeepOriginal).toHaveBeenCalledOnce()
   })
 
+  it("keeps an empty live region mounted while no review is pending", () => {
+    render(<NormalizationBanner markerCount={null} busy={false}
+      onSave={vi.fn()} onKeepOriginal={vi.fn()} />)
+    expect(screen.getByRole("status").textContent).toBe("")
+    expect(screen.queryAllByRole("button")).toEqual([])
+  })
+
   it("appears without modal semantics and without stealing focus", () => {
     render(<NormalizationBanner markerCount={1} busy={false}
       onSave={vi.fn()} onKeepOriginal={vi.fn()} />)
@@ -89,7 +96,8 @@ describe("StatusBar normalization review", () => {
   })
 
   it("omits the review notice when no review is required", () => {
-    render(<StatusBar path="untitled" dirty words={0} cursor="1:1" mode="live" />)
+    render(<StatusBar path="untitled" dirty words={0} cursor="1:1" mode="live"
+      normalizationReviewRequired={false} />)
     expect(screen.getByText("untitled •")).toBeTruthy()
     expect(screen.queryByText("Normalization review required")).toBeNull()
   })
