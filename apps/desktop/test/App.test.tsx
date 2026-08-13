@@ -1,8 +1,9 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
+import { getPendingOrderedListNormalization } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createAppHarness } from "./appHarness"
+import { createAppHarness, normalizationId } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -55,6 +56,34 @@ function makeAppHarness() {
 function edit(harness: ReturnType<typeof makeAppHarness>, tabId: number, doc: string) {
   harness.editorForTab(tabId).emit({ doc, docChanged: true, pendingNormalization: null })
 }
+
+describe("App harness ordered-list fake", () => {
+  it("counts every rewritten marker in the pending notice", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    harness.editorForTab(1).setContents("1. a\n3. b\n7. c")
+
+    harness.emitPending(1, normalizationId(1))
+
+    const view = harness.editorForTab(1).view
+    expect(view.state.doc.toString()).toBe("1. a\n2. b\n3. c")
+    expect(getPendingOrderedListNormalization(view.state)).toEqual({
+      id: normalizationId(1),
+      markerCount: 2,
+    })
+  })
+
+  it("refuses list shapes it would renumber differently from the engine", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+
+    harness.editorForTab(1).setContents("0. a\n5. b")
+    expect(() => harness.emitPending(1, normalizationId(1))).toThrow(/starting at 0/)
+
+    harness.editorForTab(1).setContents("1. a\n\n3. b")
+    expect(() => harness.emitPending(1, normalizationId(1))).toThrow(/blank line/)
+  })
+})
 
 describe("App document session", () => {
   it("marks dirty from a CodeMirror document transaction callback", async () => {

@@ -10,7 +10,6 @@ import {
 import App, { type DesktopServices } from "../src/App"
 import type { CreateEditorOptions, EditorDocumentUpdate } from "../src/Editor"
 
-const PENDING_MARKER_COUNT = 1
 const NO_WATCH_MS = 0
 /** Watch interval armed only for the duration of one faked external poll. */
 const EXTERNAL_CHECK_MS = 5
@@ -54,6 +53,10 @@ export function normalizationId(value: number): NormalizationId {
 /**
  * Fake views own no StateField, so the notice each handle last emitted is looked up by the state
  * object that handle hands to the App.
+ *
+ * The test appendix specifies `Map<EditorView, notice>`; this indexes by state instead because the
+ * App only ever asks `getPendingOrderedListNormalization(view.state)`, so a state key is what the
+ * mocked engine call actually receives. Both hold one notice per fake view.
  */
 const pendingByState = new WeakMap<object, () => OrderedListNormalizationNotice | null>()
 
@@ -133,20 +136,52 @@ function createHandleRecord(
 /**
  * Stand-in for the engine's live-preview renumbering, only so `emitPending` can report a document
  * that really changed. Production desktop code must keep asking the engine instead.
+ *
+ * It fakes one shape: flat ordered lists that start at 1 or higher and run over consecutive lines.
+ * Shapes where it would disagree with the engine are rejected loudly rather than renumbered wrong.
  */
 const ORDERED_MARKER = /^(\s*)(\d+)([.)])(\s)/
+const NOT_IN_LIST = null
+const FIRST_ORDERED_NUMBER = 1
 
-function renumberOrderedMarkers(text: string): string {
-  let expected = 0
-  return text.split("\n").map(line => {
+interface FakeNormalization {
+  readonly doc: string
+  readonly rewrittenMarkers: number
+}
+
+function unsupportedFixture(shape: string): Error {
+  return new Error(
+    `appHarness cannot fake the engine's ordered-list renumbering for ${shape}. ` +
+    "This is a limit of the test double, not of the engine: extend the double for that shape, " +
+    "or drive a real editor instead of emitPending.",
+  )
+}
+
+function nextExpectedNumber(current: number | typeof NOT_IN_LIST, raw: string): number {
+  if (current !== NOT_IN_LIST) return current + 1
+  const start = Number(raw)
+  if (start < FIRST_ORDERED_NUMBER) throw unsupportedFixture("an ordered list starting at 0")
+  return start
+}
+
+function normalizeOrderedMarkers(text: string): FakeNormalization {
+  let expected: number | typeof NOT_IN_LIST = NOT_IN_LIST
+  let blankLineSeen = false
+  let rewrittenMarkers = 0
+  const lines = text.split("\n").map(line => {
     const match = ORDERED_MARKER.exec(line)
     if (!match) {
-      expected = 0
+      blankLineSeen = expected !== NOT_IN_LIST && line.trim() === ""
+      if (!blankLineSeen) expected = NOT_IN_LIST
       return line
     }
-    expected = expected === 0 ? Number(match[2]) : expected + 1
-    return `${match[1]}${expected}${match[3]}${match[4]}${line.slice(match[0].length)}`
-  }).join("\n")
+    if (blankLineSeen) throw unsupportedFixture("an ordered list interrupted by a blank line")
+    expected = nextExpectedNumber(expected, match[2])
+    const marker = `${match[1]}${expected}${match[3]}${match[4]}`
+    if (marker !== match[0]) rewrittenMarkers += 1
+    return `${marker}${line.slice(match[0].length)}`
+  })
+  return { doc: lines.join("\n"), rewrittenMarkers }
 }
 
 function harnessServices(): HarnessServices {
@@ -264,6 +299,16 @@ async function openInNewTab(
   await openIntoActive(context, path, contents)
 }
 
+function emitPending(context: HarnessContext, tabId: number, id: NormalizationId): void {
+  const record = recordForTab(context, tabId)
+  const normalized = normalizeOrderedMarkers(record.contents())
+  record.handle.emit({
+    doc: normalized.doc,
+    docChanged: true,
+    pendingNormalization: { id, markerCount: normalized.rewrittenMarkers },
+  })
+}
+
 /**
  * Drives exactly one poll of the App's external-change watcher. The interval is armed by a
  * rerender and disarmed again straight after, and time is faked so a slow machine cannot slip a
@@ -307,14 +352,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     openIntoActive: (path, contents) => openIntoActive(context, path, contents),
     openInNewTab: (path, contents) => openInNewTab(context, path, contents),
     requestOpen: (path, contents) => requestOpen(context, path, contents),
-    emitPending: (tabId, id) => {
-      const record = recordForTab(context, tabId)
-      record.handle.emit({
-        doc: renumberOrderedMarkers(record.contents()),
-        docChanged: true,
-        pendingNormalization: { id, markerCount: PENDING_MARKER_COUNT },
-      })
-    },
+    emitPending: (tabId, id) => emitPending(context, tabId, id),
     saveNormalization: async tabId => {
       activateTab(context, tabId)
       fireEvent.click(screen.getByRole("button", { name: "Save normalization" }))
