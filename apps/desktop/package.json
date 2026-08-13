@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2",
     "katex": "^0.18.4",
+    "lucide-react": "^1.31.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

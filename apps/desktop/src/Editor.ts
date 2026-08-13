@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import { editorExtensions } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
+import { typewriterExtension } from "./typewriter"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
 export interface CreateEditorOptions {
@@ -39,6 +40,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
       }),
+      typewriterExtension(),
       imagePasteHandler({
         getDocPath: options.getDocPath,
         getDocumentId: options.getDocumentId,

@@ -3,6 +3,10 @@ import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
 import { imageResolver } from "./decorations/widgets/image"
 
+export { collectOutline, type OutlineItem } from "./outline"
+export { exportHtml } from "./export/html"
+export { applyToggle, isLivePreview } from "./modes/livePreview"
+
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
   resolveImageSrc?: (src: string) => string

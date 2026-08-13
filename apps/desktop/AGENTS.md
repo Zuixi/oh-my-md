@@ -15,13 +15,19 @@
 ```text
 apps/desktop/
 ├── src/
-│   ├── App.tsx              # Editor lifecycle, file open/save, dirty state, shortcuts
+│   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
+│   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
+│   ├── FileTree.tsx         # Sidebar tree with Lucide icons
+│   ├── session.ts           # EditorSession: path, dirty baseline, documentId
+│   ├── workspace.ts         # Tab list, active tab, folder root
 │   ├── Editor.ts            # Generic CM6 extensions, engine assembly, base theme
 │   ├── imagePaste.ts        # Clipboard image → Tauri write_image → Markdown insertion
 │   ├── main.tsx             # React mount
-│   └── styles.css           # App styles and all engine-emitted omd-* presentation
+│   └── styles.css           # App styles, theme variables, and omd-* presentation
 └── src-tauri/
-    ├── src/lib.rs           # read_file, write_file, write_image commands and tests
+    ├── src/lib.rs           # File IO, image write, asset scope, workspace commands
+    ├── src/menu.rs          # Native File / Edit application menu
+    ├── src/workspace.rs     # list_dir, search_markdown, crash-recovery files
     ├── capabilities/        # Tauri permissions
     └── tauri.conf.json      # Desktop application configuration
 ```
@@ -42,7 +48,8 @@ apps/desktop/
 - Pass host-dependent behavior through engine options, such as resolving Markdown image sources to loadable URLs.
 - Destroy `EditorView` during React cleanup and clear retained references.
 - Window-level shortcuts must use stable listeners and refs to observe current mutable state without re-registering on each render.
-- CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save.
+- CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save/command palette.
+- Do not enable generic `autocompletion()`; Cmd+K is a desktop command registry, not CM completion.
 - Replace an opened document with a fresh `EditorState`; synchronize the document path first so initial image resolution is correct and undo history cannot cross files.
 
 ## Tauri and File Rules
@@ -53,6 +60,12 @@ Current Rust commands are:
 - `write_file(path, contents)` — atomically replace the current document.
 - `write_image(path, base64, documentPath)` — decode pasted image data into the current document's `assets/` directory. `documentPath` is required.
 - `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
+- `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root.
+- `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
+- `search_markdown(root, query)` — scan `.md` files under the folder for a string.
+- `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
+
+The native File menu (Open, Open Folder, Save, Export HTML/PDF) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
 
 When adding or changing a command:
 
