@@ -1,9 +1,12 @@
 import { Compartment, StateEffect, StateField, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap } from "@codemirror/view"
 import { livePreviewField } from "../decorations/build"
+import { orderedRenumber } from "../lists/ordered"
 
 export function livePreviewExt() {
-  return [livePreviewField]   // decorations via StateField；block widgets 只能走 field
+  // decorations via StateField；block widgets 只能走 field。
+  // 有序列表编号写回源码走 ViewPlugin，不产出 block decoration。
+  return [livePreviewField, orderedRenumber]
 }
 
 export const livePreviewCompartment = new Compartment()

@@ -16,6 +16,7 @@
 packages/engine/
 ├── src/
 │   ├── index.ts                 # Public editorExtensions(options) entrypoint
+│   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
 │   ├── parse/                   # Lezer Markdown, math, and footnote extensions
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
 │   └── decorations/
@@ -42,7 +43,7 @@ packages/engine/
 1. Decorations must be sorted and non-overlapping where CodeMirror requires it.
 2. When a block widget replaces a syntax node, skip that node's subtree and filter enclosed outer decorations; overlapping replace ranges can make `Decoration.set` throw.
 3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization.
-4. Preserve the source document. A preview widget renders a projection and enters editing mode by moving selection into the source range.
+4. Preserve the source document, except for live-preview ordered-list marker normalization in `lists/ordered.ts`. A preview widget renders a projection and enters editing mode by moving selection into the source range.
 5. Treat a block as editable when the selection overlaps its source range **including both boundaries**. Do not replace selected source with a widget.
 6. `BlockWidget.eq` compares source text and `pos`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
 7. Async widget failures must be contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.

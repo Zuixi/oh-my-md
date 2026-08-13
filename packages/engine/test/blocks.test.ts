@@ -44,7 +44,7 @@ describe("block syntax", () => {
     const s = state.update({ selection: { anchor: doc.length } }).state
     const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
     expect(t.filter(x => x === "replace:ListMark")).toHaveLength(2)
-    expect(t).toContain("mark:omd-list-mark")
+    expect(t).toContain("widget:ordered-mark")
     expect(t).not.toContain("widget:checkbox")
   })
 
@@ -88,5 +88,32 @@ describe("block syntax", () => {
     expect(t.filter(x => x === "line:omd-codeblock")).toHaveLength(3)
     expect(t).not.toContain("widget:block:code")
     expect(t).not.toContain("replace:EmphasisMark")
+  })
+
+  it("displays sequential ordered numbers even when source numbers skip", () => {
+    const doc = "1. 第一项\n3. 第二项\n7. 第三项\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const labels = collectDecorationSpecs(s, 0, s.doc.length)
+      .filter(d => d.tag === "widget:ordered-mark")
+      .map(d => (d.deco.spec.widget as { label: string }).label)
+    expect(labels).toEqual(["1.", "2.", "3."])
+  })
+
+  it("starts the displayed sequence from the first item's source number", () => {
+    const doc = "3. a\n7. b\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const labels = collectDecorationSpecs(s, 0, s.doc.length)
+      .filter(d => d.tag === "widget:ordered-mark")
+      .map(d => (d.deco.spec.widget as { label: string }).label)
+    expect(labels).toEqual(["3.", "4."])
+  })
+
+  it("shows the source ordered number when the cursor is on that line", () => {
+    const doc = "1. 第一项\n3. 第二项\n7. 第三项"
+    const second = doc.indexOf("3.")
+    const s = makeState(doc).update({ selection: { anchor: second } }).state
+    const t = collectDecorationSpecs(s, 0, s.doc.length)
+    expect(t.map(d => d.tag).filter(x => x === "widget:ordered-mark")).toHaveLength(2)
+    expect(t.map(d => d.tag)).toContain("mark:omd-list-mark")
   })
 })

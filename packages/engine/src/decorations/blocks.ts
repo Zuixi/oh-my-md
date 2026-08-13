@@ -2,12 +2,13 @@ import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
-import { CheckboxWidget, BulletWidget, HrWidget } from "./widgets"
+import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget } from "./widgets"
 import { blockSelected } from "./blockWidget"
 import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
 import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
+import { orderedLabel } from "../lists/ordered"
 
 // Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
 // unless the cursor is on that line.
@@ -71,8 +72,16 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       // Task list items show a checkbox instead of a bullet — skip the mark there.
       if (node.node.parent?.getChild("Task")) break
       const text = state.doc.sliceString(node.from, node.to)
-      if (/^\d/.test(text)) {   // ordered list: keep the number, just style it
-        out.push({ from: node.from, to: node.to, tag: "mark:omd-list-mark", deco: Decoration.mark({ class: "omd-list-mark" }) })
+      if (/^\d/.test(text)) {
+        if (nearCursor(state, node.from, node.to)) {
+          out.push({ from: node.from, to: node.to, tag: "mark:omd-list-mark", deco: Decoration.mark({ class: "omd-list-mark" }) })
+        } else {
+          const label = orderedLabel(node.node, state) ?? text
+          out.push({
+            from: node.from, to: node.to, tag: "widget:ordered-mark",
+            deco: Decoration.replace({ widget: new OrderedWidget(label) }),
+          })
+        }
       } else if (!nearCursor(state, node.from, node.to)) {
         out.push({ from: node.from, to: node.to, tag: "replace:ListMark", deco: Decoration.replace({ widget: new BulletWidget() }) })
       }

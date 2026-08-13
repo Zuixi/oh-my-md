@@ -43,6 +43,16 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("displays sequential ordered-list numbers from gapped source", async () => {
+    const { view, errors } = makeView("1. 第一项\n3. 第二项\n7. 第三项\n\ntail")
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe("1. 第一项\n2. 第二项\n3. 第三项\n\ntail")
+    const labels = [...view.dom.querySelectorAll(".omd-ordered-mark")].map(el => el.textContent)
+    expect(labels).toEqual(["1.", "2.", "3."])
+    view.destroy()
+  })
+
   it("renders table/code/math blocks without exceptions", async () => {
     const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\ntail")
     await tick()
