@@ -160,6 +160,16 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("hides the quote marker in the live line while the cursor is in the content", async () => {
+    const { view, errors } = makeView("> hello", 2)
+    await tick()
+    const line = view.dom.querySelector(".omd-blockquote")
+    expect(line).toBeTruthy()
+    expect(line?.textContent).toBe("hello")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("preserves table alignment inside a blockquote", async () => {
     const doc = "> | left | right |\n> |:---|---:|\n> | 1 | 2 |\n\noutside"
     const { view, errors } = makeView(doc)
