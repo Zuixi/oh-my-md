@@ -1,15 +1,43 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { Decoration } from "@codemirror/view"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
 import { BlockWidget } from "../src/decorations/blockWidget"
+import { CheckboxWidget } from "../src/decorations/widgets"
+import { ImageWidget, imageResolver } from "../src/decorations/widgets/image"
+import { CodeWidget } from "../src/decorations/widgets/code"
+import { TableWidget, type TableData } from "../src/decorations/widgets/table"
+import { MermaidWidget } from "../src/decorations/widgets/mermaid"
+
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: () => {},
+    render: async (_id: string, src: string) => ({
+      svg: `<svg class="omd-mermaid-svg"><text>${src}</text></svg>`,
+    }),
+  },
+}))
 
 class ProbeWidget extends BlockWidget {
   protected get cssClass() { return "omd-probe" }
   protected renderInto(el: HTMLElement) { el.textContent = "probe" }
 }
 
-import { imageResolver } from "../src/decorations/widgets/image"
+class RejectedWidget extends BlockWidget {
+  protected get cssClass() { return "omd-rejected" }
+  protected async renderInto() {
+    await new Promise(resolve => setTimeout(resolve, 10))
+    throw new Error("late failure")
+  }
+}
+
+class ResolvedWidget extends BlockWidget {
+  protected get cssClass() { return "omd-resolved" }
+  protected async renderInto(el: HTMLElement) {
+    await Promise.resolve()
+    el.textContent = "done"
+  }
+}
 
 const imageResolverTestFacet = imageResolver.of((s: string) => `/resolved/${s}`)
 
@@ -61,4 +89,80 @@ describe("block widget pipeline", () => {
     const deco = Decoration.replace({ widget: new ProbeWidget("x", 0), block: true })
     expect(deco).toBeTruthy()
   })
+
+  it("widget equality includes every DOM behavior input", () => {
+    const table: TableData = { header: ["a"], rows: [["1"]], aligns: [""] }
+    // pos 已从 BlockWidget.eq 移除：src 相同时 DOM 可复用，click handler 用 posAtCoords 实时定位
+    expect(new ProbeWidget("same", 1).eq(new ProbeWidget("same", 2))).toBe(true)   // 新行为
+    expect(new ProbeWidget("a", 0).eq(new ProbeWidget("b", 0))).toBe(false)        // src 不同则不相等
+    expect(new CheckboxWidget(false, 1).eq(new CheckboxWidget(false, 2))).toBe(false)
+    expect(new ImageWidget("a.png", "first", "/a.png")
+      .eq(new ImageWidget("a.png", "second", "/a.png"))).toBe(false)
+    expect(new CodeWidget("x = 1", 0, "js").eq(new CodeWidget("x = 1", 0, "ts"))).toBe(false)
+    expect(new TableWidget("| a |\n|---|\n| 1 |", 0, table)
+      .eq(new TableWidget("| a |\n|---|\n| 1 |", 0, { ...table, header: ["b"] }))).toBe(false)
+  })
+
+  it("does not write an async fallback into detached DOM", async () => {
+    const widget = new RejectedWidget("source", 0)
+    const dom = widget.toDOM({} as never)
+    document.body.appendChild(dom)
+    widget.destroy(dom)
+    dom.remove()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(dom.querySelector(".omd-block-body")?.textContent).toBe("")
+  })
+
+  it("finishes rendering before an editor root is attached", async () => {
+    const widget = new RejectedWidget("source", 0)
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(dom.querySelector(".omd-block-body")?.textContent).toContain("late failure")
+  })
+
+  it("requests a layout measure after async block rendering", async () => {
+    let measures = 0
+    const widget = new ResolvedWidget("source", 0)
+    const dom = widget.toDOM({ requestMeasure: () => { measures++ } } as never)
+    document.body.appendChild(dom)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(measures).toBe(1)
+    dom.remove()
+  })
+
+  it("requests a layout measure after rendering an error fallback", async () => {
+    let measures = 0
+    const widget = new RejectedWidget("source", 0)
+    const dom = widget.toDOM({ requestMeasure: () => { measures++ } } as never)
+    document.body.appendChild(dom)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(measures).toBe(1)
+    dom.remove()
+  })
+
+  it("maps fenced-code language aliases and rejects unknown languages", async () => {
+    const { resolveCodeLanguage } = await import("../src/decorations/widgets/code")
+    expect(resolveCodeLanguage("JS")).toBe("javascript")
+    expect(resolveCodeLanguage("ts")).toBe("typescript")
+    expect(resolveCodeLanguage("unknown-language")).toBe(null)
+  })
+
+  it("writes mermaid SVG into the widget body", async () => {
+    const widget = new MermaidWidget("graph TD; A-->B", 0)
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    document.body.appendChild(dom)
+    await new Promise(resolve => setTimeout(resolve, 600))
+    expect(dom.querySelector("svg.omd-mermaid-svg")).toBeTruthy()
+    expect(dom.querySelector(".omd-block-body")?.textContent).toContain("graph TD; A-->B")
+    dom.remove()
+  }, 2000)
+
+  it("does not write mermaid SVG after destroy", async () => {
+    const widget = new MermaidWidget("graph TD; A-->B", 0)
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    widget.destroy(dom)
+    await new Promise(resolve => setTimeout(resolve, 600))
+    expect(dom.querySelector("svg")).toBeNull()
+    expect(dom.querySelector(".omd-block-body")?.textContent).toBe("")
+  }, 2000)
 })
