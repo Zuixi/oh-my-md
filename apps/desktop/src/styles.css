@@ -12,6 +12,7 @@
 .editor-host .omd-footnote { font-size: 0.75em; vertical-align: super; color: #0969da; }
 .editor-host .omd-footnote-def { font-size: 0.9em; color: #555; }
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
+.editor-host .omd-u { text-decoration: underline; }
 .editor-host .omd-inline-code { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
 .editor-host .omd-blockquote { border-left: 3px solid #d0d0d0; padding-left: 1em; color: #555; }
 .editor-host .omd-hr { border-top: 1px solid #d0d0d0; }
