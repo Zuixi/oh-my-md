@@ -21,8 +21,20 @@ describe("block syntax", () => {
     expect(t).toContain("replace:QuoteMark")
   })
 
-  it("styles horizontal rule", () => {
+  it("styles horizontal rule source when the cursor is on it", () => {
     expect(tags("---")).toContain("line:omd-hr")
+    expect(tags("---")).not.toContain("widget:block:hr")
+  })
+
+  it("replaces thematic breaks with a rule widget when the cursor is away", () => {
+    const variants = ["***", "* * *", "*****", "- - -", "----------"]
+    for (const rule of variants) {
+      const doc = `${rule}\n\ntail`
+      const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+      const t = collectDecorationSpecs(s, 0, s.doc.length).map(d => d.tag)
+      expect(t, rule).toContain("widget:block:hr")
+      expect(t, rule).not.toContain("line:omd-hr")
+    }
   })
 
   it("replaces bullet marks, keeps ordered numbers", () => {

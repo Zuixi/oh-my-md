@@ -34,6 +34,15 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
 }
 
 describe("view smoke (real EditorView)", () => {
+  it("renders a thematic break as an hr without the source markers", async () => {
+    const { view, errors } = makeView("before\n\n***\n\nafter")
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.dom.querySelector(".omd-hr-block hr")).toBeTruthy()
+    expect([...view.dom.querySelectorAll(".cm-line")].some(el => el.textContent?.includes("***"))).toBe(false)
+    view.destroy()
+  })
+
   it("renders table/code/math blocks without exceptions", async () => {
     const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\ntail")
     await tick()

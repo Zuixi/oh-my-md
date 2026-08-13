@@ -44,4 +44,26 @@ describe("inline marks", () => {
     const urlInside = doc.indexOf("http") + 2
     expect(tagsAt(doc, urlInside)).not.toContain("replace:URL")
   })
+
+  it("folds underscore strong/emphasis next to CJK the same way as asterisks", () => {
+    expect(tagsOffLine("这是**粗体**")).toContain("mark:omd-strong")
+    expect(tagsOffLine("这是__粗体__")).toContain("mark:omd-strong")
+    expect(tagsOffLine("这是__粗体__").filter(x => x === "replace:EmphasisMark")).toHaveLength(2)
+    expect(tagsOffLine("这是_斜体_")).toContain("mark:omd-em")
+  })
+
+  it("does not treat intra-word ASCII underscores as emphasis", () => {
+    expect(tagsOffLine("foo_bar_baz")).not.toContain("mark:omd-em")
+    expect(tagsOffLine("foo__bar__baz")).not.toContain("mark:omd-strong")
+  })
+
+  it("folds ==highlight== markers", () => {
+    expect(tagsOffLine("这是==高亮文本==").filter(x => x === "replace:HighlightMark")).toHaveLength(2)
+    expect(tagsOffLine("这是==高亮文本==")).toContain("mark:omd-highlight")
+  })
+
+  it("folds <mark> tags as highlight", () => {
+    expect(tagsOffLine("这是<mark>高亮文本</mark>").filter(x => x === "replace:HighlightMark")).toHaveLength(2)
+    expect(tagsOffLine("这是<mark>高亮文本</mark>")).toContain("mark:omd-highlight")
+  })
 })

@@ -80,7 +80,7 @@ function mergeRanges(ranges: RebuildRange[]): RebuildRange[] {
   return merged
 }
 
-const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table"])
+const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HorizontalRule"])
 
 function expandRange(
   state: EditorState,

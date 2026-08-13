@@ -10,9 +10,14 @@
 .editor-host .omd-del { text-decoration: line-through; }
 .editor-host .omd-link { color: #0969da; }
 .editor-host .omd-footnote { font-size: 0.75em; vertical-align: super; color: #0969da; }
+.editor-host .omd-footnote-def { font-size: 0.9em; color: #555; }
+.editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
 .editor-host .omd-inline-code { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
 .editor-host .omd-blockquote { border-left: 3px solid #d0d0d0; padding-left: 1em; color: #555; }
 .editor-host .omd-hr { border-top: 1px solid #d0d0d0; }
+.editor-host .omd-hr-block { margin: 0.4em 0; }
+.editor-host .omd-hr-block .omd-block-body { padding: 0; }
+.editor-host .omd-hr-block hr { border: none; border-top: 1px solid #d0d0d0; margin: 0.5em 0; }
 .editor-host .omd-checkbox { margin-right: 0.4em; }
 .editor-host .omd-bullet { color: #0969da; }
 .editor-host .omd-list-mark { color: #0969da; }

@@ -2,7 +2,7 @@ import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
-import { CheckboxWidget, BulletWidget } from "./widgets"
+import { CheckboxWidget, BulletWidget, HrWidget } from "./widgets"
 import { blockSelected } from "./blockWidget"
 import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
 import { CodeWidget } from "./widgets/code"
@@ -164,9 +164,27 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
     }
     case "QuoteMark":    { foldLineMark(node, state, out, "QuoteMark"); return false }
     case "FootnoteMark": { foldLineMark(node, state, out, "FootnoteMark"); return false }
-    case "HorizontalRule":
-      out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
+    case "FootnoteDefinition": {
+      for (let pos = node.from; pos <= node.to; ) {
+        const line = state.doc.lineAt(pos)
+        out.push({ from: line.from, to: line.from, tag: "line:omd-footnote-def", deco: Decoration.line({ class: "omd-footnote-def" }) })
+        pos = line.to + 1
+      }
       break
+    }
+    case "HorizontalRule":
+      if (blockSelected(state, node.from, node.to)) {
+        out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
+        return false
+      }
+      out.push({
+        from: node.from, to: node.to, tag: "widget:block:hr",
+        deco: Decoration.replace({
+          widget: new HrWidget(state.doc.sliceString(node.from, node.to), node.from),
+          block: true,
+        }),
+      })
+      return true
   }
   return false
 }
