@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import App, { type DesktopServices } from "../src/App"
 import type { CreateEditorOptions } from "../src/Editor"
+import { createAppHarness } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -10,6 +10,17 @@ vi.mock("@omd/engine", async importOriginal => {
     ...actual,
     exportHtml: () => "<!doctype html><html>exported</html>",
     collectOutline: () => [],
+    getPendingOrderedListNormalization: vi.fn(() => null),
+    acceptOrderedListNormalization: vi.fn(() => ({
+      kind: "accepted" as const,
+      transaction: {},
+    })),
+    rejectOrderedListNormalization: vi.fn(() => ({
+      kind: "reverted" as const,
+      transaction: {},
+      restoredMarkers: 1,
+      skippedMarkers: 0,
+    })),
   }
 })
 
@@ -37,94 +48,42 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function makeHarness() {
-  let contents = ""
-  let options: CreateEditorOptions | null = null
-  const view = {
-    get state() {
-      return {
-        doc: {
-          toString: () => contents,
-        },
-      }
-    },
-    destroy: vi.fn(),
-  } as unknown as EditorView
+function makeAppHarness() {
+  return createAppHarness(editor)
+}
 
-  editor.create.mockReset()
-  editor.reset.mockReset()
-  editor.create.mockImplementation((_parent, nextOptions) => {
-    options = nextOptions
-    contents = nextOptions.doc
-    return view
-  })
-  editor.reset.mockImplementation((_view, nextOptions) => {
-    options = nextOptions
-    contents = nextOptions.doc
-  })
-
-  const services: DesktopServices = {
-    pickOpenPath: vi.fn(async () => null),
-    pickSavePath: vi.fn(async () => null),
-    readFile: vi.fn(async () => ""),
-    writeFile: vi.fn(async () => undefined),
-    allowDocumentAssets: vi.fn(async () => undefined),
-    confirmDiscard: vi.fn(() => true),
-    reportError: vi.fn(),
-  }
-
-  return {
-    editor,
-    services,
-    renderApp: (props: { autosaveMs?: number; watchMs?: number } = {}) =>
-      render(
-        <App
-          services={services}
-          autosaveMs={props.autosaveMs ?? 0}
-          watchMs={props.watchMs ?? 0}
-        />,
-      ),
-    getOptions: () => {
-      if (!options) throw new Error("editor was not created")
-      return options
-    },
-    setContents: (value: string) => {
-      contents = value
-    },
-  }
+function edit(harness: ReturnType<typeof makeAppHarness>, tabId: number, doc: string) {
+  harness.editorForTab(tabId).emit({ doc, docChanged: true, pendingNormalization: null })
 }
 
 describe("App document session", () => {
   it("marks dirty from a CodeMirror document transaction callback", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.renderApp()
 
-    act(() => harness.getOptions().onDocChanged("edited"))
+    edit(harness, 1, "edited")
 
     expect(screen.getByText("untitled •")).toBeTruthy()
   })
 
   it("clears dirty when undo returns to the loaded document baseline", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    const harness = makeAppHarness()
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await harness.openIntoActive("/notes/doc.md", "saved")
     expect(harness.services.allowDocumentAssets).toHaveBeenCalledWith("/notes/doc.md")
 
-    act(() => harness.getOptions().onDocChanged("edited"))
+    edit(harness, 1, "edited")
     expect(screen.getByText("/notes/doc.md •")).toBeTruthy()
-    act(() => harness.getOptions().onDocChanged("saved"))
+    edit(harness, 1, "saved")
 
     expect(screen.getByText("/notes/doc.md")).toBeTruthy()
   })
 
   it("does not open or alter a dirty document when discard is cancelled", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     vi.mocked(harness.services.confirmDiscard).mockReturnValue(false)
     harness.renderApp()
-    act(() => harness.getOptions().onDocChanged("edited"))
+    edit(harness, 1, "edited")
 
     fireEvent.keyDown(window, { key: "o", metaKey: true })
 
@@ -132,12 +91,12 @@ describe("App document session", () => {
       expect(harness.services.confirmDiscard).toHaveBeenCalledOnce()
     })
     expect(harness.services.pickOpenPath).not.toHaveBeenCalled()
-    expect(harness.editor.reset).not.toHaveBeenCalled()
+    expect(editor.reset).not.toHaveBeenCalled()
     expect(screen.getByText("untitled •")).toBeTruthy()
   })
 
   it("ignores an older open response and primes the new image resolver path", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     const firstRead = deferred<string>()
     vi.mocked(harness.services.pickOpenPath)
       .mockResolvedValueOnce("/notes/old.md")
@@ -151,8 +110,8 @@ describe("App document session", () => {
     await waitFor(() => expect(harness.services.readFile).toHaveBeenCalledTimes(1))
     fireEvent.keyDown(window, { key: "o", metaKey: true })
 
-    await waitFor(() => expect(harness.editor.reset).toHaveBeenCalledOnce())
-    expect(harness.getOptions().getDocPath()).toBe("/notes/new.md")
+    await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
+    expect(harness.editorForTab(1).getOptions().getDocPath()).toBe("/notes/new.md")
     expect(screen.getByText("/notes/new.md")).toBeTruthy()
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })
@@ -160,22 +119,17 @@ describe("App document session", () => {
 
     firstRead.resolve("old")
     await act(async () => firstRead.promise)
-    expect(harness.editor.reset).toHaveBeenCalledOnce()
+    expect(editor.reset).toHaveBeenCalledOnce()
     expect(screen.getByText("/notes/new.md")).toBeTruthy()
   })
 
   it("keeps dirty when editing continues while a captured snapshot saves", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("before")
+    const harness = makeAppHarness()
     const write = deferred<void>()
     vi.mocked(harness.services.writeFile).mockReturnValue(write.promise)
     harness.renderApp()
-
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
-    harness.setContents("snapshot")
-    act(() => harness.getOptions().onDocChanged("snapshot"))
+    await harness.openIntoActive("/notes/doc.md", "before")
+    edit(harness, 1, "snapshot")
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     await waitFor(() => {
@@ -184,8 +138,7 @@ describe("App document session", () => {
         "snapshot",
       )
     })
-    harness.setContents("edited during save")
-    act(() => harness.getOptions().onDocChanged("edited during save"))
+    edit(harness, 1, "edited during save")
     write.resolve()
     await act(async () => write.promise)
 
@@ -193,30 +146,24 @@ describe("App document session", () => {
   })
 
   it("serializes saves so a newer snapshot is written last", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    const harness = makeAppHarness()
     const firstWrite = deferred<void>()
     const secondWrite = deferred<void>()
     vi.mocked(harness.services.writeFile)
       .mockReturnValueOnce(firstWrite.promise)
       .mockReturnValueOnce(secondWrite.promise)
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await harness.openIntoActive("/notes/doc.md", "saved")
 
-    harness.setContents("first snapshot")
-    act(() => harness.getOptions().onDocChanged("first snapshot"))
+    edit(harness, 1, "first snapshot")
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     await waitFor(() => expect(harness.services.writeFile).toHaveBeenCalledTimes(1))
 
-    harness.setContents("second snapshot")
-    act(() => harness.getOptions().onDocChanged("second snapshot"))
+    edit(harness, 1, "second snapshot")
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     expect(harness.services.writeFile).toHaveBeenCalledTimes(1)
 
-    harness.setContents("first snapshot")
-    act(() => harness.getOptions().onDocChanged("first snapshot"))
+    edit(harness, 1, "first snapshot")
     firstWrite.resolve()
     await waitFor(() => {
       expect(harness.services.writeFile).toHaveBeenNthCalledWith(
@@ -231,14 +178,14 @@ describe("App document session", () => {
   })
 
   it("reuses the first path for concurrent Save As requests", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     const firstWrite = deferred<void>()
     vi.mocked(harness.services.pickSavePath)
       .mockResolvedValueOnce("/notes/first-choice.md")
       .mockResolvedValueOnce("/notes/wrong-second-choice.md")
     vi.mocked(harness.services.writeFile).mockReturnValue(firstWrite.promise)
     harness.renderApp()
-    harness.setContents("untitled snapshot")
+    harness.editorForTab(1).setContents("untitled snapshot")
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     fireEvent.keyDown(window, { key: "s", metaKey: true })
@@ -263,7 +210,7 @@ describe("App document session", () => {
   })
 
   it("waits for pending saves before opening and reading a path", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
     vi.mocked(harness.services.readFile).mockResolvedValue("disk snapshot")
     const write = deferred<void>()
@@ -285,7 +232,7 @@ describe("App document session", () => {
   })
 
   it("does not start a save while an earlier open is still reading", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     const read = deferred<string>()
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
     vi.mocked(harness.services.readFile).mockReturnValue(read.promise)
@@ -307,26 +254,20 @@ describe("App document session", () => {
   })
 
   it("keeps the last successful baseline when a newer queued save fails", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("original")
+    const harness = makeAppHarness()
     const firstWrite = deferred<void>()
     vi.mocked(harness.services.writeFile)
       .mockReturnValueOnce(firstWrite.promise)
       .mockRejectedValueOnce(new Error("second save failed"))
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await harness.openIntoActive("/notes/doc.md", "original")
 
-    harness.setContents("first")
-    act(() => harness.getOptions().onDocChanged("first"))
+    edit(harness, 1, "first")
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     await waitFor(() => expect(harness.services.writeFile).toHaveBeenCalledOnce())
-    harness.setContents("second")
-    act(() => harness.getOptions().onDocChanged("second"))
+    edit(harness, 1, "second")
     fireEvent.keyDown(window, { key: "s", metaKey: true })
-    harness.setContents("first")
-    act(() => harness.getOptions().onDocChanged("first"))
+    edit(harness, 1, "first")
 
     firstWrite.resolve()
     await waitFor(() => {
@@ -338,7 +279,7 @@ describe("App document session", () => {
   })
 
   it("waits for an unresolved Save As dialog before opening", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     const savePath = deferred<string | null>()
     vi.mocked(harness.services.pickSavePath).mockReturnValue(savePath.promise)
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/opened.md")
@@ -357,7 +298,7 @@ describe("App document session", () => {
   })
 
   it("reports Save As dialog failures", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     vi.mocked(harness.services.pickSavePath).mockRejectedValue(
       new Error("dialog unavailable"),
     )
@@ -373,16 +314,12 @@ describe("App document session", () => {
   })
 
   it("rolls back session refs if resetting the editor fails", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/broken.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("broken")
-    vi.mocked(harness.editor.reset).mockImplementation(() => {
-      throw new Error("reset failed")
-    })
+    const harness = makeAppHarness()
     vi.mocked(harness.services.pickSavePath).mockResolvedValue(null)
     harness.renderApp()
+    harness.failNextReset(new Error("reset failed"))
 
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await harness.requestOpen("/notes/broken.md", "broken")
     await waitFor(() => {
       expect(harness.services.reportError).toHaveBeenCalledWith(
         "Open failed: reset failed",
@@ -397,7 +334,7 @@ describe("App document session", () => {
 
 describe("App product shell", () => {
   it("restores a recovery draft when the user confirms", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.services.listRecoveries = vi.fn(async () => [
       { key: "untitled_1", label: "untitled_1" },
     ])
@@ -405,44 +342,39 @@ describe("App product shell", () => {
     harness.services.confirmRestore = vi.fn(() => true)
     harness.renderApp()
 
-    await waitFor(() => expect(harness.editor.reset).toHaveBeenCalledOnce())
+    await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
     expect(screen.getByText("untitled •")).toBeTruthy()
   })
 
   it("writes untitled edits only to recovery, not the filesystem", async () => {
-    const harness = makeHarness()
-    harness.services.writeRecovery = vi.fn(async () => undefined)
+    const harness = makeAppHarness()
     harness.renderApp({ autosaveMs: 20 })
-    act(() => harness.getOptions().onDocChanged("draft"))
+    edit(harness, 1, "draft")
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
     expect(harness.services.writeRecovery).toHaveBeenCalled()
     expect(harness.services.writeFile).not.toHaveBeenCalled()
   })
 
   it("autosaves a dirty pathed document through the save queue", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    const harness = makeAppHarness()
     harness.renderApp({ autosaveMs: 20 })
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
-    harness.setContents("edited")
-    act(() => harness.getOptions().onDocChanged("edited"))
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    edit(harness, 1, "edited")
     await waitFor(() => {
       expect(harness.services.writeFile).toHaveBeenCalledWith("/notes/doc.md", "edited")
     })
   })
 
   it("opens a second tab from the tab bar", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.renderApp()
     fireEvent.click(screen.getByRole("button", { name: "+" }))
-    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     expect(screen.getAllByRole("button", { name: /untitled/ }).length).toBeGreaterThan(1)
   })
 
   it("opens the command palette on Cmd+K and runs a command", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.renderApp()
     fireEvent.keyDown(window, { key: "k", metaKey: true })
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
@@ -454,19 +386,18 @@ describe("App product shell", () => {
   })
 
   it("reloads a clean document when the file changes on disk", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile)
-      .mockResolvedValueOnce("saved")
-      .mockResolvedValue("external")
-    harness.renderApp({ watchMs: 15 })
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
-    await waitFor(() => expect(harness.editor.reset).toHaveBeenCalledTimes(2))
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+
+    vi.mocked(harness.services.readFile).mockResolvedValueOnce("external")
+    await harness.runExternalCheck()
+
+    await waitFor(() => expect(editor.reset).toHaveBeenCalledTimes(2))
   })
 
   it("searches the opened folder and opens a hit in a new tab", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.services.pickFolder = vi.fn(async () => "/notes")
     harness.services.listDir = vi.fn(async () => [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
@@ -496,7 +427,7 @@ describe("App product shell", () => {
   })
 
   it("shows files and outline sidebars without a chrome export panel", () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.renderApp()
     expect(screen.getByText(/Open a folder from the File menu/)).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Open folder" })).toBeNull()
@@ -507,7 +438,7 @@ describe("App product shell", () => {
   })
 
   it("expands a directory in place without replacing the tree", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.services.pickFolder = vi.fn(async () => "/notes")
     harness.services.listDir = vi.fn(async (path: string) => {
       if (path === "/notes/drafts") {
@@ -532,7 +463,7 @@ describe("App product shell", () => {
   })
 
   it("runs File menu commands including export", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
@@ -554,7 +485,7 @@ describe("App product shell", () => {
   })
 
   it("exports a PNG through native WebView capture", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
@@ -575,7 +506,7 @@ describe("App product shell", () => {
   })
 
   it("exports a PDF through native WebView capture", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
@@ -596,18 +527,15 @@ describe("App product shell", () => {
   })
 
   it("saves as a new path from the File menu even when a file is already open", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
       return () => undefined
     }
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
     vi.mocked(harness.services.pickSavePath).mockResolvedValue("/notes/copy.md")
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await harness.openIntoActive("/notes/doc.md", "saved")
     act(() => send?.("save-as"))
     await waitFor(() => {
       expect(harness.services.pickSavePath).toHaveBeenCalled()
@@ -616,7 +544,7 @@ describe("App product shell", () => {
   })
 
   it("creates and closes tabs from the File menu", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
@@ -624,13 +552,13 @@ describe("App product shell", () => {
     }
     harness.renderApp()
     act(() => send?.("new"))
-    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     act(() => send?.("close"))
     await waitFor(() => expect(screen.getAllByRole("button", { name: /untitled/ })).toHaveLength(1))
   })
 
   it("remembers opened files and reopens them from the File menu", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     let send: ((id: string) => void) | undefined
     harness.services.listenMenu = handler => {
       send = handler
@@ -638,33 +566,29 @@ describe("App product shell", () => {
     }
     harness.services.setRecentMenu = vi.fn(async () => undefined)
     harness.services.saveRecents = vi.fn()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await harness.openIntoActive("/notes/doc.md", "saved")
     await waitFor(() => expect(harness.services.setRecentMenu).toHaveBeenCalledWith(["/notes/doc.md"]))
     fireEvent.click(screen.getByRole("button", { name: "+" }))
-    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     act(() => send?.("recent:/notes/doc.md"))
     await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
   })
 
   it("fills the file tree from the parent folder after opening a file", async () => {
-    const harness = makeHarness()
-    vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("saved")
+    const harness = makeAppHarness()
     harness.services.listDir = vi.fn(async () => [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
       { name: "other.md", path: "/notes/other.md", is_dir: false },
     ])
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await harness.openIntoActive("/notes/doc.md", "saved")
     await waitFor(() => expect(screen.getByText("other.md")).toBeTruthy())
     expect(harness.services.listDir).toHaveBeenCalledWith("/notes")
   })
 
   it("exports HTML through the save service", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.html")
     harness.renderApp()
     fireEvent.keyDown(window, { key: "k", metaKey: true })
@@ -681,11 +605,11 @@ describe("App product shell", () => {
   })
 
   it("creates a tab with Cmd+N and save-as with Cmd+Shift+S", async () => {
-    const harness = makeHarness()
+    const harness = makeAppHarness()
     vi.mocked(harness.services.pickSavePath).mockResolvedValue("/notes/copy.md")
     harness.renderApp()
     fireEvent.keyDown(window, { key: "n", metaKey: true })
-    await waitFor(() => expect(harness.editor.create).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     fireEvent.keyDown(window, { key: "s", metaKey: true, shiftKey: true })
     await waitFor(() => expect(harness.services.pickSavePath).toHaveBeenCalled())
   })
