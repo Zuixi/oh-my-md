@@ -1,31 +1,22 @@
 import { useEffect, useRef, useState } from "react"
 import {
-  createEditor,
-  resetEditorDocument,
-  type CreateEditorOptions,
+  createEditor, documentOutline, editorStatus, resetEditorDocument,
+  type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, collectOutline, exportHtml, isLivePreview, type OutlineItem } from "@omd/engine"
+import { applyToggle, exportHtml, type OutlineItem } from "@omd/engine"
 import {
-  createSession,
-  markSaved,
-  openSession,
-  recoveryKey,
-  sessionDirty,
-  type EditorSession,
+  advanceDocumentIdentity, createSession, markSaved, openSession, recoveryKey,
+  sessionDirty, type EditorSession,
 } from "./session"
 import {
-  activeSession,
-  addTab,
-  closeTab,
-  createWorkspace,
-  ensureFolder,
-  findTabByPath,
-  focusTab,
-  openFolder,
-  replaceActive,
-  type Workspace,
+  activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
+  focusTab, openFolder, replaceTabSession, type Workspace,
 } from "./workspace"
+import {
+  clearTabNormalization, projectNormalizationNotice, type NormalizationByTab,
+} from "./normalizationState"
+import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
@@ -88,6 +79,8 @@ export default function App({
   const recentsRef = useRef<string[]>([])
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const pendingJumpRef = useRef<number | null>(null)
+  const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
+  const normalizationRef = useRef(normalizationByTab)
   const dirty = sessionDirty(session, doc)
 
   function commitWorkspace(next: Workspace) {
@@ -101,6 +94,16 @@ export default function App({
   function commitTree(next: FileTreeModel) {
     treeModelRef.current = next
     setTreeModel(next)
+  }
+
+  function commitNormalization(next: NormalizationByTab) {
+    if (next === normalizationRef.current) return
+    normalizationRef.current = next
+    setNormalizationByTab(next)
+  }
+
+  function tabById(id: number): EditorSession | undefined {
+    return workspaceRef.current.tabs.find(tab => tab.id === id)
   }
 
   function rememberRecent(path: string) {
@@ -117,32 +120,74 @@ export default function App({
   }
 
   function commitSession(next: EditorSession) {
-    sessionRef.current = next
-    setSession(next)
-    commitWorkspace(replaceActive(workspaceRef.current, next))
+    commitWorkspace(replaceTabSession(workspaceRef.current, next))
   }
 
-  function syncDoc(value: string, tabId = sessionRef.current.id) {
-    docRef.current = value
+  function syncDoc(value: string, tabId = workspaceRef.current.activeId) {
     docsRef.current.set(tabId, value)
+    if (tabId !== workspaceRef.current.activeId) return
+    docRef.current = value
     setDoc(value)
   }
 
-  function handleDocChanged(value: string) {
-    syncDoc(value)
-    void services.writeRecovery?.(recoveryKey(sessionRef.current), value)
+  function saveRecovery(tab: EditorSession, contents: string) {
+    void services.writeRecovery?.(recoveryKey(tab), contents)?.catch(error => {
+      if (mountedRef.current) services.reportError(errorMessage("Recovery write failed", error))
+    })
   }
 
-  function editorOptions(contents: string): CreateEditorOptions {
+  /** Applies an update to the tab it was built for, or drops it if that binding is gone. */
+  function handleDocumentUpdate(update: EditorDocumentUpdate) {
+    const tab = tabById(update.tabId)
+    if (!tab || tab.documentId !== update.documentId) return
+    if (update.docChanged) {
+      syncDoc(update.doc, update.tabId)
+      saveRecovery(tab, update.doc)
+    }
+    commitNormalization(projectNormalizationNotice(
+      normalizationRef.current,
+      update.tabId,
+      update.pendingNormalization,
+    ))
+  }
+
+  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
     return {
       doc: contents,
-      getDocPath: () => sessionRef.current.path,
-      getDocumentId: () => sessionRef.current.documentId,
-      onDocChanged: handleDocChanged,
+      tabId,
+      documentId,
+      getDocPath: () => tabById(tabId)?.path ?? null,
+      getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
+      onDocumentUpdate: handleDocumentUpdate,
       onError: (message) => {
         if (mountedRef.current) services.reportError(message)
       },
     }
+  }
+
+  /**
+   * Replaces one tab's document with a fresh EditorState. The bumped identity is committed
+   * before the view is touched, so a failing reset cannot leave a live editor bound to an
+   * identity the workspace no longer has; on failure all three stores roll back together.
+   */
+  function resetTabDocument(nextSession: EditorSession, contents: string): boolean {
+    const view = viewsRef.current.get(nextSession.id)
+    if (!view) return false
+    const previousWorkspace = workspaceRef.current
+    const previousNormalization = normalizationRef.current
+    const previousDoc = docsRef.current.get(nextSession.id) ?? ""
+    commitWorkspace(replaceTabSession(previousWorkspace, nextSession))
+    commitNormalization(clearTabNormalization(previousNormalization, nextSession.id))
+    try {
+      resetEditorDocument(view, editorOptions(contents, nextSession.id, nextSession.documentId))
+    } catch (error) {
+      commitWorkspace(previousWorkspace)
+      commitNormalization(previousNormalization)
+      syncDoc(previousDoc, nextSession.id)
+      throw error
+    }
+    syncDoc(contents, nextSession.id)
+    return true
   }
 
   function sameSession(documentId: number, view: EditorView) {
@@ -150,11 +195,7 @@ export default function App({
   }
 
   function refreshChrome(view: EditorView | null) {
-    try {
-      setOutline(view ? collectOutline(view.state) : [])
-    } catch {
-      setOutline([])
-    }
+    setOutline(documentOutline(view))
   }
 
   function ensureViews() {
@@ -162,7 +203,10 @@ export default function App({
       if (viewsRef.current.has(tab.id)) continue
       const el = hostsRef.current.get(tab.id)
       if (!el) continue
-      const view = createEditor(el, editorOptions(docsRef.current.get(tab.id) ?? ""))
+      const view = createEditor(
+        el,
+        editorOptions(docsRef.current.get(tab.id) ?? "", tab.id, tab.documentId),
+      )
       viewsRef.current.set(tab.id, view)
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
     }
@@ -260,10 +304,8 @@ export default function App({
       return
     }
     const contents = await services.readRecovery(first.key)
-    const view = viewRef.current
-    if (!view || !mountedRef.current) return
-    resetEditorDocument(view, editorOptions(contents))
-    syncDoc(contents)
+    if (!mountedRef.current) return
+    resetTabDocument(advanceDocumentIdentity(sessionRef.current), contents)
   }
 
   async function openPath(nextPath: string, inNewTab = false, request?: number) {
@@ -287,39 +329,18 @@ export default function App({
       void services.clearRecovery?.(recoveryKey(tab))
       return
     }
-    const view = viewRef.current
-    if (!view) return
-    resetEditorDocument(view, editorOptions(contents))
-    commitSession(openSession(sessionRef.current, nextPath, contents))
-    syncDoc(contents)
+    if (!resetTabDocument(openSession(sessionRef.current, nextPath, contents), contents)) return
     void services.clearRecovery?.(recoveryKey(sessionRef.current))
   }
 
-  async function openRecent(path: string) {
+  async function runOpen(pickPath: () => Promise<string | null>) {
     const request = ++openRequestRef.current
     await saveQueueRef.current.catch(() => undefined)
     if (request !== openRequestRef.current || !mountedRef.current) return
     openingRef.current = true
     try {
       if (sessionDirty(sessionRef.current, docRef.current) && !services.confirmDiscard()) return
-      await openPath(path, false, request)
-    } catch (error) {
-      if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage("Open failed", error))
-      }
-    } finally {
-      if (request === openRequestRef.current) openingRef.current = false
-    }
-  }
-
-  async function openFile() {
-    const request = ++openRequestRef.current
-    await saveQueueRef.current.catch(() => undefined)
-    if (request !== openRequestRef.current || !mountedRef.current) return
-    openingRef.current = true
-    try {
-      if (sessionDirty(sessionRef.current, docRef.current) && !services.confirmDiscard()) return
-      const nextPath = await services.pickOpenPath()
+      const nextPath = await pickPath()
       if (!nextPath || request !== openRequestRef.current) return
       await openPath(nextPath, false, request)
     } catch (error) {
@@ -329,6 +350,14 @@ export default function App({
     } finally {
       if (request === openRequestRef.current) openingRef.current = false
     }
+  }
+
+  function openRecent(path: string) {
+    return runOpen(async () => path)
+  }
+
+  function openFile() {
+    return runOpen(() => services.pickOpenPath())
   }
 
   async function saveFile(saveAs = false) {
@@ -384,11 +413,12 @@ export default function App({
   }
 
   function requestCloseTab(id: number) {
-    const tab = workspaceRef.current.tabs.find(item => item.id === id)
+    const tab = tabById(id)
     if (!tab) return
     const contents = docsRef.current.get(id) ?? ""
     if (sessionDirty(tab, contents) && !(services.confirmClose ?? services.confirmDiscard)()) return
     if (workspaceRef.current.tabs.length > 1) {
+      commitNormalization(clearTabNormalization(normalizationRef.current, id))
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
@@ -444,12 +474,8 @@ export default function App({
     const keepMine = sessionDirty(sessionRef.current, docRef.current)
       && !services.confirmExternalChange?.()
     lastDiskRef.current.set(path, disk)
-    if (keepMine) return
-    const view = viewRef.current
-    if (!view || sessionRef.current.path !== path) return
-    resetEditorDocument(view, editorOptions(disk))
-    commitSession(openSession(sessionRef.current, path, disk))
-    syncDoc(disk)
+    if (keepMine || sessionRef.current.path !== path) return
+    resetTabDocument(openSession(sessionRef.current, path, disk), disk)
   }
 
   async function exportCurrent(kind: "html" | "pdf" | "png") {
@@ -483,6 +509,15 @@ export default function App({
       services.reportError(errorMessage("Custom CSS failed", error))
     }
   }
+
+  /**
+   * Task 7 owns accept/reject orchestration (`normalizationCoordinator.ts`): both actions must
+   * capture tab, documentId, view and notice id and revalidate them before dispatching, so they
+   * stay inert until that capture exists rather than dispatching into a replaced view.
+   */
+  function acceptNormalization() {}
+
+  function keepOriginalNumbers() {}
 
   const openFileRef = useRef(openFile)
   const saveFileRef = useRef(saveFile)
@@ -567,23 +602,12 @@ export default function App({
     return () => window.clearTimeout(timer)
   }, [searchOpen, searchQuery, workspace.folder, services])
 
-  let cursor = "1:1"
-  let mode = "live"
-  try {
-    const view = viewRef.current
-    if (view) {
-      const head = view.state.selection.main.head
-      const line = view.state.doc.lineAt(head)
-      cursor = `${line.number}:${head - line.from + 1}`
-      mode = view.state.field(isLivePreview) ? "live" : "source"
-    }
-  } catch {
-    cursor = "1:1"
-  }
+  const { cursor, mode } = editorStatus(viewRef.current)
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
     .map(tab => tab.id)
+  const activeNormalization = normalizationByTab[workspace.activeId]
 
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
@@ -593,7 +617,7 @@ export default function App({
         words={wordCount(doc)}
         cursor={cursor}
         mode={mode}
-        normalizationReviewRequired={false}
+        normalizationReviewRequired={activeNormalization !== undefined}
       />
       <TabBar
         tabs={workspace.tabs}
@@ -602,6 +626,12 @@ export default function App({
         onFocus={activateTab}
         onClose={requestCloseTab}
         onNew={newTab}
+      />
+      <NormalizationBanner
+        markerCount={activeNormalization?.notice.markerCount ?? null}
+        busy={(activeNormalization?.action ?? "idle") !== "idle"}
+        onSave={acceptNormalization}
+        onKeepOriginal={keepOriginalNumbers}
       />
       <div className="workspace-body">
         {searchOpen ? (

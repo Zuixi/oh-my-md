@@ -4,7 +4,7 @@ export function StatusBar(props: {
   words: number
   cursor: string
   mode: string
-  normalizationReviewRequired?: boolean
+  normalizationReviewRequired: boolean
 }) {
   return (
     <div className="statusbar">

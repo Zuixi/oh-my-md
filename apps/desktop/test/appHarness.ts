@@ -87,15 +87,11 @@ function notifyHost(
   options: CreateEditorOptions,
   update: Omit<EditorDocumentUpdate, "tabId" | "documentId">,
 ): void {
-  if (options.onDocumentUpdate) {
-    options.onDocumentUpdate({
-      ...update,
-      tabId: options.tabId,
-      documentId: options.documentId,
-    })
-    return
-  }
-  if (update.docChanged) options.onDocChanged(update.doc)
+  options.onDocumentUpdate({
+    ...update,
+    tabId: options.tabId,
+    documentId: options.documentId,
+  })
 }
 
 function createHandleRecord(
@@ -138,7 +134,10 @@ function createHandleRecord(
  * that really changed. Production desktop code must keep asking the engine instead.
  *
  * It fakes one shape: flat ordered lists that start at 1 or higher and run over consecutive lines.
- * Shapes where it would disagree with the engine are rejected loudly rather than renumbered wrong.
+ * Two shapes are rejected loudly (lists starting at 0, lists split by a blank line), but the
+ * double is not a validator: indented or nested items, `)` delimiters, and numbered lines inside
+ * fenced code are still renumbered with a `markerCount` the engine would not produce. Prefer flat
+ * `1.`-style fixtures, or drive a real editor when the shape matters.
  */
 const ORDERED_MARKER = /^(\s*)(\d+)([.)])(\s)/
 const NOT_IN_LIST = null
@@ -214,13 +213,11 @@ function installEditorMock(context: HarnessContext): void {
   editor.create.mockReset()
   editor.reset.mockReset()
   editor.create.mockImplementation((_parent, options) => {
-    // Hosts that have not bound identity yet get the id App would have allocated for this tab.
-    const tabId = options.tabId ?? records.length + 1
-    const record = createHandleRecord(tabId, options, closed => {
+    const record = createHandleRecord(options.tabId, options, closed => {
       context.openTabIds = context.openTabIds.filter(id => id !== closed)
     })
     records.push(record)
-    context.openTabIds = [...context.openTabIds, tabId]
+    context.openTabIds = [...context.openTabIds, options.tabId]
     return record.handle.view
   })
   editor.reset.mockImplementation((view, options) => {

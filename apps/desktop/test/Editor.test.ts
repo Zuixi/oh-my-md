@@ -7,6 +7,8 @@ import {
 } from "@omd/engine"
 import {
   createEditor,
+  documentOutline,
+  editorStatus,
   makeImageResolver,
   resetEditorDocument,
   type CreateEditorOptions,
@@ -89,27 +91,6 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  // Covers the production path App.tsx still takes. Delete together with the
-  // LegacyEditorOptions variant when Task 6 migrates App.tsx.
-  it("reports document changes to an unbound host through onDocChanged", () => {
-    const onDocChanged = vi.fn()
-    const view = createEditor(document.createElement("div"), {
-      doc: "alpha",
-      getDocPath: () => null,
-      getDocumentId: () => 1,
-      onDocChanged,
-      onError: vi.fn(),
-    })
-
-    view.dispatch({ selection: { anchor: 1 } })
-    expect(onDocChanged).not.toHaveBeenCalled()
-
-    view.dispatch({ changes: { from: 5, insert: "!" } })
-    expect(onDocChanged).toHaveBeenCalledOnce()
-    expect(onDocChanged).toHaveBeenLastCalledWith("alpha!")
-    view.destroy()
-  })
-
   it("creates a fresh history when a different document is loaded", () => {
     const view = createEditor(document.createElement("div"), {
       doc: "first",
@@ -136,6 +117,23 @@ describe("desktop editor lifecycle", () => {
     expect(undo(view)).toBe(false)
     expect(view.state.doc.toString()).toBe("second")
     view.destroy()
+  })
+
+  it("reads cursor position, mode, and outline from a view", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "# Title\nbeta"),
+    )
+    view.dispatch({ selection: { anchor: 10 } })
+
+    expect(editorStatus(view)).toEqual({ cursor: "2:3", mode: "live" })
+    expect(documentOutline(view).map(item => item.text)).toEqual(["Title"])
+    view.destroy()
+  })
+
+  it("falls back to a neutral status and empty outline without a view", () => {
+    expect(editorStatus(null)).toEqual({ cursor: "1:1", mode: "live" })
+    expect(documentOutline(null)).toEqual([])
   })
 
   it("resolves a relative image from the first state of an opened document", () => {

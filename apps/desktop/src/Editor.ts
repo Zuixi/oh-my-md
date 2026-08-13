@@ -2,9 +2,12 @@ import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine, typ
 import { EditorState } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
+  collectOutline,
   editorExtensions,
   getPendingOrderedListNormalization,
+  isLivePreview,
   type OrderedListNormalizationNotice,
+  type OutlineItem,
 } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
@@ -23,32 +26,15 @@ export interface EditorDocumentUpdate {
   readonly pendingNormalization: OrderedListNormalizationNotice | null
 }
 
-interface EditorHostOptions {
+export interface CreateEditorOptions {
   doc: string
-  getDocPath: () => string | null
-  getDocumentId: () => number
-  onError: (message: string) => void
-}
-
-export interface BoundEditorOptions extends EditorHostOptions {
   tabId: number
   documentId: number
+  getDocPath: () => string | null
+  getDocumentId: () => number
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
-  onDocChanged?: undefined
+  onError: (message: string) => void
 }
-
-/**
- * Temporary shape for hosts that have not bound identity yet. Delete this variant, and the
- * legacy branch in `notifyHost`, once every caller passes `BoundEditorOptions`.
- */
-export interface LegacyEditorOptions extends EditorHostOptions {
-  onDocChanged: (doc: string) => void
-  tabId?: undefined
-  documentId?: undefined
-  onDocumentUpdate?: undefined
-}
-
-export type CreateEditorOptions = BoundEditorOptions | LegacyEditorOptions
 
 export function makeImageResolver(
   getDocPath: () => string | null,
@@ -72,30 +58,17 @@ function samePending(
   return a.id === b.id && a.markerCount === b.markerCount
 }
 
-function notifyHost(
-  options: CreateEditorOptions,
-  update: ViewUpdate,
-  pendingNormalization: OrderedListNormalizationNotice | null,
-): void {
-  const doc = update.state.doc.toString()
-  if (options.onDocumentUpdate) {
-    options.onDocumentUpdate({
-      tabId: options.tabId,
-      documentId: options.documentId,
-      doc,
-      docChanged: update.docChanged,
-      pendingNormalization,
-    })
-    return
-  }
-  if (update.docChanged) options.onDocChanged(doc)
-}
-
 function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): void {
   const pending = getPendingOrderedListNormalization(update.state)
   const before = getPendingOrderedListNormalization(update.startState)
   if (!update.docChanged && samePending(before, pending)) return
-  notifyHost(options, update, pending)
+  options.onDocumentUpdate({
+    tabId: options.tabId,
+    documentId: options.documentId,
+    doc: update.state.doc.toString(),
+    docChanged: update.docChanged,
+    pendingNormalization: pending,
+  })
 }
 
 function createEditorState(options: CreateEditorOptions): EditorState {
@@ -138,6 +111,36 @@ export function createEditor(
     state: createEditorState(options),
     parent,
   })
+}
+
+export interface EditorStatus {
+  readonly cursor: string
+  readonly mode: string
+}
+
+const NO_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
+
+/** Chrome values read back from a view; test doubles are tolerated as "no status yet". */
+export function editorStatus(view: EditorView | null): EditorStatus {
+  if (!view) return NO_STATUS
+  try {
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    return {
+      cursor: `${line.number}:${head - line.from + 1}`,
+      mode: view.state.field(isLivePreview) ? "live" : "source",
+    }
+  } catch {
+    return NO_STATUS
+  }
+}
+
+export function documentOutline(view: EditorView | null): OutlineItem[] {
+  try {
+    return view ? collectOutline(view.state) : []
+  } catch {
+    return []
+  }
 }
 
 export function resetEditorDocument(

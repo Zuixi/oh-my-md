@@ -197,6 +197,8 @@ html, body, #root { height: 100%; margin: 0; background: var(--omd-bg); color: v
   border-bottom: 1px solid var(--omd-border);
   border-left: 3px solid var(--omd-link);
 }
+/* The live region stays mounted with no notice, so it must take no space. */
+.normalization-banner.is-idle { padding: 0; background: none; border: 0; }
 .normalization-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .normalization-banner-action {
   min-height: var(--min-target); min-width: var(--min-target);
