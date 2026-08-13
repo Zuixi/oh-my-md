@@ -115,7 +115,7 @@ export function createEditor(
 
 export interface EditorStatus {
   readonly cursor: string
-  readonly mode: string
+  readonly mode: "live" | "source"
 }
 
 const NO_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
