@@ -12,10 +12,40 @@ describe("NormalizationBanner", () => {
     expect(screen.getByRole("button", { name: "Keep original numbers" })).toBeTruthy()
   })
 
-  it("disables both actions while busy", () => {
-    render(<NormalizationBanner markerCount={1} busy
+  it("states that ordered list numbers were normalized", () => {
+    render(<NormalizationBanner markerCount={2} busy={false}
       onSave={vi.fn()} onKeepOriginal={vi.fn()} />)
-    expect(screen.getAllByRole("button").every(button => button.hasAttribute("disabled"))).toBe(true)
+    expect(screen.getByRole("status").textContent).toBe(
+      "Ordered list numbers were normalized. 2 items were renumbered.",
+    )
+  })
+
+  it("keeps the action names out of the announced region", () => {
+    render(<NormalizationBanner markerCount={2} busy={false}
+      onSave={vi.fn()} onKeepOriginal={vi.fn()} />)
+    const status = screen.getByRole("status")
+    for (const button of screen.getAllByRole("button")) {
+      expect(status.contains(button)).toBe(false)
+    }
+  })
+
+  it("disables both actions while busy without dropping their focus", () => {
+    const onSave = vi.fn()
+    const onKeepOriginal = vi.fn()
+    render(<NormalizationBanner markerCount={1} busy
+      onSave={onSave} onKeepOriginal={onKeepOriginal} />)
+    const buttons = screen.getAllByRole("button")
+    expect(buttons.map(button => button.getAttribute("aria-disabled"))).toEqual([
+      "true",
+      "true",
+    ])
+    for (const button of buttons) {
+      button.focus()
+      expect(document.activeElement).toBe(button)
+      fireEvent.click(button)
+    }
+    expect(onSave).not.toHaveBeenCalled()
+    expect(onKeepOriginal).not.toHaveBeenCalled()
   })
 
   it("runs both named actions in document order", () => {
@@ -39,6 +69,7 @@ describe("NormalizationBanner", () => {
       onSave={vi.fn()} onKeepOriginal={vi.fn()} />)
     expect(screen.queryByRole("dialog")).toBeNull()
     expect(screen.getByRole("status").contains(document.activeElement)).toBe(false)
+    expect(document.activeElement).toBe(document.body)
   })
 })
 
@@ -52,6 +83,7 @@ describe("StatusBar normalization review", () => {
       .map(node => node.textContent)
     expect(pathTexts).toEqual(["untitled •"])
     const review = screen.getByText("Normalization review required")
+    expect(review.textContent).toBe("Normalization review required")
     expect(review === pathNode).toBe(false)
     expect(pathNode.contains(review)).toBe(false)
   })
