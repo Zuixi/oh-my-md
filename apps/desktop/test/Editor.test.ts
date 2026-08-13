@@ -89,6 +89,27 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  // Covers the production path App.tsx still takes. Delete together with the
+  // LegacyEditorOptions variant when Task 6 migrates App.tsx.
+  it("reports document changes to an unbound host through onDocChanged", () => {
+    const onDocChanged = vi.fn()
+    const view = createEditor(document.createElement("div"), {
+      doc: "alpha",
+      getDocPath: () => null,
+      getDocumentId: () => 1,
+      onDocChanged,
+      onError: vi.fn(),
+    })
+
+    view.dispatch({ selection: { anchor: 1 } })
+    expect(onDocChanged).not.toHaveBeenCalled()
+
+    view.dispatch({ changes: { from: 5, insert: "!" } })
+    expect(onDocChanged).toHaveBeenCalledOnce()
+    expect(onDocChanged).toHaveBeenLastCalledWith("alpha!")
+    view.destroy()
+  })
+
   it("creates a fresh history when a different document is loaded", () => {
     const view = createEditor(document.createElement("div"), {
       doc: "first",
