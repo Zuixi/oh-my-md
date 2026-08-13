@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { EditorView } from "@codemirror/view"
 import { EditorState } from "@codemirror/state"
-import { editorExtensions } from "../src/index"
+import {
+  editorExtensions,
+  getPendingOrderedListNormalization,
+  rejectOrderedListNormalization,
+} from "../src/index"
 import { livePreviewField } from "../src/decorations/build"
 
 // View 级冒烟：纯函数 spec 测试测不到 "Block decorations may not be specified
@@ -50,6 +54,19 @@ describe("view smoke (real EditorView)", () => {
     expect(view.state.doc.toString()).toBe("1. 第一项\n2. 第二项\n3. 第三项\n\ntail")
     const labels = [...view.dom.querySelectorAll(".omd-ordered-mark")].map(el => el.textContent)
     expect(labels).toEqual(["1.", "2.", "3."])
+    view.destroy()
+  })
+
+  it("keeps consecutive preview labels after reject", async () => {
+    const { view, errors } = makeView("1. a\n3. b\n\ntail")
+    await tick()
+    const notice = getPendingOrderedListNormalization(view.state)!
+    const result = rejectOrderedListNormalization(view.state, notice.id)
+    if (result.kind === "reverted") view.dispatch(result.transaction)
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe("1. a\n3. b\n\ntail")
+    expect(view.dom.querySelectorAll(".omd-ordered-mark")[1]?.textContent).toBe("2.")
     view.destroy()
   })
 
