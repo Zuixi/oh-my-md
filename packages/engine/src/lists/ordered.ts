@@ -1,9 +1,11 @@
 import type { SyntaxNode } from "@lezer/common"
 import {
   Annotation,
+  ChangeSet,
   StateEffect,
   StateField,
   Transaction,
+  type ChangeDesc,
   type EditorState,
   type TransactionSpec,
 } from "@codemirror/state"
@@ -116,29 +118,92 @@ const emptyNormalizationState: OrderedNormalizationState = {
   suppressed: false,
 }
 
-const recordNormalization = StateEffect.define<readonly ReversibleOrderedMarker[]>()
 const resolveNormalization = StateEffect.define<{
   readonly id: NormalizationId
   readonly suppress: boolean
 }>()
 
-/** Marker positions in the document produced by `changes`, paired with the replaced text. */
-function reversibleOrderedMarkers(
+/** One batch of marker rewrites. The trigger decides whether the batch is reversible. */
+interface OrderedNormalizationBatch {
+  readonly trigger: "preview-entry" | "user-followup"
+  readonly changes: readonly OrderedMarkChange[]
+}
+
+const orderedRenumberAnn = Annotation.define<OrderedNormalizationBatch>()
+
+/**
+ * Classifies one normalization pass. While the syntax tree does not yet cover the document, later
+ * passes are still parse progress of the same preview entry: an early pass can see no list at all,
+ * so the entry window must not close on pass count. Once the tree is complete, only a document
+ * change the user made can have produced new wrong numbers.
+ */
+export function normalizationTrigger(
+  hasUserDocChange: boolean,
+  treeLength: number,
+  docLength: number,
+): "preview-entry" | "user-followup" {
+  if (treeLength < docLength) return "preview-entry"
+  return hasUserDocChange ? "user-followup" : "preview-entry"
+}
+
+/**
+ * The only place that stamps a normalization batch. `changes` are positions in `state`'s document,
+ * resolved against it here so an out-of-range batch fails instead of landing somewhere else; the
+ * state field re-derives marker ranges from the resulting transaction.
+ */
+export function buildOrderedNormalizationTransaction(
   state: EditorState,
+  trigger: "preview-entry" | "user-followup",
   changes: readonly OrderedMarkChange[],
+): TransactionSpec {
+  return {
+    changes: ChangeSet.of(changes, state.doc.length),
+    annotations: [
+      orderedRenumberAnn.of({ trigger, changes }),
+      Transaction.addToHistory.of(false),
+    ],
+  }
+}
+
+export function mapReversibleMarkerRange(
+  marker: ReversibleOrderedMarker,
+  changes: ChangeDesc,
+): ReversibleOrderedMarker {
+  return {
+    ...marker,
+    from: changes.mapPos(marker.from, MAP_FROM_ASSOC),
+    to: changes.mapPos(marker.to, MAP_TO_ASSOC),
+  }
+}
+
+/**
+ * Merges a newer batch into the recorded markers. A marker rewritten again keeps the user's own
+ * text as `original` and takes the latest `normalized`, so it stays one revertible marker.
+ */
+export function mergeReversibleOrderedMarkers(
+  existing: readonly ReversibleOrderedMarker[],
+  incoming: readonly ReversibleOrderedMarker[],
 ): readonly ReversibleOrderedMarker[] {
-  const ordered = [...changes].sort((a, b) => a.from - b.from)
-  let shift = 0
-  return ordered.map(change => {
-    const from = change.from + shift
-    shift += change.insert.length - (change.to - change.from)
-    return {
-      from,
-      to: from + change.insert.length,
-      original: state.doc.sliceString(change.from, change.to),
-      normalized: change.insert,
-    }
+  const byStart = new Map(existing.map(marker => [marker.from, marker]))
+  for (const marker of incoming) {
+    const recorded = byStart.get(marker.from)
+    byStart.set(marker.from, recorded ? { ...marker, original: recorded.original } : marker)
+  }
+  return [...byStart.values()].sort((a, b) => a.from - b.from)
+}
+
+/** Markers this normalization transaction wrote, in the coordinates of the resulting document. */
+function batchMarkers(tr: Transaction): readonly ReversibleOrderedMarker[] {
+  const markers: ReversibleOrderedMarker[] = []
+  tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    markers.push({
+      from: fromB,
+      to: toB,
+      original: tr.startState.doc.sliceString(fromA, toA),
+      normalized: inserted.toString(),
+    })
   })
+  return markers
 }
 
 function mapPendingMarkers(
@@ -146,32 +211,56 @@ function mapPendingMarkers(
   tr: Transaction,
 ): OrderedNormalizationState {
   if (!value.pending || !tr.docChanged) return value
-  const markers = value.pending.markers.map(marker => ({
-    ...marker,
-    from: tr.changes.mapPos(marker.from, MAP_FROM_ASSOC),
-    to: tr.changes.mapPos(marker.to, MAP_TO_ASSOC),
-  }))
+  const markers = value.pending.markers.map(marker => mapReversibleMarkerRange(marker, tr.changes))
   return { ...value, pending: { ...value.pending, markers } }
 }
 
-function applyNormalizationEffect(
+function recordNormalizationBatch(
+  value: OrderedNormalizationState,
+  tr: Transaction,
+): OrderedNormalizationState {
+  const batch = tr.annotation(orderedRenumberAnn)
+  if (!batch || value.suppressed) return value
+  const incoming = batchMarkers(tr)
+  const pending = value.pending
+  if (!pending) {
+    if (batch.trigger === "user-followup" || incoming.length === 0) return value
+    const id = value.nextId as NormalizationId
+    return { ...value, nextId: value.nextId + 1, pending: { id, markers: incoming } }
+  }
+  // A follow-up rewrite refreshes markers already pending, but never adds new ones.
+  const known = new Set(pending.markers.map(marker => marker.from))
+  const accepted =
+    batch.trigger === "preview-entry"
+      ? incoming
+      : incoming.filter(marker => known.has(marker.from))
+  if (accepted.length === 0) return value
+  const markers = mergeReversibleOrderedMarkers(pending.markers, accepted)
+  return { ...value, pending: { ...pending, markers } }
+}
+
+function applyResolveEffect(
   value: OrderedNormalizationState,
   effect: StateEffect<unknown>,
 ): OrderedNormalizationState {
-  if (effect.is(recordNormalization)) {
-    if (value.suppressed || value.pending || effect.value.length === 0) return value
-    const id = value.nextId as NormalizationId
-    return { nextId: value.nextId + 1, pending: { id, markers: effect.value }, suppressed: false }
+  if (!effect.is(resolveNormalization) || value.pending?.id !== effect.value.id) return value
+  return {
+    nextId: value.nextId,
+    pending: null,
+    suppressed: value.suppressed || effect.value.suppress,
   }
-  if (effect.is(resolveNormalization)) {
-    if (value.pending?.id !== effect.value.id) return value
-    return {
-      nextId: value.nextId,
-      pending: null,
-      suppressed: value.suppressed || effect.value.suppress,
-    }
-  }
-  return value
+}
+
+/**
+ * Stages run in a fixed order — map, record, resolve — so a transaction that both normalizes and
+ * resolves ends resolved regardless of how its effects are ordered.
+ */
+function updateOrderedNormalization(
+  value: OrderedNormalizationState,
+  tr: Transaction,
+): OrderedNormalizationState {
+  const recorded = recordNormalizationBatch(mapPendingMarkers(value, tr), tr)
+  return tr.effects.reduce(applyResolveEffect, recorded)
 }
 
 /**
@@ -180,8 +269,7 @@ function applyNormalizationEffect(
  */
 export const orderedNormalizationState = StateField.define<OrderedNormalizationState>({
   create: () => emptyNormalizationState,
-  update: (value, tr) =>
-    tr.effects.reduce(applyNormalizationEffect, mapPendingMarkers(value, tr)),
+  update: updateOrderedNormalization,
 })
 
 export function getPendingOrderedListNormalization(
@@ -233,12 +321,11 @@ export function rejectOrderedListNormalization(
   }
 }
 
-const orderedRenumberAnn = Annotation.define<boolean>()
-
 export const orderedRenumber = ViewPlugin.fromClass(class {
   private isDestroyed = false
-  // Only the first pass after entering live preview is reversible; later passes follow user edits.
-  private isPreviewEntry = true
+  // Latched by the user's first document change: from then on, a pass over a complete syntax tree
+  // is a follow-up to that edit rather than part of entering live preview.
+  private hasUserDocChange = false
 
   constructor(readonly view: EditorView) {
     queueMicrotask(() => this.apply())
@@ -249,6 +336,7 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
     if (update.transactions.some(tr => tr.annotation(orderedRenumberAnn))) return
     const treeChanged = syntaxTree(update.state) !== syntaxTree(update.startState)
     if (!update.docChanged && !treeChanged) return
+    if (update.docChanged) this.hasUserDocChange = true
     queueMicrotask(() => this.apply())
   }
 
@@ -258,21 +346,15 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
 
   private apply() {
     if (this.isDestroyed || this.view.composing) return
-    // Single-batch semantics: an empty first pass (syntax tree not yet covering the lists) still
-    // consumes the flag, so tree-progress rewrites record nothing. Classifying tree progress as
-    // preview entry, separately from user edits, is Task 2's work.
-    const isPreviewEntry = this.isPreviewEntry
-    this.isPreviewEntry = false
     const state = this.view.state
     if (state.field(orderedNormalizationState, false)?.suppressed) return
     const changes = orderedRenumberChanges(state)
     if (changes.length === 0) return
-    this.view.dispatch({
-      changes,
-      effects: isPreviewEntry
-        ? [recordNormalization.of(reversibleOrderedMarkers(state, changes))]
-        : [],
-      annotations: [orderedRenumberAnn.of(true), Transaction.addToHistory.of(false)],
-    })
+    const trigger = normalizationTrigger(
+      this.hasUserDocChange,
+      syntaxTree(state).length,
+      state.doc.length,
+    )
+    this.view.dispatch(buildOrderedNormalizationTransaction(state, trigger, changes))
   }
 })
