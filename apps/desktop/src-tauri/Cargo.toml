@@ -52,7 +52,6 @@ objc2-web-kit = { version = "0.3", features = [
     "WKNavigation",
     "WKNavigationDelegate",
     "WKPDFConfiguration",
-    "WKSnapshotConfiguration",
     "WKWebView",
     "WKWebViewConfiguration",
     "block2",

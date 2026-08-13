@@ -3,7 +3,8 @@
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": ".cursor/hooks/guard-dangerous.sh",
+        "type": "command",
+        "command": "bash .cursor/hooks/guard-dangerous.sh",
         "timeout": 10,
         "failClosed": true
       }

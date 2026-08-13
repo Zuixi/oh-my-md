@@ -77,7 +77,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] Cmd+K 能打开/保存/切主题/Focus/导出；File 菜单与命令面板共用同一命令
 - [ ] 当前文件夹搜索 `.md`，点结果打开并定位
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
-- [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框，由离屏 WKWebView 生成 `.pdf` / `.png`（不是系统打印对话框，也不是把编辑器 DOM 截屏）
+- [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框（默认 `export.pdf` / `export.png`），确认后目标路径必须出现真实文件；由离屏 WKWebView 的 `createPDF` 生成（Image 再栅格化为 PNG），不是系统打印对话框，也不是把编辑器 DOM 截屏
 - [ ] 亮/暗主题与自定义 CSS；Typewriter 当前行居中；Focus 非当前行降透明度
 - [ ] 打开 `large.md` 后多标签切换与文件树刷新时滚动仍流畅
 

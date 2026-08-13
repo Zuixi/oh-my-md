@@ -16,11 +16,22 @@ yarn-error.log*
 dist/
 build/
 out/
+.vite/
+**/.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Rust / Cargo
 target/
 **/*.rs.bk
 Cargo.lock
+!apps/desktop/src-tauri/Cargo.lock
 
 # Tauri specific
 src-tauri/target/
@@ -44,6 +55,13 @@ src-tauri/gen/
 *.njsproj
 *.sln
 *.swp
+.cursor/*
+!.cursor/hooks/
+!.cursor/hooks/**
+!.cursor/hooks.json
+!.cursor/rules/
+!.cursor/rules/**
+
 
 # Tools / Local state
 .pi/

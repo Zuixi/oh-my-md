@@ -60,6 +60,16 @@ pub fn styled_export_html(html: &str) -> String {
 #[path = "export_native.rs"]
 mod native;
 
+pub(crate) fn measure_export_script(min_height: i32, max_height: i32) -> String {
+    format!(
+        "(function(){{var r=document.documentElement,b=document.body;\
+         var h=Math.max(r?r.scrollHeight:0,b?b.scrollHeight:0,{min});\
+         return Math.min(h,{max});}})()",
+        min = min_height,
+        max = max_height,
+    )
+}
+
 const EXPORT_TIMEOUT_SECS: u64 = 20;
 
 #[tauri::command]
@@ -103,17 +113,17 @@ fn reject_export_path(path: &str, format: ExportFormat) -> Result<PathBuf, Strin
     {
         return Err("path must not contain traversal".into());
     }
-    let matches = target
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(format.extension()));
-    if matches {
-        Ok(target.to_path_buf())
-    } else {
-        Err(format!(
+    if target.is_dir() {
+        return Err("export path must be a file, not a directory".into());
+    }
+    let extension = target.extension().and_then(|extension| extension.to_str());
+    match extension {
+        Some(value) if value.eq_ignore_ascii_case(format.extension()) => Ok(target.to_path_buf()),
+        None => Ok(target.with_extension(format.extension())),
+        Some(_) => Err(format!(
             "export path must use a .{} extension",
             format.extension()
-        ))
+        )),
     }
 }
 
@@ -138,6 +148,40 @@ mod tests {
             validate_export("/tmp/out.pdf", ExportFormat::Pdf, html).unwrap(),
             PathBuf::from("/tmp/out.pdf")
         );
+    }
+
+    #[test]
+    fn validate_export_appends_png_when_save_dialog_omits_extension() {
+        let html = "<p>hi</p>";
+        assert_eq!(
+            validate_export("/tmp/out", ExportFormat::Png, html).unwrap(),
+            PathBuf::from("/tmp/out.png")
+        );
+        assert_eq!(
+            validate_export("/tmp/out", ExportFormat::Pdf, html).unwrap(),
+            PathBuf::from("/tmp/out.pdf")
+        );
+    }
+
+    #[test]
+    fn validate_export_rejects_an_existing_directory() {
+        let directory = std::env::temp_dir().join(format!("omd-export-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let result = validate_export(directory.to_str().unwrap(), ExportFormat::Png, "<p>hi</p>");
+        let _ = std::fs::remove_dir(&directory);
+        let error = result.expect_err("directory path must not be treated as a PNG file");
+        assert!(
+            error.to_lowercase().contains("directory"),
+            "expected directory error, got {error}"
+        );
+    }
+
+    #[test]
+    fn measure_export_script_does_not_return_a_promise() {
+        let script = measure_export_script(600, 16384);
+        assert!(!script.contains("Promise"));
+        assert!(!script.contains("fonts.ready"));
+        assert!(script.contains("scrollHeight"));
     }
 
     #[test]

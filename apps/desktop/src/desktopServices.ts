@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
+import { exportSaveOptions } from "./exportPath"
 import { parseRecents, RECENTS_STORAGE_KEY } from "./recents"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
@@ -55,8 +56,10 @@ export const defaultServices: DesktopServices = {
   pickOpenPath: () => pickPath("file", ["md", "markdown", "mdx"]),
   pickSavePath: () => pickPath("save", ["md"]),
   pickFolder: () => pickPath("folder", []),
-  pickExportPath: (format = "html") =>
-    pickPath("save", format === "png" ? ["png"] : format === "pdf" ? ["pdf"] : ["html"]),
+  pickExportPath: async (format = "html") => {
+    const path = await save(exportSaveOptions(format))
+    return typeof path === "string" ? path : null
+  },
   pickCssPath: () => pickPath("file", ["css"]),
   readFile: (path) => invoke<string>("read_file", { path }),
   writeFile: async (path, contents) => {

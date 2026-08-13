@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Path-filtered domain tests for staged files.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+exec python3 "$root/.githooks/precommit.py"

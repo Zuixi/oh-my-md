@@ -82,7 +82,10 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
 - Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
 - Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.
-- Dangerous shell commands are gated by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh).
+- Dangerous shell commands are blocked by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Cursor currently ignores hook `permission: ask`, so the guard returns `deny`. Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh). To run a blocked command, execute it yourself in the integrated terminal (human terminals do not trigger hooks).
+- Git hooks live in [`.githooks/`](./.githooks/). `pnpm install` sets `core.hooksPath` via the root `prepare` script.
+  - `pre-commit` runs domain tests for staged paths: `packages/engine/**` → `pnpm test`; `apps/desktop/src|test|package files` → `pnpm --filter @omd/desktop test`; `apps/desktop/src-tauri/**` → `cargo fmt --check` and `cargo test`. Docs-only commits skip.
+  - `commit-msg` strips `Co-authored-by: Cursor <cursoragent@cursor.com>`, then requires `<type>: <why>` (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`). Merge and Revert subjects are allowed.
 
 
 
