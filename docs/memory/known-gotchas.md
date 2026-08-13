@@ -50,11 +50,39 @@ Defense, in `packages/engine/test/view.test.ts` (keep it alive and growing):
 
 Any new widget type must get a smoke case there before the task is considered done.
 
-## atomicRanges accepts only replace-type decorations
+## atomicRanges: only inline replacements — never block widgets
 
-The `atomicRanges` facet makes ranges un-enterable for cursor motion and deletion. Feeding it the whole decoration set — including `mark:` decorations like `omd-link`/`omd-strong` that cover editable text — locks the user out of every styled region (arrow keys skip, Backspace refuses; M2 incident, root cause B).
+The `atomicRanges` facet makes ranges un-enterable for cursor motion and deletion. Two rules govern what belongs there:
 
-`buildLiveDecorations` therefore emits two sets: `deco` (everything) and `atomic` (only tags starting with `replace:` or `widget:`). Never let `mark:`/`line:` tags into the atomic set. Inline folded marks are additionally protected by the line-based `nearCursor` unfold, so atomicity is redundant for them — it exists for block widgets and off-line folds.
+**Rule 1 — no `mark:`/`line:` tags.** Feeding those into the atomic set locks the user out of every styled region (arrow keys skip, Backspace refuses; M2 incident, root cause B).
+
+**Rule 2 — no `widget:block:*` tags.** Block widgets span multiple lines. Adding them to `atomicRanges` causes two user-visible bugs:
+- **↑/↓ jumps multiple lines**: when the cursor is below a code/math/table widget and the user presses Up, CodeMirror skips the entire atomic range and lands at the first line before the widget — which can be the very start of the document.
+- **Right-click paste inserts extra line**: when the paste position is adjacent to a block widget boundary, CodeMirror expands the replacement range to cover the atomic unit, pulling in the next line.
+Block widgets use `Decoration.replace({ block: true })`, which CodeMirror already handles for layout and cursor positioning. Atomic constraints are redundant and harmful on top.
+
+`buildLiveDecorations` therefore emits two sets: `deco` (everything) and `atomic` (only tags starting with `replace:` or `widget:` **excluding** `widget:block:`). The `isAtomicTag` predicate enforces both rules. Never widen it without re-reading this entry.
+
+## Right-click paste on macOS deletes extra lines (WebKit selectionchange + skipAtomsForSelection)
+
+On macOS WKWebView (Tauri), right-clicking fires this synchronous chain **before** `contextmenu` fires:
+
+```
+mousedown (button=2)
+  → CM's mousedown: setSelectionOrigin("select.pointer"), flush()
+selectionchange (WebKit moves/extends native selection to the clicked line)
+  → onSelectionChange → flush(false) → applyDOMChange
+    → lastSelectionOrigin == "select.pointer" → skipAtomsForSelection(atomicRanges, newSel)
+    → view.dispatch({ selection: expandedSel })   ← CM state is now corrupted
+contextmenu fires
+paste fires
+  → CM's doPaste uses view.state.selection.main (the corrupted, expanded selection)
+  → replaces 2 lines instead of inserting at cursor
+```
+
+The `skipAtomsForSelection` call expands the WebKit selection outward to the nearest atomic-range boundary, which can push `selection.to` past one or more newlines on empty lines.
+
+**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through to CM's default handler unchanged.
 
 ## Tests may need to force the syntax tree
 

@@ -1,0 +1,11 @@
+---
+description: C++ conventions
+globs: "**/*.cpp, **/*.hpp, **/*.cc, **/*.hh, **/*.cxx, **/*.h, **/CMakeLists.txt"
+alwaysApply: false
+---
+
+# C++
+
+- C++17+. RAII only — no raw `new`/`delete`, C arrays, `malloc`, `strcpy`. `unique_ptr` default. clang-format.
+- Rule of Zero unless you define special members, then Rule of Five. `const&` for large inputs; `std::optional` / `std::expected` for absence and expected failure.
+- CI: ASan/UBSan, clang-tidy. Tests: GoogleTest + CTest.

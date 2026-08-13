@@ -1,0 +1,14 @@
+---
+description: TypeScript and JavaScript conventions
+globs: "**/*.ts, **/*.tsx, **/*.js, **/*.jsx"
+alwaysApply: false
+---
+
+# TypeScript / JavaScript
+
+- Exported functions: explicit param and return types. No `any`; use `unknown` and narrow. `interface` for objects; `type` for unions. Prefer string unions over `enum`. Named React props; avoid `React.FC`.
+- Boundaries: Zod (or equivalent); infer types from the schema.
+- `Readonly<T>` + spread for updates. No `console.log` in production; use a logger.
+- Env secrets: `process.env.X`, throw if missing. Never hardcode `sk-` keys.
+- Tests: Playwright for critical E2E; keep mocks in sync with signatures.
+- APIs: `{ success, data?, error?, meta? }`. Keep consumer interfaces small.

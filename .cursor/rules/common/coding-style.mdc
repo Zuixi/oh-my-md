@@ -1,0 +1,12 @@
+---
+description: Hard constraints: immutability, validation, size limits
+alwaysApply: true
+---
+
+# Coding Style
+
+Do not mutate existing objects. Return a new copy.
+
+Validate at system boundaries. Fail fast. Never swallow errors. User-facing messages stay friendly; logs keep detail.
+
+Functions under 50 lines. Files under 800 lines. Nesting under 4 levels. Named constants instead of magic numbers.
