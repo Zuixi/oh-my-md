@@ -22,6 +22,7 @@
 .editor-host .omd-checkbox { margin-right: 0.4em; }
 .editor-host .omd-bullet { color: #0969da; }
 .editor-host .omd-list-mark { color: #0969da; }
+.editor-host .omd-ordered-mark { color: #0969da; }
 .editor-host .omd-codeblock { font-family: ui-monospace, monospace; background: rgba(0,0,0,0.04); }
 /* Nested list hanging indent: padding shifts the whole line, negative
    text-indent pulls the first line back so wrapped lines align to the text. */

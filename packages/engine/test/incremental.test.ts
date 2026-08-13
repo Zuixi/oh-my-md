@@ -9,6 +9,7 @@ import { editorExtensions } from "../src/index"
 import { buildLiveDecorations, livePreviewField } from "../src/decorations/build"
 import { ImageWidget } from "../src/decorations/widgets/image"
 import { livePreviewExt } from "../src/modes/livePreview"
+import { orderedRenumber } from "../src/lists/ordered"
 
 function specKeys(state: EditorState) {
   return state.field(livePreviewField).specs
@@ -180,7 +181,7 @@ describe("incremental live decorations", () => {
     parent.remove()
   })
 
-  it("provides block decorations from a StateField rather than a ViewPlugin", () => {
-    expect(livePreviewExt()).toEqual([livePreviewField])
+  it("keeps block decorations on a StateField and ordered renumbering on a ViewPlugin", () => {
+    expect(livePreviewExt()).toEqual([livePreviewField, orderedRenumber])
   })
 })

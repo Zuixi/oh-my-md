@@ -11,6 +11,17 @@ export class BulletWidget extends WidgetType {
   }
 }
 
+export class OrderedWidget extends WidgetType {
+  constructor(readonly label: string) { super() }
+  eq(other: OrderedWidget) { return this.label === other.label }
+  toDOM() {
+    const el = document.createElement("span")
+    el.textContent = this.label
+    el.className = "omd-ordered-mark"
+    return el
+  }
+}
+
 export class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean, readonly pos: number) { super() }
   eq(other: CheckboxWidget) {
