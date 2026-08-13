@@ -18,8 +18,8 @@
       }
     ],
     "security": {
-      "csp": null,
-      "assetProtocol": { "enable": true, "scope": ["**"] }
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: https:; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws:",
+      "assetProtocol": { "enable": true, "scope": [] }
     }
   },
   "bundle": {

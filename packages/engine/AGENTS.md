@@ -19,7 +19,7 @@ packages/engine/
 │   ├── parse/                   # Lezer Markdown, math, and footnote extensions
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
 │   └── decorations/
-│       ├── build.ts             # Viewport decoration collection and plugin
+│       ├── build.ts             # StateField live decorations and incremental updates
 │       ├── inline.ts            # Inline and marker decorations
 │       ├── blocks.ts            # Block detection and widget selection
 │       ├── blockWidget.ts       # Shared widget lifecycle and edit transition
@@ -41,10 +41,10 @@ packages/engine/
 
 1. Decorations must be sorted and non-overlapping where CodeMirror requires it.
 2. When a block widget replaces a syntax node, skip that node's subtree and filter enclosed outer decorations; overlapping replace ranges can make `Decoration.set` throw.
-3. Rebuild live decorations when the document, viewport, or selection changes. Rendering should remain viewport-scoped.
+3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization.
 4. Preserve the source document. A preview widget renders a projection and enters editing mode by moving selection into the source range.
-5. Treat a block as editable when the selection overlaps its half-open `[from, to)` range. Do not replace selected source with a widget.
-6. `BlockWidget.eq` is source-based. If rendering also depends on another input, that input must participate in widget equality or trigger a safe rebuild.
+5. Treat a block as editable when the selection overlaps its source range **including both boundaries**. Do not replace selected source with a widget.
+6. `BlockWidget.eq` compares source text and `pos`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
 7. Async widget failures must be contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
 8. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
 
@@ -68,6 +68,8 @@ pnpm test
 - Add focused tests for parser node shapes, decoration tags/ranges, widget editing state, and live/source round trips.
 - Add a fixture when a Markdown sample is useful across snapshot or regression tests. Keep fixtures deterministic and small unless testing large-document behavior.
 - Async widgets require explicit timing/error assertions; do not rely on incidental microtask completion.
+- Valid Mermaid diagrams can stall in `happy-dom`; mock `mermaid` for success SVG and keep the real library for invalid-syntax view tests.
+- Incremental updates should match a full rebuild on the affected document and keep selection/local-edit spec churn far below the full spec list, plus a lenient `large.md` timing gate.
 - For changes affecting appearance or interaction, also build the desktop frontend and perform the relevant items in `docs/manual-qa.md`.
 
 ## Common Pitfalls

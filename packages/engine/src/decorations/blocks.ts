@@ -1,10 +1,10 @@
-import type { SyntaxNodeRef } from "@lezer/common"
+import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { nearCursor, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget } from "./widgets"
 import { blockSelected } from "./blockWidget"
-import { TableWidget } from "./widgets/table"
+import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
 import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
@@ -16,6 +16,44 @@ function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], 
   const end = Math.min(node.to + 1, line.to)
   if (!nearCursor(state, node.from, end))
     out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
+}
+
+function directCells(row: SyntaxNode, state: EditorState) {
+  const cells: string[] = []
+  for (let child = row.firstChild; child; child = child.nextSibling) {
+    if (child.name !== "TableCell") continue
+    const source = state.doc.sliceString(child.from, child.to)
+    cells.push(source
+      .replace(/\\\|/g, "|")
+      .replace(/`([^`]*)`/g, "$1")
+      .trim())
+  }
+  return cells
+}
+
+function tableData(node: SyntaxNode, state: EditorState): TableData | null {
+  const header = node.getChild("TableHeader")
+  if (!header) return null
+  const rows: string[][] = []
+  let delimiter = ""
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "TableRow") rows.push(directCells(child, state))
+    else if (child.name === "TableDelimiter") {
+      delimiter = state.doc.sliceString(child.from, child.to)
+    }
+  }
+  const aligns = delimiter
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map<TableAlignment>(cell => {
+      const marker = cell.trim()
+      if (/^:-/.test(marker) && /-:$/.test(marker)) return "center"
+      if (/-:$/.test(marker)) return "right"
+      if (/^:-/.test(marker)) return "left"
+      return ""
+    })
+  return { header: directCells(header, state), rows, aligns }
 }
 
 export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
@@ -92,10 +130,16 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
     }
     case "Table": {
       if (blockSelected(state, node.from, node.to)) return false
+      const table = tableData(node.node, state)
+      if (!table) return false
       out.push({
         from: node.from, to: node.to, tag: "widget:block:table",
         deco: Decoration.replace({
-          widget: new TableWidget(state.doc.sliceString(node.from, node.to), node.from),
+          widget: new TableWidget(
+            state.doc.sliceString(node.from, node.to),
+            node.from,
+            table,
+          ),
           block: true,
         }),
       })
