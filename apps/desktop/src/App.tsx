@@ -593,6 +593,7 @@ export default function App({
         words={wordCount(doc)}
         cursor={cursor}
         mode={mode}
+        normalizationReviewRequired={false}
       />
       <TabBar
         tabs={workspace.tabs}

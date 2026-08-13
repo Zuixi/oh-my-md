@@ -187,6 +187,28 @@ html, body, #root { height: 100%; margin: 0; background: var(--omd-bg); color: v
   border-bottom: 1px solid var(--omd-border); font-size: 12px; color: var(--omd-muted);
   background: var(--omd-chrome);
 }
+.statusbar-review { color: var(--omd-fg); font-weight: 600; }
+.normalization-banner {
+  --omd-min-target: 24px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px; font-size: 13px; line-height: 1.4;
+  color: var(--omd-fg); background: var(--omd-code-bg);
+  border-bottom: 1px solid var(--omd-border);
+  border-left: 3px solid var(--omd-link);
+}
+.normalization-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.normalization-banner-action {
+  min-height: var(--omd-min-target); min-width: var(--omd-min-target);
+  padding: 4px 10px; font: inherit; cursor: pointer;
+  color: var(--omd-fg); background: var(--omd-bg);
+  border: 1px solid var(--omd-muted); border-radius: 4px;
+}
+.normalization-banner-action:disabled {
+  color: var(--omd-muted); border-color: var(--omd-border); cursor: not-allowed;
+}
+.normalization-banner-action:focus-visible {
+  outline: 2px solid var(--omd-link); outline-offset: 2px;
+}
 .tabbar { display: flex; gap: 2px; background: var(--omd-chrome); border-bottom: 1px solid var(--omd-border); }
 .tab, .tab-new {
   border: none; background: transparent; color: var(--omd-fg); padding: 6px 10px; cursor: pointer;
