@@ -1,0 +1,12 @@
+---
+description: Go conventions
+globs: "**/*.go, **/go.mod, **/go.sum"
+alwaysApply: false
+---
+
+# Go
+
+- `gofmt` / `goimports`. Wrap errors with `%w`. Log with `slog`. Accept interfaces, return structs (1–3 methods). Unexported consts: `camelCase`.
+- `os.Getenv` + fatal if required secret missing. `gosec ./...`. `context` with timeouts on outbound calls.
+- Tests: table-driven `go test -race ./...`. Keep test funcs in sync with signatures.
+- Interfaces defined where used. `time.ParseDuration`. Mutex/`RLock` for shared fields.

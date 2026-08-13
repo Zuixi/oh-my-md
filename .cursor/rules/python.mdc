@@ -1,0 +1,12 @@
+---
+description: Python conventions
+globs: "**/*.py, **/*.pyi"
+alwaysApply: false
+---
+
+# Python
+
+- PEP 8, typed signatures, `snake_case`. Format/lint with **ruff**. `@dataclass(frozen=True)` for values.
+- `os.environ["KEY"]` (fail if missing). `bandit -r src/` on app code. Structured logging, not f-string errors.
+- Tests: **pytest**. Update `@patch` mocks when signatures change.
+- Small `Protocol`s; `with` for resources; `Lock`/`RLock` around shared mutable state.

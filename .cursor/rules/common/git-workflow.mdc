@@ -1,0 +1,18 @@
+---
+description: Commits, branches, or pull requests
+alwaysApply: false
+---
+
+# Git Workflow
+
+Commit only when the user asks. Never update git config, skip hooks, or force-push to main/master.
+
+```
+<type>: <why>
+
+<optional body>
+```
+
+Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`
+
+PRs: full `git diff <base>...HEAD`, intent + test plan, `-u` on new branches.

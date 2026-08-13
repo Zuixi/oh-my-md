@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
 
-const tags = (doc: string) =>
-  collectDecorationSpecs(makeState(doc), 0, doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
-
 describe("headings", () => {
   it("tags heading line and hides the HeaderMark + trailing space", () => {
     // Cursor must be on a different line for the heading mark to be folded.
@@ -23,6 +20,51 @@ describe("headings", () => {
     // Cursor anywhere on the heading line → the mark stays visible.
     state = state.update({ selection: { anchor: 1 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
+    expect(t).not.toContain("replace:HeaderMark")
+  })
+
+  it("styles a Setext H1 title line and hides the underline when the cursor is away", () => {
+    const doc = "Title\n=====\n\nbody"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.length } }).state
+    const away = collectDecorationSpecs(state, 0, state.doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(away).toContain("line:omd-h1@0-0")
+    expect(away).toContain("replace:HeaderMark@6-12")
+  })
+
+  it("styles a Setext H2 title line and hides the dash underline when the cursor is away", () => {
+    const doc = "Title\n-----\n\nbody"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.length } }).state
+    const away = collectDecorationSpecs(state, 0, state.doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(away).toContain("line:omd-h2@0-0")
+    expect(away).toContain("replace:HeaderMark@6-12")
+  })
+
+  it("collapses the Setext underline line when the next paragraph is adjacent", () => {
+    const doc = "Title\n=====\nNext"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.length } }).state
+    const away = collectDecorationSpecs(state, 0, state.doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(away).toContain("line:omd-h1@0-0")
+    expect(away).toContain("replace:HeaderMark@6-12")
+  })
+
+  it("does not hide the Setext underline when the cursor is on the title line", () => {
+    const doc = "Title\n====="
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: 0 } }).state
+    const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
+    expect(t).toContain("line:omd-h1")
+    expect(t).not.toContain("replace:HeaderMark")
+  })
+
+  it("does not hide the Setext underline when the cursor is on the underline", () => {
+    const doc = "Title\n====="
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: 6 } }).state
+    const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
+    expect(t).toContain("line:omd-h1")
     expect(t).not.toContain("replace:HeaderMark")
   })
 })

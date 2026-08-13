@@ -27,10 +27,15 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
     !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
 }
 
-// 原子区间只收 replace 类装饰（折叠的语法标记 + widget）。
+// 原子区间只收内联 replace 类装饰（折叠的语法标记 + 内联 widget，如 checkbox）。
 // mark/line 装饰若进原子区间，光标移动和删除会被锁死在样式文本外（root cause B）。
+// widget:block:* 块 widget 不能进原子区间：
+//   - 块 widget 跨越多行；加入原子区间后，方向键（↑/↓）会直接跳过整个块（bug: 第99行按↑跳到第1行）。
+//   - paste 时 CM 会把粘贴位置扩展到原子区间边界，导致连带选中下一行（bug: 右键粘贴包含下一行）。
+// block: true 的 Decoration.replace 已由 CM 自行处理块周围的光标定位，无需再加原子约束。
 function isAtomicTag(tag: string) {
-  return tag.startsWith("replace:") || tag.startsWith("widget:")
+  return (tag.startsWith("replace:") || tag.startsWith("widget:")) &&
+    !tag.startsWith("widget:block:")
 }
 
 interface RebuildRange { from: number; to: number }

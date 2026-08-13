@@ -8,6 +8,7 @@ import { imageResolver, ImageWidget } from "./widgets/image"
 const HEADING_CLASS: Record<string, string> = {
   ATXHeading1: "omd-h1", ATXHeading2: "omd-h2", ATXHeading3: "omd-h3",
   ATXHeading4: "omd-h4", ATXHeading5: "omd-h5", ATXHeading6: "omd-h6",
+  SetextHeading1: "omd-h1", SetextHeading2: "omd-h2",
 }
 
 function childMarks(node: SyntaxNodeRef, name: string): { from: number; to: number }[] {
@@ -51,10 +52,20 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     if (cursor.firstChild()) {
       do {
         if (cursor.name === "HeaderMark") {
-          const line = state.doc.lineAt(node.from)
-          const end = Math.min(cursor.to + 1, line.to)  // include the trailing space after '#'
-          if (!nearCursor(state, cursor.from, end))
+          const line = state.doc.lineAt(cursor.from)
+          const end = Math.min(cursor.to + 1, line.to)  // ATX: include trailing space after '#'
+          if (nearCursor(state, node.from, node.to)) continue
+          // Setext underline is its own line; include the trailing newline so the empty
+          // row collapses (replace across a line break must be block: true).
+          if (line.from > node.from) {
+            const to = Math.min(state.doc.length, line.to + 1)
+            out.push({
+              from: line.from, to, tag: "replace:HeaderMark",
+              deco: Decoration.replace({ block: true }),
+            })
+          } else {
             out.push({ from: cursor.from, to: end, tag: "replace:HeaderMark", deco: Decoration.replace({}) })
+          }
         }
       } while (cursor.nextSibling())
     }

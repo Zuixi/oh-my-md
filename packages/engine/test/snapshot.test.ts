@@ -181,6 +181,10 @@ describe("fixture snapshots", () => {
         "replace:HeaderMark@54-60",
         "line:omd-h6@70-70",
         "replace:HeaderMark@70-77",
+        "line:omd-h1@88-88",
+        "replace:HeaderMark@98-109",
+        "line:omd-h2@110-110",
+        "replace:HeaderMark@120-131",
       ]
     `)
   })
