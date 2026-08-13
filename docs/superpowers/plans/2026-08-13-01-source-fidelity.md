@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-01-source-fidelity-design.md`
 
+**Test Appendix:** `docs/superpowers/plans/2026-08-13-01-source-fidelity-test-appendix.md`
+
 ## Global Constraints
 
 - Preview-entry 规范化创建 pending；用户编辑引发的 follow-up 规范化走普通 autosave。
@@ -28,11 +30,11 @@
 ```text
 packages/engine/src/lists/ordered.ts            pending/suppression、可逆 marker、命令
 packages/engine/src/index.ts                    顶层挂 StateField、导出 API
-packages/engine/src/modes/livePreview.ts        compartment 只拥有 preview/plugin
 packages/engine/test/ordered-renumber.test.ts   状态、合并、revert、模式
 packages/engine/test/view.test.ts               真实 EditorView 守门
 apps/desktop/src/Editor.ts                      tab/document-bound update
 apps/desktop/src/normalizationState.ts          按 tab UI 投影
+apps/desktop/src/normalizationCoordinator.ts    capture 验证与 autosave 判定
 apps/desktop/src/NormalizationBanner.tsx        非模态确认条
 apps/desktop/src/session.ts                     advanceDocumentIdentity
 apps/desktop/src/workspace.ts                   replaceTabSession
@@ -40,6 +42,7 @@ apps/desktop/src/App.tsx                        reset/save/reject 编排
 apps/desktop/src/StatusBar.tsx                   review 状态
 apps/desktop/src/styles.css                     banner/focus/theme
 apps/desktop/test/*                              对应单元与集成测试
+apps/desktop/test/appHarness.ts                  每 tab 独立 fake view/options
 docs/{manual-qa.md,memory/known-gotchas.md}      QA 与永久不变量
 ```
 
@@ -58,6 +61,8 @@ docs/{manual-qa.md,memory/known-gotchas.md}      QA 与永久不变量
 - Consumed by: Tasks 2, 4, 6, 7
 
 - [ ] **Step 1: Write failing pending/stale tests**
+
+Also add the accepted-path dispatch test from the Test Appendix.
 
 ```ts
 it("creates one pending notice for preview-entry normalization", async () => {
@@ -164,7 +169,6 @@ git commit -m "feat(engine): track pending ordered list normalization"
 
 **Files:**
 - Modify: `packages/engine/src/lists/ordered.ts`
-- Modify: `packages/engine/src/modes/livePreview.ts`
 - Modify: `packages/engine/test/ordered-renumber.test.ts`
 - Modify: `packages/engine/test/view.test.ts`
 
@@ -186,9 +190,10 @@ it("rejects normalization without losing later body edits", async () => {
   view.destroy()
 })
 
-it("skips a marker edited after automatic normalization", async () => {
+it("skips a pending marker edited in source mode", async () => {
   const { view } = makeView("1. a\n3. b")
   await tick()
+  view.dispatch(applyToggle(view.state))
   const line = view.state.doc.line(2)
   view.dispatch({ changes: { from: line.from, to: line.from + 2, insert: "9." } })
   const notice = getPendingOrderedListNormalization(view.state)!
@@ -208,7 +213,9 @@ Test names and exact assertions:
 - `keeps suppression across source/live toggles`: reject, toggle twice, source remains skipped.
 - `merges repeated writes to one marker`: first original retained, latest normalized matched, count remains one, reject returns first source.
 - `maps variable-length markers in new coordinates`: `10.` replacement does not touch adjacent text.
-- `keeps user undo history`: reject is not undoable; later body edit is.
+- `keeps tree-progress in preview-entry`: incomplete initial tree remains pending even after early user input.
+
+Use the complete code shapes in the Test Appendix. Move undo-history verification to Task 4, where desktop already installs `history()`.
 
 - [ ] **Step 3: Verify red**
 
@@ -227,6 +234,20 @@ const orderedRenumberAnn = Annotation.define<OrderedNormalizationBatch>()
 
 ViewPlugin starts with `hasUserDocChange = false`. A non-normalization doc transaction flips it before scheduling apply. Normalization transactions do not. Suppressed state returns before Lezer traversal; composing still returns.
 
+Keep a separate preview-entry latch until `syntaxTree(state).length >= state.doc.length`. Tree-progress batches remain preview-entry while the latch is open. Replace every previous `.of(true)` call with `.of({ trigger, changes })`; leaving the boolean payload is a compile error.
+
+Keep this module-internal testable helper out of `index.ts`:
+
+```ts
+export function normalizationTrigger(
+  hasUserDocChange: boolean,
+  treeLength: number,
+  docLength: number,
+): "preview-entry" | "user-followup"
+```
+
+It returns preview-entry whenever `treeLength < docLength`; otherwise it follows `hasUserDocChange`.
+
 - [ ] **Step 5: Merge marker records correctly**
 
 Field algorithm:
@@ -235,7 +256,8 @@ Field algorithm:
 2. For a normalization batch, use `tr.changes.iterChanges` `fromB/toB`.
 3. First batch allocates id; later preview batches reuse it.
 4. Same mapped marker keeps first `original`, replaces latest `normalized`, does not increase count.
-5. User-followup batches change the document but do not create/extend pending.
+5. User-followup batches do not add markers, but update latest `normalized` for markers already in pending.
+6. Map existing ranges with `from` assoc `1` and `to` assoc `-1`; appendix covers before/inside/after insertions.
 
 Keep a module-internal exported helper for direct tests:
 
@@ -244,9 +266,20 @@ export function mergeReversibleOrderedMarkers(
   existing: readonly ReversibleOrderedMarker[],
   incoming: readonly ReversibleOrderedMarker[],
 ): readonly ReversibleOrderedMarker[]
+
+export function mapReversibleMarkerRange(
+  marker: ReversibleOrderedMarker,
+  changes: ChangeDesc,
+): ReversibleOrderedMarker
+
+export function buildOrderedNormalizationTransaction(
+  state: EditorState,
+  trigger: "preview-entry" | "user-followup",
+  changes: readonly OrderedMarkChange[],
+): TransactionSpec
 ```
 
-Do not re-export it from `index.ts`.
+Do not re-export either helper from `index.ts`.
 
 - [ ] **Step 6: Verify all Engine behavior**
 
@@ -256,7 +289,7 @@ Expected: TypeScript and Vitest PASS; real EditorView exception sink remains emp
 - [ ] **Step 7: Suggested commit**
 
 ```sh
-git add packages/engine/src/lists/ordered.ts packages/engine/src/modes/livePreview.ts packages/engine/test/ordered-renumber.test.ts packages/engine/test/view.test.ts
+git add packages/engine/src/lists/ordered.ts packages/engine/test/ordered-renumber.test.ts packages/engine/test/view.test.ts
 git commit -m "feat(engine): make list normalization reversible"
 ```
 
@@ -301,6 +334,8 @@ it("resyncs fresh notice and idle atomically", () => {
 })
 ```
 
+Add the Test Appendix case proving both project/resync with `null` remove the tab key.
+
 - [ ] **Step 2: Verify red**
 
 Run: `pnpm --filter @omd/desktop test -- normalizationState.test.ts`  
@@ -326,7 +361,7 @@ it("replaces a background session without changing activeId", () => {
   const workspace = focusTab(addTab(createWorkspace(), createSession(2)), 1)
   const next = replaceTabSession(workspace, markSaved(workspace.tabs[1], "/b.md", "b"))
   expect(next.activeId).toBe(1)
-  expect(next.tabs[1].savedContents).toBe("b")
+  expect(next.tabs.find(tab => tab.id === 2)?.savedContents).toBe("b")
 })
 ```
 
@@ -361,7 +396,8 @@ git commit -m "feat(desktop): add tab-scoped normalization state"
 **Files:**
 - Modify: `apps/desktop/src/Editor.ts`
 - Modify: `apps/desktop/test/Editor.test.ts`
-- Modify: `apps/desktop/test/App.test.tsx` (mock signature)
+- Create: `apps/desktop/test/appHarness.ts`
+- Modify: `apps/desktop/test/App.test.tsx`
 
 **Interfaces:**
 - Produces: `EditorDocumentUpdate`
@@ -385,7 +421,7 @@ it("reports bound identity and document changes", () => {
 })
 ```
 
-Also assert selection-only transactions do not callback, and accepting a pending notice emits `docChanged: false` with `pendingNormalization: null`.
+Add the selection-only, pending-only, and undo-history tests from the Test Appendix. Tab-bound image getter coverage belongs to Task 6.
 
 - [ ] **Step 2: Verify red**
 
@@ -406,19 +442,21 @@ export interface EditorDocumentUpdate {
 
 Listener compares start/end notice id and markerCount. It calls `onDocumentUpdate` only for doc or pending change, using bound options identity rather than active refs.
 
+Keep a typed legacy adapter for this Task only so `App.tsx` still compiles: old options may provide `onDocChanged`, while bound options provide tabId/documentId/onDocumentUpdate. Task 6 migrates App and removes the legacy branch in the same green step.
+
 - [ ] **Step 4: Update App harness**
 
-Replace every `onDocChanged(value)` mock call with a complete `onDocumentUpdate` object. Mock the three Engine normalization functions because the fake view has no StateField.
+Create the per-tab fake-view harness defined in the Test Appendix. Each editor gets distinct options, dispatch, focus, state, and contents. Mock the three Engine normalization functions because fake views have no StateField.
 
 - [ ] **Step 5: Verify**
 
 Run: `pnpm --filter @omd/desktop test -- Editor.test.ts App.test.tsx`  
-Expected: Editor tests PASS; App integration may remain red until Task 6.
+Expected: all selected tests PASS through the temporary typed adapter.
 
 - [ ] **Step 6: Suggested commit**
 
 ```sh
-git add apps/desktop/src/Editor.ts apps/desktop/test/Editor.test.ts apps/desktop/test/App.test.tsx
+git add apps/desktop/src/Editor.ts apps/desktop/test/Editor.test.ts apps/desktop/test/appHarness.ts apps/desktop/test/App.test.tsx
 git commit -m "refactor(desktop): bind editor updates to document identity"
 ```
 
@@ -431,6 +469,7 @@ git commit -m "refactor(desktop): bind editor updates to document identity"
 - Create: `apps/desktop/test/NormalizationBanner.test.tsx`
 - Modify: `apps/desktop/src/StatusBar.tsx`
 - Modify: `apps/desktop/src/styles.css`
+- Modify: `apps/desktop/src/App.tsx`
 
 **Interfaces:**
 - Produces: `NormalizationBannerProps`
@@ -454,6 +493,8 @@ it("disables both actions while busy", () => {
 })
 ```
 
+Add the Test Appendix click/callback/order case and a StatusBar assertion that path + dirty remains one text node.
+
 - [ ] **Step 2: Verify red**
 
 Run: `pnpm --filter @omd/desktop test -- NormalizationBanner.test.tsx`  
@@ -461,7 +502,7 @@ Expected: FAIL because component does not exist.
 
 - [ ] **Step 3: Implement component and status**
 
-Banner uses `role="status"`, text count, two named native buttons, and `busy` disabled state. StatusBar keeps path + dirty in its existing text node and adds a separate conditional `Normalization review required` span.
+Banner uses `role="status"`, text count, two named native buttons, and `busy` disabled state. StatusBar keeps path + dirty in its existing text node and adds a separate conditional span. During this isolated Task, the new prop defaults to `false` and App passes `false`; Task 6 makes it required when real state is wired.
 
 - [ ] **Step 4: Add CSS**
 
@@ -481,7 +522,7 @@ Expected: PASS.
 - [ ] **Step 6: Suggested commit**
 
 ```sh
-git add apps/desktop/src/NormalizationBanner.tsx apps/desktop/src/StatusBar.tsx apps/desktop/src/styles.css apps/desktop/test/NormalizationBanner.test.tsx
+git add apps/desktop/src/NormalizationBanner.tsx apps/desktop/src/StatusBar.tsx apps/desktop/src/styles.css apps/desktop/src/App.tsx apps/desktop/test/NormalizationBanner.test.tsx
 git commit -m "feat(desktop): add normalization review banner"
 ```
 
@@ -491,6 +532,8 @@ git commit -m "feat(desktop): add normalization review banner"
 
 **Files:**
 - Modify: `apps/desktop/src/App.tsx`
+- Modify: `apps/desktop/src/Editor.ts`
+- Modify: `apps/desktop/src/StatusBar.tsx`
 - Modify: `apps/desktop/test/App.test.tsx`
 
 **Interfaces:**
@@ -499,13 +542,17 @@ git commit -m "feat(desktop): add normalization review banner"
 
 - [ ] **Step 1: Write failing integration tests**
 
-Add named tests:
+Use the executable reset/background cases in the Test Appendix, covering:
 
 - `routes a background editor update to its bound tab without changing activeId`
 - `commits bumped documentId before resetting an active view`
 - `does not write recovery for a pending-only update`
 - `clears old projection before open, external reload, and draft restore`
 - `removes projection when its tab closes`
+- `restores old session and projection when reset throws`
+- `keeps path and document identity getters bound to a background tab`
+- `updates markerCount without changing a non-idle action`
+- `confirms before closing a pending-only dirty tab`
 
 Use rendered banner/tab assertions and captured reset options, not private React state.
 
@@ -523,6 +570,8 @@ const normalizationRef = useRef(normalizationByTab)
 ```
 
 Create one immutable commit helper that updates ref and state. `ensureViews()` calls `editorOptions(doc, tab.id, tab.documentId)`.
+
+Bind `getDocPath` and `getDocumentId` by tab lookup, never `sessionRef.current`. Remove Task 4’s legacy callback adapter after all App call sites migrate.
 
 - [ ] **Step 4: Implement `handleDocumentUpdate`**
 
@@ -543,19 +592,25 @@ For open, external load, and recovery:
 
 This order is load-bearing; do not reset before bumping identity.
 
+Capture old session/projection/doc first. If reset throws, restore all three before reporting; the old EditorView must continue accepting updates.
+
 - [ ] **Step 6: Render UI and close safely**
 
-Render only active tab’s banner near editor stack. Pass review state to StatusBar. Clear projection before tab destruction; pending-only dirty still uses close confirmation.
+Render only active tab’s banner near editor stack. Make the StatusBar review prop required and pass real state. Clear projection before tab destruction; pending-only dirty still uses close confirmation.
 
-- [ ] **Step 7: Verify**
+- [ ] **Step 7: Enforce the App size checkpoint**
+
+Remove Task 4’s legacy adapter from `Editor.ts`. Confirm Task 6 leaves `App.tsx` below 700 lines so Task 7 has room to integrate save/reject coordination; extract tab-update helpers now if the checkpoint fails.
+
+- [ ] **Step 8: Verify**
 
 Run: `pnpm --filter @omd/desktop test -- App.test.tsx workspace.test.ts session.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 8: Suggested commit**
+- [ ] **Step 9: Suggested commit**
 
 ```sh
-git add apps/desktop/src/App.tsx apps/desktop/test/App.test.tsx
+git add apps/desktop/src/App.tsx apps/desktop/src/Editor.ts apps/desktop/src/StatusBar.tsx apps/desktop/test/App.test.tsx
 git commit -m "feat(desktop): surface pending list normalization"
 ```
 
@@ -565,6 +620,8 @@ git commit -m "feat(desktop): surface pending list normalization"
 
 **Files:**
 - Modify: `apps/desktop/src/App.tsx`
+- Create: `apps/desktop/src/normalizationCoordinator.ts`
+- Create: `apps/desktop/test/normalizationCoordinator.test.ts`
 - Modify: `apps/desktop/test/App.test.tsx`
 
 **Interfaces:**
@@ -573,7 +630,7 @@ git commit -m "feat(desktop): surface pending list normalization"
 
 - [ ] **Step 1: Write failing timer tests**
 
-Test names and assertions:
+Use the executable fake-timer cases in the Test Appendix:
 
 - `does not autosave while normalization review is pending`: fake timer passes autosaveMs; `writeFile` remains zero.
 - `cancels an armed timer when pending arrives`: ordinary edit arms timer; pending-only update cancels it.
@@ -581,17 +638,18 @@ Test names and assertions:
 
 - [ ] **Step 2: Write failing explicit-save tests**
 
-Cover:
+Use the per-tab harness cases in the Test Appendix, including:
 
 - Banner and Cmd+S use `saveFile(tabId, "explicit")`.
 - Success dispatches accept only to captured view/id.
 - Failure/cancel resyncs fresh notice + idle.
 - Switching tabs after write begins does not cancel write or update wrong baseline.
 - Edits during save remain dirty after captured baseline updates.
+- Two tabs can accept different pending ids consecutively without cross-dispatch.
 
 - [ ] **Step 3: Write failing reject tests**
 
-Assert idle → reverting, captured-view dispatch, stale identity resync, skipped-marker informational copy, and focus restoration.
+Use the appendix harness to assert idle → reverting, captured-view dispatch, stale identity resync, Source-mode skipped-marker informational copy, and focus restoration.
 
 - [ ] **Step 4: Verify red**
 
@@ -612,6 +670,8 @@ interface NormalizationOperationCapture {
 
 Autosave returns before queueing when the tab has pending. Explicit save captures tab/document/view/id/snapshot and sets saving only if the pure transition returns a new state. Effect dependencies include active tab, doc/path/dirty, timeout, and active pending id.
 
+Create `normalizationCoordinator.ts` before editing App. Implement the appendix signatures `canAutosaveTab` and `isCurrentNormalizationTarget`; it also owns `NormalizationOperationCapture`. Move enough logic out of App to keep it below 800 lines.
+
 - [ ] **Step 6: Validate completion and dispatch**
 
 Before accept/reject dispatch, verify tab exists, documentId matches, `viewsRef.get(tabId) === view`, and Engine pending id matches. Update baseline with `replaceTabSession`, never active refs. Stale paths resync from target view.
@@ -625,9 +685,13 @@ capture.view.dispatch(result.transaction)
 capture.view.focus()
 ```
 
+When `skippedMarkers > 0`, set an in-app transient `role="status"` message with the approved copy; do not call `reportError` or `window.alert`.
+
 - [ ] **Step 7: Cover external changes**
 
 “Load disk” uses reset helper and clears old pending; “Keep mine” preserves pending and autosave pause. Add both tests.
+
+Re-run and preserve existing save queue tests: serialized snapshots, stale open response, Save As path reuse, failed-save baseline, and edits during pending writes. Fix production regressions rather than weakening those assertions.
 
 - [ ] **Step 8: Verify Desktop**
 
@@ -643,7 +707,7 @@ Expected: all tests and build PASS.
 - [ ] **Step 9: Suggested commit**
 
 ```sh
-git add apps/desktop/src/App.tsx apps/desktop/test/App.test.tsx
+git add apps/desktop/src/App.tsx apps/desktop/src/normalizationCoordinator.ts apps/desktop/test/normalizationCoordinator.test.ts apps/desktop/test/App.test.tsx
 git commit -m "feat(desktop): confirm automatic list normalization"
 ```
 
@@ -685,7 +749,8 @@ Include all spec cases: disk unchanged after timeout, later edits survive reject
 Run:
 
 ```sh
-rg -n "T[B]D|T[O]DO|implement later|适当处理|待补充" docs/superpowers/plans/2026-08-13-01-source-fidelity.md
+rg -n "T[B]D|T[O]DO|implement later|适当处理|待补充" docs/superpowers/plans/2026-08-13-01-source-fidelity*.md
+python3 -c 'from pathlib import Path; files=[*Path("apps/desktop/src").glob("*"), *Path("packages/engine/src").rglob("*")]; bad=[(str(p), sum(1 for _ in p.open())) for p in files if p.is_file() and sum(1 for _ in p.open()) >= 800]; assert not bad, bad'
 git diff --check
 ```
 
@@ -701,6 +766,8 @@ git diff --check
 ```
 
 Expected: all commands exit 0. Cargo is not required because Rust is unchanged.
+
+Compare every approved spec test-matrix item against the Test Appendix and implemented test names before declaring coverage complete.
 
 - [ ] **Step 6: Run targeted GUI QA**
 

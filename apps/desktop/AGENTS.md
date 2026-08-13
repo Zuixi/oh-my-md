@@ -26,6 +26,7 @@ apps/desktop/
 │   └── styles.css           # App styles, theme variables, and omd-* presentation
 └── src-tauri/
     ├── src/lib.rs           # File IO, image write, asset scope, workspace commands
+    ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
     ├── src/menu.rs          # Native File / Edit application menu
     ├── src/workspace.rs     # list_dir, search_markdown, crash-recovery files
     ├── capabilities/        # Tauri permissions
@@ -64,8 +65,11 @@ Current Rust commands are:
 - `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
 - `search_markdown(root, query)` — scan `.md` files under the folder for a string.
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
+- `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
+- `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (`takeSnapshot`). `format` is `"pdf"` or `"png"`; the path extension must match. macOS only.
+- `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
 
-The native File menu (Open, Open Folder, Save, Export HTML/PDF) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
+The native File menu (New, Open, Open Folder, Open Recent, Close, Save, Save As, Export HTML/PDF/Image) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
 
 When adding or changing a command:
 
@@ -118,6 +122,7 @@ Use `pnpm dev` for manual interaction checks. Review the relevant sections of `d
 - Tauri dialog cancellation is a normal result, not an error.
 - Image writing and Markdown insertion are asynchronous; inserting before a successful write or allowing concurrent operations to race creates broken or orphaned assets.
 - Static window values in `tauri.conf.json` and runtime window behavior can drift if both are later used.
+- Hidden iframe `print()` and `html-to-image` fail in WKWebView; PDF/PNG export must go through `export_preview`.
 
 ## Documentation Maintenance
 
