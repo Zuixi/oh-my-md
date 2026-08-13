@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  advanceDocumentIdentity,
   createSession,
   markSaved,
   openSession,
@@ -32,6 +33,13 @@ describe("EditorSession", () => {
     expect(saved.documentId).toBe(1)
     expect(saved.path).toBe("/notes/out.md")
     expect(sessionDirty(saved, "body")).toBe(false)
+  })
+
+  it("advances identity without changing path or baseline", () => {
+    const session = createSession(4, "/a.md", "saved")
+    expect(advanceDocumentIdentity(session)).toEqual({
+      ...session, documentId: session.documentId + 1,
+    })
   })
 
   it("labels untitled buffers and file basenames", () => {

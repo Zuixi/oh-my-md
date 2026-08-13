@@ -24,6 +24,11 @@ export function openSession(session: EditorSession, path: string, contents: stri
   return { ...session, documentId: session.documentId + 1, path, savedContents: contents }
 }
 
+/** Invalidates in-flight async work for this tab without touching path or saved baseline. */
+export function advanceDocumentIdentity(session: EditorSession): EditorSession {
+  return { ...session, documentId: session.documentId + 1 }
+}
+
 export function markSaved(session: EditorSession, path: string, snapshot: string): EditorSession {
   return { ...session, path, savedContents: snapshot }
 }
