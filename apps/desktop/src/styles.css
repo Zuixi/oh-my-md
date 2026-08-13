@@ -189,7 +189,8 @@ html, body, #root { height: 100%; margin: 0; background: var(--omd-bg); color: v
 }
 .statusbar-review { color: var(--omd-fg); font-weight: 600; }
 .normalization-banner {
-  --omd-min-target: 24px;
+  /* WCAG 2.2 SC 2.5.8 Target Size (Minimum). */
+  --min-target: 24px;
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
   padding: 8px 12px; font-size: 13px; line-height: 1.4;
   color: var(--omd-fg); background: var(--omd-code-bg);
@@ -198,12 +199,12 @@ html, body, #root { height: 100%; margin: 0; background: var(--omd-bg); color: v
 }
 .normalization-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .normalization-banner-action {
-  min-height: var(--omd-min-target); min-width: var(--omd-min-target);
+  min-height: var(--min-target); min-width: var(--min-target);
   padding: 4px 10px; font: inherit; cursor: pointer;
   color: var(--omd-fg); background: var(--omd-bg);
   border: 1px solid var(--omd-muted); border-radius: 4px;
 }
-.normalization-banner-action:disabled {
+.normalization-banner-action[aria-disabled="true"] {
   color: var(--omd-muted); border-color: var(--omd-border); cursor: not-allowed;
 }
 .normalization-banner-action:focus-visible {
