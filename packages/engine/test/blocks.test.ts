@@ -12,13 +12,46 @@ describe("block syntax", () => {
   })
 
   it("styles blockquote lines and hides the QuoteMark", () => {
-    // Cursor must be off the blockquote line for QuoteMark to be folded.
     const doc = "> quoted\n\nnormal"
     let state = makeState(doc)
     state = state.update({ selection: { anchor: doc.length } }).state  // cursor on 'normal' line
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
     expect(t).toContain("line:omd-blockquote")
     expect(t).toContain("replace:QuoteMark")
+  })
+
+  it("hides '> ' immediately while the cursor stays in the quote content", () => {
+    const doc = "> quoted"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    expect(specs.map(d => d.tag)).toContain("line:omd-blockquote")
+    expect(specs.map(d => `${d.tag}@${d.from}-${d.to}`)).toContain("replace:QuoteMark@0-2")
+  })
+
+  it("hides the marker on an empty quote after typing '> '", () => {
+    const doc = "> "
+    const state = makeState(doc).update({ selection: { anchor: 2 } }).state
+    expect(collectDecorationSpecs(state, 0, doc.length).map(d => `${d.tag}@${d.from}-${d.to}`))
+      .toContain("replace:QuoteMark@0-2")
+  })
+
+  it("reveals the quote marker only when the cursor is inside '> '", () => {
+    const doc = "> quoted"
+    const onMark = makeState(doc).update({ selection: { anchor: 0 } }).state
+    const onSpace = makeState(doc).update({ selection: { anchor: 1 } }).state
+    expect(collectDecorationSpecs(onMark, 0, doc.length).map(d => d.tag))
+      .not.toContain("replace:QuoteMark")
+    expect(collectDecorationSpecs(onSpace, 0, doc.length).map(d => d.tag))
+      .not.toContain("replace:QuoteMark")
+  })
+
+  it("hides nested quote markers while editing the inner text", () => {
+    const doc = "> > inner"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const marks = collectDecorationSpecs(state, 0, doc.length)
+      .filter(d => d.tag === "replace:QuoteMark")
+      .map(d => `${d.from}-${d.to}`)
+    expect(marks).toEqual(["0-2", "2-4"])
   })
 
   it("styles horizontal rule source when the cursor is on it", () => {

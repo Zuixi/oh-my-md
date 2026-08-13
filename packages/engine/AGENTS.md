@@ -45,9 +45,10 @@ packages/engine/
 3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization.
 4. Preserve the source document, except for live-preview ordered-list marker normalization in `lists/ordered.ts`. A preview widget renders a projection and enters editing mode by moving selection into the source range.
 5. Treat a block as editable when the selection overlaps its source range **including both boundaries**. Do not replace selected source with a widget.
-6. `BlockWidget.eq` compares source text and `pos`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
-7. Async widget failures must be contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
-8. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
+6. Fold `QuoteMark` unless the selection is inside `>` / `> ` itself. Do not reuse line-based `nearCursor` for quote markers; the cursor stays on the quote line while typing content.
+7. `BlockWidget.eq` compares source text and `pos`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild.
+8. Async widget failures must be contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
+9. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
 
 ## Parsing Rules
 

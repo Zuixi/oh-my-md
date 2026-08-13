@@ -10,13 +10,37 @@ import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
 
-// Folds a line-leading syntax mark ('>', '[^id]:') plus its trailing space,
+// Folds a line-leading syntax mark ('[^id]:') plus its trailing space,
 // unless the cursor is on that line.
 function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   const line = state.doc.lineAt(node.from)
   const end = Math.min(node.to + 1, line.to)
   if (!nearCursor(state, node.from, end))
     out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
+}
+
+function quoteMarkEnd(node: SyntaxNodeRef, state: EditorState): number {
+  const line = state.doc.lineAt(node.from)
+  if (node.to < line.to && state.doc.sliceString(node.to, node.to + 1) === " ")
+    return node.to + 1
+  return node.to
+}
+
+// Quote marks hide as soon as the cursor leaves `>` / `> `, even on the same
+// line, so typing `> ` immediately looks like a rendered quote.
+function cursorInside(state: EditorState, from: number, to: number): boolean {
+  const { from: sf, to: st } = state.selection.main
+  if (sf === st) return sf >= from && sf < to
+  return sf < to && st > from
+}
+
+function foldQuoteMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
+  const end = quoteMarkEnd(node, state)
+  if (cursorInside(state, node.from, end)) return
+  out.push({
+    from: node.from, to: end, tag: "replace:QuoteMark",
+    deco: Decoration.replace({}),
+  })
 }
 
 function directCells(row: SyntaxNode, state: EditorState) {
@@ -171,7 +195,7 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       }
       break
     }
-    case "QuoteMark":    { foldLineMark(node, state, out, "QuoteMark"); return false }
+    case "QuoteMark":    { foldQuoteMark(node, state, out); return false }
     case "FootnoteMark": { foldLineMark(node, state, out, "FootnoteMark"); return false }
     case "FootnoteDefinition": {
       for (let pos = node.from; pos <= node.to; ) {

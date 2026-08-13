@@ -22,6 +22,7 @@ Live preview rebuilds after selection changes. Inline syntax marks remain visibl
 Boundary positions are intentionally different:
 
 - Inline folding uses a line-based `nearCursor` check.
+- QuoteMark is the exception: it folds unless the cursor/selection is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line.
 - Block editing uses an **inclusive** range overlap in `blockSelected`.
 
 The inclusive boundary is load-bearing: when the user finishes typing a closing fence, the cursor rests exactly at `node.to`. A strict (half-open) check treats that as "outside" and the widget swallows the block mid-typing, bricking the cursor at the boundary (M2 incident, root cause C). The block only renders once the cursor leaves it entirely (Typora behavior).
