@@ -21,3 +21,26 @@ export function skipInlineCode(cx: InlineContext, pos: number): number {
   }
   return pos + ticks
 }
+
+export function parseHtmlPair(
+  cx: InlineContext,
+  pos: number,
+  tag: string,
+  node: string,
+  mark: string,
+): number {
+  const open = new RegExp(`^<${tag}\\s*>`, "i").exec(cx.slice(pos, cx.end))
+  if (!open) return -1
+  const contentStart = pos + open[0].length
+  const rest = cx.slice(contentStart, cx.end)
+  const close = new RegExp(`</${tag}\\s*>`, "i").exec(rest)
+  if (!close) return -1
+  const contentEnd = contentStart + close.index
+  const closeEnd = contentEnd + close[0].length
+  const inner = cx.parser.parseInline(cx.slice(contentStart, contentEnd), contentStart)
+  return cx.addElement(cx.elt(node, pos, closeEnd, [
+    cx.elt(mark, pos, contentStart),
+    ...inner,
+    cx.elt(mark, contentEnd, closeEnd),
+  ]))
+}

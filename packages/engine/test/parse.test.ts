@@ -36,4 +36,12 @@ describe("markdown parsing", () => {
     expect(html).toContain("Highlight")
     expect(html).not.toContain("HTMLTag")
   })
+
+  it("parses <u> as Underline", () => {
+    const names: string[] = []
+    syntaxTree(makeState("<u>带下划线文本</u>")).iterate({ enter: n => { names.push(n.name) } })
+    expect(names).toContain("Underline")
+    expect(names).toContain("UnderlineMark")
+    expect(names).not.toContain("HTMLTag")
+  })
 })

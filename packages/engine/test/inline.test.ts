@@ -66,4 +66,9 @@ describe("inline marks", () => {
     expect(tagsOffLine("这是<mark>高亮文本</mark>").filter(x => x === "replace:HighlightMark")).toHaveLength(2)
     expect(tagsOffLine("这是<mark>高亮文本</mark>")).toContain("mark:omd-highlight")
   })
+
+  it("folds <u> tags as underline", () => {
+    expect(tagsOffLine("<u>带下划线文本</u>").filter(x => x === "replace:UnderlineMark")).toHaveLength(2)
+    expect(tagsOffLine("<u>带下划线文本</u>")).toContain("mark:omd-u")
+  })
 })
