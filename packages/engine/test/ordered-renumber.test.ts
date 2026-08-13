@@ -272,16 +272,47 @@ describe("ordered list source rewrite in the editor", () => {
 
   it("merges two preview batches under one id and restores every marker", async () => {
     const { view, errors } = makeView("1. a\n3. b\n7. c")
-    await dispatchPreviewBatch(view, [{ from: 5, to: 7, insert: "2." }])
+    // Source mode removes the renumber plugin, and the tick drains the pass its constructor
+    // queued, so the only batches the field sees are the two dispatched below.
+    view.dispatch(applyToggle(view.state))
+    await tick()
+    expect(getPendingOrderedListNormalization(view.state)).toBeNull()
+    dispatchPreviewBatch(view, [{ from: 5, to: 7, insert: "2." }])
     const first = getPendingOrderedListNormalization(view.state)!
-    await dispatchPreviewBatch(view, [{ from: 10, to: 12, insert: "3." }])
+    expect(first.markerCount).toBe(1)
+    // A marker the first batch never touched: the second batch must extend the same pending id.
+    dispatchPreviewBatch(view, [{ from: 10, to: 12, insert: "3." }])
     const second = getPendingOrderedListNormalization(view.state)!
-    expect(second).toEqual({ id: first.id, markerCount: 2 })
+    expect(second.id).toBe(first.id)
+    expect(second.markerCount).toBe(2)
+    expect(view.state.doc.toString()).toBe("1. a\n2. b\n3. c")
     const result = rejectOrderedListNormalization(view.state, second.id)
+    expect(result.kind === "reverted" && result.restoredMarkers).toBe(2)
+    expect(result.kind === "reverted" && result.skippedMarkers).toBe(0)
     if (result.kind === "reverted") view.dispatch(result.transaction)
     await tick()
     expect(errors.map(String)).toEqual([])
     expect(view.state.doc.toString()).toBe("1. a\n3. b\n7. c")
+    expect(getPendingOrderedListNormalization(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it("reports a partial restore when one pending marker was edited", async () => {
+    const { view, errors } = makeView("1. a\n3. b\n7. c")
+    await tick()
+    expect(view.state.doc.toString()).toBe("1. a\n2. b\n3. c")
+    const notice = getPendingOrderedListNormalization(view.state)!
+    expect(notice.markerCount).toBe(2)
+    view.dispatch(applyToggle(view.state))
+    const line3 = view.state.doc.line(3)
+    view.dispatch({ changes: { from: line3.from, to: line3.from + 2, insert: "9." } })
+    const result = rejectOrderedListNormalization(view.state, notice.id)
+    expect(result.kind === "reverted" && result.restoredMarkers).toBe(1)
+    expect(result.kind === "reverted" && result.skippedMarkers).toBe(1)
+    if (result.kind === "reverted") view.dispatch(result.transaction)
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe("1. a\n3. b\n9. c")
     view.destroy()
   })
 
