@@ -15,10 +15,12 @@
 ```text
 packages/engine/
 ├── src/
-│   ├── index.ts                 # Public editorExtensions(options) entrypoint
+│   ├── index.ts                 # Public editorExtensions, collectOutline, exportHtml
 │   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
 │   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
+│   ├── outline.ts               # Read-only heading outline from the Lezer tree
+│   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
 │   └── decorations/
 │       ├── build.ts             # StateField live decorations and incremental updates
 │       ├── inline.ts            # Inline and marker decorations
@@ -35,7 +37,7 @@ packages/engine/
 2. Do not import React, Tauri APIs, desktop modules, or native filesystem APIs.
 3. DOM use is allowed inside CodeMirror widgets. Keep it localized and compatible with the `happy-dom` test environment.
 4. The engine emits semantic `omd-*` class names; visual declarations belong in `apps/desktop/src/styles.css`.
-5. Expose desktop-facing behavior through `src/index.ts`, preferably via `editorExtensions(options)`. Do not make desktop consumers assemble engine internals.
+5. Expose desktop-facing behavior through `src/index.ts`: `editorExtensions(options)`, plus read-only `collectOutline(state)` and `exportHtml(state)`. Do not make desktop consumers assemble engine internals or re-parse Markdown.
 6. Keep generic host choices such as editor dimensions, base typography, history, and non-Markdown keymaps in `apps/desktop/src/Editor.ts`.
 
 ## Decoration and Widget Invariants

@@ -1,3 +1,6 @@
+mod menu;
+mod workspace;
+
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
@@ -48,6 +51,46 @@ fn write_image(path: String, base64: String, document_path: String) -> Result<()
     validate_document_assets_directory(assets_dir, document)?;
 
     atomic_write(target, &bytes)
+}
+
+#[tauri::command]
+fn list_dir(path: String) -> Result<Vec<workspace::DirEntry>, String> {
+    workspace::list_dir(path)
+}
+
+#[tauri::command]
+fn search_markdown(root: String, query: String) -> Result<Vec<workspace::SearchHit>, String> {
+    workspace::search_markdown(root, query)
+}
+
+#[tauri::command]
+fn write_recovery(key: String, contents: String) -> Result<(), String> {
+    workspace::write_recovery(key, contents)
+}
+
+#[tauri::command]
+fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
+    workspace::list_recoveries()
+}
+
+#[tauri::command]
+fn read_recovery(key: String) -> Result<String, String> {
+    workspace::read_recovery(key)
+}
+
+#[tauri::command]
+fn clear_recovery(key: String) -> Result<(), String> {
+    workspace::clear_recovery(key)
+}
+
+#[tauri::command]
+fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri::Manager;
+
+    let directory = workspace_directory(Path::new(&path))?;
+    app.asset_protocol_scope()
+        .allow_directory(directory, true)
+        .map_err(|e| format!("failed to allow workspace directory: {e}"))
 }
 
 #[tauri::command]
@@ -145,6 +188,17 @@ fn validate_document_assets_directory(
     Ok(())
 }
 
+fn workspace_directory(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err("workspace path must be an absolute path without traversal".into());
+    }
+    std::fs::canonicalize(path).map_err(|e| format!("failed to resolve workspace directory: {e}"))
+}
+
 fn document_directory_for_assets(document_path: &Path) -> Result<PathBuf, String> {
     if !document_path.is_absolute()
         || document_path
@@ -185,11 +239,22 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            menu::install(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             read_file,
             write_file,
             write_image,
-            allow_document_assets
+            allow_document_assets,
+            list_dir,
+            search_markdown,
+            write_recovery,
+            list_recoveries,
+            read_recovery,
+            clear_recovery,
+            allow_workspace_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running oh-my-md");
@@ -296,7 +361,12 @@ mod tests {
     fn write_image_decodes_base64_and_creates_dirs() {
         let (directory, document, path) = document_image("image-success", "pixel.png");
 
-        write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).unwrap();
+        write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&path).unwrap(), PNG_BYTES);
         fs::remove_dir_all(directory).ok();
@@ -310,8 +380,18 @@ mod tests {
         let jpeg = b"\xff\xd8\xff\xe0jpeg";
         let webp = b"RIFF\x04\x00\x00\x00WEBP";
 
-        write_image(path_string(&jpeg_path), encoded(jpeg), path_string(&document)).unwrap();
-        write_image(path_string(&webp_path), encoded(webp), path_string(&document)).unwrap();
+        write_image(
+            path_string(&jpeg_path),
+            encoded(jpeg),
+            path_string(&document),
+        )
+        .unwrap();
+        write_image(
+            path_string(&webp_path),
+            encoded(webp),
+            path_string(&document),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(jpeg_path).unwrap(), jpeg);
         assert_eq!(fs::read(webp_path).unwrap(), webp);
@@ -355,7 +435,12 @@ mod tests {
         let (directory, document) = prepare_document("image-traversal");
         let path = directory.join("assets/../pixel.png");
 
-        assert!(write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         assert!(!directory.join("pixel.png").exists());
         fs::remove_dir_all(directory).ok();
     }
@@ -372,7 +457,12 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, &assets).unwrap();
 
-        assert!(write_image(path_string(&image), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&image),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         assert!(!outside.join("pixel.png").exists());
         fs::remove_dir_all(directory).ok();
         fs::remove_dir_all(outside).ok();
@@ -381,21 +471,36 @@ mod tests {
     #[test]
     fn write_image_rejects_bad_base64() {
         let (directory, document, path) = document_image("bad-base64", "x.png");
-        assert!(write_image(path_string(&path), "!!!not-base64!!!".into(), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            "!!!not-base64!!!".into(),
+            path_string(&document)
+        )
+        .is_err());
         fs::remove_dir_all(directory).ok();
     }
 
     #[test]
     fn write_image_rejects_unsupported_extension() {
         let (directory, document, path) = document_image("bad-extension", "x.gif");
-        assert!(write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         fs::remove_dir_all(directory).ok();
     }
 
     #[test]
     fn write_image_rejects_mismatched_format() {
         let (directory, document, path) = document_image("bad-format", "x.jpg");
-        assert!(write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         fs::remove_dir_all(directory).ok();
     }
 
@@ -403,7 +508,12 @@ mod tests {
     fn write_image_rejects_destination_outside_assets() {
         let (directory, document) = prepare_document("outside-assets");
         let path = directory.join("pixel.png");
-        assert!(write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         assert!(!path.exists());
         fs::remove_dir_all(directory).ok();
     }
@@ -412,7 +522,12 @@ mod tests {
     fn write_image_rejects_nested_destination_inside_assets() {
         let (directory, document) = prepare_document("nested-assets");
         let path = directory.join("assets/nested/pixel.png");
-        assert!(write_image(path_string(&path), encoded(PNG_BYTES), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(PNG_BYTES),
+            path_string(&document)
+        )
+        .is_err());
         assert!(!path.exists());
         fs::remove_dir_all(directory).ok();
     }
@@ -421,7 +536,12 @@ mod tests {
     fn write_image_rejects_oversized_decoded_payload() {
         let (directory, document, path) = document_image("oversized", "large.png");
         let payload = vec![0_u8; 10 * 1024 * 1024 + 1];
-        assert!(write_image(path_string(&path), encoded(&payload), path_string(&document)).is_err());
+        assert!(write_image(
+            path_string(&path),
+            encoded(&payload),
+            path_string(&document)
+        )
+        .is_err());
         assert!(!path.exists());
         fs::remove_dir_all(directory).ok();
     }
@@ -435,6 +555,23 @@ mod tests {
 
         let resolved = document_directory_for_assets(&document).unwrap();
         assert_eq!(resolved, fs::canonicalize(&directory).unwrap());
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn workspace_directory_canonicalizes_existing_dir() {
+        let directory = tmp_path("workspace-scope-dir");
+        fs::create_dir_all(&directory).unwrap();
+        let resolved = workspace_directory(&directory).unwrap();
+        assert_eq!(resolved, fs::canonicalize(&directory).unwrap());
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn workspace_directory_rejects_traversal() {
+        let directory = tmp_path("workspace-scope-traversal");
+        fs::create_dir_all(&directory).unwrap();
+        assert!(workspace_directory(&directory.join("..")).is_err());
         fs::remove_dir_all(directory).ok();
     }
 

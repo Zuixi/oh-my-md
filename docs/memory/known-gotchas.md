@@ -163,6 +163,14 @@ Open/save shortcuts are registered once at window scope. The stable listener mus
 
 Adding changing React values to the listener effect can cause repeated registration; capturing them with an empty dependency array causes stale behavior.
 
+## Tab identity and document identity are different
+
+`EditorSession.id` is the stable tab key (one `EditorView` / host per tab). `documentId` increments when a file is opened or reloaded so in-flight image paste and save operations can detect a stale session. Do not increment `id` on open: React would remount the host and destroy undo history.
+
+Cmd+O replaces the active tab. File-tree / search open in a new tab, or focus an existing tab with the same path. Switching tabs hides hosts; do not stuff multiple documents into one `EditorState`. The Files sidebar is always mounted; opening a file also `ensureFolder`s its parent so the tree is not gated on an explicit Open folder command. Expanding a directory lists that folder in place and must not replace `workspace.folder`. Open / Open Folder / Save / Export live in the native File menu and Cmd+K, not in a chrome export panel.
+
+Autosave (about 1.5s, pathed documents only) and Cmd+S share the same save queue. Untitled buffers go to recovery files only. Startup recovery must prompt; never silently overwrite. External file changes poll `read_file`: clean tabs reload, dirty tabs ask. StatusBar path + dirty ` •` must stay one text node so session tests can `getByText` the exact path.
+
 ## Dirty state needs a saved-content baseline
 
 `App.tsx` receives every document change through `EditorView.updateListener` and compares the current text with the last successfully opened or saved snapshot. A one-way boolean ("a change happened") is insufficient because undo can return to the clean baseline.
