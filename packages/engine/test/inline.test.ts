@@ -71,4 +71,23 @@ describe("inline marks", () => {
     expect(tagsOffLine("<u>带下划线文本</u>").filter(x => x === "replace:UnderlineMark")).toHaveLength(2)
     expect(tagsOffLine("<u>带下划线文本</u>")).toContain("mark:omd-u")
   })
+
+  it("replaces HTML entities with their characters when the cursor is away", () => {
+    const doc = "see &#x1f4da; &#128218; &copy;\nx"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const chars = collectDecorationSpecs(state, 0, state.doc.length)
+      .filter(d => d.tag === "widget:entity")
+      .map(d => (d.deco.spec.widget as { ch: string }).ch)
+    expect(chars).toEqual(["📚", "📚", "©"])
+  })
+
+  it("shows the entity source when the cursor is inside it", () => {
+    const doc = "see &#x1f4da; here"
+    const inside = doc.indexOf("#")
+    expect(tagsAt(doc, inside)).not.toContain("widget:entity")
+  })
+
+  it("leaves unicode emoji as literal text", () => {
+    expect(tagsOffLine("📚 推荐")).not.toContain("widget:entity")
+  })
 })

@@ -118,8 +118,13 @@ function expandRange(
   return { from: safeFrom, to: safeTo }
 }
 
+// expandRange uses endLine.to + 1 as an exclusive end (the next line's from).
+// A closed overlap would drop point decorations sitting exactly at that boundary
+// (the next line's omd-blockquote-N / QuoteMark) without the inner Blockquote
+// being visited again, so the following quote line loses its bar.
 function intersects(from: number, to: number, range: RebuildRange) {
-  return from <= range.to && to >= range.from
+  if (range.from === range.to) return from <= range.to && to >= range.from
+  return from < range.to && to >= range.from
 }
 
 function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
@@ -193,7 +198,7 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   ])
   const retained = mappedSpecs.filter(spec =>
     !removalRanges.some(range => intersects(spec.from, spec.to, range)))
-  const seen = new Set<string>()
+  const seen = new Set(retained.map(spec => `${spec.tag}:${spec.from}:${spec.to}`))
   const additions = rebuilt.filter(spec => {
     const key = `${spec.tag}:${spec.from}:${spec.to}`
     if (seen.has(key)) return false

@@ -78,7 +78,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ## Workspace Conventions
 
 - Write strict TypeScript and avoid `any`; use named exports except framework/config files that conventionally require default exports.
-- Do not enable `indentOnInput`, `closeBrackets`, or `autocompletion` in `createEditor`; they conflict with current live-preview behavior.
+- Do not enable `indentOnInput`, `closeBrackets`, or generic `autocompletion` in `createEditor`; they conflict with current live-preview behavior. Gemoji completion is a `:`-only override inside `editorExtensions`.
 - Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
 - Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
 - Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.

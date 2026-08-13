@@ -160,6 +160,148 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("renders fenced code inside a quote without splitting the quote", async () => {
+    const doc = "> 运行：\n>\n> ```bash\n> npm install\n> npm start\n> ```\n>\n> 完成\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    expect(view.dom.querySelector(".omd-code")).toBeNull()
+    const codeLines = [...view.dom.querySelectorAll(".omd-codeblock")]
+    expect(codeLines.length).toBeGreaterThanOrEqual(2)
+    expect(codeLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
+    expect(codeLines.some(el => el.textContent?.includes("npm install"))).toBe(true)
+    expect(codeLines.some(el => el.textContent?.includes("npm start"))).toBe(true)
+    expect(codeLines.every(el => !el.textContent?.includes(">"))).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders HTML entities as characters and leaves unicode emoji alone", async () => {
+    const doc = "unicode 📚 and &#x1f4da; &#128218; &copy;\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const entities = [...view.dom.querySelectorAll(".omd-entity")].map(el => el.textContent)
+    expect(entities).toEqual(["📚", "📚", "©"])
+    expect(view.dom.textContent).toContain("📚")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders a known gemoji shortcode as unicode and keeps the source", async () => {
+    const doc = "celebrate :tada: please\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const emoji = [...view.dom.querySelectorAll(".omd-emoji")].map(el => el.textContent)
+    expect(emoji).toEqual(["🎉"])
+    expect(view.state.doc.toString()).toContain(":tada:")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders a quote nested inside a list item", async () => {
+    const doc = "* 第一项\n    > 菜鸟教程\n    > 学的不仅是技术更是梦想\n* 第二项\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const quoteLines = [...view.dom.querySelectorAll(".omd-blockquote-1")]
+    expect(quoteLines.length).toBeGreaterThanOrEqual(2)
+    expect(quoteLines.every(el => el.classList.contains("omd-quote-in-li-1"))).toBe(true)
+    expect(quoteLines.every(el => !el.classList.contains("omd-li-1"))).toBe(true)
+    expect(quoteLines.some(el => el.textContent === "菜鸟教程")).toBe(true)
+    expect(quoteLines.some(el => el.textContent === "学的不仅是技术更是梦想")).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("shows stacked depth classes for nested quotes", async () => {
+    const doc = "> 最外层\n> > 第一层嵌套\n> > > 第二层嵌套\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    expect(view.dom.querySelector(".omd-blockquote-1")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-blockquote-2")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-blockquote-3")).toBeTruthy()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders list markers inside a quote without throwing", async () => {
+    const doc = "> 区块中使用列表\n> 1. 第一项\n> 2. 第二项\n> + 第一项\n> + 第二项\n> + 第三项\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    expect(view.dom.querySelectorAll(".omd-ordered-mark")).toHaveLength(2)
+    expect(view.dom.querySelectorAll(".omd-bullet")).toHaveLength(3)
+    const listLines = [...view.dom.querySelectorAll(".omd-li-1")]
+    expect(listLines.length).toBeGreaterThanOrEqual(5)
+    expect(listLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
+    expect(listLines.every(el => !el.classList.contains("omd-quote-in-li-1"))).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps the nested quote line when clicking an empty quote line", async () => {
+    const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    view.dispatch({ selection: { anchor: doc.indexOf("\n>\n> > >") + 1 } })
+    await tick()
+    const nested = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("第二层嵌套"))
+    expect(nested?.className).toContain("omd-blockquote-3")
+    expect(nested?.textContent).toBe("第二层嵌套")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps the inner quote line when clicking the leading empty quote line", async () => {
+    const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    view.dispatch({ selection: { anchor: doc.indexOf("\n>\n> > ") + 1 } })
+    await tick()
+    const nested = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("第一层嵌套"))
+    expect(nested?.className).toContain("omd-blockquote-2")
+    expect(nested?.textContent).toBe("第一层嵌套")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps quote chrome after clicking a blank line before a nested quote", async () => {
+    const doc = "最外层\n\n> 第一层嵌套\n>\n> > 第二层嵌套"
+    const { view, errors } = makeView(doc)
+    await tick()
+    view.dispatch({ selection: { anchor: doc.indexOf("\n\n>") + 1 } })
+    await tick()
+    const first = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("第一层嵌套"))
+    const nested = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("第二层嵌套"))
+    expect(first?.className).toContain("omd-blockquote-1")
+    expect(nested?.className).toContain("omd-blockquote-2")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps nested quote preview when clicking the inner content", async () => {
+    const doc = [
+      "> **用户反馈**：这个功能很有用！",
+      ">",
+      "> > **开发团队回复**：感谢您的反馈，我们会继续优化。",
+      "> >",
+      "> > > **项目经理补充**：预计下个版本会有更多改进。",
+      "",
+      "outside",
+    ].join("\n")
+    const { view, errors } = makeView(doc, doc.indexOf("感谢您的反馈"))
+    await tick()
+    const line = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("感谢您的反馈"))
+    expect(line?.classList.contains("omd-blockquote-2")).toBe(true)
+    expect(line?.textContent).toBe("开发团队回复：感谢您的反馈，我们会继续优化。")
+    expect(line?.textContent).not.toContain(">")
+    expect(line?.textContent).not.toContain("**")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("hides the quote marker in the live line while the cursor is in the content", async () => {
     const { view, errors } = makeView("> hello", 2)
     await tick()
@@ -177,6 +319,7 @@ describe("view smoke (real EditorView)", () => {
     const headers = view.dom.querySelectorAll(".omd-table th")
     expect((headers[0] as HTMLElement).style.textAlign).toBe("left")
     expect((headers[1] as HTMLElement).style.textAlign).toBe("right")
+    expect(view.dom.querySelector(".omd-table.omd-blockquote-1")).toBeTruthy()
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

@@ -6,6 +6,7 @@
     "test": "tsc --noEmit && vitest run"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/lang-markdown": "^6.3.0",
     "@codemirror/language": "^6.10.0",
     "@codemirror/state": "^6.5.0",

@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest"
-import { collectDecorationSpecs } from "../src/decorations/build"
+import { buildLiveDecorations, collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
+
+function replaceRanges(doc: string, anchor: number) {
+  const state = makeState(doc).update({ selection: { anchor } }).state
+  return collectDecorationSpecs(state, 0, doc.length)
+    .filter(d => d.tag.startsWith("replace:") || d.tag.startsWith("widget:"))
+}
+
+function assertNoReplaceOverlap(ranges: { tag: string; from: number; to: number }[]) {
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      const a = ranges[i], b = ranges[j]
+      expect(
+        a.from < b.to && b.from < a.to,
+        `${a.tag}@${a.from}-${a.to} overlaps ${b.tag}@${b.from}-${b.to}`,
+      ).toBe(false)
+    }
+  }
+}
 
 const tags = (doc: string) => collectDecorationSpecs(makeState(doc), 0, doc.length).map(d => d.tag)
 
@@ -16,7 +34,7 @@ describe("block syntax", () => {
     let state = makeState(doc)
     state = state.update({ selection: { anchor: doc.length } }).state  // cursor on 'normal' line
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
-    expect(t).toContain("line:omd-blockquote")
+    expect(t).toContain("line:omd-blockquote-1")
     expect(t).toContain("replace:QuoteMark")
   })
 
@@ -24,7 +42,7 @@ describe("block syntax", () => {
     const doc = "> quoted"
     const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
     const specs = collectDecorationSpecs(state, 0, doc.length)
-    expect(specs.map(d => d.tag)).toContain("line:omd-blockquote")
+    expect(specs.map(d => d.tag)).toContain("line:omd-blockquote-1")
     expect(specs.map(d => `${d.tag}@${d.from}-${d.to}`)).toContain("replace:QuoteMark@0-2")
   })
 
@@ -45,6 +63,35 @@ describe("block syntax", () => {
       .not.toContain("replace:QuoteMark")
   })
 
+  it("keeps nested quote and emphasis marks folded when clicking the content", () => {
+    const doc = [
+      "> **用户反馈**：这个功能很有用！",
+      ">",
+      "> > **开发团队回复**：感谢您的反馈，我们会继续优化。",
+      "> >",
+      "> > > **项目经理补充**：预计下个版本会有更多改进。",
+    ].join("\n")
+    const line = makeState(doc).doc.lineAt(doc.indexOf("感谢您的反馈"))
+    const state = makeState(doc).update({ selection: { anchor: doc.indexOf("感谢您的反馈") } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length)
+      .filter(d => d.from >= line.from && (d.tag.startsWith("line:") ? d.from === line.from : d.to <= line.to))
+      .map(d => d.tag)
+    expect(tags.filter(t => t === "replace:QuoteMark")).toHaveLength(2)
+    expect(tags.filter(t => t === "replace:EmphasisMark")).toHaveLength(2)
+    expect(tags).toContain("line:omd-blockquote-2")
+    expect(tags).not.toContain("line:omd-blockquote-1")
+    expect(tags).not.toContain("line:omd-blockquote-3")
+  })
+
+  it("keeps nested quote marks folded when the whole line is selected", () => {
+    const doc = "> > **开发团队回复**：感谢您的反馈"
+    const line = makeState(doc).doc.lineAt(0)
+    const state = makeState(doc).update({ selection: { anchor: line.from, head: line.to } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(tags.filter(t => t === "replace:QuoteMark")).toHaveLength(2)
+    expect(tags.filter(t => t === "replace:EmphasisMark")).toHaveLength(2)
+  })
+
   it("hides nested quote markers while editing the inner text", () => {
     const doc = "> > inner"
     const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
@@ -52,6 +99,107 @@ describe("block syntax", () => {
       .filter(d => d.tag === "replace:QuoteMark")
       .map(d => `${d.from}-${d.to}`)
     expect(marks).toEqual(["0-2", "2-4"])
+  })
+
+  it("tags each nested quote line with its own depth", () => {
+    const doc = "> 最外层\n> > 第一层嵌套\n> > > 第二层嵌套"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const depths = collectDecorationSpecs(state, 0, doc.length)
+      .filter(d => d.tag.startsWith("line:omd-blockquote"))
+      .map(d => `${d.tag}@${d.from}`)
+    expect(depths).toEqual([
+      `line:omd-blockquote-1@0`,
+      `line:omd-blockquote-2@${doc.indexOf("\n") + 1}`,
+      `line:omd-blockquote-3@${doc.lastIndexOf("\n") + 1}`,
+    ])
+  })
+
+  it("renders ordered and bullet lists inside a quote without overlapping replaces", () => {
+    const doc = "> 区块中使用列表\n> 1. 第一项\n> 2. 第二项\n> + 第一项\n> + 第二项\n> + 第三项"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    const tags = specs.map(d => d.tag)
+    expect(tags.filter(t => t === "widget:ordered-mark")).toHaveLength(2)
+    expect(tags.filter(t => t === "replace:ListMark")).toHaveLength(3)
+    expect(tags).toContain("line:omd-blockquote-1")
+    expect(tags).toContain("line:omd-li-1")
+    expect(tags).not.toContain("line:omd-quote-in-li-1")
+    assertNoReplaceOverlap(replaceRanges(doc, doc.length))
+    expect(() => buildLiveDecorations(state)).not.toThrow()
+  })
+
+  it("styles a quote nested in a list item and hides its indent", () => {
+    const doc = "* 第一项\n    > 菜鸟教程\n    > 学的不仅是技术更是梦想\n* 第二项"
+    const quoteLine = doc.indexOf("\n") + 1
+    const secondQuote = doc.indexOf("\n", quoteLine) + 1
+    const state = makeState(doc).update({ selection: { anchor: 0 } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    const tags = specs.map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(tags).toContain(`line:omd-blockquote-1@${quoteLine}-${quoteLine}`)
+    expect(tags).toContain(`line:omd-quote-in-li-1@${quoteLine}-${quoteLine}`)
+    expect(tags).not.toContain(`line:omd-li-1@${quoteLine}-${quoteLine}`)
+    expect(tags).toContain(`line:omd-blockquote-1@${secondQuote}-${secondQuote}`)
+    expect(tags).toContain(`line:omd-quote-in-li-1@${secondQuote}-${secondQuote}`)
+    expect(tags).not.toContain(`line:omd-li-1@${secondQuote}-${secondQuote}`)
+    expect(tags).toContain(`replace:QuoteIndent@${quoteLine}-${quoteLine + 4}`)
+    expect(tags).toContain(`replace:QuoteIndent@${secondQuote}-${secondQuote + 4}`)
+    expect(tags).toContain(`replace:QuoteMark@${quoteLine + 4}-${quoteLine + 6}`)
+    assertNoReplaceOverlap(replaceRanges(doc, 0))
+    expect(() => buildLiveDecorations(state)).not.toThrow()
+  })
+
+  it("keeps fenced code inside a quote as quote lines, not a block widget", () => {
+    const doc = "intro\n\n> ```bash\n> npm install\n> npm start\n> ```\n"
+    const state = makeState(doc).update({ selection: { anchor: 0 } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(tags).not.toContain("widget:block:code")
+    expect(tags.filter(t => t === "line:omd-codeblock")).toHaveLength(4)
+    expect(tags).toContain("line:omd-blockquote-1")
+    expect(tags).toContain("replace:QuoteMark")
+    expect(tags).toContain("replace:CodeMark")
+    assertNoReplaceOverlap(replaceRanges(doc, 0))
+  })
+
+  it("keeps table widgets aligned to an enclosing quote", () => {
+    const doc = "> | a |\n> |---|\n> | 1 |\n\noutside"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const spec = collectDecorationSpecs(state, 0, doc.length)
+      .find(d => d.tag === "widget:block:table")
+    expect(spec).toBeTruthy()
+    expect((spec!.deco.spec.widget as { embed: { quoteDepth: number } }).embed.quoteDepth).toBe(1)
+  })
+
+  it("hides heading marks inside a quote while editing the title", () => {
+    const doc = "> # 标题"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(tags).toContain("line:omd-blockquote-1")
+    expect(tags).toContain("line:omd-h1")
+    expect(tags).toContain("replace:QuoteMark")
+    expect(tags).toContain("replace:HeaderMark")
+  })
+
+  it("renders emphasis, links, images, and inline code inside a quote", () => {
+    const doc = [
+      "> 📚 **推荐阅读**",
+      ">",
+      "> 详细信息请参考 [官方文档](https://example.com)",
+      ">",
+      "> ![示例图片](./images/example.png)",
+      ">",
+      "> 执行后会在 `http://localhost:3000` 看到结果。",
+      "",
+      "outside",
+    ].join("\n")
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(tags).toContain("mark:omd-strong")
+    expect(tags).toContain("replace:EmphasisMark")
+    expect(tags).toContain("mark:omd-link")
+    expect(tags).toContain("replace:URL")
+    expect(tags).toContain("widget:image")
+    expect(tags).toContain("mark:omd-inline-code")
+    expect(tags.filter(t => t === "replace:QuoteMark").length).toBeGreaterThan(3)
   })
 
   it("styles horizontal rule source when the cursor is on it", () => {

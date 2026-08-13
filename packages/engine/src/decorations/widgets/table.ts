@@ -1,4 +1,4 @@
-import { BlockWidget } from "../blockWidget"
+import { BlockWidget, type BlockEmbed } from "../blockWidget"
 
 export type TableAlignment = "left" | "center" | "right" | ""
 
@@ -11,8 +11,8 @@ export interface TableData {
 // ponytail: 表格单元格按纯文本渲染（block replace 内叠不了行内装饰）；
 // 需要表内加粗/链接渲染时再考虑 widget 内自渲染行内子集。
 export class TableWidget extends BlockWidget {
-  constructor(src: string, pos: number, readonly table: TableData) {
-    super(src, pos)
+  constructor(src: string, pos: number, readonly table: TableData, embed?: BlockEmbed) {
+    super(src, pos, embed)
   }
 
   eq(other: TableWidget) {

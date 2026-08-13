@@ -1,6 +1,30 @@
 import { EditorView, WidgetType } from "@codemirror/view"
 import { BlockWidget } from "./blockWidget"
 
+export class EntityWidget extends WidgetType {
+  constructor(readonly ch: string, readonly raw: string) { super() }
+  eq(other: EntityWidget) { return this.ch === other.ch && this.raw === other.raw }
+  toDOM() {
+    const el = document.createElement("span")
+    el.className = "omd-entity"
+    el.textContent = this.ch
+    el.title = this.raw
+    return el
+  }
+}
+
+export class EmojiWidget extends WidgetType {
+  constructor(readonly ch: string, readonly raw: string) { super() }
+  eq(other: EmojiWidget) { return this.ch === other.ch && this.raw === other.raw }
+  toDOM() {
+    const el = document.createElement("span")
+    el.className = "omd-emoji"
+    el.textContent = this.ch
+    el.title = this.raw
+    return el
+  }
+}
+
 export class BulletWidget extends WidgetType {
   eq() { return true }
   toDOM() {

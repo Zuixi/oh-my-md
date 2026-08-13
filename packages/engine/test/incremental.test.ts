@@ -82,6 +82,75 @@ describe("incremental live decorations", () => {
     })))
   })
 
+  it("keeps nested quote marks after moving onto an empty quote line", () => {
+    const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
+    const emptyQuote = doc.indexOf("\n>\n> > >") + 1
+    const nested = doc.indexOf("第二层嵌套")
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length },
+      extensions: editorExtensions(),
+    })
+    const next = state.update({ selection: { anchor: emptyQuote } }).state
+    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
+      doc: next.doc,
+      selection: next.selection,
+      extensions: editorExtensions(),
+    })))
+    const nestedLine = next.doc.lineAt(nested)
+    const marks = next.field(livePreviewField).specs
+      .filter(spec => spec.tag === "replace:QuoteMark" && spec.from >= nestedLine.from && spec.to <= nestedLine.to)
+    const depths = next.field(livePreviewField).specs
+      .filter(spec => spec.tag.startsWith("line:omd-blockquote") && spec.from === nestedLine.from)
+      .map(spec => spec.tag)
+    expect(depths).toEqual(["line:omd-blockquote-3"])
+    expect(marks).toHaveLength(3)
+  })
+
+  it("keeps quote depth after moving onto a blank line before a nested quote", () => {
+    const doc = "最外层\n\n> 第一层嵌套\n>\n> > 第二层嵌套"
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length },
+      extensions: editorExtensions(),
+    })
+    const next = state.update({ selection: { anchor: doc.indexOf("\n\n>") + 1 } }).state
+    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
+      doc: next.doc,
+      selection: next.selection,
+      extensions: editorExtensions(),
+    })))
+    const first = next.doc.lineAt(doc.indexOf("第一层嵌套"))
+    const nested = next.doc.lineAt(doc.indexOf("第二层嵌套"))
+    const depths = next.field(livePreviewField).specs
+      .filter(spec => spec.tag.startsWith("line:omd-blockquote") &&
+        (spec.from === first.from || spec.from === nested.from))
+      .map(spec => spec.tag)
+    expect(depths).toEqual(["line:omd-blockquote-1", "line:omd-blockquote-2"])
+  })
+
+  it("keeps the first nested quote after moving onto the leading empty quote line", () => {
+    const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
+    const emptyQuote = doc.indexOf("\n>\n> > ") + 1
+    const nested = doc.indexOf("第一层嵌套")
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length },
+      extensions: editorExtensions(),
+    })
+    const next = state.update({ selection: { anchor: emptyQuote } }).state
+    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
+      doc: next.doc,
+      selection: next.selection,
+      extensions: editorExtensions(),
+    })))
+    const nestedLine = next.doc.lineAt(nested)
+    const depths = next.field(livePreviewField).specs
+      .filter(spec => spec.tag.startsWith("line:omd-blockquote") && spec.from === nestedLine.from)
+      .map(spec => spec.tag)
+    expect(depths).toEqual(["line:omd-blockquote-2"])
+  })
+
   it("does not duplicate enclosing block decorations during a local rebuild", () => {
     const doc = "> first\n> second\n> third\n\noutside"
     const state = EditorState.create({
