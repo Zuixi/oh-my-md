@@ -1,4 +1,5 @@
-import { sessionLabel, type EditorSession } from "./session"
+import { ChevronRight, FileText, Plus, X } from "lucide-react"
+import { sessionLabel, sessionPath, type EditorSession } from "./session"
 
 export function TopBar(props: {
   workspace: string | null
@@ -20,55 +21,73 @@ export function TopBar(props: {
 
   return (
     <header className="topbar" data-tauri-drag-region="">
-      <div className="topbar-breadcrumb" data-tauri-drag-region="">
-        {workspaceName ? (
-          <span className="topbar-workspace">{workspaceName}</span>
-        ) : null}
-        {breadcrumb.length > 0 ? (
-          breadcrumb.map((segment, i) => (
-            <span key={i} className="topbar-segment">
-              <span className="topbar-separator" aria-hidden="true">/</span>
-              <span className={i === breadcrumb.length - 1 ? "topbar-file" : "topbar-dir"}>
-                {segment}
-              </span>
-            </span>
-          ))
-        ) : (
-          <span className="topbar-segment">
-            {workspaceName ? (
-              <span className="topbar-separator" aria-hidden="true">/</span>
-            ) : null}
-            <span className="topbar-file">untitled</span>
-          </span>
-        )}
-        {props.dirty ? <span className="topbar-dirty" aria-label="Unsaved">•</span> : null}
-      </div>
-      <div className="topbar-tabs">
-        {props.tabs.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            className={tab.id === props.activeId ? "tab is-active" : "tab"}
-            onClick={() => props.onFocusTab(tab.id)}
-          >
-            {sessionLabel(tab)}
-            {props.dirtyIds.includes(tab.id) ? <span className="tab-dirty">•</span> : null}
-            {props.conflictIds.includes(tab.id)
-              ? <span className="tab-conflict" aria-label="Conflict">!</span>
-              : null}
-            <span
-              className="tab-close"
-              onClick={event => {
-                event.stopPropagation()
-                props.onCloseTab(tab.id)
-              }}
+      <div className="topbar-tabs" data-tauri-drag-region="">
+        {props.tabs.map(tab => {
+          const isActive = tab.id === props.activeId
+          const isDirty = props.dirtyIds.includes(tab.id)
+          const hasConflict = props.conflictIds.includes(tab.id)
+          const path = sessionPath(tab)
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              className={isActive ? "tab is-active" : "tab"}
+              onClick={() => props.onFocusTab(tab.id)}
+              title={path ?? "unnamed"}
             >
-              ×
-            </span>
-          </button>
-        ))}
-        <button type="button" className="tab-new" onClick={props.onNewTab}>+</button>
+              <FileText size={13} className="tab-icon" aria-hidden="true" />
+              <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
+                {sessionLabel(tab)}
+              </span>
+              {isDirty ? (
+                <span
+                  className="tab-dirty"
+                  aria-label={isActive ? "Unsaved" : undefined}
+                >
+                  •
+                </span>
+              ) : null}
+              {hasConflict ? (
+                <span className="tab-conflict" aria-label="Conflict">
+                  !
+                </span>
+              ) : null}
+              <span
+                role="button"
+                tabIndex={-1}
+                className="tab-close"
+                aria-label="Close tab"
+                onClick={event => {
+                  event.stopPropagation()
+                  props.onCloseTab(tab.id)
+                }}
+              >
+                <X size={12} aria-hidden="true" />
+              </span>
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          className="tab-new"
+          aria-label="+"
+          title="New tab"
+          onClick={props.onNewTab}
+        >
+          <Plus size={14} aria-hidden="true" />
+        </button>
       </div>
+      {breadcrumb.length > 0 && workspaceName ? (
+        <div className="topbar-breadcrumb" data-tauri-drag-region="">
+          <span className="topbar-workspace">{workspaceName}</span>
+          {breadcrumb.map((segment, i) => (
+            <span key={i} className="topbar-segment">
+              <ChevronRight size={11} className="topbar-separator" aria-hidden="true" />
+              <span className="topbar-dir">{segment}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </header>
   )
 }
