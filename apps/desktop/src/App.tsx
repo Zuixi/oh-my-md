@@ -50,7 +50,7 @@ import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type 
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
-import { TabBar } from "./TabBar"
+import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
   emptyFileTree,
@@ -64,6 +64,7 @@ import {
 import { OutlinePanel } from "./OutlinePanel"
 import { CommandPalette } from "./CommandPalette"
 import { SearchPanel, type SearchHit } from "./SearchPanel"
+import { PanelLeft, PanelLeftClose } from "lucide-react"
 import "./styles.css"
 
 export type { DesktopServices, RecoveryRecord } from "./desktopServices"
@@ -72,6 +73,22 @@ interface AppProps {
   services?: DesktopServices
   autosaveMs?: number
   watchMs?: number
+}
+
+const OUTLINE_OPEN_KEY = "omd-outline-open"
+
+function readOutlineOpen(): boolean {
+  try {
+    return localStorage.getItem(OUTLINE_OPEN_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeOutlineOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OUTLINE_OPEN_KEY, open ? "1" : "0")
+  } catch { /* storage unavailable (tests, private mode) */ }
 }
 
 export default function App({
@@ -113,6 +130,7 @@ export default function App({
   const [theme, setTheme] = useState<ThemeName>("light")
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
+  const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -349,6 +367,10 @@ export default function App({
     document.documentElement.dataset.typewriter = typewriter ? "on" : "off"
     document.documentElement.dataset.focus = focusMode ? "on" : "off"
   }, [typewriter, focusMode])
+
+  useEffect(() => {
+    writeOutlineOpen(outlineOpen)
+  }, [outlineOpen])
 
   const activePendingId = normalizationByTab[session.id]?.notice.id ?? null
 
@@ -604,6 +626,7 @@ export default function App({
     { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
     { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
+    { id: "outline", label: "Toggle outline", shortcut: "⇧⌘O", run: () => setOutlineOpen(open => !open) },
     { id: "typewriter", label: "Toggle typewriter", run: () => setTypewriter(on => !on) },
     { id: "source", label: "Toggle live/source", shortcut: "⌘E", run: () => {
       const view = viewRef.current
@@ -638,7 +661,10 @@ export default function App({
         return
       }
       if (!e.metaKey && !e.ctrlKey) return
-      if (e.key === "o") {
+      if (e.key === "O" && e.shiftKey) {
+        e.preventDefault()
+        setOutlineOpen(open => !open)
+      } else if (e.key === "o") {
         e.preventDefault()
         void openFileRef.current()
       } else if (e.key === "n") {
@@ -682,85 +708,48 @@ export default function App({
 
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
-      <StatusBar
-        path={activeFilePath ?? "untitled"}
+      <TopBar
+        workspace={workspace.folder}
+        filePath={activeFilePath}
         dirty={dirty}
-        words={wordCount(doc)}
-        cursor={cursor}
-        mode={mode}
-        normalizationReviewRequired={bannerKind === "normalization"}
-        saveStatus={saveStatusLabel(activeSaveState)}
-      />
-      <TabBar
         tabs={workspace.tabs}
         activeId={workspace.activeId}
         dirtyIds={dirtyIds}
         conflictIds={conflictIds}
-        onFocus={activateTab}
-        onClose={requestCloseTab}
-        onNew={newTab}
+        onFocusTab={activateTab}
+        onCloseTab={requestCloseTab}
+        onNewTab={newTab}
       />
-      <ConflictSaveRegion
-        bannerKind={
-          bannerKind === "conflict" || bannerKind === "saveFailed" ? bannerKind : null
-        }
-        activeTabId={workspace.activeId}
-        activeSaveState={activeSaveState}
-        saveErrorCode={saveErrorCode}
-        localContents={doc}
-        diffOpenTabId={conflictSave.diffOpenTabId}
-        diffRefreshed={conflictSave.diffRefreshed}
-        conflictFocusToken={conflictFocusToken}
-        activeView={viewRef.current}
-        onConflictAction={action => conflictSave.onConflictAction(action, workspace.activeId)}
-        onDiffClose={conflictSave.closeDiff}
-        onDiskFingerprintChange={conflictSave.handleDiskFingerprintChange}
-      />
-      <NormalizationBanner
-        markerCount={activeNormalization?.notice.markerCount ?? null}
-        busy={(activeNormalization?.action ?? "idle") !== "idle"}
-        onSave={acceptNormalization}
-        onKeepOriginal={keepOriginalNumbers}
-      />
-      {skippedMarkersMessage ? (
-        <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
-      ) : null}
-      {transientStatus ? (
-        <p className="save-transient-status" role="status">{transientStatus}</p>
-      ) : null}
       <div className="workspace-body">
-        {searchOpen ? (
-          <SearchPanel
-            query={searchQuery}
-            hits={searchHits}
-            onQuery={setSearchQuery}
-            onClose={() => setSearchOpen(false)}
-            onOpen={hit => {
-              pendingJumpRef.current = hit.line
-              void openPath(hit.path, true)
-            }}
-          />
-        ) : (
-          <FileTree
-            folder={workspace.folder}
-            rows={workspace.folder ? visibleRows(workspace.folder, treeModel) : []}
-            activePath={activeFilePath}
-            onOpenFile={path => void openPath(path, true)}
-            onToggleDir={path => void toggleDir(path)}
-            onSearch={() => setSearchOpen(true)}
-          />
-        )}
-        <div className="editor-stack">
-          {workspace.tabs.map(tab => (
-            <div
-              key={tab.id}
-              className="editor-host"
-              hidden={tab.id !== workspace.activeId}
-              ref={el => bindHost(tab.id, el)}
+        <aside className="sidebar-primary">
+          {searchOpen ? (
+            <SearchPanel
+              query={searchQuery}
+              hits={searchHits}
+              onQuery={setSearchQuery}
+              onClose={() => setSearchOpen(false)}
+              onOpen={hit => {
+                pendingJumpRef.current = hit.line
+                void openPath(hit.path, true)
+              }}
             />
-          ))}
-        </div>
-        <div className="sidebar-right">
+          ) : (
+            <FileTree
+              folder={workspace.folder}
+              rows={workspace.folder ? visibleRows(workspace.folder, treeModel) : []}
+              activePath={activeFilePath}
+              onOpenFile={path => void openPath(path, true)}
+              onToggleDir={path => void toggleDir(path)}
+              onSearch={() => setSearchOpen(true)}
+            />
+          )}
+        </aside>
+        <aside
+          id="outline-panel"
+          className={`sidebar-secondary${outlineOpen ? "" : " is-hidden"}`}
+          aria-hidden={!outlineOpen}
+          inert={!outlineOpen}
+        >
           <OutlinePanel
             items={outline}
             onJump={from => {
@@ -772,8 +761,68 @@ export default function App({
               } catch { /* mock views */ }
             }}
           />
+        </aside>
+        <div className="outline-toggle-strip">
+          <button
+            type="button"
+            className={`outline-toggle-btn${outlineOpen ? " is-active" : ""}`}
+            onClick={() => setOutlineOpen(open => !open)}
+            aria-expanded={outlineOpen}
+            aria-controls="outline-panel"
+            aria-label={outlineOpen ? "Hide outline" : "Show outline"}
+            title={outlineOpen ? "Hide outline (⇧⌘O)" : "Show outline (⇧⌘O)"}
+          >
+            {outlineOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
+          </button>
+        </div>
+        <div className="editor-canvas">
+          <ConflictSaveRegion
+            bannerKind={
+              bannerKind === "conflict" || bannerKind === "saveFailed" ? bannerKind : null
+            }
+            activeTabId={workspace.activeId}
+            activeSaveState={activeSaveState}
+            saveErrorCode={saveErrorCode}
+            localContents={doc}
+            diffOpenTabId={conflictSave.diffOpenTabId}
+            diffRefreshed={conflictSave.diffRefreshed}
+            conflictFocusToken={conflictFocusToken}
+            activeView={viewRef.current}
+            onConflictAction={action => conflictSave.onConflictAction(action, workspace.activeId)}
+            onDiffClose={conflictSave.closeDiff}
+            onDiskFingerprintChange={conflictSave.handleDiskFingerprintChange}
+          />
+          <NormalizationBanner
+            markerCount={activeNormalization?.notice.markerCount ?? null}
+            busy={(activeNormalization?.action ?? "idle") !== "idle"}
+            onSave={acceptNormalization}
+            onKeepOriginal={keepOriginalNumbers}
+          />
+          {skippedMarkersMessage ? (
+            <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
+          ) : null}
+          {transientStatus ? (
+            <p className="save-transient-status" role="status">{transientStatus}</p>
+          ) : null}
+          <div className="editor-stack">
+            {workspace.tabs.map(tab => (
+              <div
+                key={tab.id}
+                className="editor-host"
+                hidden={tab.id !== workspace.activeId}
+                ref={el => bindHost(tab.id, el)}
+              />
+            ))}
+          </div>
         </div>
       </div>
+      <StatusBar
+        words={wordCount(doc)}
+        cursor={cursor}
+        mode={mode}
+        normalizationReviewRequired={bannerKind === "normalization"}
+        saveStatus={saveStatusLabel(activeSaveState)}
+      />
       {paletteOpen ? (
         <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />
       ) : null}

@@ -7,7 +7,7 @@ import {
 } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
-import { createAppHarness, normalizationId, resetMountedApps, versionFor } from "./appHarness"
+import { createAppHarness, expectPathShown, normalizationId, resetMountedApps, versionFor } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -144,7 +144,7 @@ describe("App normalization wiring", () => {
     })
 
     expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
-    const active = document.querySelectorAll(".tabbar .tab.is-active")
+    const active = document.querySelectorAll(".topbar-tabs .tab.is-active")
     expect(active).toHaveLength(1)
     expect(active[0]?.textContent).toContain("untitled")
     harness.activateTab(2)
@@ -166,7 +166,7 @@ describe("App normalization wiring", () => {
     }))
 
     expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
-    expect(screen.getByText("/notes/fresh.md")).toBeTruthy()
+    expectPathShown("/notes/fresh.md")
     expect(harness.services.writeRecovery).not.toHaveBeenCalled()
   })
 
@@ -274,14 +274,14 @@ describe("App normalization wiring", () => {
 
     await harness.requestOpen("/notes/new.md", "1. a\n3. b")
 
-    // Scoped to the status bar: an untitled tab button carries the same text.
-    expect(screen.getByText("untitled", { selector: ".statusbar span" })).toBeTruthy()
+    // Scoped to the top bar breadcrumb: an untitled tab button carries the same text.
+    expectPathShown("untitled")
     harness.editorForTab(1).emit({
       doc: "still editable",
       docChanged: true,
       pendingNormalization: null,
     })
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
   })
 
   it("restores the old projection when reset throws", async () => {
@@ -294,7 +294,7 @@ describe("App normalization wiring", () => {
     await harness.requestOpen("/notes/new.md", "body")
 
     expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
   })
 })
 
@@ -383,7 +383,7 @@ describe("App normalization autosave and accept/reject", () => {
     })
     write.resolve()
     await saving
-    expect(screen.getByText("/notes/a.md •")).toBeTruthy()
+    expectPathShown("/notes/a.md", { dirty: true })
   })
 
   it("resyncs idle without accept when the notice id changes during save", async () => {
@@ -506,7 +506,7 @@ describe("App document session", () => {
 
     edit(harness, 1, "edited")
 
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
   })
 
   it("reports a failing recovery write once per tab and keeps editing", async () => {
@@ -523,7 +523,7 @@ describe("App document session", () => {
     expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
     expect(logged).toHaveBeenCalledTimes(2)
     expect(screen.getByText("3 words")).toBeTruthy()
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
     logged.mockRestore()
   })
 
@@ -555,10 +555,10 @@ describe("App document session", () => {
     expect(harness.services.allowDocumentAssets).toHaveBeenCalledWith("/notes/doc.md")
 
     edit(harness, 1, "edited")
-    expect(screen.getByText("/notes/doc.md •")).toBeTruthy()
+    expectPathShown("/notes/doc.md", { dirty: true })
     edit(harness, 1, "saved")
 
-    expect(screen.getByText("/notes/doc.md")).toBeTruthy()
+    expectPathShown("/notes/doc.md")
   })
 
   it("does not open or alter a dirty document when discard is cancelled", async () => {
@@ -574,7 +574,7 @@ describe("App document session", () => {
     })
     expect(harness.services.pickOpenPath).not.toHaveBeenCalled()
     expect(editor.reset).not.toHaveBeenCalled()
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
   })
 
   it("ignores an older open response and primes the new image resolver path", async () => {
@@ -602,7 +602,7 @@ describe("App document session", () => {
 
     await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
     expect(harness.editorForTab(1).getOptions().getDocPath()).toBe("/notes/new.md")
-    expect(screen.getByText("/notes/new.md")).toBeTruthy()
+    expectPathShown("/notes/new.md")
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })
     await waitFor(() => expect(harness.services.saveDocument).toHaveBeenCalledOnce())
@@ -615,7 +615,7 @@ describe("App document session", () => {
     })
     await act(async () => firstRead.promise)
     expect(editor.reset).toHaveBeenCalledOnce()
-    expect(screen.getByText("/notes/new.md")).toBeTruthy()
+    expectPathShown("/notes/new.md")
   })
 
   it("keeps dirty when editing continues while a captured snapshot saves", async () => {
@@ -637,7 +637,7 @@ describe("App document session", () => {
     write.resolve()
     await act(async () => write.promise)
 
-    expect(screen.getByText("/notes/doc.md •")).toBeTruthy()
+    expectPathShown("/notes/doc.md", { dirty: true })
   })
 
   it("serializes saves so a newer snapshot is written last", async () => {
@@ -666,7 +666,7 @@ describe("App document session", () => {
       "second snapshot",
       expect.objectContaining({ kind: "existing" }),
     )
-    await waitFor(() => expect(screen.getByText("/notes/doc.md •")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/doc.md", { dirty: true }))
   })
 
   it("reuses the first path for concurrent Save As requests", async () => {
@@ -686,7 +686,7 @@ describe("App document session", () => {
     await act(async () => firstWrite.promise)
 
     await waitFor(() => {
-      expect(screen.getByText("/notes/first-choice.md")).toBeTruthy()
+      expectPathShown("/notes/first-choice.md")
     })
     expect(harness.services.allowDocumentAssets).toHaveBeenCalledWith(
       "/notes/first-choice.md",
@@ -719,7 +719,7 @@ describe("App document session", () => {
     write.resolve()
     await act(async () => write.promise)
     await waitFor(() => expect(harness.services.pickOpenPath).toHaveBeenCalledOnce())
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/doc.md"))
   })
 
   it("does not start a save while an earlier open is still reading", async () => {
@@ -751,7 +751,7 @@ describe("App document session", () => {
       version: versionFor("/notes/doc.md", "opened"),
     })
     await act(async () => read.promise)
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/doc.md"))
     expect(harness.services.saveDocument).not.toHaveBeenCalled()
   })
 
@@ -766,7 +766,7 @@ describe("App document session", () => {
     await waitFor(() => expect(harness.services.saveDocument).toHaveBeenCalledOnce())
     firstWrite.resolve()
     await act(async () => firstWrite.promise)
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/doc.md"))
 
     harness.failNextSave({ code: "internal", message: "second save failed" })
     edit(harness, 1, "second")
@@ -776,7 +776,7 @@ describe("App document session", () => {
     await waitFor(() => {
       expect(screen.getByText("save failed")).toBeTruthy()
     })
-    expect(screen.getByText("/notes/doc.md")).toBeTruthy()
+    expectPathShown("/notes/doc.md")
   })
 
   it("waits for an unresolved Save As dialog before opening", async () => {
@@ -794,7 +794,7 @@ describe("App document session", () => {
     savePath.resolve(null)
     await act(async () => savePath.promise)
 
-    await waitFor(() => expect(screen.getByText("/notes/opened.md")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/opened.md"))
     expect(harness.services.saveDocument).not.toHaveBeenCalled()
   })
 
@@ -842,7 +842,7 @@ describe("App product shell", () => {
     harness.renderApp()
 
     await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
-    expect(screen.getByText("untitled •")).toBeTruthy()
+    expectPathShown("untitled", { dirty: true })
   })
 
   it("writes untitled edits only to recovery, not the filesystem", async () => {
@@ -950,6 +950,21 @@ describe("App product shell", () => {
     expect(screen.getByText("Outline")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Export HTML" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull()
+  })
+
+  it("toggles the outline via button and shortcut", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const toggle = screen.getByRole("button", { name: "Show outline" })
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+
+    fireEvent.click(toggle)
+    expect(screen.getByRole("button", { name: "Hide outline" }).getAttribute("aria-expanded"))
+      .toBe("true")
+
+    fireEvent.keyDown(window, { key: "O", metaKey: true, shiftKey: true })
+    expect(screen.getByRole("button", { name: "Show outline" }).getAttribute("aria-expanded"))
+      .toBe("false")
   })
 
   it("expands a directory in place without replacing the tree", async () => {
@@ -1091,7 +1106,7 @@ describe("App product shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "+" }))
     await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     act(() => send?.("recent:/notes/doc.md"))
-    await waitFor(() => expect(screen.getByText("/notes/doc.md")).toBeTruthy())
+    await waitFor(() => expectPathShown("/notes/doc.md"))
   })
 
   it("fills the file tree from the parent folder after opening a file", async () => {
@@ -1151,7 +1166,7 @@ describe("App conflict-safe save integration", () => {
       contents: "mine",
       expected: { kind: "existing", version: opened },
     })
-    expect(screen.getByText("/notes/a.md")).toBeTruthy()
+    expectPathShown("/notes/a.md")
   })
 
   it("sends expected missing for an untitled document", async () => {
@@ -1238,7 +1253,7 @@ describe("App conflict-safe save integration", () => {
     await harness.runWatcher()
 
     expect(screen.queryByRole("status", { name: "Save conflict" })).toBeNull()
-    expect(screen.getByText("/notes/a.md")).toBeTruthy()
+    expectPathShown("/notes/a.md")
   })
 
   it("records a durability warning without failing the save", async () => {
@@ -1254,7 +1269,7 @@ describe("App conflict-safe save integration", () => {
 
     await harness.saveActive()
 
-    expect(screen.getByText("/notes/a.md")).toBeTruthy()
+    expectPathShown("/notes/a.md")
     expect(screen.getByText("Saved, but the folder could not be flushed to disk.")).toBeTruthy()
     expect(screen.queryByRole("status", { name: "Save conflict" })).toBeNull()
   })
@@ -1275,7 +1290,6 @@ describe("App conflict-safe save integration", () => {
 
     expect(harness.disk("/notes/a.md").contents()).toBe("a mine")
     expect(harness.disk("/notes/b.md").contents()).toBe("b mine")
-    expect(screen.getByText("/notes/b.md")).toBeTruthy()
-    expect(screen.queryByText("/notes/b.md •")).toBeNull()
+    expectPathShown("/notes/b.md")
   })
 })

@@ -1,8 +1,6 @@
 export type SaveStatus = "idle" | "saving" | "save failed" | "conflict"
 
 export function StatusBar(props: {
-  path: string
-  dirty: boolean
   words: number
   cursor: string
   mode: string
@@ -11,7 +9,6 @@ export function StatusBar(props: {
 }) {
   return (
     <div className="statusbar">
-      <span>{`${props.path}${props.dirty ? " •" : ""}`}</span>
       {props.normalizationReviewRequired
         ? <span className="statusbar-review">Normalization review required</span>
         : null}
