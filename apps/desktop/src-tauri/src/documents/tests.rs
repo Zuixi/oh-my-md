@@ -259,6 +259,50 @@ fn compare_symlink_conflicts_carry_only_the_requested_path() {
     );
 }
 
+#[test]
+fn same_resolved_path_serializes_and_lock_table_stays_bounded() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("lock-serialize", "body");
+    let key = resolve_path_key(&file).unwrap();
+    let first = coordinator.lock_for(&key);
+    let second = coordinator.lock_for(&key);
+    assert!(Arc::ptr_eq(&first, &second));
+    drop(first);
+    drop(second);
+    let other = write_temp("lock-other", "body");
+    let _other = coordinator.lock_for(&resolve_path_key(&other).unwrap());
+    assert_eq!(coordinator.tracked_paths(), 1);
+}
+
+#[test]
+fn missing_path_key_uses_the_canonical_parent() {
+    let directory = temp_dir("missing-key");
+    let key = resolve_path_key(&directory.join("new.md")).unwrap();
+    let canonical =
+        resolve_path_key(&fs::canonicalize(&directory).unwrap().join("new.md")).unwrap();
+    assert_eq!(key, canonical);
+}
+
+#[test]
+fn missing_parent_directory_is_invalid_path() {
+    let directory = temp_dir("missing-parent");
+    assert!(matches!(
+        resolve_path_key(&directory.join("absent-dir").join("new.md")),
+        Err(DocumentError::InvalidPath(_)),
+    ));
+}
+
+#[test]
+fn lock_different_paths_do_not_share_a_lock() {
+    let coordinator = DocumentCoordinator::default();
+    let first = write_temp("lock-a", "a");
+    let second = write_temp("lock-b", "b");
+    let left = coordinator.lock_for(&resolve_path_key(&first).unwrap());
+    let right = coordinator.lock_for(&resolve_path_key(&second).unwrap());
+    assert!(!Arc::ptr_eq(&left, &right));
+    assert_eq!(coordinator.tracked_paths(), 2);
+}
+
 #[allow(dead_code)]
 fn _future_task_helpers() {
     let _ = (
