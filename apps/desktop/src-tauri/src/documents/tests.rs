@@ -150,6 +150,115 @@ fn dangling_symlink_is_not_reported_as_missing() {
     ));
 }
 
+#[test]
+fn expected_missing_and_new_symlink_returns_unexpected_symlink() {
+    let probe = DiskProbe::Existing {
+        snapshot: sample_snapshot("/tmp/a.md", "body"),
+        node_is_symlink: true,
+    };
+    match compare_expected(&ExpectedDocumentVersion::Missing, &probe, "/tmp/a.md") {
+        VersionCheck::Conflict(SaveDocumentResult::UnexpectedSymlinkConflict {
+            requested_path,
+        }) => {
+            assert_eq!(requested_path, "/tmp/a.md");
+        }
+        other => panic!("unexpected check: {other:?}"),
+    }
+}
+
+#[test]
+fn compare_table_returns_typed_variant_for_every_pair() {
+    let disk = sample_snapshot("/tmp/a.md", "disk");
+    let same = ExpectedDocumentVersion::Existing {
+        version: disk.version.clone(),
+    };
+    let changed = ExpectedDocumentVersion::Existing {
+        version: DocumentVersion {
+            resolved_path: "/tmp/a.md".into(),
+            fingerprint: fingerprint(b"mine"),
+        },
+    };
+    let moved = ExpectedDocumentVersion::Existing {
+        version: DocumentVersion {
+            resolved_path: "/tmp/moved.md".into(),
+            fingerprint: disk.version.fingerprint.clone(),
+        },
+    };
+    let regular = DiskProbe::Existing {
+        snapshot: disk.clone(),
+        node_is_symlink: false,
+    };
+    let symlinked = DiskProbe::Existing {
+        snapshot: disk,
+        node_is_symlink: true,
+    };
+
+    assert!(matches!(
+        compare_expected(
+            &ExpectedDocumentVersion::Missing,
+            &DiskProbe::Missing,
+            "/tmp/a.md"
+        ),
+        VersionCheck::Match,
+    ));
+    assert!(matches!(
+        compare_expected(&same, &regular, "/tmp/a.md"),
+        VersionCheck::Match,
+    ));
+    assert!(matches!(
+        compare_expected(&ExpectedDocumentVersion::Missing, &regular, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::CreatedConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(&ExpectedDocumentVersion::Missing, &symlinked, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::UnexpectedSymlinkConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(
+            &ExpectedDocumentVersion::Missing,
+            &DiskProbe::DanglingSymlink,
+            "/tmp/a.md"
+        ),
+        VersionCheck::Conflict(SaveDocumentResult::UnexpectedSymlinkConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(&same, &DiskProbe::Missing, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::DeletedConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(&same, &DiskProbe::DanglingSymlink, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::PathChangedConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(&moved, &regular, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::PathChangedConflict { .. }),
+    ));
+    assert!(matches!(
+        compare_expected(&changed, &regular, "/tmp/a.md"),
+        VersionCheck::Conflict(SaveDocumentResult::ContentConflict { .. }),
+    ));
+}
+
+#[test]
+fn compare_symlink_conflicts_carry_only_the_requested_path() {
+    let json = serde_json::to_string(&SaveDocumentResult::PathChangedConflict {
+        requested_path: "/tmp/a.md".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        r#"{"status":"pathChangedConflict","requestedPath":"/tmp/a.md"}"#
+    );
+    let symlink_json = serde_json::to_string(&SaveDocumentResult::UnexpectedSymlinkConflict {
+        requested_path: "/tmp/a.md".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        symlink_json,
+        r#"{"status":"unexpectedSymlinkConflict","requestedPath":"/tmp/a.md"}"#,
+    );
+}
+
 #[allow(dead_code)]
 fn _future_task_helpers() {
     let _ = (

@@ -46,6 +46,39 @@ pub enum SaveDurability {
     DirectorySyncFailed,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum SaveDocumentResult {
+    Saved {
+        version: DocumentVersion,
+        durability: SaveDurability,
+    },
+    ContentConflict {
+        disk: ExistingDiskSnapshot,
+    },
+    #[serde(rename_all = "camelCase")]
+    DeletedConflict {
+        requested_path: String,
+    },
+    CreatedConflict {
+        disk: ExistingDiskSnapshot,
+    },
+    #[serde(rename_all = "camelCase")]
+    PathChangedConflict {
+        requested_path: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    UnexpectedSymlinkConflict {
+        requested_path: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum VersionCheck {
+    Match,
+    Conflict(SaveDocumentResult),
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[serde(tag = "code", content = "message", rename_all = "camelCase")]
 pub enum DocumentError {
@@ -104,6 +137,54 @@ pub(crate) fn validate_requested(path: &str) -> Result<PathBuf, DocumentError> {
         ));
     }
     Ok(path_buf)
+}
+
+pub(crate) fn compare_expected(
+    expected: &ExpectedDocumentVersion,
+    probe: &DiskProbe,
+    requested_path: &str,
+) -> VersionCheck {
+    match (expected, probe) {
+        (ExpectedDocumentVersion::Missing, DiskProbe::Missing) => VersionCheck::Match,
+        (
+            ExpectedDocumentVersion::Missing,
+            DiskProbe::Existing {
+                snapshot,
+                node_is_symlink: false,
+            },
+        ) => VersionCheck::Conflict(SaveDocumentResult::CreatedConflict {
+            disk: snapshot.clone(),
+        }),
+        (ExpectedDocumentVersion::Missing, DiskProbe::Existing { .. })
+        | (ExpectedDocumentVersion::Missing, DiskProbe::DanglingSymlink) => {
+            VersionCheck::Conflict(SaveDocumentResult::UnexpectedSymlinkConflict {
+                requested_path: requested_path.to_owned(),
+            })
+        }
+        (ExpectedDocumentVersion::Existing { .. }, DiskProbe::Missing) => {
+            VersionCheck::Conflict(SaveDocumentResult::DeletedConflict {
+                requested_path: requested_path.to_owned(),
+            })
+        }
+        (ExpectedDocumentVersion::Existing { .. }, DiskProbe::DanglingSymlink) => {
+            VersionCheck::Conflict(SaveDocumentResult::PathChangedConflict {
+                requested_path: requested_path.to_owned(),
+            })
+        }
+        (ExpectedDocumentVersion::Existing { version }, DiskProbe::Existing { snapshot, .. }) => {
+            if version.resolved_path != snapshot.version.resolved_path {
+                VersionCheck::Conflict(SaveDocumentResult::PathChangedConflict {
+                    requested_path: requested_path.to_owned(),
+                })
+            } else if version.fingerprint != snapshot.version.fingerprint {
+                VersionCheck::Conflict(SaveDocumentResult::ContentConflict {
+                    disk: snapshot.clone(),
+                })
+            } else {
+                VersionCheck::Match
+            }
+        }
+    }
 }
 
 pub(crate) fn probe_disk(path: &Path) -> Result<DiskProbe, DocumentError> {
