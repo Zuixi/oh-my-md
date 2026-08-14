@@ -4,6 +4,7 @@ export function TabBar(props: {
   tabs: EditorSession[]
   activeId: number
   dirtyIds: number[]
+  conflictIds: number[]
   onFocus: (id: number) => void
   onClose: (id: number) => void
   onNew: () => void
@@ -19,6 +20,9 @@ export function TabBar(props: {
         >
           {sessionLabel(tab)}
           {props.dirtyIds.includes(tab.id) ? <span className="tab-dirty">•</span> : null}
+          {props.conflictIds.includes(tab.id)
+            ? <span className="tab-conflict" aria-label="Conflict">!</span>
+            : null}
           <span
             className="tab-close"
             onClick={event => {

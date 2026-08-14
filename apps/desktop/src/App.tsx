@@ -650,11 +650,13 @@ export default function App({
         cursor={cursor}
         mode={mode}
         normalizationReviewRequired={activeNormalization !== undefined}
+        saveStatus="idle"
       />
       <TabBar
         tabs={workspace.tabs}
         activeId={workspace.activeId}
         dirtyIds={dirtyIds}
+        conflictIds={[]}
         onFocus={activateTab}
         onClose={requestCloseTab}
         onNew={newTab}

@@ -83,7 +83,7 @@ describe("NormalizationBanner", () => {
 describe("StatusBar normalization review", () => {
   it("keeps path and dirty in one text node beside a separate review notice", () => {
     render(<StatusBar path="untitled" dirty words={0} cursor="1:1" mode="live"
-      normalizationReviewRequired />)
+      normalizationReviewRequired saveStatus="idle" />)
     const pathNode = screen.getByText("untitled •")
     const pathTexts = Array.from(pathNode.childNodes)
       .filter(node => node.nodeType === Node.TEXT_NODE)
@@ -97,7 +97,7 @@ describe("StatusBar normalization review", () => {
 
   it("omits the review notice when no review is required", () => {
     render(<StatusBar path="untitled" dirty words={0} cursor="1:1" mode="live"
-      normalizationReviewRequired={false} />)
+      normalizationReviewRequired={false} saveStatus="idle" />)
     expect(screen.getByText("untitled •")).toBeTruthy()
     expect(screen.queryByText("Normalization review required")).toBeNull()
   })
