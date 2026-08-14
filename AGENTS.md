@@ -52,13 +52,15 @@ Use pnpm for JavaScript workspace tasks and Cargo for Rust tasks.
 pnpm dev
 pnpm test
 pnpm verify
+scripts/build.sh
+scripts/test.sh
 pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
 - `pnpm test` runs engine TypeScript checking (`tsc --noEmit`) before Vitest.
-- `pnpm verify` is the repo-wide gate: engine test, desktop test, desktop build, the Rust app binary link (`cargo build --no-default-features`, matching what `tauri dev` runs), and `cargo test`. Use it before a release or any multi-domain merge — `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade.
+- `scripts/build.sh` and `scripts/test.sh` are the standalone build/test entry points for agents and humans; `pnpm verify` runs `test.sh` then `build.sh`. `build.sh` links the Rust app binary (`cargo build --no-default-features`, matching what `tauri dev` runs); `test.sh` covers engine, desktop, and `cargo test` — but `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade. Use `pnpm verify` before a release or any multi-domain merge.
 - Use `pnpm --filter @omd/desktop tauri build` only when a packaged desktop build is relevant.
 - Run the checks matching the changed domains; cross-layer changes require both frontend/engine and Rust checks.
 - Before a release or interaction-sensitive editor change, review `docs/manual-qa.md`. Its recorded test counts are historical, not assertions about the current suite.
