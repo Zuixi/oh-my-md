@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 TRAILER_RE = re.compile(
-    r"(?m)^Co-authored-by:\s*Cursor\s*<cursoragent@cursor\.com>[ \t]*\r?\n?"
+    r"(?m)^Co-authored-by:\s*\.com>[ \t]*\r?\n?"
 )
 SUBJECT_RE = re.compile(
     r"^(feat|fix|refactor|docs|test|chore|perf|ci): \S"
