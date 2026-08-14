@@ -317,7 +317,10 @@ describe("App normalization autosave and accept/reject", () => {
       })
       await vi.advanceTimersByTimeAsync(100)
       expect(harness.services.writeFile).not.toHaveBeenCalled()
-      expect(harness.services.writeRecovery).toHaveBeenCalled()
+      expect(harness.services.writeRecovery).toHaveBeenCalledWith(
+        expect.any(String),
+        "1. a\n2. b",
+      )
     } finally {
       vi.useRealTimers()
     }
@@ -370,6 +373,44 @@ describe("App normalization autosave and accept/reject", () => {
     expect(screen.getByText("/notes/a.md •")).toBeTruthy()
   })
 
+  it("resyncs idle without accept when the notice id changes during save", async () => {
+    const write = deferred<void>()
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.writeFile).mockReturnValueOnce(write.promise)
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    const saving = harness.saveNormalization(1)
+    harness.editorForTab(1).emit({
+      doc: "1. a\n2. b",
+      docChanged: false,
+      pendingNormalization: { id: normalizationId(2), markerCount: 1 },
+    })
+    write.resolve()
+    await saving
+    expect(harness.editorForTab(1).view.dispatch).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+  })
+
+  it("does not accept when document identity changes during explicit save", async () => {
+    let releaseWrite!: () => void
+    const writeGate = new Promise<void>(resolve => { releaseWrite = resolve })
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.writeFile).mockImplementationOnce(() => writeGate)
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    void harness.saveNormalization(1)
+    await waitFor(() => expect(harness.services.writeFile).toHaveBeenCalledOnce())
+    vi.mocked(harness.services.readFile).mockResolvedValueOnce("disk version")
+    vi.mocked(harness.services.confirmExternalChange).mockReturnValueOnce(true)
+    await harness.runExternalCheck()
+    releaseWrite()
+    await act(async () => { await Promise.resolve() })
+    expect(harness.editorForTab(1).view.dispatch).not.toHaveBeenCalled()
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+  })
+
   it("keeps pending idle when Save As is cancelled", async () => {
     const harness = makeAppHarness()
     vi.mocked(harness.services.pickSavePath).mockResolvedValueOnce(null)
@@ -377,6 +418,7 @@ describe("App normalization autosave and accept/reject", () => {
     harness.emitPending(1, normalizationId(1))
     await harness.saveNormalization(1)
     expect(harness.services.writeFile).not.toHaveBeenCalled()
+    expect(harness.services.reportError).not.toHaveBeenCalled()
     expect((screen.getByRole("button", { name: "Save normalization" }) as HTMLButtonElement).disabled).toBe(false)
   })
 
