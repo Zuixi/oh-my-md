@@ -65,6 +65,18 @@ import { OutlinePanel } from "./OutlinePanel"
 import { CommandPalette } from "./CommandPalette"
 import { SearchPanel, type SearchHit } from "./SearchPanel"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
+import {
+  toggleBold,
+  toggleBlockquote,
+  toggleCodeBlock,
+  toggleHeading,
+  toggleInlineCode,
+  toggleItalic,
+  toggleOrderedList,
+  toggleStrikethrough,
+  toggleUnorderedList,
+  insertLink,
+} from "@omd/engine"
 import "./styles.css"
 
 export type { DesktopServices, RecoveryRecord } from "./desktopServices"
@@ -76,6 +88,7 @@ interface AppProps {
 }
 
 const OUTLINE_OPEN_KEY = "omd-outline-open"
+const SIDEBAR_OPEN_KEY = "omd-sidebar-open"
 const OUTLINE_DEBOUNCE_MS = 150
 
 /** Shallow directory listing equality; a mismatch means disk changed. */
@@ -90,6 +103,20 @@ function sameEntries(
     }
   }
   return true
+}
+
+function readSidebarOpen(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0"
+  } catch {
+    return true
+  }
+}
+
+function writeSidebarOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_OPEN_KEY, open ? "1" : "0")
+  } catch { /* storage unavailable */ }
 }
 
 function readOutlineOpen(): boolean {
@@ -145,6 +172,7 @@ export default function App({
   const [theme, setTheme] = useState<ThemeName>("light")
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
   const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -384,6 +412,10 @@ export default function App({
     document.documentElement.dataset.typewriter = typewriter ? "on" : "off"
     document.documentElement.dataset.focus = focusMode ? "on" : "off"
   }, [typewriter, focusMode])
+
+  useEffect(() => {
+    writeSidebarOpen(sidebarOpen)
+  }, [sidebarOpen])
 
   useEffect(() => {
     writeOutlineOpen(outlineOpen)
@@ -698,6 +730,11 @@ export default function App({
   openRecentRef.current = openRecent
   closeActiveRef.current = () => requestCloseTab(workspaceRef.current.activeId)
 
+  const runFormat = (command: (view: EditorView) => boolean): (() => void) => () => {
+    const view = viewRef.current
+    if (view) try { command(view) } catch { /* mock views */ }
+  }
+
   const commands: AppCommand[] = [
     { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
     { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
@@ -708,12 +745,28 @@ export default function App({
     { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
     { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
+    { id: "sidebar", label: "Toggle sidebar", shortcut: "⌘\\", run: () => setSidebarOpen(open => !open) },
     { id: "outline", label: "Toggle outline", shortcut: "⇧⌘O", run: () => setOutlineOpen(open => !open) },
     { id: "typewriter", label: "Toggle typewriter", run: () => setTypewriter(on => !on) },
     { id: "source", label: "Toggle live/source", shortcut: "⌘E", run: () => {
       const view = viewRef.current
       if (view) try { view.dispatch(applyToggle(view.state)) } catch { /* mock views */ }
     } },
+    { id: "bold", label: "Bold", shortcut: "⌘B", run: runFormat(toggleBold) },
+    { id: "italic", label: "Italic", shortcut: "⌘I", run: runFormat(toggleItalic) },
+    { id: "strikethrough", label: "Strikethrough", shortcut: "⇧⌘X", run: runFormat(toggleStrikethrough) },
+    { id: "inline-code", label: "Inline code", shortcut: "⇧⌘`", run: runFormat(toggleInlineCode) },
+    { id: "code-block", label: "Code block", shortcut: "⇧⌘K", run: runFormat(toggleCodeBlock) },
+    { id: "heading-1", label: "Heading 1", shortcut: "⌘1", run: runFormat(toggleHeading(1)) },
+    { id: "heading-2", label: "Heading 2", shortcut: "⌘2", run: runFormat(toggleHeading(2)) },
+    { id: "heading-3", label: "Heading 3", shortcut: "⌘3", run: runFormat(toggleHeading(3)) },
+    { id: "heading-4", label: "Heading 4", shortcut: "⌘4", run: runFormat(toggleHeading(4)) },
+    { id: "heading-5", label: "Heading 5", shortcut: "⌘5", run: runFormat(toggleHeading(5)) },
+    { id: "heading-6", label: "Heading 6", shortcut: "⌘6", run: runFormat(toggleHeading(6)) },
+    { id: "ordered-list", label: "Ordered list", shortcut: "⌥⌘7", run: runFormat(toggleOrderedList) },
+    { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
+    { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
+    { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
     { id: "search", label: "Search in folder", run: () => setSearchOpen(true) },
     { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
     { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
@@ -737,13 +790,16 @@ export default function App({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "p" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setPaletteOpen(open => !open)
         return
       }
       if (!e.metaKey && !e.ctrlKey) return
-      if (e.key === "O" && e.shiftKey) {
+      if (e.key === "\\" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setSidebarOpen(open => !open)
+      } else if (e.key === "O" && e.shiftKey) {
         e.preventDefault()
         setOutlineOpen(open => !open)
       } else if (e.key === "o") {
@@ -805,12 +861,19 @@ export default function App({
         activeId={workspace.activeId}
         dirtyIds={dirtyIds}
         conflictIds={conflictIds}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(open => !open)}
         onFocusTab={activateTab}
         onCloseTab={requestCloseTab}
         onNewTab={newTab}
       />
       <div className="workspace-body">
-        <aside className="sidebar-primary">
+        <aside
+          id="primary-sidebar"
+          className={`sidebar-primary${sidebarOpen ? "" : " is-hidden"}`}
+          aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen}
+        >
           {searchOpen ? (
             <SearchPanel
               query={searchQuery}
@@ -830,6 +893,7 @@ export default function App({
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => setSearchOpen(true)}
+              onCollapse={() => setSidebarOpen(false)}
             />
           )}
         </aside>

@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Plus, X } from "lucide-react"
+import { ChevronRight, FileText, PanelLeft, Plus, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
 
 export function TopBar(props: {
@@ -9,6 +9,8 @@ export function TopBar(props: {
   activeId: number
   dirtyIds: number[]
   conflictIds: number[]
+  sidebarOpen?: boolean
+  onToggleSidebar?: () => void
   onFocusTab: (id: number) => void
   onCloseTab: (id: number) => void
   onNewTab: () => void
@@ -21,6 +23,20 @@ export function TopBar(props: {
 
   return (
     <header className="topbar" data-tauri-drag-region="">
+      {!props.sidebarOpen && props.onToggleSidebar ? (
+        <div className="topbar-sidebar-toggle-wrapper">
+          <button
+            type="button"
+            className="topbar-sidebar-toggle"
+            onClick={props.onToggleSidebar}
+            aria-label="Show sidebar"
+            title="Show sidebar (⌘\)"
+          >
+            <PanelLeft size={15} aria-hidden="true" />
+          </button>
+          <span className="topbar-sidebar-divider" aria-hidden="true" />
+        </div>
+      ) : null}
       <div className="topbar-tabs" data-tauri-drag-region="">
         {props.tabs.map(tab => {
           const isActive = tab.id === props.activeId
