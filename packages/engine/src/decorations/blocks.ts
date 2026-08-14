@@ -247,7 +247,6 @@ function directCells(row: SyntaxNode, state: EditorState) {
     const source = state.doc.sliceString(child.from, child.to)
     cells.push(source
       .replace(/\\\|/g, "|")
-      .replace(/`([^`]*)`/g, "$1")
       .trim())
   }
   return cells

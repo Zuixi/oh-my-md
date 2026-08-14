@@ -100,7 +100,7 @@ App
 │   └─ Outline (从当前文档 Lezer 树提取标题)
 ├─ TabBar (多标签页, 脏状态标记)
 ├─ EditorPane ← CM6 EditorView 挂载点 (每标签一个 view)
-├─ CommandPalette (Cmd+K, 所有功能入口, 快捷键全走这里)
+├─ CommandPalette (⇧⌘P, 所有功能入口, 快捷键全走这里)
 └─ StatusBar (字数 / 光标位置 / 保存状态 / 模式指示)
 ```
 

@@ -163,11 +163,45 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   background: #fff5f5; border: 1px solid #f0c0c0; border-radius: 4px;
   padding: 8px; white-space: pre-wrap; color: #a00;
 }
-.editor-host .omd-table table { border-collapse: collapse; }
-.editor-host .omd-table th, .editor-host .omd-table td {
-  border: 1px solid #d0d0d0; padding: 4px 10px;
+.editor-host .omd-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.8em 0;
+  border-radius: 6px;
+  border: 1px solid var(--omd-border);
 }
-.editor-host .omd-table th { background: rgba(0,0,0,0.03); }
+.editor-host .omd-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 0.93em;
+  line-height: 1.6;
+}
+.editor-host .omd-table th, .editor-host .omd-table td {
+  border: 1px solid var(--omd-border);
+  padding: 8px 14px;
+  vertical-align: top;
+  word-break: normal;
+  overflow-wrap: break-word;
+  white-space: normal;
+  min-width: 90px;
+}
+.editor-host .omd-table th {
+  background: var(--omd-chrome);
+  font-weight: 600;
+  color: var(--omd-fg);
+}
+.editor-host .omd-table td code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--omd-code-bg);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.editor-host .omd-table td a {
+  color: var(--omd-link);
+  text-decoration: underline;
+}
 .editor-host .omd-code pre {
   margin: 0; padding: 10px 12px; border-radius: 6px;
   font-size: 0.9em; overflow-x: auto;
@@ -275,21 +309,22 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted);
   font-weight: 700;
 }
-/* Outline toggle strip — always-visible 24px column between sidebar-secondary and editor */
+/* Outline toggle strip — always-visible column between sidebar-secondary and editor */
 .outline-toggle-strip {
-  width: 24px;
+  width: 28px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding-top: 8px;
   background: var(--omd-bg);
+  position: relative;
 }
 .outline-toggle-btn {
   position: sticky;
   top: 8px;
   display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 4px;
+  width: 26px; height: 26px; border-radius: 4px;
   border: none; background: transparent; cursor: pointer;
   color: var(--omd-muted);
   transition: background 0.15s, color 0.15s;
@@ -299,6 +334,56 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   outline: 2px solid var(--omd-link); outline-offset: 1px;
 }
 .outline-toggle-btn.is-active { color: var(--omd-fg); }
+
+/* Hover popover for quick outline inspection */
+.outline-hover-popover {
+  position: absolute;
+  top: 8px;
+  left: calc(100% + 4px);
+  width: 220px;
+  max-height: 280px;
+  background: var(--omd-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  overflow: hidden;
+  animation: omd-fade-in 0.12s ease-out;
+}
+.outline-hover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--omd-border);
+  background: var(--omd-chrome);
+  font-size: 11px;
+}
+.outline-hover-title {
+  font-weight: 600;
+  color: var(--omd-fg);
+}
+.outline-hover-hint {
+  color: var(--omd-muted);
+  font-size: 10px;
+}
+.outline-hover-body {
+  padding: 4px 0;
+  overflow-y: auto;
+  max-height: 230px;
+}
+@keyframes omd-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 /* Status bar: now at bottom */
 .statusbar {
   display: flex; justify-content: flex-end; gap: 16px; padding: 4px 12px;

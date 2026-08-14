@@ -32,7 +32,7 @@ export function TopBar(props: {
             aria-label="Show sidebar"
             title="Show sidebar (⌘\)"
           >
-            <PanelLeft size={15} aria-hidden="true" />
+            <PanelLeft size={16} aria-hidden="true" />
           </button>
           <span className="topbar-sidebar-divider" aria-hidden="true" />
         </div>

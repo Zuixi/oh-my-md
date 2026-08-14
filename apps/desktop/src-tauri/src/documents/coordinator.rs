@@ -52,6 +52,7 @@ impl DocumentCoordinator {
         new_lock
     }
 
+    #[cfg(test)]
     pub fn tracked_paths(&self) -> usize {
         let mut registry = self
             .locks

@@ -73,10 +73,11 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 多标签各有独立撤销；脏点显示；关脏标签会确认；`+` 新建标签
 - [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问
 - [ ] 打开深层子目录的 .md（FileTree 点开或搜索面板点结果）会逐级自动展开祖先目录并滚动到该文件；千级文件的目录展开后滚动无卡顿、无空白行（树行虚拟化）
-- [ ] 右侧只有 Outline，没有 Export 面板；导出走 File 菜单或 Cmd+K
+- [ ] 右侧只有 Outline，没有 Export 面板；导出走 File 菜单或 ⇧⌘P
 - [ ] Outline 可用左侧常驻窄条的按钮或 ⇧⌘O 折叠/展开（命令面板也有 Toggle outline）；折叠状态跨会话记住；折叠后面板 aria-hidden/inert，动画无文字挤压
 - [ ] 大纲点击跳转到标题；状态栏显示字数、光标行列、live/source
-- [ ] Cmd+K 能打开/保存/切主题/Focus/导出；File 菜单与命令面板共用同一命令
+- [ ] ⇧⌘P 能打开/保存/切主题/Focus/导出；File 菜单与命令面板共用同一命令
+- [ ] 编辑器排版快捷键（live/source 两模式一致）：⌘B 粗体、⌘I 斜体、⇧⌘X 删除线、⇧⌘` 行内代码、⇧⌘K 代码块、⌘1–⌘6 标题、⌥⌘7 有序列表、⌥⌘8 无序列表、⌥⌘9 引用、⌘K 插入链接；再次按同键可切换（去掉标记）；命令面板含同一组命令
 - [ ] 当前文件夹搜索 `.md`，点结果打开并定位
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
 - [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框（默认 `export.pdf` / `export.png`），确认后目标路径必须出现真实文件；由离屏 WKWebView 的 `createPDF` 生成（Image 再栅格化为 PNG），不是系统打印对话框，也不是把编辑器 DOM 截屏

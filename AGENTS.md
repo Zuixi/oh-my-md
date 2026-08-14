@@ -28,7 +28,7 @@ oh-my-md/
 ├── packages/engine/       # Markdown language support and live-preview behavior
 │   ├── src/               # Lezer parsing, decorations, modes, widgets
 │   └── test/              # Vitest tests and Markdown fixtures
-└── docs/                  # Product specs, implementation plans, QA, agent memory
+└── docs/                  # Product specs, implementation plans, QA, guides, agent memory
 ```
 
 The repository intentionally uses plain pnpm workspaces; do not add Turborepo or Nx for the current two-package graph.

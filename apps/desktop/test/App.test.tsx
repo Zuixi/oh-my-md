@@ -967,6 +967,25 @@ describe("App product shell", () => {
       .toBe("false")
   })
 
+  it("shows outline preview popover on hover when outline sidebar is collapsed", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const strip = document.querySelector(".outline-toggle-strip")
+    expect(strip).toBeTruthy()
+
+    expect(screen.queryByRole("dialog", { name: "Outline preview" })).toBeNull()
+
+    fireEvent.mouseEnter(strip!)
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Outline preview" })).toBeTruthy()
+    })
+
+    fireEvent.mouseLeave(strip!)
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Outline preview" })).toBeNull()
+    })
+  })
+
   it("toggles the primary sidebar via collapse button, topbar expand button, and shortcut", () => {
     const harness = makeAppHarness()
     harness.renderApp()
