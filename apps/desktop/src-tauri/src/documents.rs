@@ -3,9 +3,11 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 mod coordinator;
+mod save;
 
 pub use coordinator::DocumentCoordinator;
 pub(crate) use coordinator::{resolve_path_key, PathKey};
+pub(crate) use save::{copy_metadata, guarded_save, guarded_save_with_hook, sync_parent};
 
 const FINGERPRINT_PREFIX: &str = "v1:";
 
@@ -278,6 +280,17 @@ pub async fn read_document(path: String) -> Result<DiskSnapshot, DocumentError> 
 #[tauri::command]
 pub async fn read_document_version(path: String) -> Result<ExpectedDocumentVersion, DocumentError> {
     spawn_blocking_document(move || read_document_version_blocking(&path)).await
+}
+
+#[tauri::command]
+pub async fn save_document(
+    coordinator: tauri::State<'_, DocumentCoordinator>,
+    path: String,
+    contents: String,
+    expected: ExpectedDocumentVersion,
+) -> Result<SaveDocumentResult, DocumentError> {
+    let coordinator = coordinator.inner().clone();
+    spawn_blocking_document(move || guarded_save(&coordinator, &path, &contents, &expected)).await
 }
 
 fn probe_disk_raw(path: &Path) -> Result<RawDiskProbe, DocumentError> {

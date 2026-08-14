@@ -310,6 +310,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(documents::DocumentCoordinator::default())
         .setup(|app| {
             menu::install(app)?;
             Ok(())
@@ -317,6 +318,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             documents::read_document,
             documents::read_document_version,
+            documents::save_document,
             read_file,
             write_file,
             write_png,

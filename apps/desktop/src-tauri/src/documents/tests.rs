@@ -1,9 +1,7 @@
 use super::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 fn temp_dir(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!("omd-doc-{}-{name}", std::process::id()));
@@ -303,16 +301,234 @@ fn lock_different_paths_do_not_share_a_lock() {
     assert_eq!(coordinator.tracked_paths(), 2);
 }
 
-#[allow(dead_code)]
-fn _future_task_helpers() {
-    let _ = (
-        existing_expected,
-        sample_snapshot,
-        temp_siblings,
-        AtomicBool::new(false),
-        Ordering::SeqCst,
-        Arc::new(Mutex::new(())),
-        Condvar::new(),
-        Duration::from_secs(1),
+#[test]
+fn guarded_matching_version_saves_and_returns_a_new_version() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("save-match", "original");
+    let expected = existing_expected(&file);
+    match guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap() {
+        SaveDocumentResult::Saved {
+            version,
+            durability,
+        } => {
+            assert_eq!(version.fingerprint, fingerprint(b"mine"));
+            assert_eq!(version.resolved_path, canonical_string(&file));
+            assert_eq!(durability, SaveDurability::Durable);
+        }
+        other => panic!("unexpected result: {other:?}"),
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+    assert_eq!(temp_siblings(&file), 0);
+}
+
+#[test]
+fn guarded_stale_version_conflicts_without_touching_the_target() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("save-stale", "original");
+    let expected = existing_expected(&file);
+    fs::write(&file, "theirs").unwrap();
+    let result = guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap();
+    match result {
+        SaveDocumentResult::ContentConflict { disk } => assert_eq!(disk.contents, "theirs"),
+        other => panic!("unexpected result: {other:?}"),
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), "theirs");
+    assert_eq!(temp_siblings(&file), 0);
+}
+
+#[test]
+fn external_write_during_temp_phase_is_caught_by_second_compare() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("second-compare", "original");
+    let expected = existing_expected(&file);
+    let target = file.clone();
+    let result = guarded_save_with_hook(
+        &coordinator,
+        &path_string_for(&file),
+        "mine",
+        &expected,
+        &move || fs::write(&target, "theirs").unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(result, SaveDocumentResult::ContentConflict { .. }));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "theirs");
+    assert_eq!(temp_siblings(&file), 0);
+}
+
+#[test]
+fn guarded_expected_missing_creates_only_when_both_checks_are_missing() {
+    let coordinator = DocumentCoordinator::default();
+    let target = temp_dir("save-create").join("new.md");
+    let result = guarded_save(
+        &coordinator,
+        &path_string_for(&target),
+        "mine",
+        &ExpectedDocumentVersion::Missing,
+    )
+    .unwrap();
+    assert!(matches!(result, SaveDocumentResult::Saved { .. }));
+    assert_eq!(fs::read_to_string(&target).unwrap(), "mine");
+    assert_eq!(temp_siblings(&target), 0);
+}
+
+#[test]
+fn guarded_missing_create_is_no_clobber_when_the_target_appears() {
+    let coordinator = DocumentCoordinator::default();
+    let target = temp_dir("save-no-clobber").join("new.md");
+    let racing = target.clone();
+    let result = guarded_save_with_hook(
+        &coordinator,
+        &path_string_for(&target),
+        "mine",
+        &ExpectedDocumentVersion::Missing,
+        &move || fs::write(&racing, "theirs").unwrap(),
+    )
+    .unwrap();
+    match result {
+        SaveDocumentResult::CreatedConflict { disk } => assert_eq!(disk.contents, "theirs"),
+        other => panic!("unexpected result: {other:?}"),
+    }
+    assert_eq!(fs::read_to_string(&target).unwrap(), "theirs");
+    assert_eq!(temp_siblings(&target), 0);
+}
+
+#[test]
+fn guarded_external_delete_returns_deleted_conflict() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("save-deleted", "original");
+    let expected = existing_expected(&file);
+    fs::remove_file(&file).unwrap();
+    let result = guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap();
+    assert!(matches!(result, SaveDocumentResult::DeletedConflict { .. }));
+    assert!(!file.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn guarded_symlink_target_is_replaced_without_consuming_the_link() {
+    use std::os::unix::fs::symlink;
+
+    let coordinator = DocumentCoordinator::default();
+    let directory = temp_dir("save-symlink");
+    let target = directory.join("real.md");
+    let link = directory.join("link.md");
+    fs::write(&target, "original").unwrap();
+    symlink(&target, &link).unwrap();
+    let expected = existing_expected(&link);
+
+    let result = guarded_save(&coordinator, &path_string_for(&link), "mine", &expected).unwrap();
+
+    assert!(matches!(result, SaveDocumentResult::Saved { .. }));
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "mine");
+}
+
+#[cfg(unix)]
+#[test]
+fn guarded_retargeted_symlink_writes_neither_target() {
+    use std::os::unix::fs::symlink;
+
+    let coordinator = DocumentCoordinator::default();
+    let directory = temp_dir("save-retarget");
+    let first = directory.join("first.md");
+    let second = directory.join("second.md");
+    let link = directory.join("link.md");
+    fs::write(&first, "first").unwrap();
+    fs::write(&second, "second").unwrap();
+    symlink(&first, &link).unwrap();
+    let expected = existing_expected(&link);
+
+    fs::remove_file(&link).unwrap();
+    symlink(&second, &link).unwrap();
+    let result = guarded_save(&coordinator, &path_string_for(&link), "mine", &expected).unwrap();
+
+    assert!(matches!(
+        result,
+        SaveDocumentResult::PathChangedConflict { .. }
+    ));
+    assert_eq!(fs::read_to_string(&first).unwrap(), "first");
+    assert_eq!(fs::read_to_string(&second).unwrap(), "second");
+}
+
+#[test]
+fn guarded_parent_sync_failure_downgrades_durability_only() {
+    let directory = temp_dir("parent-sync");
+    assert_eq!(
+        sync_parent(&directory.join("absent-dir")),
+        SaveDurability::DirectorySyncFailed
     );
+}
+
+#[test]
+fn guarded_saved_version_does_not_conflict_with_itself() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("no-self-conflict", "original");
+    let first = existing_expected(&file);
+    let saved = guarded_save(&coordinator, &path_string_for(&file), "mine", &first).unwrap();
+    let SaveDocumentResult::Saved { version, .. } = saved else {
+        panic!("expected a saved result")
+    };
+    let again = guarded_save(
+        &coordinator,
+        &path_string_for(&file),
+        "mine again",
+        &ExpectedDocumentVersion::Existing { version },
+    )
+    .unwrap();
+    assert!(matches!(again, SaveDocumentResult::Saved { .. }));
+}
+
+#[test]
+fn guarded_unicode_contents_roundtrip_through_a_save() {
+    let coordinator = DocumentCoordinator::default();
+    let file = temp_dir("unicode-保存").join("文档-🦀.md");
+    fs::write(&file, "旧内容").unwrap();
+    let expected = existing_expected(&file);
+    guarded_save(
+        &coordinator,
+        &path_string_for(&file),
+        "新内容 🦀",
+        &expected,
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "新内容 🦀");
+}
+
+#[test]
+fn guarded_same_path_saves_serialize_and_the_loser_conflicts() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("save-serialize", "original");
+    let expected = existing_expected(&file);
+    let path = path_string_for(&file);
+    let left_coordinator = coordinator.clone();
+    let right_coordinator = coordinator.clone();
+    let left_expected = expected.clone();
+    let right_expected = expected;
+    let left_path = path.clone();
+
+    let (left, right) = tauri::async_runtime::block_on(async move {
+        let left = tauri::async_runtime::spawn(spawn_blocking_document(move || {
+            guarded_save(&left_coordinator, &left_path, "left", &left_expected)
+        }));
+        let right = tauri::async_runtime::spawn(spawn_blocking_document(move || {
+            guarded_save(&right_coordinator, &path, "right", &right_expected)
+        }));
+        (left.await.unwrap(), right.await.unwrap())
+    });
+
+    let statuses = [left.unwrap(), right.unwrap()];
+    let saved = statuses
+        .iter()
+        .filter(|result| matches!(result, SaveDocumentResult::Saved { .. }))
+        .count();
+    let conflicts = statuses
+        .iter()
+        .filter(|result| matches!(result, SaveDocumentResult::ContentConflict { .. }))
+        .count();
+    assert_eq!((saved, conflicts), (1, 1));
+    let final_contents = fs::read_to_string(&file).unwrap();
+    assert!(final_contents == "left" || final_contents == "right");
 }
