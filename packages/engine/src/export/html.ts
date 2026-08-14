@@ -1,6 +1,7 @@
 import { syntaxTree } from "@codemirror/language"
 import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
+import { parseCell, type CellNode } from "../parse/cell"
 import { linkHref } from "../links"
 
 const SKIP = new Set([
@@ -48,8 +49,36 @@ function fencedText(node: SyntaxNode, state: EditorState): string {
   return parts.join("")
 }
 
+function cellChildrenHtml(children: CellNode[]): string {
+  return children.map(cellNodeHtml).join("")
+}
+
+// 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致。
+function cellNodeHtml(node: CellNode): string {
+  switch (node.type) {
+    case "text": return escapeHtml(node.text)
+    case "code": return `<code>${escapeHtml(node.text)}</code>`
+    case "math": return `<code>${escapeHtml(node.text)}</code>`
+    case "em": return `<em>${cellChildrenHtml(node.children)}</em>`
+    case "strong": return `<strong>${cellChildrenHtml(node.children)}</strong>`
+    case "del": return `<del>${cellChildrenHtml(node.children)}</del>`
+    case "mark": return `<mark>${cellChildrenHtml(node.children)}</mark>`
+    case "underline": return `<u>${cellChildrenHtml(node.children)}</u>`
+    case "link": return `<a href="${escapeHtml(node.href)}">${cellChildrenHtml(node.children)}</a>`
+    case "image": return `<img src="${escapeHtml(node.src)}" alt="${escapeHtml(node.alt)}">`
+    case "br": return "<br>"
+    case "hr": return "<hr>"
+    case "ul": return `<ul>${cellChildrenHtml(node.children)}</ul>`
+    case "ol": return `<ol>${cellChildrenHtml(node.children)}</ol>`
+    case "li": return `<li>${cellChildrenHtml(node.children)}</li>`
+    case "blockquote": return `<blockquote>${cellChildrenHtml(node.children)}</blockquote>`
+    case "pre": return `<pre><code>${escapeHtml(node.text)}</code></pre>`
+  }
+}
+
 function cellText(node: SyntaxNode, state: EditorState): string {
-  return escapeHtml(state.doc.sliceString(node.from, node.to).replace(/\\\|/g, "|").trim())
+  const source = state.doc.sliceString(node.from, node.to).replace(/\\\|/g, "|").trim()
+  return cellChildrenHtml(parseCell(source))
 }
 
 function linkLabel(node: SyntaxNode, state: EditorState): string {

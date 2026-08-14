@@ -1,3 +1,4 @@
+import { parseCell, type CellNode } from "../../parse/cell"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 
 export type TableAlignment = "left" | "center" | "right" | ""
@@ -8,80 +9,101 @@ export interface TableData {
   aligns: TableAlignment[]
 }
 
-export function renderTableCellContent(parent: HTMLElement, text: string): void {
-  const lines = text.split(/<br\s*\/?>/i)
-  lines.forEach((line, lineIndex) => {
-    if (lineIndex > 0) {
-      parent.appendChild(document.createElement("br"))
-    }
-    renderInlineFormatted(parent, line)
-  })
+type ResolveSrc = (src: string) => string
+
+function renderCellContainer(
+  parent: HTMLElement,
+  tag: string,
+  children: CellNode[],
+  resolveSrc?: ResolveSrc,
+): void {
+  const el = document.createElement(tag)
+  for (const child of children) renderCellNode(el, child, resolveSrc)
+  parent.appendChild(el)
 }
 
-function renderInlineFormatted(parent: HTMLElement, text: string): void {
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|(?<!\w)_[^_]+_(?!\w)|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+function renderCellNode(parent: HTMLElement, node: CellNode, resolveSrc?: ResolveSrc): void {
+  switch (node.type) {
+    case "text": parent.appendChild(document.createTextNode(node.text)); return
+    case "code": {
+      const el = document.createElement("code")
+      el.textContent = node.text
+      parent.appendChild(el)
+      return
     }
-
-    const token = match[0]
-    if (token.startsWith("`") && token.endsWith("`")) {
-      const code = document.createElement("code")
-      code.textContent = token.slice(1, -1)
-      parent.appendChild(code)
-    } else if (
-      (token.startsWith("**") && token.endsWith("**")) ||
-      (token.startsWith("__") && token.endsWith("__"))
-    ) {
-      const strong = document.createElement("strong")
-      strong.textContent = token.slice(2, -2)
-      parent.appendChild(strong)
-    } else if (token.startsWith("~~") && token.endsWith("~~")) {
-      const del = document.createElement("del")
-      del.textContent = token.slice(2, -2)
-      parent.appendChild(del)
-    } else if (
-      (token.startsWith("*") && token.endsWith("*")) ||
-      (token.startsWith("_") && token.endsWith("_"))
-    ) {
-      const em = document.createElement("em")
-      em.textContent = token.slice(1, -1)
-      parent.appendChild(em)
-    } else if (token.startsWith("[")) {
-      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)
-      if (linkMatch) {
-        const a = document.createElement("a")
-        a.textContent = linkMatch[1]
-        a.href = linkMatch[2]
-        a.target = "_blank"
-        a.rel = "noopener noreferrer"
-        a.className = "omd-link"
-        parent.appendChild(a)
-      } else {
-        parent.appendChild(document.createTextNode(token))
+    case "math": {
+      const el = document.createElement("code")
+      el.className = "omd-cell-math"
+      el.textContent = node.text
+      parent.appendChild(el)
+      return
+    }
+    case "em": renderCellContainer(parent, "em", node.children, resolveSrc); return
+    case "strong": renderCellContainer(parent, "strong", node.children, resolveSrc); return
+    case "del": renderCellContainer(parent, "del", node.children, resolveSrc); return
+    case "mark": renderCellContainer(parent, "mark", node.children, resolveSrc); return
+    case "underline": renderCellContainer(parent, "u", node.children, resolveSrc); return
+    case "link": {
+      const a = document.createElement("a")
+      a.href = node.href
+      a.target = "_blank"
+      a.rel = "noopener noreferrer"
+      a.className = "omd-link"
+      for (const child of node.children) renderCellNode(a, child, resolveSrc)
+      parent.appendChild(a)
+      return
+    }
+    case "image": {
+      const img = document.createElement("img")
+      img.src = resolveSrc ? resolveSrc(node.src) : node.src
+      img.alt = node.alt
+      img.className = "omd-image"
+      img.onerror = () => {
+        img.replaceWith(Object.assign(document.createElement("span"), {
+          className: "omd-image-broken",
+          textContent: node.src,
+        }))
       }
-    } else {
-      parent.appendChild(document.createTextNode(token))
+      parent.appendChild(img)
+      return
     }
-
-    lastIndex = match.index + token.length
+    case "br": parent.appendChild(document.createElement("br")); return
+    case "hr": parent.appendChild(document.createElement("hr")); return
+    case "ul": renderCellContainer(parent, "ul", node.children, resolveSrc); return
+    case "ol": renderCellContainer(parent, "ol", node.children, resolveSrc); return
+    case "li": renderCellContainer(parent, "li", node.children, resolveSrc); return
+    case "blockquote": renderCellContainer(parent, "blockquote", node.children, resolveSrc); return
+    case "pre": {
+      const pre = document.createElement("pre")
+      const code = document.createElement("code")
+      code.textContent = node.text
+      pre.appendChild(code)
+      parent.appendChild(pre)
+      return
+    }
   }
+}
 
-  if (lastIndex < text.length) {
-    parent.appendChild(document.createTextNode(text.slice(lastIndex)))
-  }
+// cell 内容按引擎自有的 markdown parser 解析后再渲染（任意语法：粗体/斜体/删除线/
+// 高亮/下划线/行内代码/行内数学/链接/autolink/图片/emoji/HTML 实体/`<br>`/列表/引用/
+// 代码块/分隔线），不再是手写正则。
+export function renderTableCellContent(parent: HTMLElement, text: string, resolveSrc?: ResolveSrc): void {
+  for (const node of parseCell(text)) renderCellNode(parent, node, resolveSrc)
 }
 
 export class TableWidget extends BlockWidget {
-  constructor(src: string, pos: number, readonly table: TableData, embed?: BlockEmbed) {
+  constructor(
+    src: string,
+    pos: number,
+    readonly table: TableData,
+    embed?: BlockEmbed,
+    readonly resolveSrc?: ResolveSrc,
+  ) {
     super(src, pos, embed)
   }
 
   eq(other: TableWidget) {
+    // resolveSrc 不参与相等性：由宿主 facet 注入，只在编辑器配置重建时变化。
     return super.eq(other) && JSON.stringify(this.table) === JSON.stringify(other.table)
   }
 
@@ -93,7 +115,7 @@ export class TableWidget extends BlockWidget {
     const hr = document.createElement("tr")
     for (const [i, c] of this.table.header.entries()) {
       const th = document.createElement("th")
-      renderTableCellContent(th, c)
+      renderTableCellContent(th, c, this.resolveSrc)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
       hr.appendChild(th)
     }
@@ -104,7 +126,7 @@ export class TableWidget extends BlockWidget {
       const tr = document.createElement("tr")
       for (let i = 0; i < this.table.header.length; i++) {
         const td = document.createElement("td")
-        renderTableCellContent(td, row[i] ?? "")
+        renderTableCellContent(td, row[i] ?? "", this.resolveSrc)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
         tr.appendChild(td)
       }

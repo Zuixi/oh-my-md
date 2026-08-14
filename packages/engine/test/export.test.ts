@@ -34,4 +34,15 @@ describe("html export", () => {
     expect(html).toContain('<a href="mailto:foo@example.com">foo@example.com</a>')
     expect(html).toContain('<a href="#guide">Back</a>')
   })
+
+  it("exports rich markdown inside table cells", () => {
+    const doc = "| **a** | [x](https://e.com) | ~~del~~ |\n|---|---|---|\n| - one | `code` | > q |\n"
+    const html = exportHtml(makeState(doc))
+    expect(html).toContain("<th><strong>a</strong></th>")
+    expect(html).toContain('<th><a href="https://e.com">x</a></th>')
+    expect(html).toContain("<th><del>del</del></th>")
+    expect(html).toContain("<td><ul><li>one</li></ul></td>")
+    expect(html).toContain("<td><code>code</code></td>")
+    expect(html).toContain("<td><blockquote>q</blockquote></td>")
+  })
 })
