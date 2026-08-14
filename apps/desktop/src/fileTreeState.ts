@@ -6,7 +6,7 @@ export interface TreeEntry {
 
 export interface FileTreeModel {
   childrenByPath: Readonly<Record<string, readonly TreeEntry[]>>
-  expanded: readonly string[]
+  expanded: ReadonlySet<string>
 }
 
 export interface VisibleRow {
@@ -16,7 +16,7 @@ export interface VisibleRow {
 }
 
 export function emptyFileTree(): FileTreeModel {
-  return { childrenByPath: {}, expanded: [] }
+  return { childrenByPath: {}, expanded: new Set() }
 }
 
 export function setChildren(
@@ -31,9 +31,9 @@ export function setChildren(
 }
 
 export function toggleExpand(model: FileTreeModel, path: string): FileTreeModel {
-  const expanded = model.expanded.includes(path)
-    ? model.expanded.filter(item => item !== path)
-    : [...model.expanded, path]
+  const expanded = new Set(model.expanded)
+  if (expanded.has(path)) expanded.delete(path)
+  else expanded.add(path)
   return { ...model, expanded }
 }
 
@@ -44,7 +44,7 @@ export function visibleRows(root: string, model: FileTreeModel): VisibleRow[] {
 function rowsFor(dir: string, depth: number, model: FileTreeModel): VisibleRow[] {
   const entries = model.childrenByPath[dir] ?? []
   return entries.flatMap(entry => {
-    const expanded = entry.is_dir && model.expanded.includes(entry.path)
+    const expanded = entry.is_dir && model.expanded.has(entry.path)
     const row = { entry, depth, expanded }
     return expanded ? [row, ...rowsFor(entry.path, depth + 1, model)] : [row]
   })
