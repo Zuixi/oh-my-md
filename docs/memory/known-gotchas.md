@@ -234,3 +234,19 @@ As of Cursor 3.15, `beforeShellExecution` returning `permission: "ask"` does not
 ## `.githooks/` does nothing until `core.hooksPath` is set
 
 The repo stores hooks in `.githooks/`, not `.git/hooks`. Git ignores that directory unless `core.hooksPath=.githooks`. The root `prepare` script sets this on `pnpm install`. A clone that never ran install still uses the sample hooks under `.git/hooks`, so `commit-msg` will not strip Cursor co-author trailers.
+
+## Stale Rust target artifacts break the link after a toolchain upgrade
+
+After upgrading the Rust toolchain (e.g. Homebrew `brew upgrade rust`), `pnpm dev` / `cargo build` can fail at the final link with:
+
+```
+Undefined symbols for architecture arm64:
+  "alloc::slice::stable_sort::hcaebff4dcd0e3274", referenced from:
+      alloc::slice::...::sort_by::... in libappsdesktop_lib.rlib
+ld: warning: object file ... was built for newer 'macOS' version (15.0) than being linked (11.0)
+```
+
+Cause: `src-tauri/target/` holds `.rlib`s compiled against the previous toolchain's std; mixing them with the new std leaves the shared `stable_sort` instantiation unresolved. `cargo test` can still pass from cached test artifacts, so a green test run does not prove the bin links.
+
+Fix: `cargo clean --manifest-path apps/desktop/src-tauri/Cargo.toml` and rebuild. A minimal `rustc` program using `sort_by` links fine on a fresh build, so this is stale-state, not a code or std defect. If `pnpm dev` reports `Port 1420 is already in use` instead, a stale dev server holds the Vite port — kill the leftover `pnpm dev`/`tauri dev`/`vite.js` processes.
+
