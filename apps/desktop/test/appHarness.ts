@@ -9,16 +9,31 @@ import {
 } from "@omd/engine"
 import App, { type DesktopServices } from "../src/App"
 import type {
-  DocumentVersion,
-  DiskSnapshot,
-  ExpectedDocumentVersion,
+  DocumentCommandError,
   SaveDocumentResult,
 } from "../src/desktopServices"
 import type { CreateEditorOptions, EditorDocumentUpdate } from "../src/Editor"
+import {
+  makeFakeDisk,
+  versionFor,
+  type DiskFixture,
+  type FakeDisk,
+  type SaveDocumentOverride,
+} from "./fakeDisk"
 
 const NO_WATCH_MS = 0
 /** Watch interval armed only for the duration of one faked external poll. */
-const EXTERNAL_CHECK_MS = 5
+const WATCH_POLL_MS = 5
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 export type EditorMock = {
   create: Mock<(parent: HTMLElement, options: CreateEditorOptions) => EditorView>
@@ -39,32 +54,33 @@ export type HarnessServices = DesktopServices & Required<
 export interface AppHarness {
   readonly services: HarnessServices
   seedFile: (path: string, contents: string) => void
+  disk: (path: string) => DiskFixture
   renderApp: (props?: { autosaveMs?: number; watchMs?: number }) => RenderResult
   editorForTab: (tabId: number) => FakeEditorHandle
   allEditors: () => readonly FakeEditorHandle[]
   activateTab: (tabId: number) => void
   openIntoActive: (path: string, contents: string) => Promise<void>
   openInNewTab: (path: string, contents: string) => Promise<void>
+  openFileTab: (path: string, contents: string) => Promise<void>
   requestOpen: (path: string, contents: string) => Promise<void>
   emitPending: (tabId: number, id: NormalizationId) => void
   saveNormalization: (tabId: number) => Promise<void>
+  saveActive: () => Promise<void>
   failNextReset: (error: Error) => void
   requestCloseTab: (tabId: number) => void
   runExternalCheck: () => Promise<void>
+  runWatcher: () => Promise<void>
+  nextSaveResult: (result: SaveDocumentResult) => void
+  failNextSave: (error: DocumentCommandError) => void
+  pauseNextSave: () => { promise: Promise<void>; resolve: (value: void) => void; reject: (reason?: unknown) => void }
 }
 
 export function normalizationId(value: number): NormalizationId {
   return value as NormalizationId
 }
 
-/**
- * Fake views own no StateField, so the notice each handle last emitted is looked up by the state
- * object that handle hands to the App.
- *
- * The test appendix specifies `Map<EditorView, notice>`; this indexes by state instead because the
- * App only ever asks `getPendingOrderedListNormalization(view.state)`, so a state key is what the
- * mocked engine call actually receives. Both hold one notice per fake view.
- */
+export { versionFor }
+
 const pendingByState = new WeakMap<object, () => OrderedListNormalizationNotice | null>()
 
 function pendingNoticeFor(state: unknown): OrderedListNormalizationNotice | null {
@@ -72,11 +88,6 @@ function pendingNoticeFor(state: unknown): OrderedListNormalizationNotice | null
   return pendingByState.get(state)?.() ?? null
 }
 
-/**
- * The test file owns `vi.mock("@omd/engine", ...)` so Vitest can hoist it; the harness only gives
- * that hoisted spy its per-view implementation. Importing this module from the mock factory would
- * deadlock, because it imports App, which imports the module being mocked.
- */
 function installEnginePendingLookup(): void {
   vi.mocked(getPendingOrderedListNormalization).mockImplementation(state =>
     pendingNoticeFor(state),
@@ -140,16 +151,6 @@ function createHandleRecord(
   }
 }
 
-/**
- * Stand-in for the engine's live-preview renumbering, only so `emitPending` can report a document
- * that really changed. Production desktop code must keep asking the engine instead.
- *
- * It fakes one shape: flat ordered lists that start at 1 or higher and run over consecutive lines.
- * Two shapes are rejected loudly (lists starting at 0, lists split by a blank line), but the
- * double is not a validator: indented or nested items, `)` delimiters, and numbered lines inside
- * fenced code are still renumbered with a `markerCount` the engine would not produce. Prefer flat
- * `1.`-style fixtures, or drive a real editor when the shape matters.
- */
 const ORDERED_MARKER = /^(\s*)(\d+)([.)])(\s)/
 const NOT_IN_LIST = null
 const FIRST_ORDERED_NUMBER = 1
@@ -194,49 +195,54 @@ function normalizeOrderedMarkers(text: string): FakeNormalization {
   return { doc: lines.join("\n"), rewrittenMarkers }
 }
 
-function versionFor(path: string, contents: string): DocumentVersion {
-  return { resolvedPath: path, fingerprint: `v1:${contents.length}:${contents}` }
+interface HarnessContext {
+  readonly editor: EditorMock
+  readonly fakeDisk: FakeDisk
+  services: HarnessServices
+  readonly records: HandleRecord[]
+  saveOverride: SaveDocumentOverride | null
+  savePauseQueue: Array<ReturnType<typeof deferred<void>>>
+  openTabIds: number[]
+  rendered: RenderResult | null
+  autosaveMs: number
+  watchMs: number
 }
 
-export { versionFor }
+async function invokeSaveDocument(
+  context: HarnessContext,
+  path: string,
+  contents: string,
+  expected: import("../src/desktopServices").ExpectedDocumentVersion,
+): Promise<SaveDocumentResult> {
+  const pause = context.savePauseQueue.shift()
+  if (pause) {
+    await pause.promise
+  }
+  if (context.saveOverride) {
+    const override = context.saveOverride
+    context.saveOverride = null
+    if (override.kind === "error") throw override.error
+    return override.result
+  }
+  return context.fakeDisk.saveDocument(path, contents, expected)
+}
 
-function harnessServices(diskContents: Map<string, string>): HarnessServices {
+function harnessServices(context: HarnessContext): HarnessServices {
+  const { fakeDisk } = context
   return {
     pickOpenPath: vi.fn(async () => null),
     pickSavePath: vi.fn(async () => null),
-    readDocument: vi.fn(async (path: string) => {
-      const contents = diskContents.get(path)
-      return contents === undefined
-        ? ({ kind: "missing", requestedPath: path }) satisfies DiskSnapshot
-        : ({
-            kind: "existing",
-            requestedPath: path,
-            contents,
-            version: versionFor(path, contents),
-          }) satisfies DiskSnapshot
+    readDocument: vi.fn(async path => fakeDisk.readDocument(path)),
+    readDocumentVersion: vi.fn(async path => fakeDisk.readDocumentVersion(path)),
+    saveDocument: vi.fn(async (path, contents, expected) =>
+      invokeSaveDocument(context, path, contents, expected)),
+    readFile: vi.fn(async path => {
+      const snapshot = fakeDisk.readDocument(path)
+      if (snapshot.kind === "missing") throw new Error(`missing file: ${path}`)
+      return snapshot.contents
     }),
-    readDocumentVersion: vi.fn(async (path: string) => {
-      const contents = diskContents.get(path)
-      return contents === undefined
-        ? ({ kind: "missing" }) satisfies ExpectedDocumentVersion
-        : ({
-            kind: "existing",
-            version: versionFor(path, contents),
-          }) satisfies ExpectedDocumentVersion
-    }),
-    saveDocument: vi.fn(async (_path: string, _contents: string, _expected: ExpectedDocumentVersion) =>
-      ({
-        status: "saved",
-        version: { resolvedPath: "", fingerprint: "" },
-        durability: "durable",
-      }) satisfies SaveDocumentResult),
-    readFile: vi.fn(async (path: string) => {
-      const contents = diskContents.get(path)
-      if (contents === undefined) throw new Error(`missing file: ${path}`)
-      return contents
-    }),
-    writeFile: vi.fn(async (path: string, contents: string) => {
-      diskContents.set(path, contents)
+    writeFile: vi.fn(async (path, contents) => {
+      fakeDisk.seed(path, contents)
     }),
     allowDocumentAssets: vi.fn(async () => undefined),
     writeRecovery: vi.fn(async () => undefined),
@@ -245,17 +251,6 @@ function harnessServices(diskContents: Map<string, string>): HarnessServices {
     confirmExternalChange: vi.fn(() => true),
     reportError: vi.fn(),
   }
-}
-
-interface HarnessContext {
-  readonly editor: EditorMock
-  readonly services: HarnessServices
-  readonly records: HandleRecord[]
-  readonly diskContents: Map<string, string>
-  openTabIds: number[]
-  rendered: RenderResult | null
-  autosaveMs: number
-  watchMs: number
 }
 
 function installEditorMock(context: HarnessContext): void {
@@ -317,7 +312,7 @@ async function requestOpen(
   path: string,
   contents: string,
 ): Promise<void> {
-  context.diskContents.set(path, contents)
+  context.fakeDisk.seed(path, contents)
   vi.mocked(context.services.pickOpenPath).mockResolvedValueOnce(path)
   fireEvent.keyDown(window, { key: "o", metaKey: true })
   await waitFor(() => {
@@ -346,6 +341,15 @@ async function openInNewTab(
   await openIntoActive(context, path, contents)
 }
 
+async function openFileTab(
+  context: HarnessContext,
+  path: string,
+  contents: string,
+): Promise<void> {
+  context.fakeDisk.seed(path, contents)
+  await openIntoActive(context, path, contents)
+}
+
 function emitPending(context: HarnessContext, tabId: number, id: NormalizationId): void {
   const record = recordForTab(context, tabId)
   const normalized = normalizeOrderedMarkers(record.contents())
@@ -356,40 +360,45 @@ function emitPending(context: HarnessContext, tabId: number, id: NormalizationId
   })
 }
 
-/**
- * Drives exactly one poll of the App's external-change watcher. The interval is armed by a
- * rerender and disarmed again straight after, and time is faked so a slow machine cannot slip a
- * second poll into the window.
- */
-async function runExternalCheck(context: HarnessContext): Promise<void> {
+async function runWatcherPoll(context: HarnessContext): Promise<void> {
   const rendered = requireRendered(context)
   const alreadyFaked = vi.isFakeTimers()
   if (!alreadyFaked) vi.useFakeTimers()
-  rendered.rerender(appElement(context, EXTERNAL_CHECK_MS))
-  await act(async () => { await vi.advanceTimersByTimeAsync(EXTERNAL_CHECK_MS) })
+  rendered.rerender(appElement(context, WATCH_POLL_MS))
+  await act(async () => { await vi.advanceTimersByTimeAsync(WATCH_POLL_MS) })
   rendered.rerender(appElement(context, context.watchMs))
   if (!alreadyFaked) vi.useRealTimers()
   await settle()
 }
 
+async function saveActive(_context: HarnessContext): Promise<void> {
+  fireEvent.keyDown(window, { key: "s", metaKey: true })
+  await settle()
+  await act(async () => { await Promise.resolve() })
+}
+
 export function createAppHarness(editor: EditorMock): AppHarness {
-  const diskContents = new Map<string, string>()
+  const fakeDisk = makeFakeDisk()
   const context: HarnessContext = {
     editor,
-    services: harnessServices(diskContents),
+    fakeDisk,
+    services: {} as HarnessServices,
     records: [],
-    diskContents,
+    saveOverride: null,
+    savePauseQueue: [],
     openTabIds: [],
     rendered: null,
     autosaveMs: 0,
     watchMs: NO_WATCH_MS,
   }
+  context.services = harnessServices(context)
   installEditorMock(context)
   installEnginePendingLookup()
 
   return {
     services: context.services,
-    seedFile: (path, contents) => { context.diskContents.set(path, contents) },
+    seedFile: (path, contents) => { fakeDisk.seed(path, contents) },
+    disk: path => fakeDisk.disk(path),
     renderApp: (props = {}) => {
       context.autosaveMs = props.autosaveMs ?? 0
       context.watchMs = props.watchMs ?? NO_WATCH_MS
@@ -401,6 +410,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     activateTab: tabId => activateTab(context, tabId),
     openIntoActive: (path, contents) => openIntoActive(context, path, contents),
     openInNewTab: (path, contents) => openInNewTab(context, path, contents),
+    openFileTab: (path, contents) => openFileTab(context, path, contents),
     requestOpen: (path, contents) => requestOpen(context, path, contents),
     emitPending: (tabId, id) => emitPending(context, tabId, id),
     saveNormalization: async tabId => {
@@ -408,6 +418,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       fireEvent.click(screen.getByRole("button", { name: "Save normalization" }))
       await settle()
     },
+    saveActive: () => saveActive(context),
     failNextReset: error => {
       context.editor.reset.mockImplementationOnce(() => { throw error })
     },
@@ -415,6 +426,18 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       activateTab(context, tabId)
       fireEvent.keyDown(window, { key: "w", metaKey: true })
     },
-    runExternalCheck: () => runExternalCheck(context),
+    runExternalCheck: () => runWatcherPoll(context),
+    runWatcher: () => runWatcherPoll(context),
+    nextSaveResult: result => {
+      context.saveOverride = { kind: "result", result }
+    },
+    failNextSave: error => {
+      context.saveOverride = { kind: "error", error }
+    },
+    pauseNextSave: () => {
+      const gate = deferred<void>()
+      context.savePauseQueue.push(gate)
+      return gate
+    },
   }
 }

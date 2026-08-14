@@ -172,7 +172,7 @@ interface PreparedTabSave {
   readonly nextNormalization: NormalizationByTab
 }
 
-function prepareTabSave(
+export function prepareTabSave(
   tabId: number,
   trigger: SaveTrigger,
   tab: EditorSession | undefined,
