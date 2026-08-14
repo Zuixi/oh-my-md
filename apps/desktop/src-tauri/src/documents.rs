@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+mod coordinator;
+
+pub use coordinator::DocumentCoordinator;
+pub(crate) use coordinator::{resolve_path_key, PathKey};
+
 const FINGERPRINT_PREFIX: &str = "v1:";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
