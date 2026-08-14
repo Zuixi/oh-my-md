@@ -6,6 +6,7 @@ import { orderedNormalizationState } from "./lists/ordered"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml } from "./export/html"
+export { headingPositionForAnchor, headingSlug, linkAt, linkHref, type LinkTarget } from "./links"
 export { applyToggle, isLivePreview } from "./modes/livePreview"
 export {
   acceptOrderedListNormalization,

@@ -4,8 +4,10 @@ import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
   collectOutline,
   editorExtensions,
+  headingPositionForAnchor,
   getPendingOrderedListNormalization,
   isLivePreview,
+  linkAt,
   type OrderedListNormalizationNotice,
   type OutlineItem,
 } from "@omd/engine"
@@ -50,6 +52,25 @@ export function makeImageResolver(
   }
 }
 
+export function activateLink(view: EditorView, event: MouseEvent): boolean {
+  if (event.button !== 0) return false
+  const target = event.target instanceof Element ? event.target.closest(".omd-link") : null
+  if (!target) return false
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+  if (pos === null) return false
+  const targetLink = linkAt(view.state, pos)
+  if (!targetLink) return false
+
+  event.preventDefault()
+  if (targetLink.href.startsWith("#")) {
+    const target = headingPositionForAnchor(view.state, targetLink.href)
+    if (target !== null) view.dispatch({ selection: { anchor: target }, scrollIntoView: true })
+  } else {
+    window.open(targetLink.href, "_blank", "noopener,noreferrer")
+  }
+  return true
+}
+
 function samePending(
   a: OrderedListNormalizationNotice | null,
   b: OrderedListNormalizationNotice | null,
@@ -88,6 +109,9 @@ function createEditorState(options: CreateEditorOptions): EditorState {
         getDocPath: options.getDocPath,
         getDocumentId: options.getDocumentId,
         onError: options.onError,
+      }),
+      EditorView.domEventHandlers({
+        click: (event, view) => activateLink(view, event),
       }),
       EditorView.updateListener.of((update) => reportEditorUpdate(options, update)),
       EditorView.theme({
