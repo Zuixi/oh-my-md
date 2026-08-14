@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Strip Cursor co-author trailers, then require `<type>: <why>`.
+# Strip any Co-authored-by trailers, then require `<type>: <why>`.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)

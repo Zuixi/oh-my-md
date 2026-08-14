@@ -10,6 +10,9 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent / "commit-msg"
 TRAILER = "Co-authored-by: Cursor <cursoragent@cursor.com>\n"
+COPILOT_TRAILER = (
+    "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>\n"
+)
 
 
 def run_hook(text: str) -> tuple[int, str, str]:
@@ -26,6 +29,12 @@ class CommitMsgStripTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(result, "feat: add tabs\n")
         self.assertNotIn("cursoragent@cursor.com", result)
+
+    def test_strips_any_coauthor_and_keeps_subject(self) -> None:
+        code, result, _stderr = run_hook("feat: add tabs\n\n" + COPILOT_TRAILER)
+        self.assertEqual(code, 0)
+        self.assertEqual(result, "feat: add tabs\n")
+        self.assertNotIn("users.noreply.github.com", result)
 
     def test_leaves_unrelated_message_alone(self) -> None:
         code, result, _stderr = run_hook("fix: parser crash\n")
