@@ -6,6 +6,63 @@ import { parseRecents, RECENTS_STORAGE_KEY } from "./recents"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
 
+export interface DocumentVersion {
+  readonly resolvedPath: string
+  readonly fingerprint: string
+}
+
+export interface ExistingDiskSnapshot {
+  readonly requestedPath: string
+  readonly contents: string
+  readonly version: DocumentVersion
+}
+
+export type DiskSnapshot =
+  | { readonly kind: "missing"; readonly requestedPath: string }
+  | ({ readonly kind: "existing" } & ExistingDiskSnapshot)
+
+export type ExpectedDocumentVersion =
+  | { readonly kind: "missing" }
+  | { readonly kind: "existing"; readonly version: DocumentVersion }
+
+export type SaveDocumentResult =
+  | {
+      readonly status: "saved"
+      readonly version: DocumentVersion
+      readonly durability: "durable" | "directorySyncFailed"
+    }
+  | {
+      readonly status: "contentConflict" | "createdConflict"
+      readonly disk: ExistingDiskSnapshot
+    }
+  | { readonly status: "deletedConflict"; readonly requestedPath: string }
+  | { readonly status: "pathChangedConflict"; readonly requestedPath: string }
+  | { readonly status: "unexpectedSymlinkConflict"; readonly requestedPath: string }
+
+export type DocumentErrorCode =
+  | "invalidPath"
+  | "notUtf8"
+  | "readFailed"
+  | "writeFailed"
+  | "permissionDenied"
+  | "metadataFailed"
+  | "internal"
+
+export interface DocumentCommandError {
+  readonly code: DocumentErrorCode
+  readonly message: string
+}
+
+export const DOCUMENT_ERROR_CODES = [
+  "invalidPath",
+  "notUtf8",
+  "readFailed",
+  "writeFailed",
+  "permissionDenied",
+  "metadataFailed",
+  "internal",
+] as const satisfies readonly DocumentErrorCode[]
+
 export interface RecoveryRecord {
   key: string
   label: string
@@ -18,8 +75,16 @@ export interface DesktopServices {
   pickExportPath?: (format?: "html" | "png" | "pdf") => Promise<string | null>
   exportPreview?: (html: string, path: string, format: "pdf" | "png") => Promise<void>
   pickCssPath?: () => Promise<string | null>
+  readDocument: (path: string) => Promise<DiskSnapshot>
+  readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
+  saveDocument: (
+    path: string,
+    contents: string,
+    expected: ExpectedDocumentVersion,
+  ) => Promise<SaveDocumentResult>
   readFile: (path: string) => Promise<string>
   writeFile: (path: string, contents: string) => Promise<void>
+  revealInFinder?: (path: string) => Promise<void>
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
@@ -37,6 +102,36 @@ export interface DesktopServices {
   confirmExternalChange?: () => boolean
   reportError: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
+}
+
+function isDocumentErrorCode(code: string): code is DocumentErrorCode {
+  return (DOCUMENT_ERROR_CODES as readonly string[]).includes(code)
+}
+
+export function toDocumentCommandError(error: unknown): DocumentCommandError {
+  if (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && "message" in error
+    && typeof error.code === "string"
+    && typeof error.message === "string"
+    && isDocumentErrorCode(error.code)
+  ) {
+    return { code: error.code, message: error.message }
+  }
+  if (error instanceof Error) {
+    return { code: "internal", message: error.message }
+  }
+  return { code: "internal", message: String(error) }
+}
+
+async function invokeDocument<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args)
+  } catch (error) {
+    throw toDocumentCommandError(error)
+  }
 }
 
 async function pickPath(kind: "file" | "folder" | "save", extensions: string[]): Promise<string | null> {
@@ -61,10 +156,16 @@ export const defaultServices: DesktopServices = {
     return typeof path === "string" ? path : null
   },
   pickCssPath: () => pickPath("file", ["css"]),
+  readDocument: path => invokeDocument<DiskSnapshot>("read_document", { path }),
+  readDocumentVersion: path =>
+    invokeDocument<ExpectedDocumentVersion>("read_document_version", { path }),
+  saveDocument: (path, contents, expected) =>
+    invokeDocument<SaveDocumentResult>("save_document", { path, contents, expected }),
   readFile: (path) => invoke<string>("read_file", { path }),
   writeFile: async (path, contents) => {
     await invoke("write_file", { path, contents })
   },
+  revealInFinder: path => invoke("plugin:opener|reveal_item_in_dir", { path }),
   exportPreview: async (html, path, format) => {
     await invoke("export_preview", { html, path, format })
   },
