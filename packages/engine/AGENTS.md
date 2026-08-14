@@ -37,8 +37,16 @@ packages/engine/
 2. Do not import React, Tauri APIs, desktop modules, or native filesystem APIs.
 3. DOM use is allowed inside CodeMirror widgets. Keep it localized and compatible with the `happy-dom` test environment.
 4. The engine emits semantic `omd-*` class names; visual declarations belong in `apps/desktop/src/styles.css`.
-5. Expose desktop-facing behavior through `src/index.ts`: `editorExtensions(options)`, plus read-only `collectOutline(state)` and `exportHtml(state)`, plus the ordered-list normalization commands (`getPendingOrderedListNormalization`, `acceptOrderedListNormalization`, `rejectOrderedListNormalization`). Do not make desktop consumers assemble engine internals or re-parse Markdown. Commands stay pure: they return a `TransactionSpec` (or a `"stale"` result) and never dispatch.
+5. Expose desktop-facing behavior through `src/index.ts`: `editorExtensions(options)`, plus read-only `collectOutline(state)` and `exportHtml(state)`, plus the ordered-list normalization commands (`getPendingOrderedListNormalization`, `acceptOrderedListNormalization`, `rejectOrderedListNormalization`). Do not make desktop consumers assemble engine internals or re-parse Markdown. Commands stay pure: they return a `TransactionSpec` (or a `"stale"` result) and never dispatch. Read pending and build accept/reject transactions in the same tick as the triggering update; stale offsets if deferred.
 6. Keep generic host choices such as editor dimensions, base typography, history, and non-Markdown keymaps in `apps/desktop/src/Editor.ts`.
+
+## Ordered-list normalization invariants
+
+1. `orderedNormalizationState` is a top-level `StateField` mounted directly in `editorExtensions()`, never inside `livePreviewCompartment`, so pending and post-reject session suppression survive Source/Live toggles.
+2. Preview-entry batches merge under one pending id: keep the first `original`, take the latest `normalized`, leave `markerCount` unchanged. Follow-up batches (complete tree after a user edit) may refresh markers already pending but must not add new pending entries.
+3. `rejectOrderedListNormalization` restores first-recorded `original` markers; markers the user edited in Source (or that follow-up batches overwrote) are skipped. Preview labels stay consecutive via `widget:ordered-mark` even when source markers are gapped after reject.
+4. Session-local suppression after reject prevents further auto-renumbering until a fresh `EditorState` (reopen/reload). A new tab or document gets default behavior.
+5. Compare pending notices by `id`, not object reference — `getPendingOrderedListNormalization` returns a new object each call.
 
 ## Decoration and Widget Invariants
 

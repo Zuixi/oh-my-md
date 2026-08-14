@@ -81,6 +81,27 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 亮/暗主题与自定义 CSS；Typewriter 当前行居中；Focus 非当前行降透明度
 - [ ] 打开 `large.md` 后多标签切换与文件树刷新时滚动仍流畅
 
+## 有序列表规范化确认（Source Fidelity）
+
+Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写 marker、显示 dirty 与非模态提示条。以下项需 `pnpm dev` 目视；VoiceOver / IME 在本环境未跑则标 **NOT RUN**。
+
+- [ ] 打开 `1. / 3. / 7.` 文档：预览连续编号、源码已改写、dirty、提示条与状态栏 `Normalization review required`
+- [ ] 等待超过 autosave 时长（约 1.5s）：磁盘文件仍保持跳号
+- [ ] 点击 **Save normalization**：磁盘变为连续编号，提示消失，dirty 清除
+- [ ] 点击 **Keep original numbers**：磁盘与编辑器恢复跳号，提示消失
+- [ ] 提示出现后先编辑正文再保留原编号：正文编辑不丢
+- [ ] 提示出现后切 Source 修改一个 marker 再保留原编号：手动编号不被覆盖；若 marker 被改过，出现 skipped 状态文案
+- [ ] 保留原编号后继续编辑并来回切换 Source/Live：不再自动规范化；预览仍显示连续编号
+- [ ] 关闭并重开同一文件：自动规范化策略恢复（跳号文件再次触发提示）
+- [ ] Pending 时切 Source：提示仍在；返回 Live 后 id 不变，新 marker 合并到同一 pending
+- [ ] 无 pending 时 Source→Live 若发生规范化：出现新的待确认提示
+- [ ] Pending 时外部修改文件：选「加载磁盘」清 pending；选「保留我的」保留 pending
+- [ ] 仅规范化造成 dirty 时关闭标签：仍触发未保存确认
+- [ ] 中文输入法合成期间不触发编号改写 — **NOT RUN**（需 Tauri + IME）
+- [ ] 多标签：后台 tab pending 切回时显示正确提示；活动 tab 不显示他人 pending
+- [ ] 仅键盘 Tab 可到达保存/保留并完成操作 — **NOT RUN**（需 GUI）
+- [ ] VoiceOver 朗读 status 文案与按钮名，busy 时按钮仍可聚焦 — **NOT RUN**（需 VoiceOver）
+
 ## 自动化验证命令
 - 引擎单测：`pnpm test`
 - Desktop 类型检查与自动化：`pnpm --filter @omd/desktop test`
@@ -92,6 +113,9 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 
 ## 最近一次验证记录
 
+- 日期：2026-08-14（Task 8 / Source Fidelity）
+- 自动化已通过：`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（137）、`pnpm --filter @omd/desktop build`、`git diff --check`
+- 有序列表规范化 GUI / VoiceOver / IME：本环境未执行 `pnpm dev`，上方新节交互项保持未勾选或标 **NOT RUN**
 - 日期：2026-08-13
 - 自动化已通过：`pnpm test`、`pnpm --filter @omd/desktop test`、`pnpm --filter @omd/desktop build`、`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`、`git diff --check`。具体用例数以当次命令输出为准。
 - 交互式 M2 QA：本环境未执行 `pnpm dev` GUI 清单，上方交互项保持未勾选。

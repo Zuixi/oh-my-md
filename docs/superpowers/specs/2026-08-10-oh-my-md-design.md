@@ -125,7 +125,11 @@ App
 
 1. **输入 → 渲染**：敲键 → CM6 transaction → Lezer 增量重解析（只碰视口内）→ 装饰管线重建 RangeSet → 视口内块 widget 按需渲染（KaTeX/Mermaid 结果按"块文本 hash"缓存，未变块不重算）。
 2. **保存**：debounce 1.5s 自动保存 → IPC write → Rust 写盘 → 状态栏更新。Rust watch 事件回推时若文档脏则弹冲突提示，不静默覆盖。
-3. **AI**：块级 widget 挂操作菜单 → 取块文本 → provider 流式返回 → diff 视图呈现建议，用户确认才写回。**AI 永不直接改文档。**
+3. **有序列表自动规范化确认**（Live Preview）：preview-entry 规范化 → dirty + recovery + 暂停 autosave → 非模态提示条
+   - 保存规范化 → 显式 save 队列 → accept pending → 清 pending、落盘连续编号
+   - 保留原编号 → reject transaction → 恢复首次记录的 marker + session-local suppression（预览仍显示连续编号）
+   - pending 与 suppression 跨 Source/Live 切换保留；重开文档或新 EditorState 恢复默认策略
+4. **AI**：块级 widget 挂操作菜单 → 取块文本 → provider 流式返回 → diff 视图呈现建议，用户确认才写回。**AI 永不直接改文档。**
 
 **性能底线**：大文档靠 CM6 视口虚拟化天然成立；风险在块 widget——离屏块只占位不渲染、渲染结果缓存、Mermaid 重编译 debounce 500ms。
 
