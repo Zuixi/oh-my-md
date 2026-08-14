@@ -65,6 +65,22 @@ function TreeScroller(props: {
     return () => observer.disconnect()
   }, [])
 
+  // Keep the active file visible. Runs again once rows arrive after an
+  // auto-reveal expansion; the per-path guard stops it from fighting the user.
+  const scrolledToRef = useRef<string | null>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !props.activePath || scrolledToRef.current === props.activePath) return
+    const index = props.rows.findIndex(row => row.entry.path === props.activePath)
+    if (index < 0) return
+    const rowTop = index * ROW_HEIGHT
+    const rowBottom = rowTop + ROW_HEIGHT
+    if (rowTop < el.scrollTop || rowBottom > el.scrollTop + el.clientHeight) {
+      el.scrollTop = rowTop
+    }
+    scrolledToRef.current = props.activePath
+  }, [props.activePath, props.rows])
+
   const { start, end } = visibleRowRange(props.rows.length, viewportH, scrollTop)
 
   return (

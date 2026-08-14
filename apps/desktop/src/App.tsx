@@ -11,7 +11,7 @@ import {
 } from "./session"
 import {
   activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, replaceTabSession, type Workspace,
+  focusTab, openFolder, parentDir, replaceTabSession, type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -497,6 +497,7 @@ export default function App({
     const { contents } = snapshot
     await services.allowDocumentAssets(nextPath)
     revealFolder(nextPath)
+    void expandToPath(nextPath)
     rememberRecent(nextPath)
     if (inNewTab) {
       const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
@@ -635,6 +636,38 @@ export default function App({
       services.reportError(errorMessage("Folder listing failed", error))
     } finally {
       pendingListDirsRef.current.delete(path)
+    }
+  }
+
+  /** Expands every ancestor of `path` down from the workspace root so the
+   * opened file is reachable in the tree. Best-effort: a listing failure must
+   * not block an open that already succeeded. */
+  async function expandToPath(path: string): Promise<void> {
+    const folder = workspaceRef.current.folder
+    if (!folder || !services.listDir) return
+    const dirs: string[] = []
+    let current = parentDir(path)
+    while (current && current !== folder && current.startsWith(folder)) {
+      dirs.unshift(current)
+      const above = parentDir(current)
+      if (above === current) break
+      current = above
+    }
+    for (const dir of dirs) {
+      const toggled = toggleExpand(treeModelRef.current, dir)
+      commitTree(toggled)
+      if (toggled.childrenByPath[dir] || pendingListDirsRef.current.has(dir)) continue
+      pendingListDirsRef.current.add(dir)
+      try {
+        const entries = await services.listDir(dir)
+        if (treeModelRef.current.expanded.has(dir)) {
+          commitTree(setChildren(treeModelRef.current, dir, entries))
+        }
+      } catch {
+        // reveal is best-effort
+      } finally {
+        pendingListDirsRef.current.delete(dir)
+      }
     }
   }
 
