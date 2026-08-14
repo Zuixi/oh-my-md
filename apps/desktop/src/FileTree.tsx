@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react"
-import { ChevronRight, FileText, Folder, FolderOpen } from "lucide-react"
+import { ChevronRight, FileText, Folder, FolderOpen, PanelLeftClose, Search } from "lucide-react"
 import { ROW_HEIGHT, visibleRowRange, type VisibleRow } from "./fileTreeState"
 
 export type { TreeEntry } from "./fileTreeState"
@@ -15,15 +15,38 @@ export function FileTree(props: {
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onSearch: () => void
+  onCollapse?: () => void
 }) {
   const title = (props.folder ?? "").replace(/\\/g, "/").split("/").pop() || "Files"
   return (
     <aside className="filetree">
       <div className="sidebar-title">
-        <span>{title}</span>
-        <span className="sidebar-actions">
-          <button type="button" onClick={props.onSearch}>Search</button>
-        </span>
+        <div className="sidebar-title-left">
+          {props.onCollapse ? (
+            <button
+              type="button"
+              className="sidebar-collapse-btn"
+              onClick={props.onCollapse}
+              aria-label="Hide sidebar"
+              title="Hide sidebar (⌘\)"
+            >
+              <PanelLeftClose size={15} />
+            </button>
+          ) : null}
+          <span className="sidebar-title-text">{title}</span>
+        </div>
+      </div>
+      <div className="filetree-search-bar">
+        <button
+          type="button"
+          className="filetree-search-btn"
+          onClick={props.onSearch}
+          aria-label="Search"
+        >
+          <Search size={13} className="filetree-search-icon" aria-hidden="true" />
+          <span>Search in folder…</span>
+          <kbd>⌘F</kbd>
+        </button>
       </div>
       {!props.folder ? (
         <p className="sidebar-empty">Open a folder from the File menu.</p>

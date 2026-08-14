@@ -200,6 +200,36 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   gap: 8px;
   user-select: none;
 }
+.topbar-sidebar-toggle-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.topbar-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--omd-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.topbar-sidebar-toggle:hover {
+  background: var(--omd-border);
+  color: var(--omd-fg);
+}
+.topbar-sidebar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--omd-border);
+}
 .topbar-tabs {
   display: flex;
   align-items: center;
@@ -457,10 +487,26 @@ html[data-theme="dark"] .tab:hover {
 /* Three-column workspace layout */
 .workspace-body { display: flex; flex: 1; min-height: 0; }
 .sidebar-primary {
-  width: 220px; min-width: 0; overflow: auto;
+  width: 230px; min-width: 0; overflow: auto;
   border-right: 1px solid var(--omd-border);
   background: var(--omd-chrome); font-size: 13px;
   flex-shrink: 0;
+  transition: width 0.2s ease, border-color 0.2s ease;
+}
+.sidebar-primary.is-hidden {
+  width: 0;
+  border-right-color: transparent;
+  overflow: hidden;
+}
+.sidebar-primary .filetree,
+.sidebar-primary .search-panel {
+  transition: opacity 0.1s ease 0.1s;
+}
+.sidebar-primary.is-hidden .filetree,
+.sidebar-primary.is-hidden .search-panel {
+  opacity: 0;
+  transition-delay: 0s;
+  pointer-events: none;
 }
 .sidebar-secondary {
   width: 200px; min-width: 0; overflow: auto;
@@ -505,6 +551,50 @@ html[data-theme="dark"] .tab:hover {
 .sidebar-title {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 10px; font-weight: 600; color: var(--omd-muted);
+}
+.sidebar-title-left {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.sidebar-title-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-collapse-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: none; background: transparent;
+  color: var(--omd-muted); border-radius: 4px; cursor: pointer;
+  transition: background 0.12s, color 0.12s; flex-shrink: 0;
+}
+.sidebar-collapse-btn:hover {
+  background: var(--omd-border); color: var(--omd-fg);
+}
+.filetree-search-bar {
+  padding: 0 10px 8px 10px;
+}
+.filetree-search-btn {
+  width: 100%; box-sizing: border-box;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  background: var(--omd-bg);
+  color: var(--omd-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.filetree-search-btn:hover {
+  border-color: var(--omd-muted);
+  color: var(--omd-fg);
+}
+.filetree-search-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.filetree-search-btn kbd {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--omd-muted);
+  opacity: 0.8;
 }
 .sidebar-actions { display: flex; gap: 6px; font-weight: 400; }
 .sidebar-actions button, .search-panel .sidebar-title button {

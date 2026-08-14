@@ -1,3 +1,5 @@
+import { Search, X } from "lucide-react"
+
 export interface SearchHit {
   path: string
   line: number
@@ -14,15 +16,27 @@ export function SearchPanel(props: {
   return (
     <div className="search-panel">
       <div className="sidebar-title">
-        Search
-        <button type="button" onClick={props.onClose}>×</button>
+        <div className="sidebar-title-left">
+          <Search size={14} className="filetree-search-icon" aria-hidden="true" />
+          <span className="sidebar-title-text">Search</span>
+        </div>
+        <button
+          type="button"
+          className="sidebar-collapse-btn"
+          onClick={props.onClose}
+          aria-label="Close search"
+        >
+          <X size={14} />
+        </button>
       </div>
-      <input
-        autoFocus
-        value={props.query}
-        onChange={event => props.onQuery(event.target.value)}
-        placeholder="Find in folder…"
-      />
+      <div className="search-input-wrapper">
+        <input
+          autoFocus
+          value={props.query}
+          onChange={event => props.onQuery(event.target.value)}
+          placeholder="Find in folder…"
+        />
+      </div>
       {props.hits.map(hit => (
         <button
           key={`${hit.path}:${hit.line}`}

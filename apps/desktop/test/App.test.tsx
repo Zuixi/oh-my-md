@@ -146,7 +146,7 @@ describe("App normalization wiring", () => {
     expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
     const active = document.querySelectorAll(".topbar-tabs .tab.is-active")
     expect(active).toHaveLength(1)
-    expect(active[0]?.textContent).toContain("untitled")
+    expect(active[0]?.textContent).toContain("unnamed")
     harness.activateTab(2)
     expect(screen.getByRole("status").textContent).toContain("1")
   })
@@ -275,13 +275,13 @@ describe("App normalization wiring", () => {
     await harness.requestOpen("/notes/new.md", "1. a\n3. b")
 
     // Scoped to the top bar breadcrumb: an untitled tab button carries the same text.
-    expectPathShown("untitled")
+    expectPathShown("unnamed")
     harness.editorForTab(1).emit({
       doc: "still editable",
       docChanged: true,
       pendingNormalization: null,
     })
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
   })
 
   it("restores the old projection when reset throws", async () => {
@@ -294,7 +294,7 @@ describe("App normalization wiring", () => {
     await harness.requestOpen("/notes/new.md", "body")
 
     expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
   })
 })
 
@@ -506,7 +506,7 @@ describe("App document session", () => {
 
     edit(harness, 1, "edited")
 
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
   })
 
   it("reports a failing recovery write once per tab and keeps editing", async () => {
@@ -523,7 +523,7 @@ describe("App document session", () => {
     expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
     expect(logged).toHaveBeenCalledTimes(2)
     expect(screen.getByText("3 words")).toBeTruthy()
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
     logged.mockRestore()
   })
 
@@ -574,7 +574,7 @@ describe("App document session", () => {
     })
     expect(harness.services.pickOpenPath).not.toHaveBeenCalled()
     expect(editor.reset).not.toHaveBeenCalled()
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
   })
 
   it("ignores an older open response and primes the new image resolver path", async () => {
@@ -842,7 +842,7 @@ describe("App product shell", () => {
     harness.renderApp()
 
     await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
-    expectPathShown("untitled", { dirty: true })
+    expectPathShown("unnamed", { dirty: true })
   })
 
   it("writes untitled edits only to recovery, not the filesystem", async () => {
@@ -873,13 +873,13 @@ describe("App product shell", () => {
     harness.renderApp()
     fireEvent.click(screen.getByRole("button", { name: "+" }))
     await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
-    expect(screen.getAllByRole("button", { name: /untitled/ }).length).toBeGreaterThan(1)
+    expect(screen.getAllByRole("button", { name: /unnamed/ }).length).toBeGreaterThan(1)
   })
 
   it("opens the command palette on Cmd+K and runs a command", async () => {
     const harness = makeAppHarness()
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "k", metaKey: true })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
       target: { value: "theme" },
@@ -922,13 +922,13 @@ describe("App product shell", () => {
       }
     })
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "k", metaKey: true })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
       target: { value: "Open folder" },
     })
     fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
     await waitFor(() => expect(screen.getByText("doc.md")).toBeTruthy())
-    fireEvent.keyDown(window, { key: "k", metaKey: true })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
       target: { value: "Search in folder" },
     })
@@ -967,6 +967,27 @@ describe("App product shell", () => {
       .toBe("false")
   })
 
+  it("toggles the primary sidebar via collapse button, topbar expand button, and shortcut", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const sidebar = document.getElementById("primary-sidebar")
+    expect(sidebar?.classList.contains("is-hidden")).toBe(false)
+
+    const collapseBtn = screen.getByRole("button", { name: "Hide sidebar" })
+    fireEvent.click(collapseBtn)
+    expect(sidebar?.classList.contains("is-hidden")).toBe(true)
+
+    const expandBtn = screen.getByRole("button", { name: "Show sidebar" })
+    fireEvent.click(expandBtn)
+    expect(sidebar?.classList.contains("is-hidden")).toBe(false)
+
+    fireEvent.keyDown(window, { key: "\\", metaKey: true })
+    expect(sidebar?.classList.contains("is-hidden")).toBe(true)
+
+    fireEvent.keyDown(window, { key: "\\", metaKey: true })
+    expect(sidebar?.classList.contains("is-hidden")).toBe(false)
+  })
+
   it("expands a directory in place without replacing the tree", async () => {
     const harness = makeAppHarness()
     harness.services.pickFolder = vi.fn(async () => "/notes")
@@ -980,7 +1001,7 @@ describe("App product shell", () => {
       ]
     })
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "k", metaKey: true })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
       target: { value: "Open folder" },
     })
@@ -1088,7 +1109,7 @@ describe("App product shell", () => {
     act(() => send?.("new"))
     await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     act(() => send?.("close"))
-    await waitFor(() => expect(screen.getAllByRole("button", { name: /untitled/ })).toHaveLength(1))
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /unnamed/ })).toHaveLength(1))
   })
 
   it("remembers opened files and reopens them from the File menu", async () => {
@@ -1125,7 +1146,7 @@ describe("App product shell", () => {
     const harness = makeAppHarness()
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.html")
     harness.renderApp()
-    fireEvent.keyDown(window, { key: "k", metaKey: true })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), {
       target: { value: "Export HTML" },
     })

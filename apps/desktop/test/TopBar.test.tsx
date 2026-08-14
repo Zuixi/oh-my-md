@@ -110,4 +110,47 @@ describe("TopBar", () => {
     expect(screen.getByText("project")).toBeTruthy()
     expect(screen.getByText("docs")).toBeTruthy()
   })
+
+  it("renders sidebar expansion toggle when sidebar is collapsed", () => {
+    const onToggleSidebar = vi.fn()
+    const { rerender } = render(
+      <TopBar
+        workspace="/notes"
+        filePath="/notes/alpha.md"
+        dirty={false}
+        tabs={sampleTabs}
+        activeId={1}
+        dirtyIds={[]}
+        conflictIds={[]}
+        sidebarOpen={false}
+        onToggleSidebar={onToggleSidebar}
+        onFocusTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onNewTab={vi.fn()}
+      />,
+    )
+
+    const toggleBtn = screen.getByRole("button", { name: /show sidebar/i })
+    expect(toggleBtn).toBeTruthy()
+    fireEvent.click(toggleBtn)
+    expect(onToggleSidebar).toHaveBeenCalledOnce()
+
+    rerender(
+      <TopBar
+        workspace="/notes"
+        filePath="/notes/alpha.md"
+        dirty={false}
+        tabs={sampleTabs}
+        activeId={1}
+        dirtyIds={[]}
+        conflictIds={[]}
+        sidebarOpen={true}
+        onToggleSidebar={onToggleSidebar}
+        onFocusTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onNewTab={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole("button", { name: /show sidebar/i })).toBeNull()
+  })
 })
