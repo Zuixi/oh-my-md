@@ -1,3 +1,4 @@
+mod documents;
 mod export;
 mod menu;
 mod workspace;
@@ -314,6 +315,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            documents::read_document,
+            documents::read_document_version,
             read_file,
             write_file,
             write_png,
