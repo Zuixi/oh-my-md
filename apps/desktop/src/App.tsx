@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   createEditor, documentOutline, editorStatus, resetEditorDocument,
   type CreateEditorOptions, type EditorDocumentUpdate,
@@ -76,6 +76,7 @@ interface AppProps {
 }
 
 const OUTLINE_OPEN_KEY = "omd-outline-open"
+const OUTLINE_DEBOUNCE_MS = 150
 
 function readOutlineOpen(): boolean {
   try {
@@ -419,9 +420,16 @@ export default function App({
     return () => window.clearInterval(timer)
   }, [watchMs])
 
+  // Outline follows the document, but only while the panel is open and only
+  // after typing pauses: collectOutline walks the whole syntax tree, so it must
+  // stay off the per-keystroke path. activateTab refreshes immediately instead.
   useEffect(() => {
-    refreshChrome(viewRef.current)
-  }, [doc])
+    if (!outlineOpen) return
+    const timer = window.setTimeout(() => {
+      setOutline(documentOutline(viewRef.current))
+    }, OUTLINE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [doc, outlineOpen, session.id])
 
   async function restoreDraft() {
     const records = await services.listRecoveries?.() ?? []
@@ -585,7 +593,7 @@ export default function App({
   async function toggleDir(path: string): Promise<void> {
     const next = toggleExpand(treeModelRef.current, path)
     commitTree(next)
-    if (!next.expanded.includes(path) || next.childrenByPath[path] || !services.listDir) return
+    if (!next.expanded.has(path) || next.childrenByPath[path] || !services.listDir) return
     try {
       commitTree(setChildren(treeModelRef.current, path, await services.listDir(path)))
     } catch (error) {
@@ -706,6 +714,13 @@ export default function App({
     .filter(tab => tabHasConflict(saveStateByTab[tab.id]))
     .map(tab => tab.id)
 
+  // Memoized so the flattened row list (and its object identities) stay stable
+  // across unrelated App re-renders; TreeRow's comparator relies on that.
+  const treeRows = useMemo(
+    () => workspace.folder ? visibleRows(workspace.folder, treeModel) : [],
+    [workspace.folder, treeModel],
+  )
+
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
       <TopBar
@@ -736,7 +751,7 @@ export default function App({
           ) : (
             <FileTree
               folder={workspace.folder}
-              rows={workspace.folder ? visibleRows(workspace.folder, treeModel) : []}
+              rows={treeRows}
               activePath={activeFilePath}
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}

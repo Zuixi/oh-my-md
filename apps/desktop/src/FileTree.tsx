@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { ChevronRight, FileText, Folder, FolderOpen } from "lucide-react"
 import type { VisibleRow } from "./fileTreeState"
 
@@ -43,7 +44,14 @@ export function FileTree(props: {
   )
 }
 
-function TreeRow(props: {
+/**
+ * Rows are memoized on entry/depth/expanded/active so an unrelated App
+ * re-render (e.g. every keystroke) skips rows whose data did not change. The
+ * handler props are intentionally excluded from the comparison: both closures
+ * read refs only and are behaviourally stable across renders. If a handler ever
+ * captures React state, it must participate in the comparison instead.
+ */
+const TreeRow = memo(function TreeRow(props: {
   row: VisibleRow
   active: boolean
   onOpenFile: (path: string) => void
@@ -68,4 +76,9 @@ function TreeRow(props: {
       <span>{entry.name}</span>
     </button>
   )
-}
+}, (prev, next) =>
+  prev.row.entry === next.row.entry &&
+  prev.row.depth === next.row.depth &&
+  prev.row.expanded === next.row.expanded &&
+  prev.active === next.active,
+)
