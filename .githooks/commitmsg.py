@@ -1,4 +1,4 @@
-"""Strip Cursor trailers and require `<type>: <why>` commit subjects."""
+"""Strip any `Co-authored-by:` trailer and require `<type>: <why>` subjects."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 TRAILER_RE = re.compile(
-    r"(?m)^Co-authored-by:\s*\.com>[ \t]*\r?\n?"
+    r"(?m)^Co-authored-by:.*\r?\n?"
 )
 SUBJECT_RE = re.compile(
     r"^(feat|fix|refactor|docs|test|chore|perf|ci): \S"
@@ -15,7 +15,7 @@ SUBJECT_RE = re.compile(
 ALLOWED_TYPES = "feat, fix, refactor, docs, test, chore, perf, ci"
 
 
-def strip_cursor_trailer(text: str) -> str:
+def strip_coauthor_trailer(text: str) -> str:
     cleaned = TRAILER_RE.sub("", text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).rstrip() + "\n"
     return cleaned
@@ -33,7 +33,7 @@ def subject_line(text: str) -> str:
 def validate_subject(text: str) -> str | None:
     subject = subject_line(text)
     if subject == "":
-        return "empty commit message after stripping Cursor trailers"
+        return "empty commit message after stripping Co-authored-by trailers"
     if subject.startswith("Merge ") or subject.startswith("Revert "):
         return None
     if SUBJECT_RE.match(subject):
@@ -49,7 +49,7 @@ def main(argv: list[str]) -> int:
         print("usage: commitmsg.py <message-file>", file=sys.stderr)
         return 2
     path = Path(argv[1])
-    cleaned = strip_cursor_trailer(path.read_text(encoding="utf-8"))
+    cleaned = strip_coauthor_trailer(path.read_text(encoding="utf-8"))
     path.write_text(cleaned, encoding="utf-8")
     error = validate_subject(cleaned)
     if error is not None:
