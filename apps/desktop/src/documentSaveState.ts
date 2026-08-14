@@ -129,6 +129,11 @@ export function clearDivergence(state: DocumentSaveState): DocumentSaveState {
   return { ...state, divergence: { kind: "none" } }
 }
 
+export function clearSaveFailed(state: DocumentSaveState): DocumentSaveState {
+  if (state.lifecycle.kind !== "saveFailed") return state
+  return { ...state, lifecycle: { kind: "idle" } }
+}
+
 export function isFreshObservation(state: DocumentSaveState, generation: number): boolean {
   return state.lifecycle.kind !== "saving" && state.ioGeneration === generation
 }

@@ -7,6 +7,8 @@ import {
 import {
   createFileTabWatcher,
   createGuardedDocumentSaver,
+  createSaveCopy,
+  type DocumentSaveHost,
 } from "./documentSaveRunner"
 import type { SaveStateByTab } from "./documentSaveState"
 import type { NormalizationByTab } from "./normalizationState"
@@ -15,6 +17,7 @@ import type { Workspace } from "./workspace"
 
 export interface DocumentSaveAppBridge {
   readonly saveFile: ReturnType<typeof createGuardedDocumentSaver>
+  readonly saveCopy: ReturnType<typeof createSaveCopy>
   readonly pollFileTabs: () => Promise<void>
 }
 
@@ -39,9 +42,15 @@ export function createDocumentSaveAppBridge(deps: {
   readonly clearRecovery: (key: string) => void
   readonly onDurabilityWarning: () => void
   readonly incrementFocusToken: () => void
+  readonly reportStatus: (message: string) => void
+  readonly onSaveFailed?: (
+    tabId: number,
+    code: import("./desktopServices").DocumentErrorCode,
+    message: string,
+  ) => void
 }): DocumentSaveAppBridge {
   const enqueue = createTabSaveEnqueuer(deps.tabSaveQueues)
-  const saveFile = createGuardedDocumentSaver({
+  const saveHost: DocumentSaveHost = {
     isOpening: deps.isOpening,
     getTab: deps.getTab,
     getView: deps.getView,
@@ -68,7 +77,11 @@ export function createDocumentSaveAppBridge(deps: {
     onDurabilityWarning: deps.onDurabilityWarning,
     incrementFocusToken: deps.incrementFocusToken,
     logReadFailed: error => { console.error(error) },
-  })
+    reportStatus: deps.reportStatus,
+    onSaveFailed: deps.onSaveFailed,
+  }
+  const saveFile = createGuardedDocumentSaver(saveHost)
+  const saveCopy = createSaveCopy(saveHost)
   const pollFileTabs = createFileTabWatcher({
     getWorkspace: deps.getWorkspace,
     getContents: deps.getContents,
@@ -78,5 +91,5 @@ export function createDocumentSaveAppBridge(deps: {
     readDocument: path => deps.services.readDocument(path),
     logReadFailed: error => { console.error(error) },
   })
-  return { saveFile, pollFileTabs }
+  return { saveFile, saveCopy, pollFileTabs }
 }

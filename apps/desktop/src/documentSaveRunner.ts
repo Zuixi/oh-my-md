@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view"
 import type {
   DiskSnapshot,
+  DocumentErrorCode,
   DocumentCommandError,
   ExpectedDocumentVersion,
   SaveDocumentResult,
@@ -9,6 +10,7 @@ import { toDocumentCommandError } from "./desktopServices"
 import {
   applyDivergence,
   beginSave,
+  clearDivergence,
   completeSave,
   failSave,
   initialSaveState,
@@ -35,7 +37,8 @@ import {
   type SaveTrigger,
 } from "./normalizationCoordinator"
 import type { NormalizationByTab } from "./normalizationState"
-import { markSaved, recoveryKey, sessionDirty, sessionPath, type EditorSession } from "./session"
+import { SAVE_COPY_SAME_PATH_MESSAGE } from "./conflictActions"
+import { markSaved, recoveryKey, sessionDirty, sessionPath, sessionVersion, type EditorSession } from "./session"
 import { replaceTabSession, type Workspace } from "./workspace"
 
 export type SaveMode =
@@ -86,6 +89,12 @@ export interface DocumentSaveHost {
   readonly onDurabilityWarning: () => void
   readonly incrementFocusToken: () => void
   readonly logReadFailed: (error: unknown) => void
+  readonly reportStatus: (message: string) => void
+  readonly onSaveFailed?: (
+    tabId: number,
+    code: DocumentErrorCode,
+    message: string,
+  ) => void
 }
 
 function expectedForMode(
@@ -249,7 +258,7 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
           host.setSaveStates(updateTabSaveState(
             host.getSaveStates(),
             tabId,
-            completeSave(currentState, operationId),
+            clearDivergence(completeSave(currentState, operationId)),
           ))
           if (result.durability === "directorySyncFailed") {
             host.onDurabilityWarning()
@@ -300,6 +309,59 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
             userFacingSaveError(cmd),
           ),
         ))
+        host.onSaveFailed?.(tabId, cmd.code, userFacingSaveError(cmd))
+      }
+    })
+  }
+}
+
+export function createSaveCopy(host: Pick<
+  DocumentSaveHost,
+  | "getTab"
+  | "getContents"
+  | "pickSavePath"
+  | "readDocumentVersion"
+  | "saveDocument"
+  | "allowDocumentAssets"
+  | "enqueue"
+  | "reportStatus"
+>) {
+  return async function saveCopy(tabId: number): Promise<void> {
+    const tab = host.getTab(tabId)
+    if (!tab) return
+    const pickedPath = await host.pickSavePath()
+    if (!pickedPath) return
+
+    const resolvedPath = sessionVersion(tab)?.resolvedPath ?? null
+    if (resolvedPath !== null && resolvedPath === pickedPath) {
+      host.reportStatus(SAVE_COPY_SAME_PATH_MESSAGE)
+      return
+    }
+
+    const contents = host.getContents(tabId)
+    await host.enqueue(tabId, async () => {
+      let expected: ExpectedDocumentVersion
+      try {
+        const probe = await host.readDocumentVersion(pickedPath)
+        expected = probe.kind === "existing"
+          ? { kind: "existing", version: probe.version }
+          : { kind: "missing" }
+      } catch (error) {
+        const cmd = toDocumentCommandError(error)
+        host.reportStatus(userFacingSaveError(cmd))
+        return
+      }
+      try {
+        const result = await host.saveDocument(pickedPath, contents, expected)
+        if (result.status === "saved") {
+          await host.allowDocumentAssets(pickedPath)
+          host.reportStatus(`Saved copy to ${pickedPath}`)
+          return
+        }
+        host.reportStatus("Save copy failed")
+      } catch (error) {
+        const cmd = toDocumentCommandError(error)
+        host.reportStatus(userFacingSaveError(cmd))
       }
     })
   }

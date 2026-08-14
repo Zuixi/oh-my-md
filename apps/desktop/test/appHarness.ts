@@ -48,7 +48,10 @@ export interface FakeEditorHandle {
 }
 
 export type HarnessServices = DesktopServices & Required<
-  Pick<DesktopServices, "writeRecovery" | "confirmClose" | "confirmExternalChange">
+  Pick<
+    DesktopServices,
+    "writeRecovery" | "confirmClose" | "confirmExternalChange" | "revealInFinder" | "clearRecovery"
+  >
 >
 
 export interface AppHarness {
@@ -208,6 +211,17 @@ interface HarnessContext {
   watchMs: number
 }
 
+let lastMountedApp: RenderResult | null = null
+
+function unmountLastMountedApp(): void {
+  lastMountedApp?.unmount()
+  lastMountedApp = null
+}
+
+export function resetMountedApps(): void {
+  unmountLastMountedApp()
+}
+
 async function invokeSaveDocument(
   context: HarnessContext,
   path: string,
@@ -250,6 +264,8 @@ function harnessServices(context: HarnessContext): HarnessServices {
     confirmClose: vi.fn(() => true),
     confirmExternalChange: vi.fn(() => true),
     reportError: vi.fn(),
+    revealInFinder: vi.fn(async () => undefined),
+    clearRecovery: vi.fn(async () => undefined),
   }
 }
 
@@ -364,11 +380,14 @@ async function runWatcherPoll(context: HarnessContext): Promise<void> {
   const rendered = requireRendered(context)
   const alreadyFaked = vi.isFakeTimers()
   if (!alreadyFaked) vi.useFakeTimers()
-  rendered.rerender(appElement(context, WATCH_POLL_MS))
-  await act(async () => { await vi.advanceTimersByTimeAsync(WATCH_POLL_MS) })
-  rendered.rerender(appElement(context, context.watchMs))
-  if (!alreadyFaked) vi.useRealTimers()
-  await settle()
+  try {
+    rendered.rerender(appElement(context, WATCH_POLL_MS))
+    await act(async () => { await vi.advanceTimersByTimeAsync(WATCH_POLL_MS) })
+    rendered.rerender(appElement(context, context.watchMs))
+    await settle()
+  } finally {
+    if (!alreadyFaked) vi.useRealTimers()
+  }
 }
 
 async function saveActive(_context: HarnessContext): Promise<void> {
@@ -400,9 +419,12 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     seedFile: (path, contents) => { fakeDisk.seed(path, contents) },
     disk: path => fakeDisk.disk(path),
     renderApp: (props = {}) => {
+      unmountLastMountedApp()
+      context.rendered?.unmount()
       context.autosaveMs = props.autosaveMs ?? 0
       context.watchMs = props.watchMs ?? NO_WATCH_MS
       context.rendered = render(appElement(context, context.watchMs))
+      lastMountedApp = context.rendered
       return context.rendered
     },
     editorForTab: tabId => recordForTab(context, tabId).handle,
