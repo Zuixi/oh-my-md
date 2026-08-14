@@ -12,8 +12,9 @@ import {
   setNormalizationAction,
   type NormalizationByTab,
 } from "./normalizationState"
-import { markSaved, recoveryKey, sessionDirty, type EditorSession } from "./session"
+import { markSaved, recoveryKey, sessionDirty, sessionPath, type EditorSession } from "./session"
 import { replaceTabSession, type Workspace } from "./workspace"
+import type { DocumentVersion, ExpectedDocumentVersion } from "./desktopServices"
 
 export type SaveTrigger = "autosave" | "explicit"
 
@@ -181,7 +182,7 @@ function prepareTabSave(
 ): PreparedTabSave | null {
   if (!tab || !view) return null
   if (trigger === "autosave") {
-    if (!tab.path || !sessionDirty(tab, contents)) return null
+    if (!sessionPath(tab) || !sessionDirty(tab, contents)) return null
     if (!canAutosaveTab(tabId, normalization)) return null
   }
   const documentId = tab.documentId
@@ -210,7 +211,14 @@ export interface TabSaveHost {
   readonly pickSavePath: () => Promise<string | null>
   readonly writeFile: (path: string, contents: string) => Promise<void>
   readonly allowDocumentAssets: (path: string) => Promise<void>
-  readonly onPersisted: (tab: EditorSession, path: string, snapshot: string, view: EditorView) => void
+  readonly readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
+  readonly onPersisted: (
+    tab: EditorSession,
+    path: string,
+    snapshot: string,
+    version: DocumentVersion,
+    view: EditorView,
+  ) => void
   readonly onSaveFailed: (error: unknown) => void
   readonly enqueue: (work: () => Promise<void>) => Promise<void>
 }
@@ -272,8 +280,8 @@ export interface SessionPersistenceHost {
 export function createSessionPersistence(
   host: SessionPersistenceHost,
 ): TabSaveHost["onPersisted"] {
-  return (tab, path, snapshot, view) => {
-    const saved = markSaved(tab, path, snapshot)
+  return (tab, path, snapshot, version, view) => {
+    const saved = markSaved(tab, path, snapshot, version)
     host.setWorkspace(replaceTabSession(host.getWorkspace(), saved))
     host.revealFolder(path)
     host.rememberRecent(path)
@@ -338,9 +346,9 @@ export function createTabSaver(host: TabSaveHost) {
           resync()
           return
         }
-        const targetPath = saveAs || !queuedTab.path
+        const targetPath = saveAs || !sessionPath(queuedTab)
           ? await host.pickSavePath()
-          : queuedTab.path
+          : sessionPath(queuedTab)!
         if (!targetPath || !stillTarget()) {
           resync()
           return
@@ -349,6 +357,10 @@ export function createTabSaver(host: TabSaveHost) {
         if (!stillTarget()) {
           resync()
           return
+        }
+        const versionProbe = await host.readDocumentVersion(targetPath)
+        if (versionProbe.kind !== "existing") {
+          throw new Error("Save succeeded but document version is unavailable")
         }
         await host.allowDocumentAssets(targetPath)
         if (!stillTarget()) {
@@ -360,7 +372,7 @@ export function createTabSaver(host: TabSaveHost) {
           resync()
           return
         }
-        host.onPersisted(currentTab, targetPath, snapshot, view)
+        host.onPersisted(currentTab, targetPath, snapshot, versionProbe.version, view)
         if (capture) {
           const done = completeAccept(
             capture, host.getWorkspace(), host.getViews(), host.getNormalization(),

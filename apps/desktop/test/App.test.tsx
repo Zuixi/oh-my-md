@@ -6,7 +6,7 @@ import {
   rejectOrderedListNormalization,
 } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createAppHarness, normalizationId } from "./appHarness"
+import { createAppHarness, normalizationId, versionFor } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -577,7 +577,15 @@ describe("App document session", () => {
       .mockResolvedValueOnce("/notes/new.md")
     vi.mocked(harness.services.readFile)
       .mockReturnValueOnce(firstRead.promise)
-      .mockResolvedValueOnce("new")
+      .mockImplementationOnce(async path => {
+        harness.seedFile(path, "new")
+        return "new"
+      })
+    vi.mocked(harness.services.readDocumentVersion).mockImplementation(async path => {
+      const contents = path === "/notes/new.md" ? "new" : undefined
+      if (contents === undefined) return { kind: "missing" }
+      return { kind: "existing", version: versionFor(path, contents) }
+    })
     harness.renderApp()
 
     fireEvent.keyDown(window, { key: "o", metaKey: true })
@@ -657,7 +665,10 @@ describe("App document session", () => {
     vi.mocked(harness.services.pickSavePath)
       .mockResolvedValueOnce("/notes/first-choice.md")
       .mockResolvedValueOnce("/notes/wrong-second-choice.md")
-    vi.mocked(harness.services.writeFile).mockReturnValue(firstWrite.promise)
+    vi.mocked(harness.services.writeFile).mockImplementation(async (path, contents) => {
+      harness.seedFile(path, contents)
+      return firstWrite.promise
+    })
     harness.renderApp()
     harness.editorForTab(1).setContents("untitled snapshot")
 
@@ -685,13 +696,16 @@ describe("App document session", () => {
 
   it("waits for pending saves before opening and reading a path", async () => {
     const harness = makeAppHarness()
+    harness.seedFile("/notes/doc.md", "disk snapshot")
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("disk snapshot")
     const write = deferred<void>()
     vi.mocked(harness.services.pickSavePath).mockResolvedValue(
       "/notes/saved-before-open.md",
     )
-    vi.mocked(harness.services.writeFile).mockReturnValue(write.promise)
+    vi.mocked(harness.services.writeFile).mockImplementation(async (path, contents) => {
+      harness.seedFile(path, contents)
+      return write.promise
+    })
     harness.renderApp()
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })
@@ -709,7 +723,11 @@ describe("App document session", () => {
     const harness = makeAppHarness()
     const read = deferred<string>()
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/doc.md")
-    vi.mocked(harness.services.readFile).mockReturnValue(read.promise)
+    vi.mocked(harness.services.readFile).mockImplementation(async path => {
+      const contents = await read.promise
+      harness.seedFile(path, contents)
+      return contents
+    })
     vi.mocked(harness.services.pickSavePath).mockResolvedValue(
       "/notes/should-not-save.md",
     )
@@ -757,7 +775,7 @@ describe("App document session", () => {
     const savePath = deferred<string | null>()
     vi.mocked(harness.services.pickSavePath).mockReturnValue(savePath.promise)
     vi.mocked(harness.services.pickOpenPath).mockResolvedValue("/notes/opened.md")
-    vi.mocked(harness.services.readFile).mockResolvedValue("opened")
+    harness.seedFile("/notes/opened.md", "opened")
     harness.renderApp()
 
     fireEvent.keyDown(window, { key: "s", metaKey: true })

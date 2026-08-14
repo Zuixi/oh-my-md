@@ -1,4 +1,4 @@
-import { createSession, type EditorSession } from "./session"
+import { createSession, sessionPath, type EditorSession } from "./session"
 
 export interface Workspace {
   tabs: EditorSession[]
@@ -72,5 +72,5 @@ export function ensureFolder(workspace: Workspace, path: string): Workspace {
 }
 
 export function findTabByPath(workspace: Workspace, path: string): EditorSession | undefined {
-  return workspace.tabs.find(tab => tab.path === path)
+  return workspace.tabs.find(tab => sessionPath(tab) === path)
 }

@@ -9,6 +9,7 @@ import {
 } from "@omd/engine"
 import App, { type DesktopServices } from "../src/App"
 import type {
+  DocumentVersion,
   DiskSnapshot,
   ExpectedDocumentVersion,
   SaveDocumentResult,
@@ -37,6 +38,7 @@ export type HarnessServices = DesktopServices & Required<
 
 export interface AppHarness {
   readonly services: HarnessServices
+  seedFile: (path: string, contents: string) => void
   renderApp: (props?: { autosaveMs?: number; watchMs?: number }) => RenderResult
   editorForTab: (tabId: number) => FakeEditorHandle
   allEditors: () => readonly FakeEditorHandle[]
@@ -192,22 +194,50 @@ function normalizeOrderedMarkers(text: string): FakeNormalization {
   return { doc: lines.join("\n"), rewrittenMarkers }
 }
 
-function harnessServices(): HarnessServices {
+function versionFor(path: string, contents: string): DocumentVersion {
+  return { resolvedPath: path, fingerprint: `v1:${contents.length}:${contents}` }
+}
+
+export { versionFor }
+
+function harnessServices(diskContents: Map<string, string>): HarnessServices {
   return {
     pickOpenPath: vi.fn(async () => null),
     pickSavePath: vi.fn(async () => null),
-    readDocument: vi.fn(async (_path: string) =>
-      ({ kind: "missing", requestedPath: "" }) satisfies DiskSnapshot),
-    readDocumentVersion: vi.fn(async (_path: string) =>
-      ({ kind: "missing" }) satisfies ExpectedDocumentVersion),
+    readDocument: vi.fn(async (path: string) => {
+      const contents = diskContents.get(path)
+      return contents === undefined
+        ? ({ kind: "missing", requestedPath: path }) satisfies DiskSnapshot
+        : ({
+            kind: "existing",
+            requestedPath: path,
+            contents,
+            version: versionFor(path, contents),
+          }) satisfies DiskSnapshot
+    }),
+    readDocumentVersion: vi.fn(async (path: string) => {
+      const contents = diskContents.get(path)
+      return contents === undefined
+        ? ({ kind: "missing" }) satisfies ExpectedDocumentVersion
+        : ({
+            kind: "existing",
+            version: versionFor(path, contents),
+          }) satisfies ExpectedDocumentVersion
+    }),
     saveDocument: vi.fn(async (_path: string, _contents: string, _expected: ExpectedDocumentVersion) =>
       ({
         status: "saved",
         version: { resolvedPath: "", fingerprint: "" },
         durability: "durable",
       }) satisfies SaveDocumentResult),
-    readFile: vi.fn(async () => ""),
-    writeFile: vi.fn(async () => undefined),
+    readFile: vi.fn(async (path: string) => {
+      const contents = diskContents.get(path)
+      if (contents === undefined) throw new Error(`missing file: ${path}`)
+      return contents
+    }),
+    writeFile: vi.fn(async (path: string, contents: string) => {
+      diskContents.set(path, contents)
+    }),
     allowDocumentAssets: vi.fn(async () => undefined),
     writeRecovery: vi.fn(async () => undefined),
     confirmDiscard: vi.fn(() => true),
@@ -221,6 +251,7 @@ interface HarnessContext {
   readonly editor: EditorMock
   readonly services: HarnessServices
   readonly records: HandleRecord[]
+  readonly diskContents: Map<string, string>
   openTabIds: number[]
   rendered: RenderResult | null
   autosaveMs: number
@@ -286,8 +317,8 @@ async function requestOpen(
   path: string,
   contents: string,
 ): Promise<void> {
+  context.diskContents.set(path, contents)
   vi.mocked(context.services.pickOpenPath).mockResolvedValueOnce(path)
-  vi.mocked(context.services.readFile).mockResolvedValueOnce(contents)
   fireEvent.keyDown(window, { key: "o", metaKey: true })
   await waitFor(() => {
     expect(context.services.allowDocumentAssets).toHaveBeenCalledWith(path)
@@ -342,10 +373,12 @@ async function runExternalCheck(context: HarnessContext): Promise<void> {
 }
 
 export function createAppHarness(editor: EditorMock): AppHarness {
+  const diskContents = new Map<string, string>()
   const context: HarnessContext = {
     editor,
-    services: harnessServices(),
+    services: harnessServices(diskContents),
     records: [],
+    diskContents,
     openTabIds: [],
     rendered: null,
     autosaveMs: 0,
@@ -356,6 +389,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
 
   return {
     services: context.services,
+    seedFile: (path, contents) => { context.diskContents.set(path, contents) },
     renderApp: (props = {}) => {
       context.autosaveMs = props.autosaveMs ?? 0
       context.watchMs = props.watchMs ?? NO_WATCH_MS
