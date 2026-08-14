@@ -84,6 +84,14 @@ export function normalizationId(value: number): NormalizationId {
 
 export { versionFor }
 
+/** The TopBar breadcrumb shows the basename in .topbar-file; dirty adds a dot labeled "Unsaved". */
+export function expectPathShown(path: string, opts: { dirty?: boolean } = {}): void {
+  const name = path === "untitled" ? "untitled" : path.replace(/\\/g, "/").split("/").pop()!
+  expect(screen.getByText(name, { selector: ".topbar-file" })).toBeTruthy()
+  if (opts.dirty) expect(screen.getByLabelText("Unsaved")).toBeTruthy()
+  else expect(screen.queryByLabelText("Unsaved")).toBeNull()
+}
+
 const pendingByState = new WeakMap<object, () => OrderedListNormalizationNotice | null>()
 
 function pendingNoticeFor(state: unknown): OrderedListNormalizationNotice | null {
@@ -318,7 +326,7 @@ async function settle(): Promise<void> {
 function activateTab(context: HarnessContext, tabId: number): void {
   const index = context.openTabIds.indexOf(tabId)
   if (index < 0) throw new Error(`tab ${tabId} is not open`)
-  const button = document.querySelectorAll<HTMLButtonElement>(".tabbar .tab")[index]
+  const button = document.querySelectorAll<HTMLButtonElement>(".topbar-tabs .tab")[index]
   if (!button) throw new Error(`tab ${tabId} has no tab button`)
   fireEvent.click(button)
 }
@@ -343,7 +351,7 @@ async function openIntoActive(
   contents: string,
 ): Promise<void> {
   await requestOpen(context, path, contents)
-  await waitFor(() => expect(screen.getByText(path)).toBeTruthy())
+  await waitFor(() => expectPathShown(path))
 }
 
 async function openInNewTab(

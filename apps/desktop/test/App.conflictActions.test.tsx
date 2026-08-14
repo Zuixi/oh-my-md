@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import { acceptOrderedListNormalization } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createAppHarness, normalizationId, resetMountedApps } from "./appHarness"
+import { createAppHarness, expectPathShown, normalizationId, resetMountedApps } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -93,7 +93,7 @@ describe("App conflict actions", () => {
     await waitFor(() => expect(harness.disk("/notes/copy.md").contents()).toBe("mine"))
 
     expect(harness.disk("/notes/a.md").contents()).toBe("theirs")
-    expect(screen.getByText("/notes/a.md •")).toBeTruthy()
+    expectPathShown("/notes/a.md", { dirty: true })
     expect(screen.getByRole("status", { name: "Save conflict" })).toBeTruthy()
   })
 
@@ -151,7 +151,7 @@ describe("App conflict actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Overwrite disk" }))
     await waitFor(() => expect(harness.disk("/notes/a.md").contents()).toBe("mine"))
     expect(screen.queryByRole("status", { name: "Save conflict" })).toBeNull()
-    expect(screen.getByText("/notes/a.md")).toBeTruthy()
+    expectPathShown("/notes/a.md")
   })
 
   it("recreate uses expected missing and stays in conflict when the path reappears", async () => {

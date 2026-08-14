@@ -95,7 +95,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
         ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
         ".cm-content": {
           padding: "16px 24px",
-          maxWidth: "780px",
+          maxWidth: "var(--omd-content-width, 780px)",
           margin: "0 auto",
         },
       }),

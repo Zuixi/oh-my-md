@@ -4,7 +4,7 @@ import { unifiedDiff } from "../src/documentDiff"
 import { DocumentDiffPanel } from "../src/DocumentDiffPanel"
 import { createFileSession } from "../src/session"
 import { StatusBar } from "../src/StatusBar"
-import { TabBar } from "../src/TabBar"
+import { TopBar } from "../src/TopBar"
 
 const version = { resolvedPath: "/notes/a.md", fingerprint: "v1:aa" } as const
 
@@ -42,17 +42,20 @@ describe("DocumentDiffPanel", () => {
   })
 })
 
-describe("TabBar conflict badge", () => {
+describe("TopBar conflict badge", () => {
   it("shows a conflict badge with an accessible name", () => {
     render(
-      <TabBar
+      <TopBar
+        workspace={null}
+        filePath={null}
+        dirty={false}
         tabs={[createFileSession(1, "/notes/a.md", "body", version)]}
         activeId={1}
         dirtyIds={[]}
         conflictIds={[1]}
-        onFocus={vi.fn()}
-        onClose={vi.fn()}
-        onNew={vi.fn()}
+        onFocusTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onNewTab={vi.fn()}
       />,
     )
     expect(screen.getByLabelText("Conflict")).toBeTruthy()
@@ -60,11 +63,9 @@ describe("TabBar conflict badge", () => {
 })
 
 describe("StatusBar save status", () => {
-  it("keeps path and dirty in one node while save status is separate", () => {
+  it("shows the save status as its own node", () => {
     render(
       <StatusBar
-        path="/notes/a.md"
-        dirty
         words={0}
         cursor="1:1"
         mode="live"
@@ -72,7 +73,6 @@ describe("StatusBar save status", () => {
         saveStatus="conflict"
       />,
     )
-    expect(screen.getByText("/notes/a.md •")).toBeTruthy()
     expect(screen.getByText("conflict")).toBeTruthy()
   })
 })
