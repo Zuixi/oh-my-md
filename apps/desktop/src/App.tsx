@@ -647,16 +647,20 @@ export default function App({
     if (!folder || !services.listDir) return
     const dirs: string[] = []
     let current = parentDir(path)
-    while (current && current !== folder && current.startsWith(folder)) {
+    const prefix = folder === "/" ? folder : `${folder}/`
+    while (current && current !== folder && current.startsWith(prefix)) {
       dirs.unshift(current)
       const above = parentDir(current)
       if (above === current) break
       current = above
     }
     for (const dir of dirs) {
-      const toggled = toggleExpand(treeModelRef.current, dir)
-      commitTree(toggled)
-      if (toggled.childrenByPath[dir] || pendingListDirsRef.current.has(dir)) continue
+      // Ensure the ancestor is expanded without toggling: the user may have
+      // already opened it, and expandToPath must never collapse it.
+      if (!treeModelRef.current.expanded.has(dir)) {
+        commitTree(toggleExpand(treeModelRef.current, dir))
+      }
+      if (treeModelRef.current.childrenByPath[dir] || pendingListDirsRef.current.has(dir)) continue
       pendingListDirsRef.current.add(dir)
       try {
         const entries = await services.listDir(dir)
