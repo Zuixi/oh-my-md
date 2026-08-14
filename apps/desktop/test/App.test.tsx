@@ -1,7 +1,10 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import { getPendingOrderedListNormalization } from "@omd/engine"
+import {
+  getPendingOrderedListNormalization,
+  rejectOrderedListNormalization,
+} from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, normalizationId } from "./appHarness"
 
@@ -277,6 +280,172 @@ describe("App normalization wiring", () => {
 
     expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
     expect(screen.getByText("untitled •")).toBeTruthy()
+  })
+})
+
+describe("App normalization autosave and accept/reject", () => {
+  it("cancels autosave when pending arrives", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp({ autosaveMs: 100 })
+    await harness.openIntoActive("/notes/a.md", "saved")
+    vi.useFakeTimers()
+    try {
+      harness.editorForTab(1).emit({
+        doc: "edited", docChanged: true, pendingNormalization: null,
+      })
+      harness.editorForTab(1).emit({
+        doc: "edited", docChanged: false,
+        pendingNormalization: { id: normalizationId(1), markerCount: 1 },
+      })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(harness.services.writeFile).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not autosave a pending normalization", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp({ autosaveMs: 100 })
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    vi.useFakeTimers()
+    try {
+      harness.editorForTab(1).emit({
+        doc: "1. a\n2. b",
+        docChanged: true,
+        pendingNormalization: { id: normalizationId(1), markerCount: 1 },
+      })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(harness.services.writeFile).not.toHaveBeenCalled()
+      expect(harness.services.writeRecovery).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("accepts two pending tabs independently", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    await harness.openInNewTab("/notes/b.md", "1. x\n4. y")
+    harness.emitPending(1, normalizationId(1))
+    harness.emitPending(2, normalizationId(2))
+    await harness.saveNormalization(1)
+    await harness.saveNormalization(2)
+    expect(harness.editorForTab(1).view.dispatch).toHaveBeenCalledOnce()
+    expect(harness.editorForTab(2).view.dispatch).toHaveBeenCalledOnce()
+  })
+
+  it("updates only the captured tab after switching during save", async () => {
+    const write = deferred<void>()
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.writeFile).mockReturnValueOnce(write.promise)
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    await harness.openInNewTab("/notes/b.md", "body")
+    harness.emitPending(1, normalizationId(1))
+    const saving = harness.saveNormalization(1)
+    harness.activateTab(2)
+    write.resolve()
+    await saving
+    expect(harness.editorForTab(1).view.dispatch).toHaveBeenCalledOnce()
+    expect(harness.editorForTab(2).view.dispatch).not.toHaveBeenCalled()
+  })
+
+  it("keeps edits made after the saved snapshot dirty", async () => {
+    const write = deferred<void>()
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.writeFile).mockReturnValueOnce(write.promise)
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    const saving = harness.saveNormalization(1)
+    harness.editorForTab(1).emit({
+      doc: "1. a\n2. b\nlater",
+      docChanged: true,
+      pendingNormalization: { id: normalizationId(1), markerCount: 1 },
+    })
+    write.resolve()
+    await saving
+    expect(screen.getByText("/notes/a.md •")).toBeTruthy()
+  })
+
+  it("keeps pending idle when Save As is cancelled", async () => {
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.pickSavePath).mockResolvedValueOnce(null)
+    harness.renderApp()
+    harness.emitPending(1, normalizationId(1))
+    await harness.saveNormalization(1)
+    expect(harness.services.writeFile).not.toHaveBeenCalled()
+    expect((screen.getByRole("button", { name: "Save normalization" }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("rejects on the captured view and restores focus", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    vi.mocked(rejectOrderedListNormalization).mockReturnValue({
+      kind: "reverted",
+      transaction: { changes: { from: 5, to: 7, insert: "3." } },
+      restoredMarkers: 1,
+      skippedMarkers: 0,
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Keep original numbers" }))
+    expect(harness.editorForTab(1).view.dispatch).toHaveBeenCalledOnce()
+    expect(harness.editorForTab(1).view.focus).toHaveBeenCalledOnce()
+  })
+
+  it("announces skipped source-mode markers without an alert", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    vi.mocked(rejectOrderedListNormalization).mockReturnValue({
+      kind: "reverted",
+      transaction: {},
+      restoredMarkers: 0,
+      skippedMarkers: 1,
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Keep original numbers" }))
+    expect(screen.getByText(
+      "Original numbers were restored where they were unchanged.",
+    )).toBeTruthy()
+    expect(harness.services.reportError).not.toHaveBeenCalled()
+  })
+
+  it("keeps review pending after save failure", async () => {
+    const harness = makeAppHarness()
+    vi.mocked(harness.services.writeFile).mockRejectedValueOnce(new Error("disk full"))
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    await harness.saveNormalization(1)
+    expect((screen.getByRole("button", { name: "Save normalization" }) as HTMLButtonElement).disabled).toBe(false)
+    expect(harness.services.reportError).toHaveBeenCalled()
+  })
+
+  it("clears pending when external disk content is loaded", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    vi.mocked(harness.services.readFile).mockResolvedValueOnce("disk version")
+    vi.mocked(harness.services.confirmExternalChange).mockReturnValueOnce(true)
+    await harness.runExternalCheck()
+    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    expect(screen.getByText("/notes/a.md")).toBeTruthy()
+  })
+
+  it("keeps pending when external disk content is rejected", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
+    harness.emitPending(1, normalizationId(1))
+    vi.mocked(harness.services.readFile).mockResolvedValueOnce("disk version")
+    vi.mocked(harness.services.confirmExternalChange).mockReturnValueOnce(false)
+    await harness.runExternalCheck()
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
   })
 })
 
