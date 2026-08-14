@@ -184,33 +184,66 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
-/* Top bar: breadcrumb + tabs */
+/* Top bar: unified single-row tab bar */
 .topbar {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  min-height: 38px;
   background: var(--omd-chrome);
   border-bottom: 1px solid var(--omd-border);
   -webkit-app-region: drag;
   flex-shrink: 0;
-}
-.topbar-breadcrumb {
-  display: flex; align-items: center; gap: 2px;
-  padding: 6px 12px; font-size: 12px; color: var(--omd-muted);
-  min-height: 28px;
-}
-.topbar-workspace {
-  font-weight: 600; color: var(--omd-fg);
-}
-.topbar-separator {
-  margin: 0 3px; color: var(--omd-border); user-select: none;
-}
-.topbar-dir { color: var(--omd-muted); }
-.topbar-file { color: var(--omd-fg); }
-.topbar-dirty {
-  margin-left: 4px; color: var(--omd-muted); font-weight: 700;
+  padding: 0 8px;
+  gap: 8px;
+  user-select: none;
 }
 .topbar-tabs {
-  display: flex; gap: 2px; padding: 0 4px;
-  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: drag;
+}
+.topbar-tabs::-webkit-scrollbar {
+  display: none;
+}
+.topbar-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--omd-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.topbar-workspace {
+  font-weight: 600;
+  color: var(--omd-fg);
+}
+.topbar-separator {
+  color: var(--omd-muted);
+  opacity: 0.5;
+  user-select: none;
+}
+.topbar-dir {
+  color: var(--omd-muted);
+}
+.topbar-file {
+  color: var(--omd-fg);
+}
+.topbar-dirty {
+  margin-left: 2px;
+  color: var(--omd-muted);
+  font-weight: 700;
 }
 /* Outline toggle strip — always-visible 24px column between sidebar-secondary and editor */
 .outline-toggle-strip {
@@ -333,14 +366,94 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted); background: var(--omd-chrome);
   border-bottom: 1px solid var(--omd-border);
 }
-/* Tabs (now inside topbar) */
-.tab, .tab-new {
-  border: none; background: transparent; color: var(--omd-fg); padding: 6px 10px; cursor: pointer;
+/* Tabs (inside topbar) */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--omd-muted);
   font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 180px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  -webkit-app-region: no-drag;
 }
-.tab.is-active { background: var(--omd-bg); border-radius: 4px 4px 0 0; }
-.tab-dirty { margin-left: 4px; color: var(--omd-muted); }
-.tab-close { margin-left: 8px; }
+.tab:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--omd-fg);
+}
+html[data-theme="dark"] .tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.tab.is-active {
+  background: var(--omd-bg);
+  color: var(--omd-fg);
+  border-color: var(--omd-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-weight: 500;
+}
+.tab-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.tab.is-active .tab-icon {
+  opacity: 0.9;
+}
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-dirty {
+  margin-left: 2px;
+  color: var(--omd-muted);
+  font-weight: 700;
+}
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  border-radius: 3px;
+  opacity: 0.4;
+  transition: opacity 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+.tab:hover .tab-close {
+  opacity: 0.7;
+}
+.tab-close:hover {
+  opacity: 1 !important;
+  background: var(--omd-border);
+}
+.tab-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--omd-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+}
+.tab-new:hover {
+  background: var(--omd-border);
+  color: var(--omd-fg);
+}
 /* Three-column workspace layout */
 .workspace-body { display: flex; flex: 1; min-height: 0; }
 .sidebar-primary {
