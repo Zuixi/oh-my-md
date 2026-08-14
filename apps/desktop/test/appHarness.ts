@@ -125,7 +125,11 @@ function createHandleRecord(
     tabId,
     handle,
     contents: () => contents,
-    rebind: next => { options = next; contents = next.doc },
+    rebind: next => {
+      options = next
+      contents = next.doc
+      pending = null
+    },
   }
 }
 
