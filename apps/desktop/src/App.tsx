@@ -78,6 +78,20 @@ interface AppProps {
 const OUTLINE_OPEN_KEY = "omd-outline-open"
 const OUTLINE_DEBOUNCE_MS = 150
 
+/** Shallow directory listing equality; a mismatch means disk changed. */
+function sameEntries(
+  a: readonly TreeEntry[] | undefined,
+  b: readonly TreeEntry[],
+): boolean {
+  if (!a || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].name !== b[i].name || a[i].path !== b[i].path || a[i].is_dir !== b[i].is_dir) {
+      return false
+    }
+  }
+  return true
+}
+
 function readOutlineOpen(): boolean {
   try {
     return localStorage.getItem(OUTLINE_OPEN_KEY) === "1"
@@ -139,6 +153,8 @@ export default function App({
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
+  const treePollInFlightRef = useRef(false)
+  const pendingListDirsRef = useRef(new Set<string>())
   const recentsRef = useRef<string[]>([])
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const pendingJumpRef = useRef<number | null>(null)
@@ -408,11 +424,13 @@ export default function App({
   }, [workspace.folder, services])
 
   useEffect(() => {
-    if (!watchMs || !workspace.folder || !services.listDir) return
+    // Skip the whole poll while Search replaces the tree: the scan is pure
+    // waste and its results are not rendered.
+    if (!watchMs || !workspace.folder || !services.listDir || searchOpen) return
     const listDir = services.listDir
     const timer = window.setInterval(() => { void refreshTree(listDir) }, watchMs)
     return () => window.clearInterval(timer)
-  }, [watchMs, workspace.folder, services])
+  }, [watchMs, workspace.folder, services, searchOpen])
 
   useEffect(() => {
     if (!watchMs) return
@@ -578,26 +596,45 @@ export default function App({
 
   async function refreshTree(listDir: (path: string) => Promise<TreeEntry[]>): Promise<void> {
     const folder = workspaceRef.current.folder
-    if (!folder) return
-    let next = treeModelRef.current
-    for (const path of pathsToRefresh(folder, next)) {
-      try {
-        next = setChildren(next, path, await listDir(path))
-      } catch {
-        continue
+    if (!folder || treePollInFlightRef.current) return
+    treePollInFlightRef.current = true
+    try {
+      let next = treeModelRef.current
+      let changed = false
+      for (const path of pathsToRefresh(folder, next)) {
+        let entries: TreeEntry[]
+        try {
+          entries = await listDir(path)
+        } catch {
+          continue
+        }
+        // Skip re-rendering the whole tree when a directory is unchanged.
+        if (sameEntries(next.childrenByPath[path], entries)) continue
+        next = setChildren(next, path, entries)
+        changed = true
       }
+      if (changed) commitTree(next)
+    } finally {
+      treePollInFlightRef.current = false
     }
-    commitTree(next)
   }
 
   async function toggleDir(path: string): Promise<void> {
     const next = toggleExpand(treeModelRef.current, path)
     commitTree(next)
     if (!next.expanded.has(path) || next.childrenByPath[path] || !services.listDir) return
+    if (pendingListDirsRef.current.has(path)) return
+    pendingListDirsRef.current.add(path)
     try {
-      commitTree(setChildren(treeModelRef.current, path, await services.listDir(path)))
+      const entries = await services.listDir(path)
+      // The user may have collapsed the directory while the listing was in
+      // flight; caching it would only produce a useless model update.
+      if (!treeModelRef.current.expanded.has(path)) return
+      commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
       services.reportError(errorMessage("Folder listing failed", error))
+    } finally {
+      pendingListDirsRef.current.delete(path)
     }
   }
 
