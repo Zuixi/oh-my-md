@@ -86,6 +86,35 @@ fn read_missing_returns_a_missing_snapshot() {
     }
 }
 
+// The webview reads `requestedPath`; enum-level `rename_all` only renames
+// variant names, so each struct variant needs its own `rename_all`.
+#[test]
+fn disk_snapshot_serializes_requested_path_as_camel_case() {
+    let existing = DiskSnapshot::Existing {
+        requested_path: "/tmp/a.md".into(),
+        contents: "body".into(),
+        version: DocumentVersion {
+            resolved_path: "/tmp/a.md".into(),
+            fingerprint: "v1:x".into(),
+        },
+    };
+    let json = serde_json::to_string(&existing).unwrap();
+    assert!(
+        json.contains(r#""requestedPath":"/tmp/a.md""#),
+        "payload: {json}"
+    );
+    assert!(!json.contains("requested_path"), "payload: {json}");
+
+    let missing = DiskSnapshot::Missing {
+        requested_path: "/tmp/a.md".into(),
+    };
+    let missing_json = serde_json::to_string(&missing).unwrap();
+    assert!(
+        missing_json.contains(r#""requestedPath":"/tmp/a.md""#),
+        "payload: {missing_json}"
+    );
+}
+
 #[test]
 fn read_non_utf8_returns_not_utf8() {
     let file = temp_dir("read-non-utf8").join("binary.md");

@@ -76,6 +76,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 4. **Do not duplicate parsing.** Desktop and Rust code must not reimplement Markdown syntax detection already owned by the engine.
 5. **Keep the engine framework-independent.** It must not import React or Tauri. It may use browser DOM APIs for CodeMirror widgets; tests provide `happy-dom`.
 6. **Preserve source text.** Preview is a projection of the Markdown document. Decorations and widgets must not silently rewrite user content.
+7. **IPC field casing is a tested contract.** TypeScript types cannot catch wire-format drift (runtime `undefined` compiles fine), and desktop tests mock services at the TS boundary. Any Rust payload with multi-word fields needs a serialized-JSON assertion in Rust tests — see the "IPC casing trap" in `apps/desktop/AGENTS.md`.
 
 
 

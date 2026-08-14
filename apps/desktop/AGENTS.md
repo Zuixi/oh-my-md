@@ -113,6 +113,9 @@ When adding or changing a command:
 3. Register the command in `tauri::generate_handler!`.
 4. Check whether Tauri capabilities or plugins must change.
 5. Add Rust tests for native behavior and failure paths.
+6. For any payload with multi-word fields, add a Rust test asserting the **serialized JSON field names** (see IPC casing trap below).
+
+**IPC casing trap (verified 2026-08-14).** `#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum camelCases only the *variant names*, never fields inside struct variants — those need their own variant-level `#[serde(rename_all = "camelCase")]` (see `SaveDocumentResult` for the correct pattern). `DiskSnapshot` once relied on the enum-level attribute, so `read_document` sent `requested_path` while the webview read `requestedPath`; every opened file silently became an "unnamed" tab. TypeScript gives no protection: `snapshot.requestedPath` compiles fine and is `undefined` at runtime, and desktop tests mock `services.readDocument` at the TS boundary so they can never catch wire-format drift. Only a Rust-side `serde_json::to_string` assertion (e.g. `disk_snapshot_serializes_requested_path_as_camel_case`) guards the contract.
 
 Do not silently overwrite in-memory content after a failed read/write. Preserve the current document and surface the error. Do not add unconditional force-write APIs for conflict paths.
 

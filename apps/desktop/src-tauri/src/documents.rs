@@ -21,9 +21,9 @@ pub struct DocumentVersion {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DiskSnapshot {
-    Missing {
-        requested_path: String,
-    },
+    #[serde(rename_all = "camelCase")]
+    Missing { requested_path: String },
+    #[serde(rename_all = "camelCase")]
     Existing {
         requested_path: String,
         contents: String,
