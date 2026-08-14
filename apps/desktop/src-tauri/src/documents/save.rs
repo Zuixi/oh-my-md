@@ -45,8 +45,100 @@ pub(crate) fn guarded_save_with_hook(
     }
 }
 
-pub(crate) fn copy_metadata(_source: &Path, _dest: &Path) -> Result<(), DocumentError> {
+#[cfg(target_os = "macos")]
+const REQUIRED_XATTRS: [&str; 2] = [
+    "com.apple.FinderInfo",
+    "com.apple.metadata:_kMDItemUserTags",
+];
+
+#[cfg(target_os = "macos")]
+const SKIPPED_XATTRS: [&str; 2] = ["com.apple.quarantine", "com.apple.provenance"];
+
+pub(crate) fn copy_metadata(source: &Path, dest: &Path) -> Result<(), DocumentError> {
+    let metadata = fs::metadata(source).map_err(|error| map_metadata_error(source, error))?;
+    fs::set_permissions(dest, metadata.permissions())
+        .map_err(|error| map_metadata_error(dest, error))?;
+
+    #[cfg(unix)]
+    copy_xattrs(source, dest)?;
+
     Ok(())
+}
+
+#[cfg(unix)]
+fn copy_xattrs(source: &Path, dest: &Path) -> Result<(), DocumentError> {
+    let names = match xattr::list(source) {
+        Ok(names) => names.collect::<Vec<_>>(),
+        Err(error) => {
+            eprintln!(
+                "[documents] xattr list failed for {}: {error}",
+                source.display()
+            );
+            Vec::new()
+        }
+    };
+
+    for name in names {
+        let name_str = name.to_string_lossy();
+
+        #[cfg(target_os = "macos")]
+        if SKIPPED_XATTRS
+            .iter()
+            .any(|skipped| *skipped == name_str.as_ref())
+        {
+            continue;
+        }
+
+        let value = match xattr::get(source, &name) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(error) => {
+                if is_required_xattr(&name_str) {
+                    return Err(metadata_failed(format!(
+                        "failed to read required xattr {name_str} on {}: {error}",
+                        source.display()
+                    )));
+                }
+                eprintln!("[documents] xattr read failed: name={name_str} error={error}");
+                continue;
+            }
+        };
+
+        if let Err(error) = xattr::set(dest, &name, &value) {
+            if is_required_xattr(&name_str) {
+                return Err(metadata_failed(format!(
+                    "failed to write required xattr {name_str} on {}: {error}",
+                    dest.display()
+                )));
+            }
+            eprintln!("[documents] xattr write failed: name={name_str} error={error}");
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn is_required_xattr(name: &str) -> bool {
+    REQUIRED_XATTRS.iter().any(|required| *required == name)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_required_xattr(_name: &str) -> bool {
+    false
+}
+
+fn metadata_failed(message: impl Into<String>) -> DocumentError {
+    DocumentError::MetadataFailed(message.into())
+}
+
+fn map_metadata_error(path: &Path, error: io::Error) -> DocumentError {
+    eprintln!("[documents] metadata error: path={path:?} error={error}");
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        DocumentError::PermissionDenied(error.to_string())
+    } else {
+        DocumentError::MetadataFailed(error.to_string())
+    }
 }
 
 pub(crate) fn sync_parent(parent: &Path) -> SaveDurability {
