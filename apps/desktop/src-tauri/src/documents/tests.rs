@@ -1,7 +1,9 @@
 use super::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 fn temp_dir(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!("omd-doc-{}-{name}", std::process::id()));
@@ -531,4 +533,176 @@ fn guarded_same_path_saves_serialize_and_the_loser_conflicts() {
     assert_eq!((saved, conflicts), (1, 1));
     let final_contents = fs::read_to_string(&file).unwrap();
     assert!(final_contents == "left" || final_contents == "right");
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_permission_bits_survive_a_guarded_save() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("permission-bits", "original");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+    let expected = existing_expected(&file);
+    guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap();
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn metadata_required_user_xattrs_survive_a_guarded_save() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("xattr-keep", "original");
+    xattr::set(&file, "com.apple.metadata:_kMDItemUserTags", b"tag").unwrap();
+    let expected = existing_expected(&file);
+
+    guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap();
+
+    assert_eq!(
+        xattr::get(&file, "com.apple.metadata:_kMDItemUserTags")
+            .unwrap()
+            .as_deref(),
+        Some(b"tag".as_slice()),
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn metadata_required_xattr_failure_reports_metadata_failed_and_keeps_the_target() {
+    let file = write_temp("xattr-fail", "original");
+    xattr::set(&file, "com.apple.metadata:_kMDItemUserTags", b"tag").unwrap();
+    let absent = file.parent().unwrap().join("absent.tmp");
+    assert!(matches!(
+        copy_metadata(&file, &absent),
+        Err(DocumentError::MetadataFailed(_))
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn metadata_skips_quarantine_and_tolerates_other_xattr_failures() {
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("xattr-skip", "original");
+    xattr::set(&file, "com.apple.quarantine", b"0081;0;;").unwrap();
+    let expected = existing_expected(&file);
+
+    guarded_save(&coordinator, &path_string_for(&file), "mine", &expected).unwrap();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+    assert!(xattr::get(&file, "com.apple.quarantine").unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_read_only_directory_returns_permission_denied() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let coordinator = DocumentCoordinator::default();
+    let file = write_temp("permission-denied", "original");
+    let directory = file.parent().unwrap().to_path_buf();
+    let expected = existing_expected(&file);
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let result = guarded_save(&coordinator, &path_string_for(&file), "mine", &expected);
+
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(result, Err(DocumentError::PermissionDenied(_))));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+    assert_eq!(temp_siblings(&file), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_created_file_permissions_follow_the_process_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let coordinator = DocumentCoordinator::default();
+    let directory = temp_dir("umask-create");
+    let reference = directory.join("reference.md");
+    let target = directory.join("new.md");
+    fs::File::create(&reference).unwrap();
+    let expected_mode = fs::metadata(&reference).unwrap().permissions().mode() & 0o777;
+
+    guarded_save(
+        &coordinator,
+        &path_string_for(&target),
+        "mine",
+        &ExpectedDocumentVersion::Missing,
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        expected_mode
+    );
+}
+
+fn meet(rendezvous: &(Mutex<usize>, Condvar)) -> bool {
+    let (lock, signal) = rendezvous;
+    let mut arrived = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *arrived += 1;
+    signal.notify_all();
+    while *arrived < 2 {
+        let (next, timeout) = signal
+            .wait_timeout(arrived, Duration::from_secs(5))
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        arrived = next;
+        if timeout.timed_out() {
+            break;
+        }
+    }
+    *arrived >= 2
+}
+
+#[test]
+fn metadata_different_paths_overlap_inside_the_blocking_pool() {
+    let coordinator = DocumentCoordinator::default();
+    let first = write_temp("overlap-a", "a");
+    let second = write_temp("overlap-b", "b");
+    let first_expected = existing_expected(&first);
+    let second_expected = existing_expected(&second);
+    let first_path = path_string_for(&first);
+    let second_path = path_string_for(&second);
+    let rendezvous = Arc::new((Mutex::new(0_usize), Condvar::new()));
+    let left_met = Arc::new(AtomicBool::new(false));
+    let right_met = Arc::new(AtomicBool::new(false));
+
+    let left_rendezvous = Arc::clone(&rendezvous);
+    let right_rendezvous = Arc::clone(&rendezvous);
+    let left_flag = Arc::clone(&left_met);
+    let right_flag = Arc::clone(&right_met);
+    let left_coordinator = coordinator.clone();
+    let right_coordinator = coordinator.clone();
+
+    let (left, right) = tauri::async_runtime::block_on(async move {
+        let left = tauri::async_runtime::spawn(spawn_blocking_document(move || {
+            guarded_save_with_hook(
+                &left_coordinator,
+                &first_path,
+                "mine a",
+                &first_expected,
+                &|| left_flag.store(meet(&left_rendezvous), Ordering::SeqCst),
+            )
+        }));
+        let right = tauri::async_runtime::spawn(spawn_blocking_document(move || {
+            guarded_save_with_hook(
+                &right_coordinator,
+                &second_path,
+                "mine b",
+                &second_expected,
+                &|| right_flag.store(meet(&right_rendezvous), Ordering::SeqCst),
+            )
+        }));
+        (left.await.unwrap(), right.await.unwrap())
+    });
+
+    assert!(left_met.load(Ordering::SeqCst) && right_met.load(Ordering::SeqCst));
+    assert!(matches!(left.unwrap(), SaveDocumentResult::Saved { .. }));
+    assert!(matches!(right.unwrap(), SaveDocumentResult::Saved { .. }));
+    assert_eq!(fs::read_to_string(&first).unwrap(), "mine a");
+    assert_eq!(fs::read_to_string(&second).unwrap(), "mine b");
 }
