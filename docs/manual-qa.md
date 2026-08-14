@@ -102,6 +102,29 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 仅键盘 Tab 可到达保存/保留并完成操作 — **NOT RUN**（需 GUI）
 - [ ] VoiceOver 朗读 status 文案与按钮名，busy 时按钮仍可聚焦 — **NOT RUN**（需 VoiceOver）
 
+## Conflict-safe guarded save
+
+外部修改、删除、symlink、权限与多标签冲突需 `pnpm dev` + 真实 macOS 文件系统目视；VoiceOver / IME 未跑则标 **NOT RUN**。
+
+- [ ] 打开文件，在外部编辑器修改后保存，oh-my-md 不覆盖外部内容
+- [ ] 在 temp 写入阶段模拟第二次外部改动，确认出现 conflict
+- [ ] Autosave conflict 后继续输入，内容与 recovery 保留
+- [ ] Compare 显示 current/disk 正确 hunk，点击可跳转
+- [ ] Overwrite 前再次外部修改，确认出现新 conflict
+- [ ] Reload 取消不改变内容；确认后加载点击时最新版本
+- [ ] Save copy 写出当前内容，原标签 path/conflict 不变
+- [ ] 外部删除 dirty 文件，验证 recreate / save copy / close and discard 三条路径
+- [ ] 外部删除后同名文件重新出现，recreate 不覆盖新文件
+- [ ] 修改 symlink 目标后保存，两个目标都不被误写
+- [ ] Finder tags 与 permission bits 保存前后保持 — **NOT RUN**（需 macOS + Finder tags）
+- [ ] 两标签同时保存，完成顺序不影响 active tab
+- [ ] Conflict 时 Cmd+S 聚焦 banner，不覆盖
+- [ ] 键盘与 VoiceOver 可操作 banner 和 diff panel — **NOT RUN**（需 GUI + VoiceOver）
+- [ ] 中文路径、中文正文与 IME 编辑后保存正常 — **NOT RUN**（需 Tauri + IME）
+- [ ] PathChanged 仅重开旧 resolved file，dirty 取消后内容不变
+- [ ] Save As missing 目标竞态出现 symlink 时只允许换路径/取消
+- [ ] PermissionDenied 可 Retry、Save copy 和 Reveal in Finder
+
 ## 自动化验证命令
 - 引擎单测：`pnpm test`
 - Desktop 类型检查与自动化：`pnpm --filter @omd/desktop test`
@@ -113,6 +136,9 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 ## 最近一次验证记录
 
+- 日期：2026-08-14（Task 14 / Conflict-safe guarded save）
+- 自动化已通过：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（206）、`pnpm --filter @omd/desktop build`、`rg` 计划扫描无 TBD/TODO、`git diff --check`
+- Conflict-safe GUI / VoiceOver / IME / Finder tags：本环境未执行 `pnpm dev`，上方新节交互项保持未勾选或标 **NOT RUN**
 - 日期：2026-08-14（Task 8 / Source Fidelity）
 - 自动化已通过：`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（137）、`pnpm --filter @omd/desktop build`、`git diff --check`
 - 有序列表规范化 GUI / VoiceOver / IME：本环境未执行 `pnpm dev`，上方新节交互项保持未勾选或标 **NOT RUN**

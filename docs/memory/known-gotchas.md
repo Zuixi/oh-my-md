@@ -185,7 +185,7 @@ Cmd+O replaces the active tab. File-tree / search open in a new tab, or focus an
 
 PDF and image export cannot use a hidden iframe `print()` or `html-to-image`. Tauri on macOS is WKWebView/Safari: `display:none` iframes do not print, and `html-to-image` depends on SVG `foreignObject`, which WebKit does not rasterize. Load the HTML projection in an offscreen `WKWebView` and call `createPDFWithConfiguration`, then write the bytes in Rust. PNG is that PDF rasterized with `NSImage` — do not use `takeSnapshotWithConfiguration` with `afterScreenUpdates` on an offscreen window; WindowServer never presents it, the completion never fires, and no file is written. Save panels often omit the extension; append `.png`/`.pdf` when missing. Do not capture the live CodeMirror widget DOM.
 
-Autosave (about 1.5s, pathed documents only) and Cmd+S share the same save queue. Untitled buffers go to recovery files only. Startup recovery must prompt; never silently overwrite. External file changes poll `read_file`: clean tabs reload, dirty tabs ask. StatusBar path + dirty ` •` must stay one text node so session tests can `getByText` the exact path.
+Autosave (about 1.5s, pathed documents only) and Cmd+S share the same save queue. Untitled buffers go to recovery files only. Startup recovery must prompt; never silently overwrite. External file changes are detected by fingerprint polling: clean tabs get a non-modal external-changed notice; dirty tabs and conflict states keep local text and show the conflict/save banner — never silent overwrite. StatusBar path + dirty ` •` must stay one text node so session tests can `getByText` the exact path.
 
 `services.reportError` is `window.alert` in production, so anything on a per-document-change path must not report every failure. Recovery writes run on every change: `recoveryWriter.ts` reports the first failure per tab, logs the rest with key and path, and re-arms after a successful write or when the tab closes. Swallowing the rejection instead hides a broken recovery directory; reporting each one makes the editor unusable.
 
@@ -200,6 +200,26 @@ Opening a document creates a new `EditorState` after synchronizing its path. Thi
 `Line.depth` and `BlockContext.stack` exist at runtime (the built-in parsers use them) but are absent from `@lezer/markdown`'s public type declarations. `vitest run` does not typecheck, so such misuse passes tests and only explodes under `tsc --noEmit` (which `pnpm --filter @omd/engine test` now runs first) or the stricter desktop tsconfig (`noUnusedLocals` etc., which also typechecks engine sources through the workspace import).
 
 Pattern used in `parse/footnotes.ts` and `parse/math.ts`: cast `(line as unknown as { depth: number }).depth`, and prefer the public equivalent when one exists (`cx.depth` === internal `stack.length`). Always leave a comment on the cast.
+
+## Guarded save is double-compare + atomic replace, not strict CAS
+
+Rust `save_document` compares the expected opaque version twice around temp-file write and rename. That catches most external edits, but standard file APIs cannot merge "compare against arbitrary other processes" with "persist" into one indivisible step. A cooperating or racing writer can still change the file after the last compare and before `persist`. Document and logs must call this **residual race**; never describe guarded-save as strict compare-and-swap.
+
+## Expected version binds to resolved path, not the symlink node
+
+`DocumentVersion.resolved_path` is the canonical target at open/save time. If a symlink later points elsewhere, the next save returns `PathChangedConflict` instead of writing either target. `PathChanged` and `UnexpectedSymlinkConflict` do not expose the new target; desktop must offer reopen-previous / choose-another-path, never silently adopt the new identity.
+
+## Missing-file publish uses a same-filesystem hard link
+
+Creating a file from `ExpectedDocumentVersion::Missing` writes a temp file, hard-links it into place, then removes the temp link. A crash between link and temp cleanup can leave an extra temp hard-link alias on disk (recorded residual risk). Parent-directory `fsync` failure returns `Saved` with a `directorySyncFailed` durability warning — the save succeeded but directory metadata may not be durable across power loss.
+
+## macOS metadata and xattr expectations
+
+Required user metadata (`com.apple.FinderInfo`, `com.apple.metadata:_kMDItemUserTags`) must copy on overwrite; failure returns `MetadataFailed` and does not replace the target. Quarantine, provenance, ACLs, and birthtime are intentionally not copied. Other xattrs are best-effort (ENOTSUP/EPERM logged, save continues).
+
+## Watcher fingerprints are hints; conflict banner replaces silent reload
+
+File-tab polling uses `readDocumentVersion` only. External changes on a clean tab surface a non-modal **external changed** notice; dirty tabs and active conflicts keep editing/recovery and pause autosave until the user resolves via banner actions. Do not auto-reload disk over local edits.
 
 ## Manual QA baselines can become stale
 

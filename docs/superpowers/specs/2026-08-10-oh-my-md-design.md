@@ -124,7 +124,17 @@ App
 ## 数据流
 
 1. **输入 → 渲染**：敲键 → CM6 transaction → Lezer 增量重解析（只碰视口内）→ 装饰管线重建 RangeSet → 视口内块 widget 按需渲染（KaTeX/Mermaid 结果按"块文本 hash"缓存，未变块不重算）。
-2. **保存**：debounce 1.5s 自动保存 → IPC write → Rust 写盘 → 状态栏更新。Rust watch 事件回推时若文档脏则弹冲突提示，不静默覆盖。
+2. **保存（guarded-save）**：
+
+```text
+open → readDocument(version) → edit → save_document(expected)
+  ├─ Saved      → 原子更新 baseline/version
+  └─ Conflict   → 非模态 banner
+        ├─ Compare / Save copy（不改原 tab 路径与冲突状态）
+        └─ Reload / Overwrite / Recreate（重新比较版本后再落盘）
+```
+
+debounce 1.5s autosave 与 Cmd+S 共用 per-tab 保存队列；冲突或 saveFailed 时暂停 autosave。watcher 只做 fingerprint 提前通知，正确性以 Rust 双比较为准。父目录 fsync 失败时保存仍成功但返回 durability warning。
 3. **有序列表自动规范化确认**（Live Preview）：preview-entry 规范化 → dirty + recovery + 暂停 autosave → 非模态提示条
    - 保存规范化 → 显式 save 队列 → accept pending → 清 pending、落盘连续编号
    - 保留原编号 → reject transaction → 恢复首次记录的 marker + session-local suppression（预览仍显示连续编号）
@@ -135,7 +145,7 @@ App
 
 ## 错误处理（按数据丢失风险排序）
 
-1. **保存链路（最高优先级）**：写盘失败 → 文档保持脏标记 + 状态栏红色告警 + 内容不丢（留在内存）。外部变更冲突 → 三方选择弹窗（保留我的 / 加载磁盘版 / 看 diff），永不静默覆盖。App 崩溃兜底：每次 transaction 后把内容写入本地 crash-recovery 文件（Rust 侧，按路径 hash 命名），启动时检测到孤儿恢复文件则提示恢复。
+1. **保存链路（最高优先级）**：写盘失败 → 文档保持脏标记 + 状态栏/非模态 saveFailed 告警 + 内容不丢（留在内存）。外部变更 → 非模态 conflict banner（Compare / Save copy / Reload / Overwrite / Recreate），永不静默覆盖；typed conflict 不更新 baseline/version。App 崩溃兜底：每次 transaction 后把内容写入本地 crash-recovery 文件（Rust 侧，按路径 hash 命名），启动时检测到孤儿恢复文件则提示恢复；只有 Saved / Reload / Discard 成功路径清 recovery。
 2. **块 Widget 渲染失败**：KaTeX 语法错、Mermaid 编译失败 → widget 内展示错误信息 + 原文，不白屏、不崩编辑器，点进去就能修。
 3. **AI 调用**：网络/超时/key 失效 → toast 提示，文档不受影响（本来就只是建议流）。
 4. **IPC/Rust 侧 panic**：统一错误信封 `{ok, error}` 回传，前端兜底 toast，不出现未处理 promise。

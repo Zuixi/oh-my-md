@@ -25,6 +25,16 @@ apps/desktop/
 │   ├── normalizationState.ts    # Per-tab pending notice projection (pure reducers)
 │   ├── normalizationCoordinator.ts  # Accept/reject/save orchestration, autosave gate
 │   ├── NormalizationBanner.tsx  # Non-modal review banner + live region host
+│   ├── documentSaveState.ts     # Per-tab save lifecycle + divergence reducer
+│   ├── documentSaveCoordinator.ts  # canAutosave, topBanner, watcherIntent
+│   ├── documentSaveRunner.ts    # Guarded save queue, poll, saveCopy
+│   ├── documentSaveAppBridge.ts # App wiring for save runner
+│   ├── conflictActions.ts       # Conflict action orchestration (compare/reload/overwrite/…)
+│   ├── conflictSaveBinding.ts   # React hook: diff state + makeConflictActions deps
+│   ├── ConflictSaveRegion.tsx   # Conflict/saveFailed banner + DocumentDiffPanel host
+│   ├── SaveConflictBanner.tsx   # Non-modal conflict action buttons
+│   ├── DocumentDiffPanel.tsx    # Read-only unified diff panel
+│   ├── documentDiff.ts          # unifiedDiff for conflict compare
 │   ├── main.tsx             # React mount
 │   └── styles.css           # App styles, theme variables, and omd-* presentation
 └── src-tauri/
@@ -65,12 +75,25 @@ apps/desktop/
 5. Reject dispatches only to the captured target view after re-validating tab, document, view, and notice id. Command completion must call `resyncNormalizationIdle` only after the same identity checks — the reducer does not validate ids itself.
 6. `normalizationCoordinator.ts` owns accept/reject/save wiring; keep `App.tsx` under the file-size budget by extending the coordinator instead of inlining orchestration.
 
+## Conflict-safe guarded save (desktop)
+
+1. **Markdown document IO only through guarded IPC.** Open/read/save/version-probe must use `readDocument`, `readDocumentVersion`, and `saveDocument` (Rust: `read_document`, `read_document_version`, `save_document`). Do not call legacy `read_file` / `write_file` for editor documents. Export, recovery, and image writes use their own commands and paths.
+2. **Watcher is early notification, not the truth boundary.** File-tab polling compares opaque disk fingerprints via `readDocumentVersion`; correctness comes from Rust double-compare at save time. Never treat a poll result as permission to overwrite.
+3. **Session baseline updates atomically.** On `Saved` only, update the tab's on-disk version/fingerprint and clean baseline together through `documentSaveState` reducers. Conflict, save failure, and stale completions must not clear recovery or bump baseline.
+4. **Single autosave gate.** `canAutosave` in `documentSaveCoordinator.ts` is the only autosave entry point (conflict, saveFailed, pending normalization, opening, and per-tab queues). Do not add parallel autosave checks in React effects.
+5. **Conflict UI is non-modal.** `SaveConflictBanner` + `ConflictSaveRegion` host compare/reload/overwrite/save-copy/recreate actions. `Compare` opens a debounced read-only unified diff (`DIFF_RECOMPUTE_MS = 150` in `ConflictSaveRegion.tsx`). Path-changed and unexpected-symlink conflicts disable compare/overwrite.
+6. **Normalization coexistence.** While a tab is in conflict or saveFailed, pending normalization stays visible but autosave to the on-disk path stays paused. Overwrite/recreate/successful guarded save may accept normalization; save copy and reload/discard clear stale pending per plan 01 rules.
+7. **Orchestration lives outside `App.tsx`.** Extend `conflictActions.ts`, `conflictSaveBinding.ts`, or `documentSaveRunner.ts` rather than growing the shell component.
+
 ## Tauri and File Rules
 
 Current Rust commands are:
 
-- `read_file(path)` — read Markdown as UTF-8 text.
-- `write_file(path, contents)` — atomically replace the current document.
+- `read_document(path)` — read Markdown as UTF-8 with typed `DiskSnapshot` (missing or existing + opaque version).
+- `read_document_version(path)` — fingerprint probe only; used by watcher and pre-save checks.
+- `save_document(path, contents, expected)` — guarded save with double-compare; returns typed `SaveDocumentResult` (saved, content/deleted/created/path-changed/unexpected-symlink conflict, permission/metadata/internal errors).
+- `read_file(path)` — legacy UTF-8 read; not for editor document lifecycle.
+- `write_file(path, contents)` — legacy atomic replace; not for editor document saves.
 - `write_image(path, base64, documentPath)` — decode pasted image data into the current document's `assets/` directory. `documentPath` is required.
 - `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
 - `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root.
@@ -91,7 +114,7 @@ When adding or changing a command:
 4. Check whether Tauri capabilities or plugins must change.
 5. Add Rust tests for native behavior and failure paths.
 
-Do not silently overwrite in-memory content after a failed read/write. Preserve the current document and surface the error.
+Do not silently overwrite in-memory content after a failed read/write. Preserve the current document and surface the error. Do not add unconditional force-write APIs for conflict paths.
 
 ## Image Paste Invariants
 
