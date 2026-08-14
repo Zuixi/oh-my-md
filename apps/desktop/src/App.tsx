@@ -6,7 +6,7 @@ import {
 import type { EditorView } from "@codemirror/view"
 import { applyToggle, exportHtml, type OutlineItem } from "@omd/engine"
 import {
-  advanceDocumentIdentity, createSession, markSaved, openSession, recoveryKey,
+  advanceDocumentIdentity, createSession, openSession, recoveryKey,
   sessionDirty, type EditorSession,
 } from "./session"
 import {
@@ -14,8 +14,13 @@ import {
   focusTab, openFolder, replaceTabSession, type Workspace,
 } from "./workspace"
 import {
-  clearTabNormalization, projectNormalizationNotice, type NormalizationByTab,
+  clearTabNormalization, projectNormalizationNotice,
+  type NormalizationByTab,
 } from "./normalizationState"
+import {
+  canAutosaveTab, createNormalizationHandlers, createSaveQueueRunner,
+  createSessionPersistence, createSkippedStatusNotifier, createTabSaver,
+} from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
@@ -83,6 +88,8 @@ export default function App({
   const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
   const normalizationRef = useRef(normalizationByTab)
   const recoveryWriterRef = useRef(createRecoveryWriter())
+  const skippedStatusTimerRef = useRef<number | null>(null)
+  const [skippedMarkersMessage, setSkippedMarkersMessage] = useState<string | null>(null)
   const dirty = sessionDirty(session, doc)
 
   function commitWorkspace(next: Workspace) {
@@ -121,10 +128,36 @@ export default function App({
     void services.setRecentMenu?.([])
   }
 
-  function commitSession(next: EditorSession) {
-    commitWorkspace(replaceTabSession(workspaceRef.current, next))
-  }
+  const saveFile = createTabSaver({
+    isOpening: () => openingRef.current,
+    getTab: tabById,
+    getView: tabId => viewsRef.current.get(tabId),
+    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    getNormalization: () => normalizationRef.current,
+    setNormalization: commitNormalization,
+    getWorkspace: () => workspaceRef.current,
+    getViews: () => viewsRef.current,
+    pickSavePath: () => services.pickSavePath(),
+    writeFile: (path, contents) => services.writeFile(path, contents),
+    allowDocumentAssets: path => services.allowDocumentAssets(path),
+    onPersisted: createSessionPersistence({
+      getWorkspace: () => workspaceRef.current,
+      setWorkspace: commitWorkspace,
+      revealFolder, rememberRecent,
+      recordDiskSnapshot: (path, snapshot) => lastDiskRef.current.set(path, snapshot),
+      syncDoc,
+      clearRecovery: key => { void services.clearRecovery?.(key) },
+    }),
+    onSaveFailed: error => {
+      if (mountedRef.current) services.reportError(errorMessage("Save failed", error))
+    },
+    enqueue: createSaveQueueRunner(saveQueueRef),
+  })
 
+  const showSkippedMarkersStatus = createSkippedStatusNotifier(
+    setSkippedMarkersMessage, skippedStatusTimerRef,
+    id => { skippedStatusTimerRef.current = id },
+  )
   function syncDoc(value: string, tabId = workspaceRef.current.activeId) {
     docsRef.current.set(tabId, value)
     if (tabId !== workspaceRef.current.activeId) return
@@ -143,7 +176,7 @@ export default function App({
     )
   }
 
-  /** Applies an update to the tab it was built for, or drops it if that binding is gone. */
+  /** Applies an update to the tab it was built for, or drops stale bindings. */
   function handleDocumentUpdate(update: EditorDocumentUpdate) {
     const tab = tabById(update.tabId)
     if (!tab || tab.documentId !== update.documentId) return
@@ -170,11 +203,6 @@ export default function App({
     }
   }
 
-  /**
-   * Replaces one tab's document with a fresh EditorState. The bumped identity is committed
-   * before the view is touched, so a failing reset cannot leave a live editor bound to an
-   * identity the workspace no longer has; on failure all three stores roll back together.
-   */
   function resetTabDocument(nextSession: EditorSession, contents: string): boolean {
     const view = viewsRef.current.get(nextSession.id)
     if (!view) return false
@@ -193,10 +221,6 @@ export default function App({
     }
     syncDoc(contents, nextSession.id)
     return true
-  }
-
-  function sameSession(documentId: number, view: EditorView) {
-    return sessionRef.current.documentId === documentId && viewRef.current === view && mountedRef.current
   }
 
   function refreshChrome(view: EditorView | null) {
@@ -262,11 +286,18 @@ export default function App({
     document.documentElement.dataset.focus = focusMode ? "on" : "off"
   }, [typewriter, focusMode])
 
+  const activePendingId = normalizationByTab[session.id]?.notice.id ?? null
+
   useEffect(() => {
     if (!autosaveMs || !session.path || !dirty) return
-    const timer = window.setTimeout(() => { void saveFileRef.current() }, autosaveMs)
+    if (!canAutosaveTab(session.id, normalizationByTab)) return
+    const tabId = session.id
+    const timer = window.setTimeout(
+      () => { void saveFileRef.current(tabId, "autosave") },
+      autosaveMs,
+    )
     return () => window.clearTimeout(timer)
-  }, [doc, session.path, dirty, autosaveMs])
+  }, [doc, session.path, dirty, autosaveMs, session.id, activePendingId])
 
   useEffect(() => {
     if (!workspace.folder || !services.listDir) return
@@ -363,39 +394,6 @@ export default function App({
 
   function openFile() {
     return runOpen(() => services.pickOpenPath())
-  }
-
-  async function saveFile(saveAs = false) {
-    if (openingRef.current) return
-    const view = viewRef.current
-    if (!view) return
-    const documentId = sessionRef.current.documentId
-    const tabId = sessionRef.current.id
-    const snapshot = view.state.doc.toString()
-
-    const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
-      try {
-        if (!sameSession(documentId, view)) return
-        const targetPath = saveAs || !sessionRef.current.path
-          ? await services.pickSavePath()
-          : sessionRef.current.path
-        if (!targetPath || !sameSession(documentId, view)) return
-        await services.writeFile(targetPath, snapshot)
-        if (!sameSession(documentId, view)) return
-        await services.allowDocumentAssets(targetPath)
-        if (!sameSession(documentId, view)) return
-        commitSession(markSaved(sessionRef.current, targetPath, snapshot))
-        revealFolder(targetPath)
-        rememberRecent(targetPath)
-        lastDiskRef.current.set(targetPath, snapshot)
-        syncDoc(view.state.doc.toString(), tabId)
-        void services.clearRecovery?.(recoveryKey(sessionRef.current))
-      } catch (error) {
-        if (mountedRef.current) services.reportError(errorMessage("Save failed", error))
-      }
-    })
-    saveQueueRef.current = operation
-    await operation
   }
 
   function activateTab(id: number) {
@@ -518,14 +516,17 @@ export default function App({
     }
   }
 
-  /**
-   * Task 7 owns accept/reject orchestration (`normalizationCoordinator.ts`): both actions must
-   * capture tab, documentId, view and notice id and revalidate them before dispatching, so they
-   * stay inert until that capture exists rather than dispatching into a replaced view.
-   */
-  function acceptNormalization() {}
-
-  function keepOriginalNumbers() {}
+  const { accept: acceptNormalization, reject: keepOriginalNumbers } = createNormalizationHandlers({
+    getActiveTabId: () => workspaceRef.current.activeId,
+    getTab: tabById,
+    getView: tabId => viewsRef.current.get(tabId),
+    getNormalization: () => normalizationRef.current,
+    setNormalization: commitNormalization,
+    getWorkspace: () => workspaceRef.current,
+    getViews: () => viewsRef.current,
+    saveExplicit: tabId => { void saveFile(tabId, "explicit") },
+    onSkippedMarkers: showSkippedMarkersStatus,
+  })
 
   const openFileRef = useRef(openFile)
   const saveFileRef = useRef(saveFile)
@@ -542,8 +543,8 @@ export default function App({
 
   const commands: AppCommand[] = [
     { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
-    { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile() },
-    { id: "save-as", label: "Save As…", shortcut: "⇧⌘S", run: () => void saveFile(true) },
+    { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
+    { id: "save-as", label: "Save As…", shortcut: "⇧⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: "Open Folder…", run: () => void chooseFolder() },
     { id: "tab", label: "New", shortcut: "⌘N", run: newTab },
     { id: "close", label: "Close", shortcut: "⌘W", run: () => requestCloseTab(workspaceRef.current.activeId) },
@@ -595,7 +596,7 @@ export default function App({
         closeActiveRef.current()
       } else if (e.key === "s") {
         e.preventDefault()
-        void saveFileRef.current(e.shiftKey)
+        void saveFileRef.current(workspaceRef.current.activeId, "explicit", e.shiftKey)
       }
     }
     window.addEventListener("keydown", handler)
@@ -641,6 +642,9 @@ export default function App({
         onSave={acceptNormalization}
         onKeepOriginal={keepOriginalNumbers}
       />
+      {skippedMarkersMessage ? (
+        <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
+      ) : null}
       <div className="workspace-body">
         {searchOpen ? (
           <SearchPanel
