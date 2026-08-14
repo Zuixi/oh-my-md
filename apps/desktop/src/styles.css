@@ -404,6 +404,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .filetree-item {
   display: flex; align-items: center; gap: 6px; padding-right: 10px;
+  /* Fixed height so virtualization can derive row positions from ROW_HEIGHT. */
+  height: 26px; box-sizing: border-box;
 }
 .filetree-item.is-active { background: var(--omd-border); }
 .filetree-item svg { flex: none; color: var(--omd-muted); }
