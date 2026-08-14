@@ -377,11 +377,18 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-stack { flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
 .editor-host { height: 100%; overflow: auto; }
 .editor-host[hidden] { display: none; }
-.filetree, .search-panel {
-  width: 100%; overflow: auto;
+.filetree {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* The tree scrolls inside FileTree itself so it can virtualize by viewport. */
+.filetree-tree {
+  flex: 1; min-height: 0; overflow: auto; position: relative;
 }
 .outline { width: 100%; flex: 1; min-height: 0; overflow: auto; }
-.search-panel { border-right: none; }
+.search-panel {
+  width: 100%; overflow: auto;
+}
 .sidebar-title {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 10px; font-weight: 600; color: var(--omd-muted);

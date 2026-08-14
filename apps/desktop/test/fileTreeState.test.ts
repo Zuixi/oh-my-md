@@ -4,6 +4,7 @@ import {
   pathsToRefresh,
   setChildren,
   toggleExpand,
+  visibleRowRange,
   visibleRows,
   type TreeEntry,
 } from "../src/fileTreeState"
@@ -52,5 +53,32 @@ describe("file tree model", () => {
   it("refreshes the root and every cached directory", () => {
     const model = setChildren(rooted(), drafts.path, [idea])
     expect(pathsToRefresh(root, model).sort()).toEqual(["/notes", "/notes/drafts"])
+  })
+})
+
+describe("visibleRowRange", () => {
+  it("covers a list that fits the viewport", () => {
+    expect(visibleRowRange(5, 130, 0)).toEqual({ start: 0, end: 5 })
+  })
+
+  it("windows a tall list around the scroll offset with overscan", () => {
+    // 1000 rows * 26px = 26000px; viewport 300px scrolled to 13000px.
+    const window = visibleRowRange(1000, 300, 13000)
+    expect(window.start).toBe(490)
+    expect(window.end).toBe(522)
+  })
+
+  it("clamps start above zero near the top", () => {
+    expect(visibleRowRange(100, 300, 0).start).toBe(0)
+  })
+
+  it("clamps to the end of the list when scrolled past the bottom", () => {
+    const window = visibleRowRange(100, 300, 100000)
+    expect(window.end).toBe(100)
+    expect(window.start).toBeLessThan(window.end)
+  })
+
+  it("returns an empty window for an empty list", () => {
+    expect(visibleRowRange(0, 300, 0)).toEqual({ start: 0, end: 0 })
   })
 })
