@@ -15,6 +15,32 @@ export interface VisibleRow {
   expanded: boolean
 }
 
+/** Fixed tree row height; must match `.filetree-item` in styles.css. */
+export const ROW_HEIGHT = 26
+/** Extra rows kept rendered above and below the viewport window. */
+export const OVERSCAN = 10
+
+export interface RowWindow {
+  readonly start: number
+  readonly end: number
+}
+
+/** Viewport window for virtualization: rows [start, end) intersect the scroll
+ * viewport, clamped to the list and to valid scroll positions. */
+export function visibleRowRange(
+  rowCount: number,
+  viewportH: number,
+  scrollTop: number,
+  rowHeight: number = ROW_HEIGHT,
+  overscan: number = OVERSCAN,
+): RowWindow {
+  const totalHeight = rowCount * rowHeight
+  const effectiveTop = Math.min(scrollTop, Math.max(0, totalHeight - viewportH))
+  const start = Math.max(0, Math.floor(effectiveTop / rowHeight) - overscan)
+  const end = Math.min(rowCount, Math.ceil((effectiveTop + viewportH) / rowHeight) + overscan)
+  return { start, end }
+}
+
 export function emptyFileTree(): FileTreeModel {
   return { childrenByPath: {}, expanded: new Set() }
 }
