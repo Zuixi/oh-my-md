@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { NormalizationId } from "@omd/engine"
-import { createSession } from "../src/session"
+import { createFileSession } from "../src/session"
 import { addTab, createWorkspace } from "../src/workspace"
 import {
   canAutosaveTab,
@@ -12,8 +12,9 @@ import { projectNormalizationNotice } from "../src/normalizationState"
 
 const notice = { id: 1 as NormalizationId, markerCount: 2 }
 const targetView = {} as EditorView
+const version = { resolvedPath: "/notes/b.md", fingerprint: "v1:b" }
 const workspace = addTab(createWorkspace(), {
-  ...createSession(2, "/notes/b.md", "b"),
+  ...createFileSession(2, "/notes/b.md", "b", version),
   documentId: 8,
 })
 const views = new Map<number, EditorView>([[2, targetView]])

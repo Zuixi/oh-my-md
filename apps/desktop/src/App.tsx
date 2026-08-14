@@ -7,7 +7,7 @@ import type { EditorView } from "@codemirror/view"
 import { applyToggle, exportHtml, type OutlineItem } from "@omd/engine"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
-  sessionDirty, type EditorSession,
+  sessionDirty, sessionPath, type EditorSession,
 } from "./session"
 import {
   activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
@@ -91,6 +91,7 @@ export default function App({
   const skippedStatusTimerRef = useRef<number | null>(null)
   const [skippedMarkersMessage, setSkippedMarkersMessage] = useState<string | null>(null)
   const dirty = sessionDirty(session, doc)
+  const activeFilePath = sessionPath(session)
 
   function commitWorkspace(next: Workspace) {
     workspaceRef.current = next
@@ -139,6 +140,7 @@ export default function App({
     getViews: () => viewsRef.current,
     pickSavePath: () => services.pickSavePath(),
     writeFile: (path, contents) => services.writeFile(path, contents),
+    readDocumentVersion: path => services.readDocumentVersion(path),
     allowDocumentAssets: path => services.allowDocumentAssets(path),
     onPersisted: createSessionPersistence({
       getWorkspace: () => workspaceRef.current,
@@ -171,7 +173,7 @@ export default function App({
 
   function saveRecovery(tab: EditorSession, contents: string) {
     void recoveryWriterRef.current.save(
-      { tabId: tab.id, key: recoveryKey(tab), path: tab.path, contents },
+      { tabId: tab.id, key: recoveryKey(tab), path: sessionPath(tab), contents },
       { write: services.writeRecovery, reportError: reportUserError },
     )
   }
@@ -196,7 +198,10 @@ export default function App({
       doc: contents,
       tabId,
       documentId,
-      getDocPath: () => tabById(tabId)?.path ?? null,
+      getDocPath: () => {
+        const tab = tabById(tabId)
+        return tab ? sessionPath(tab) : null
+      },
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
       onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
@@ -289,7 +294,7 @@ export default function App({
   const activePendingId = normalizationByTab[session.id]?.notice.id ?? null
 
   useEffect(() => {
-    if (!autosaveMs || !session.path || !dirty) return
+    if (!autosaveMs || !activeFilePath || !dirty) return
     if (!canAutosaveTab(session.id, normalizationByTab)) return
     const tabId = session.id
     const timer = window.setTimeout(
@@ -297,7 +302,7 @@ export default function App({
       autosaveMs,
     )
     return () => window.clearTimeout(timer)
-  }, [doc, session.path, dirty, autosaveMs, session.id, activePendingId])
+  }, [doc, activeFilePath, dirty, autosaveMs, session.id, activePendingId])
 
   useEffect(() => {
     if (!workspace.folder || !services.listDir) return
@@ -321,11 +326,11 @@ export default function App({
   }, [watchMs, workspace.folder, services])
 
   useEffect(() => {
-    if (!watchMs || !session.path) return
-    const path = session.path
+    if (!watchMs || !activeFilePath) return
+    const path = activeFilePath
     const timer = window.setInterval(() => { void checkExternalRef.current(path) }, watchMs)
     return () => window.clearInterval(timer)
-  }, [session.path, watchMs])
+  }, [activeFilePath, watchMs])
 
   useEffect(() => {
     refreshChrome(viewRef.current)
@@ -353,19 +358,31 @@ export default function App({
     }
     const contents = await services.readFile(nextPath)
     if (request !== undefined && request !== openRequestRef.current) return
+    const versionProbe = await services.readDocumentVersion(nextPath)
+    if (versionProbe.kind !== "existing") {
+      if (mountedRef.current) {
+        services.reportError(errorMessage("Open failed", new Error("Document version is unavailable")))
+      }
+      return
+    }
+    const snapshot = {
+      requestedPath: nextPath,
+      contents,
+      version: versionProbe.version,
+    }
     await services.allowDocumentAssets(nextPath)
     lastDiskRef.current.set(nextPath, contents)
     revealFolder(nextPath)
     rememberRecent(nextPath)
     if (inNewTab) {
-      const tab = openSession(createSession(workspaceRef.current.nextId), nextPath, contents)
+      const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
       docsRef.current.set(tab.id, contents)
       commitWorkspace(addTab(workspaceRef.current, tab))
       syncDoc(contents, tab.id)
       void services.clearRecovery?.(recoveryKey(tab))
       return
     }
-    if (!resetTabDocument(openSession(sessionRef.current, nextPath, contents), contents)) return
+    if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
     void services.clearRecovery?.(recoveryKey(sessionRef.current))
   }
 
@@ -474,14 +491,20 @@ export default function App({
   }
 
   async function checkExternal(path: string) {
-    if (openingRef.current || sessionRef.current.path !== path) return
+    if (openingRef.current || sessionPath(sessionRef.current) !== path) return
     const disk = await services.readFile(path)
     if (disk === lastDiskRef.current.get(path)) return
     const keepMine = sessionDirty(sessionRef.current, docRef.current)
       && !services.confirmExternalChange?.()
     lastDiskRef.current.set(path, disk)
-    if (keepMine || sessionRef.current.path !== path) return
-    resetTabDocument(openSession(sessionRef.current, path, disk), disk)
+    if (keepMine || sessionPath(sessionRef.current) !== path) return
+    const versionProbe = await services.readDocumentVersion(path)
+    if (versionProbe.kind !== "existing") return
+    resetTabDocument(openSession(sessionRef.current, {
+      requestedPath: path,
+      contents: disk,
+      version: versionProbe.version,
+    }), disk)
   }
 
   async function exportCurrent(kind: "html" | "pdf" | "png") {
@@ -621,7 +644,7 @@ export default function App({
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
       <StatusBar
-        path={session.path ?? "untitled"}
+        path={activeFilePath ?? "untitled"}
         dirty={dirty}
         words={wordCount(doc)}
         cursor={cursor}
@@ -661,7 +684,7 @@ export default function App({
           <FileTree
             folder={workspace.folder}
             rows={workspace.folder ? visibleRows(workspace.folder, treeModel) : []}
-            activePath={session.path}
+            activePath={activeFilePath}
             onOpenFile={path => void openPath(path, true)}
             onToggleDir={path => void toggleDir(path)}
             onSearch={() => setSearchOpen(true)}
