@@ -185,6 +185,8 @@ export default function App({
   const pendingListDirsRef = useRef(new Set<string>())
   const recentsRef = useRef<string[]>([])
   const [outline, setOutline] = useState<OutlineItem[]>([])
+  const [outlineHover, setOutlineHover] = useState(false)
+  const outlineHoverTimerRef = useRef<number | null>(null)
   const pendingJumpRef = useRef<number | null>(null)
   const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
   const normalizationRef = useRef(normalizationByTab)
@@ -480,6 +482,28 @@ export default function App({
     }, OUTLINE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [doc, outlineOpen, session.id])
+
+  useEffect(() => {
+    return () => {
+      if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
+    }
+  }, [])
+
+  function handleOutlineMouseEnter() {
+    if (outlineOpen) return
+    if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
+    outlineHoverTimerRef.current = window.setTimeout(() => {
+      setOutline(documentOutline(viewRef.current))
+      setOutlineHover(true)
+    }, 180)
+  }
+
+  function handleOutlineMouseLeave() {
+    if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
+    outlineHoverTimerRef.current = window.setTimeout(() => {
+      setOutlineHover(false)
+    }, 120)
+  }
 
   async function restoreDraft() {
     const records = await services.listRecoveries?.() ?? []
@@ -915,18 +939,58 @@ export default function App({
             }}
           />
         </aside>
-        <div className="outline-toggle-strip">
+        <div
+          className="outline-toggle-strip"
+          onMouseEnter={handleOutlineMouseEnter}
+          onMouseLeave={handleOutlineMouseLeave}
+        >
           <button
             type="button"
             className={`outline-toggle-btn${outlineOpen ? " is-active" : ""}`}
-            onClick={() => setOutlineOpen(open => !open)}
+            onClick={() => {
+              if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
+              setOutlineHover(false)
+              setOutlineOpen(open => !open)
+            }}
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
             aria-label={outlineOpen ? "Hide outline" : "Show outline"}
             title={outlineOpen ? "Hide outline (⇧⌘O)" : "Show outline (⇧⌘O)"}
           >
-            {outlineOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
+            {outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>
+          {!outlineOpen && outlineHover ? (
+            <div className="outline-hover-popover" role="dialog" aria-label="Outline preview">
+              <div className="outline-hover-header">
+                <span className="outline-hover-title">Outline</span>
+                <span className="outline-hover-hint">Click to expand</span>
+              </div>
+              <div className="outline-hover-body">
+                {outline.length === 0 ? (
+                  <div className="sidebar-empty">No headings</div>
+                ) : (
+                  outline.map(item => (
+                    <button
+                      key={`${item.from}-${item.text}`}
+                      type="button"
+                      className={`outline-item level-${item.level}`}
+                      onClick={() => {
+                        const view = viewRef.current
+                        if (!view) return
+                        try {
+                          view.dispatch({ selection: { anchor: item.from } })
+                          view.focus()
+                        } catch { /* mock views */ }
+                        setOutlineHover(false)
+                      }}
+                    >
+                      {item.text}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="editor-canvas">
           <ConflictSaveRegion

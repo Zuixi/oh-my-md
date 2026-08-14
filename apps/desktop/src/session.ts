@@ -50,7 +50,7 @@ export function sessionDirty(session: EditorSession, doc: string): boolean {
 
 export function sessionLabel(session: EditorSession): string {
   const path = sessionPath(session)
-  if (!path) return "untitled"
+  if (!path) return "unnamed"
   const normalized = path.replace(/\\/g, "/")
   const name = normalized.slice(normalized.lastIndexOf("/") + 1)
   return name || path

@@ -96,6 +96,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
   return EditorState.create({
     doc: options.doc,
     extensions: [
+      EditorView.lineWrapping,
       history(),
       drawSelection(),
       dropCursor(),

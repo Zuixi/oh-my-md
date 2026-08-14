@@ -84,7 +84,7 @@ describe("EditorSession", () => {
   })
 
   it("labels untitled buffers and file basenames", () => {
-    expect(sessionLabel(createSession(1))).toBe("untitled")
+    expect(sessionLabel(createSession(1))).toBe("unnamed")
     expect(sessionLabel(createFileSession(1, "/notes/doc.md", "", version))).toBe("doc.md")
   })
 

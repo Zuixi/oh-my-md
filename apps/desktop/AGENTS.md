@@ -63,7 +63,7 @@ apps/desktop/
 - Destroy `EditorView` during React cleanup and clear retained references.
 - Window-level shortcuts must use stable listeners and refs to observe current mutable state without re-registering on each render.
 - CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save/command palette.
-- Do not enable generic `autocompletion()`; Cmd+K is a desktop command registry, not CM completion.
+- Do not enable generic `autocompletion()`; ⇧⌘P is the command palette, and ⌘K is the engine's Markdown insert-link binding (live preview), not a CM completion or a window-level command.
 - Replace an opened document with a fresh `EditorState`; synchronize the document path first so initial image resolution is correct and undo history cannot cross files.
 
 ## Ordered-list normalization (desktop)

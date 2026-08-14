@@ -86,7 +86,7 @@ export { versionFor }
 
 /** The TopBar breadcrumb shows the basename in .topbar-file; dirty adds a dot labeled "Unsaved". */
 export function expectPathShown(path: string, opts: { dirty?: boolean } = {}): void {
-  const name = path === "untitled" ? "untitled" : path.replace(/\\/g, "/").split("/").pop()!
+  const name = path === "unnamed" ? "unnamed" : path.replace(/\\/g, "/").split("/").pop()!
   expect(screen.getByText(name, { selector: ".topbar-file" })).toBeTruthy()
   if (opts.dirty) expect(screen.getByLabelText("Unsaved")).toBeTruthy()
   else expect(screen.queryByLabelText("Unsaved")).toBeNull()

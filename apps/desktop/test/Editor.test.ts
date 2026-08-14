@@ -148,6 +148,28 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("binds markdown formatting shortcuts from the engine keymap", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "hello world"),
+    )
+    view.dispatch({ selection: { anchor: 6 } })
+    // happy-dom reports a non-mac platform, so CodeMirror maps "Mod" to Ctrl
+    // (on a real macOS webview the same bindings fire on ⌘).
+    const bold = new KeyboardEvent("keydown", {
+      key: "b", ctrlKey: true, bubbles: true, cancelable: true,
+    })
+    view.contentDOM.dispatchEvent(bold)
+    expect(view.state.doc.toString()).toBe("hello **world**")
+
+    const heading = new KeyboardEvent("keydown", {
+      key: "2", ctrlKey: true, bubbles: true, cancelable: true,
+    })
+    view.contentDOM.dispatchEvent(heading)
+    expect(view.state.doc.toString()).toBe("## hello **world**")
+    view.destroy()
+  })
+
   it("falls back to a neutral status and empty outline without a view", () => {
     expect(editorStatus(null)).toEqual({ cursor: "1:1", mode: "live" })
     expect(documentOutline(null)).toEqual([])
@@ -164,5 +186,14 @@ describe("desktop editor lifecycle", () => {
       "asset:///notes/opened/assets/photo.png",
     )
     expect(convert).toHaveBeenCalledWith("/notes/opened/assets/photo.png")
+  })
+
+  it("configures line wrapping on the editor view", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "sample text"),
+    )
+    expect(view.lineWrapping).toBe(true)
+    view.destroy()
   })
 })
