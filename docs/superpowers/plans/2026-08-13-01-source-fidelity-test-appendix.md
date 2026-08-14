@@ -290,6 +290,28 @@ it("runs both named actions in document order", () => {
   expect(onSave).toHaveBeenCalledOnce()
   expect(onKeepOriginal).toHaveBeenCalledOnce()
 })
+
+While `busy`, both buttons use `aria-disabled` (not native `disabled`), stay focusable, and ignore clicks:
+
+```tsx
+it("disables both actions while busy without dropping their focus", () => {
+  const onSave = vi.fn()
+  const onKeepOriginal = vi.fn()
+  render(<NormalizationBanner markerCount={1} busy
+    onSave={onSave} onKeepOriginal={onKeepOriginal} />)
+  const buttons = screen.getAllByRole("button")
+  expect(buttons.map(button => button.getAttribute("aria-disabled"))).toEqual([
+    "true",
+    "true",
+  ])
+  for (const button of buttons) {
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    fireEvent.click(button)
+  }
+  expect(onSave).not.toHaveBeenCalled()
+  expect(onKeepOriginal).not.toHaveBeenCalled()
+})
 ```
 
 Add a StatusBar test in the same file or `StatusBar.test.tsx`: `untitled •` remains one text node while `Normalization review required` is separate.
@@ -476,7 +498,8 @@ it("keeps pending idle when Save As is cancelled", async () => {
   harness.emitPending(1, normalizationId(1))
   await harness.saveNormalization(1)
   expect(harness.services.writeFile).not.toHaveBeenCalled()
-  expect((screen.getByRole("button", { name: "Save normalization" }) as HTMLButtonElement).disabled).toBe(false)
+  const saveButton = screen.getByRole("button", { name: "Save normalization" })
+  expect(saveButton.getAttribute("aria-disabled")).not.toBe("true")
 })
 ```
 
@@ -528,7 +551,8 @@ it("keeps review pending after save failure", async () => {
   await harness.openIntoActive("/notes/a.md", "1. a\n3. b")
   harness.emitPending(1, normalizationId(1))
   await harness.saveNormalization(1)
-  expect((screen.getByRole("button", { name: "Save normalization" }) as HTMLButtonElement).disabled).toBe(false)
+  const saveButton = screen.getByRole("button", { name: "Save normalization" })
+  expect(saveButton.getAttribute("aria-disabled")).not.toBe("true")
   expect(harness.services.reportError).toHaveBeenCalled()
 })
 ```

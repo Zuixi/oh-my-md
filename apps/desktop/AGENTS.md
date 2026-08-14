@@ -22,6 +22,9 @@ apps/desktop/
 │   ├── workspace.ts         # Tab list, active tab, folder root
 │   ├── Editor.ts            # Generic CM6 extensions, engine assembly, base theme
 │   ├── imagePaste.ts        # Clipboard image → Tauri write_image → Markdown insertion
+│   ├── normalizationState.ts    # Per-tab pending notice projection (pure reducers)
+│   ├── normalizationCoordinator.ts  # Accept/reject/save orchestration, autosave gate
+│   ├── NormalizationBanner.tsx  # Non-modal review banner + live region host
 │   ├── main.tsx             # React mount
 │   └── styles.css           # App styles, theme variables, and omd-* presentation
 └── src-tauri/
@@ -52,6 +55,15 @@ apps/desktop/
 - CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save/command palette.
 - Do not enable generic `autocompletion()`; Cmd+K is a desktop command registry, not CM completion.
 - Replace an opened document with a fresh `EditorState`; synchronize the document path first so initial image resolution is correct and undo history cannot cross files.
+
+## Ordered-list normalization (desktop)
+
+1. `Editor.ts` binds each `EditorView` to a stable tab id and document id. Document-update callbacks carry the ids captured at view creation, not the currently active tab.
+2. Before resetting a view for open/reload/restore, commit a bumped `documentId` to the tab session, then reset with that new id. Never reset before the identity bump — stale updates from the old view must be ignored. If reset throws, roll back session refs and projection.
+3. While a tab has pending normalization, pause autosave to the on-disk path for that tab only; recovery writes to the crash-recovery directory continue on real document edits.
+4. Accepting normalization runs through the explicit save queue (banner **Save normalization** or Cmd+S). Successful save dispatches `acceptOrderedListNormalization`; Save As cancel and save failure leave pending and re-sync idle banner state.
+5. Reject dispatches only to the captured target view after re-validating tab, document, view, and notice id. Command completion must call `resyncNormalizationIdle` only after the same identity checks — the reducer does not validate ids itself.
+6. `normalizationCoordinator.ts` owns accept/reject/save wiring; keep `App.tsx` under the file-size budget by extending the coordinator instead of inlining orchestration.
 
 ## Tauri and File Rules
 

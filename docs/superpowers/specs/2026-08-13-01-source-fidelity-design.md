@@ -462,8 +462,8 @@ export interface NormalizationBannerProps {
 - 只为当前活动标签的 pending notice 渲染。
 - 非模态，不在出现时移动焦点。
 - 使用原生 `<button type="button">`。
-- `busy` 时禁用两个动作，避免保存与拒绝并发。
-- 容器使用 `role="status"`，文案包含受影响 marker 数量。
+- `busy` 时通过 `aria-disabled="true"` 与 handler 首行守卫禁用两个动作（不用原生 `disabled`，避免按下瞬间丢失键盘焦点），避免保存与拒绝并发。
+- 消息文本元素使用 `role="status"`，文案包含受影响 marker 数量；按钮在 live region 之外，避免 markerCount 变化时重念按钮名。banner 容器本身无 `role="status"`。
 - 键盘 Tab 可到达两个按钮，焦点样式清晰。
 - 保存成功或拒绝完成后，焦点回到 EditorView。
 - 关闭或切换标签时不把焦点落到隐藏元素。
@@ -692,7 +692,7 @@ git diff --check
 
 12 Accessibility 可以依赖：
 
-- `NormalizationBanner` 使用原生按钮、`role="status"` 和稳定焦点恢复行为。
+- `NormalizationBanner` 使用原生按钮、消息元素上的 `role="status"`、首帧即挂载的 live region 宿主，以及稳定焦点恢复行为。
 
 ## 完成定义
 
