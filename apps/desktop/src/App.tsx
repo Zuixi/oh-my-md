@@ -4,7 +4,7 @@ import {
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, exportHtml, type OutlineItem } from "@omd/engine"
+import { applyToggle, type OutlineItem } from "@omd/engine"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
   sessionDirty, sessionPath, type EditorSession,
@@ -22,12 +22,12 @@ import {
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import { useConflictSaveBinding } from "./conflictSaveBinding"
+import { ConflictSaveRegion } from "./ConflictSaveRegion"
+import { exportCurrent, loadCustomCss } from "./appExportActions"
 import {
-  CONFLICT_ACTION_LABELS,
   canAutosave,
-  conflictBannerModel,
   topBanner,
-  type ConflictActionId,
   type TabSaveQueues,
 } from "./documentSaveCoordinator"
 import {
@@ -42,12 +42,13 @@ import {
   tabSaveState,
   type SaveStateByTab,
 } from "./documentSaveState"
-import { SaveConflictBanner } from "./SaveConflictBanner"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type DesktopServices } from "./desktopServices"
+import type { SaveTrigger } from "./normalizationCoordinator"
+import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
 import { TabBar } from "./TabBar"
 import { FileTree } from "./FileTree"
@@ -94,6 +95,12 @@ export default function App({
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
   const [saveStateByTab, setSaveStateByTab] = useState<SaveStateByTab>(saveStateRef.current)
   const [conflictFocusToken, setConflictFocusToken] = useState(0)
+  const saveFileRef = useRef<
+    (tabId: number, trigger: SaveTrigger, mode?: SaveMode | boolean) => Promise<void>
+  >(async () => {})
+  const saveCopyRef = useRef<(tabId: number) => Promise<void>>(async () => {})
+  const requestCloseTabRef = useRef<(id: number) => void>(() => {})
+  const resetTabDocumentRef = useRef<(session: EditorSession, contents: string) => boolean>(() => false)
   const [transientStatus, setTransientStatus] = useState<string | null>(null)
   const transientStatusTimerRef = useRef<number | null>(null)
   const showTransientStatus = createTransientStatusNotifier(
@@ -166,7 +173,20 @@ export default function App({
     setSaveStateByTab(next)
   }
 
-  const { saveFile, pollFileTabs } = createDocumentSaveAppBridge({
+  const conflictSave = useConflictSaveBinding({
+    services,
+    getTab: tabById,
+    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    getSaveStates: () => saveStateRef.current,
+    commitSaveState,
+    saveFile: (...args) => saveFileRef.current(...args),
+    saveCopy: tabId => saveCopyRef.current(tabId),
+    resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
+    requestCloseTab: id => requestCloseTabRef.current(id),
+    showTransientStatus,
+  })
+
+  const { saveFile, saveCopy, pollFileTabs } = createDocumentSaveAppBridge({
     services,
     tabSaveQueues: tabSaveQueuesRef.current,
     operationSeq: operationSeqRef,
@@ -187,7 +207,12 @@ export default function App({
     clearRecovery: key => { void services.clearRecovery?.(key) },
     onDurabilityWarning: () => showTransientStatus(DURABILITY_WARNING),
     incrementFocusToken: () => setConflictFocusToken(token => token + 1),
+    reportStatus: showTransientStatus,
+    onSaveFailed: conflictSave.onSaveFailed,
   })
+
+  saveFileRef.current = saveFile
+  saveCopyRef.current = saveCopy
 
   const showSkippedMarkersStatus = createSkippedStatusNotifier(
     setSkippedMarkersMessage, skippedStatusTimerRef,
@@ -260,6 +285,7 @@ export default function App({
     syncDoc(contents, nextSession.id)
     return true
   }
+  resetTabDocumentRef.current = resetTabDocument
 
   function refreshChrome(view: EditorView | null) {
     setOutline(documentOutline(view))
@@ -504,6 +530,7 @@ export default function App({
     viewRef.current = viewsRef.current.get(active.id) ?? viewRef.current
     syncDoc(docsRef.current.get(active.id) ?? "", active.id)
   }
+  requestCloseTabRef.current = requestCloseTab
 
   function revealFolder(path: string) {
     const next = ensureFolder(workspaceRef.current, path)
@@ -544,38 +571,6 @@ export default function App({
     }
   }
 
-  async function exportCurrent(kind: "html" | "pdf" | "png") {
-    const view = viewRef.current
-    if (!view) return
-    try {
-      const html = exportHtml(view.state)
-      if (kind === "html") {
-        const path = await services.pickExportPath?.("html")
-        if (path) await services.writeFile(path, html)
-        return
-      }
-      if (!services.exportPreview) {
-        throw new Error("PDF and image export are only available in the desktop app")
-      }
-      const format = kind === "pdf" ? "pdf" : "png"
-      const path = await services.pickExportPath?.(format)
-      if (path) await services.exportPreview(html, path, format)
-    } catch (error) {
-      services.reportError(errorMessage("Export failed", error))
-    }
-  }
-
-  async function loadCustomCss() {
-    try {
-      const path = await services.pickCssPath?.()
-      if (!path) return
-      setCustomCss(await services.readFile(path))
-    } catch (error) {
-      setCustomCss("")
-      services.reportError(errorMessage("Custom CSS failed", error))
-    }
-  }
-
   const { accept: acceptNormalization, reject: keepOriginalNumbers } = createNormalizationHandlers({
     getActiveTabId: () => workspaceRef.current.activeId,
     getTab: tabById,
@@ -589,13 +584,11 @@ export default function App({
   })
 
   const openFileRef = useRef(openFile)
-  const saveFileRef = useRef(saveFile)
   const pollFileTabsRef = useRef(pollFileTabs)
   const newTabRef = useRef(newTab)
   const openRecentRef = useRef(openRecent)
   const closeActiveRef = useRef(() => requestCloseTab(workspaceRef.current.activeId))
   openFileRef.current = openFile
-  saveFileRef.current = saveFile
   pollFileTabsRef.current = pollFileTabs
   newTabRef.current = newTab
   openRecentRef.current = openRecent
@@ -609,7 +602,7 @@ export default function App({
     { id: "tab", label: "New", shortcut: "⌘N", run: newTab },
     { id: "close", label: "Close", shortcut: "⌘W", run: () => requestCloseTab(workspaceRef.current.activeId) },
     { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
-    { id: "css", label: "Load custom CSS", run: () => void loadCustomCss() },
+    { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
     { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
     { id: "typewriter", label: "Toggle typewriter", run: () => setTypewriter(on => !on) },
     { id: "source", label: "Toggle live/source", shortcut: "⌘E", run: () => {
@@ -617,9 +610,9 @@ export default function App({
       if (view) try { view.dispatch(applyToggle(view.state)) } catch { /* mock views */ }
     } },
     { id: "search", label: "Search in folder", run: () => setSearchOpen(true) },
-    { id: "export-html", label: "Export HTML", run: () => void exportCurrent("html") },
-    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent("pdf") },
-    { id: "export-image", label: "Export Image", run: () => void exportCurrent("png") },
+    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
+    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
+    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png") },
     { id: "clear-recents", label: "Clear Recents", run: clearRecents },
   ]
   const commandsRef = useRef(commands)
@@ -682,14 +675,10 @@ export default function App({
     activeSaveState,
     activeNormalization !== undefined,
   )
-  const conflictModel = conflictBannerModel(activeSaveState)
+  const saveErrorCode = conflictSave.saveErrorCodeFor(activeSaveState, workspace.activeId)
   const conflictIds = workspace.tabs
     .filter(tab => tabHasConflict(saveStateByTab[tab.id]))
     .map(tab => tab.id)
-
-  function onConflictAction(_action: ConflictActionId) {
-    /* Task 13 wires conflict handlers */
-  }
 
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
@@ -711,25 +700,28 @@ export default function App({
         onClose={requestCloseTab}
         onNew={newTab}
       />
-      {bannerKind === "conflict" && conflictModel ? (
-        <SaveConflictBanner
-          message={conflictModel.message}
-          actions={conflictModel.actions.map(id => ({
-            id,
-            label: CONFLICT_ACTION_LABELS[id],
-          }))}
-          busy={activeSaveState.lifecycle.kind === "saving"}
-          focusToken={conflictFocusToken}
-          onSelect={onConflictAction}
-        />
-      ) : (
-        <NormalizationBanner
-          markerCount={activeNormalization?.notice.markerCount ?? null}
-          busy={(activeNormalization?.action ?? "idle") !== "idle"}
-          onSave={acceptNormalization}
-          onKeepOriginal={keepOriginalNumbers}
-        />
-      )}
+      <ConflictSaveRegion
+        bannerKind={
+          bannerKind === "conflict" || bannerKind === "saveFailed" ? bannerKind : null
+        }
+        activeTabId={workspace.activeId}
+        activeSaveState={activeSaveState}
+        saveErrorCode={saveErrorCode}
+        localContents={doc}
+        diffOpenTabId={conflictSave.diffOpenTabId}
+        diffRefreshed={conflictSave.diffRefreshed}
+        conflictFocusToken={conflictFocusToken}
+        activeView={viewRef.current}
+        onConflictAction={action => conflictSave.onConflictAction(action, workspace.activeId)}
+        onDiffClose={conflictSave.closeDiff}
+        onDiskFingerprintChange={conflictSave.handleDiskFingerprintChange}
+      />
+      <NormalizationBanner
+        markerCount={activeNormalization?.notice.markerCount ?? null}
+        busy={(activeNormalization?.action ?? "idle") !== "idle"}
+        onSave={acceptNormalization}
+        onKeepOriginal={keepOriginalNumbers}
+      />
       {skippedMarkersMessage ? (
         <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
       ) : null}

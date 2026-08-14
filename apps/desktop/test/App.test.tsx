@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi, afterEach } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import {
   getPendingOrderedListNormalization,
@@ -7,7 +7,7 @@ import {
 } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
-import { createAppHarness, normalizationId, versionFor } from "./appHarness"
+import { createAppHarness, normalizationId, resetMountedApps, versionFor } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -68,6 +68,11 @@ function deferSaveDocuments(harness: ReturnType<typeof makeAppHarness>, count: n
 function makeAppHarness() {
   return createAppHarness(editor)
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+  resetMountedApps()
+})
 
 function edit(harness: ReturnType<typeof makeAppHarness>, tabId: number, doc: string) {
   harness.editorForTab(tabId).emit({ doc, docChanged: true, pendingNormalization: null })
@@ -240,7 +245,7 @@ describe("App normalization wiring", () => {
     harness.disk("/notes/one.md").set("disk version")
     await harness.runExternalCheck()
     expect(screen.getByRole("status", { name: "Save conflict" })).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
   })
 
   it("removes a closed tab projection before reusing the workspace", async () => {
@@ -479,7 +484,7 @@ describe("App normalization autosave and accept/reject", () => {
     harness.disk("/notes/a.md").set("disk version")
     await harness.runExternalCheck()
     expect(screen.getByRole("status", { name: "Save conflict" })).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
   })
 
   it("keeps pending when external disk content is rejected", async () => {
@@ -490,7 +495,7 @@ describe("App normalization autosave and accept/reject", () => {
     harness.disk("/notes/a.md").set("disk version")
     await harness.runExternalCheck()
     expect(screen.getByRole("status", { name: "Save conflict" })).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
   })
 })
 
