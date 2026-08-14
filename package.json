@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "pnpm --filter @omd/desktop tauri dev",
     "test": "pnpm --filter @omd/engine test",
-    "verify": "pnpm test && pnpm --filter @omd/desktop test && pnpm --filter @omd/desktop build && cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "verify": "bash scripts/test.sh && bash scripts/build.sh",
     "prepare": "git config core.hooksPath .githooks"
   }
 }
