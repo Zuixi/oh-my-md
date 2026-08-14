@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
 import { TableWidget, renderTableCellContent } from "../src/decorations/widgets/table"
+import { imageResolver } from "../src/decorations/widgets/image"
 
 const doc = "| a | b |\n|---|---|\n| 1 | 2 |"
 
@@ -41,6 +42,40 @@ describe("tables", () => {
     expect(link?.href).toBe("https://example.com/")
   })
 
+  it("renders full inline markdown inside cells", () => {
+    const div = document.createElement("div")
+    renderTableCellContent(div, "==hi== <u>u</u> ~~no~~ $x$ :smile: &copy; https://example.com")
+
+    expect(div.querySelector("mark")?.textContent).toBe("hi")
+    expect(div.querySelector("u")?.textContent).toBe("u")
+    expect(div.querySelector("del")?.textContent).toBe("no")
+    expect(div.querySelector(".omd-cell-math")?.textContent).toBe("x")
+    expect(div.textContent).toContain("😄")       // :smile: → emoji
+    expect(div.textContent).toContain("©")        // &copy; → entity
+    const link = div.querySelector("a")
+    expect(link?.textContent).toBe("https://example.com")  // bare URL → autolink
+    expect(link?.href).toBe("https://example.com/")
+  })
+
+  it("renders block-level markdown inside cells: lists, quotes, and fenced code", () => {
+    const list = document.createElement("div")
+    renderTableCellContent(list, "- one")
+    expect(list.querySelector("ul")).toBeTruthy()
+    expect(list.querySelector("li")?.textContent).toBe("one")
+
+    const quote = document.createElement("div")
+    renderTableCellContent(quote, "> cited")
+    expect(quote.querySelector("blockquote")?.textContent).toContain("cited")
+
+    const ordered = document.createElement("div")
+    renderTableCellContent(ordered, "1. first")
+    expect(ordered.querySelector("ol")?.querySelector("li")?.textContent).toBe("first")
+
+    const pre = document.createElement("div")
+    renderTableCellContent(pre, "```js\nconst x = 1\n```")
+    expect(pre.querySelector("pre code")?.textContent).toContain("const x = 1")
+  })
+
   it("renders table widget DOM with parsed rich cells", async () => {
     const widget = new TableWidget(
       "| Item | Details |\n|---|---|\n| Func | Line 1<br>_note_ |",
@@ -56,5 +91,30 @@ describe("tables", () => {
     const td = dom.querySelectorAll("td")[1]
     expect(td.querySelector("br")).toBeTruthy()
     expect(td.querySelector("em")?.textContent).toBe("note")
+  })
+
+  it("resolves cell images through the widget resolveSrc", async () => {
+    const widget = new TableWidget(
+      "| Pic |\n|---|\n| ![a](x.png) |",
+      0,
+      { header: ["Pic"], rows: [["![a](x.png)"]], aligns: [""] },
+      undefined,
+      src => `/res/${src}`,
+    )
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    await Promise.resolve()
+    expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/res/x.png")
+  })
+
+  it("threads the host image resolver facet into the table widget", async () => {
+    const doc = "intro\n\n| Pic |\n|---|\n| ![a](x.png) |"
+    const state = makeState(doc, [imageResolver.of((s: string) => `/facet/${s}`)])
+    const s = state.update({ selection: { anchor: 0 } }).state
+    const spec = collectDecorationSpecs(s, 0, s.doc.length).find(d => d.tag === "widget:block:table")
+    expect(spec).toBeTruthy()
+    const widget = (spec!.deco.spec as unknown as { widget: TableWidget }).widget
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    await Promise.resolve()
+    expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/facet/x.png")
   })
 })

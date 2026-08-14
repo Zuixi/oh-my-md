@@ -5,6 +5,7 @@ import { cursorInside, nearCursor, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
+import { imageResolver } from "./widgets/image"
 import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
@@ -321,6 +322,7 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
             node.from,
             table,
             blockEmbed(node.node),
+            state.facet(imageResolver),
           ),
           block: true,
         }),

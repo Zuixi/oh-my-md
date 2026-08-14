@@ -191,17 +191,25 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-weight: 600;
   color: var(--omd-fg);
 }
-.editor-host .omd-table td code {
+.editor-host .omd-table th code, .editor-host .omd-table td code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.88em;
   background: var(--omd-code-bg);
   padding: 2px 5px;
   border-radius: 4px;
 }
-.editor-host .omd-table td a {
+.editor-host .omd-table th a, .editor-host .omd-table td a {
   color: var(--omd-link);
   text-decoration: underline;
 }
+/* Block-level markdown inside cells: lists, quotes, fenced code */
+.editor-host .omd-table ul, .editor-host .omd-table ol { margin: 0.2em 0; padding-left: 1.4em; }
+.editor-host .omd-table li { margin: 0; }
+.editor-host .omd-table blockquote {
+  margin: 0.2em 0; padding: 0 0.6em;
+  border-left: 3px solid var(--omd-border); color: #666;
+}
+.editor-host .omd-table pre { margin: 0.2em 0; }
 .editor-host .omd-code pre {
   margin: 0; padding: 10px 12px; border-radius: 6px;
   font-size: 0.9em; overflow-x: auto;
