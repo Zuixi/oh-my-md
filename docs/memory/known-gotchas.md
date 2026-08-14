@@ -252,3 +252,9 @@ Fix: `cargo clean --manifest-path apps/desktop/src-tauri/Cargo.toml` and rebuild
 
 Prevention: the repo-wide `pnpm verify` gate links the app binary (`cargo build --no-default-features`) before `cargo test`, so a toolchain-upgrade breakage surfaces there instead of at `pnpm dev`.
 
+
+## serde enum-level `rename_all` does not rename variant fields
+
+`#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum only camelCases the **variant names**, not the fields inside struct variants. `DiskSnapshot` shipped with `Existing { requested_path, .. }` relying on the enum-level attribute, so `read_document` returned `requested_path` over IPC while the webview read `requestedPath` — every opened file tab silently became "unnamed" (path `undefined`), with duplicate tabs on re-open and no autosave. Symptom looked frontend; cause was wire-format.
+
+Fix pattern (already used by `SaveDocumentResult`): put `#[serde(rename_all = "camelCase")]` on **each struct variant**. Regression guard: `documents::tests::disk_snapshot_serializes_requested_path_as_camel_case` asserts the JSON field names. TS-side tests mock `services.readDocument`, so they cannot catch IPC casing drift — assert serialized JSON in Rust tests for any new IPC payload with multi-word fields.
