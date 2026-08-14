@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs } from "../src/decorations/build"
+import { headingPositionForAnchor, linkAt } from "../src/links"
 import { makeState } from "./helpers"
 
 // Build tags with cursor on a separate line (so marks on line 1 are folded).
@@ -43,6 +44,67 @@ describe("inline marks", () => {
     const doc = "[text](http://x.com)"
     const urlInside = doc.indexOf("http") + 2
     expect(tagsAt(doc, urlInside)).not.toContain("replace:URL")
+  })
+
+  it("renders angle-bracket URL and email autolinks as links", () => {
+    const tags = tagsOffLine("<https://www.runoob.com> <foo@bar.com> https://example.com foo@example.com")
+    expect(tags.filter(x => x === "mark:omd-link")).toHaveLength(4)
+    expect(tags.filter(x => x === "replace:URL")).toHaveLength(0)
+  })
+
+  it("folds custom HTML anchors without showing the source tag", () => {
+    const tags = tagsOffLine('<a id="custom-anchor"></a>Target')
+    expect(tags.filter(x => x.startsWith("replace:HTMLTag"))).toHaveLength(2)
+  })
+
+  it("resolves autolink targets and heading anchors", () => {
+    const doc = "# Guide\n\nhttps://example.com foo@example.com\n\n[Back](#guide)"
+    const state = makeState(doc)
+    const url = linkAt(state, doc.indexOf("https://") + 2)
+    const email = linkAt(state, doc.indexOf("foo@") + 2)
+    expect(url?.href).toBe("https://example.com")
+    expect(email?.href).toBe("mailto:foo@example.com")
+    expect(headingPositionForAnchor(state, "#guide")).toBe(0)
+
+    const custom = makeState('<a id="custom-anchor"></a>Target')
+    expect(headingPositionForAnchor(custom, "#custom-anchor")).toBe(0)
+  })
+
+  it("keeps the complete reference-link and autolink document visible", () => {
+    const doc = `ib
+
+markdown 我喜欢使用 [GitHub][] 来管理代码。
+
+[GitHub]: https://github.com
+
+markdown# 学习资源推荐
+
+## 在线教程
+
+- [MDN Web Docs][mdn] - 权威的 Web 技术文档
+- [RUNOOB][rnb] - 适合初学者的教程网站
+- [freeCodeCamp][fcc] - 免费的编程学习平台
+
+## 代码托管
+
+- [GitHub][github] - 最受欢迎的代码托管服务
+- [GitLab][gitlab] - 企业级的代码管理服务
+
+[mdn]: https://developer.mozilla.org/
+[rnb]: https://www.runoob.com/
+[fcc]: https://www.freecodecamp.org/
+[github]: https://github.com/
+[gitlab]: https://gitlab.com/
+
+markdown联系邮箱：example@email.com
+或者：<example@email.com>
+
+<https://www.runoob.com>`
+    const state = makeState(doc + "\nx").update({ selection: { anchor: doc.length + 1 } }).state
+    expect(linkAt(state, doc.indexOf("[GitHub][]") + 2)?.href).toBe("https://github.com")
+    expect(linkAt(state, doc.indexOf("[MDN Web Docs][mdn]") + 2)?.href)
+      .toBe("https://developer.mozilla.org/")
+    expect(state.doc.toString()).toContain("<https://www.runoob.com>")
   })
 
   it("folds underscore strong/emphasis next to CJK the same way as asterisks", () => {

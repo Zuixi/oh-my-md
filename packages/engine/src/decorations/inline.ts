@@ -45,18 +45,30 @@ function foldPair(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], mark
 
 function foldLink(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const inQuote = hasAncestor(node.node, "Blockquote")
-  for (const m of childMarks(node, "LinkMark"))
+  const marks = childMarks(node, "LinkMark")
+  for (const m of marks)
     if (!markActive(state, m.from, m.to, inQuote))
       out.push({ from: m.from, to: m.to, tag: "replace:LinkMark", deco: Decoration.replace({}) })
   const c = node.node.cursor()
   if (c.firstChild()) do {
-    if (c.name === "URL" && !markActive(state, c.from, c.to, inQuote))
+    if (node.name === "Link" && c.name === "URL" && !markActive(state, c.from, c.to, inQuote))
       out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: Decoration.replace({}) })
   } while (c.nextSibling())
   out.push({ from: node.from, to: node.to, tag: "mark:omd-link", deco: Decoration.mark({ class: "omd-link" }) })
 }
 
+function isAnchorTag(state: EditorState, node: SyntaxNodeRef): boolean {
+  if (node.name !== "HTMLTag") return false
+  const raw = state.doc.sliceString(node.from, node.to)
+  return /^<a\b[^>]*\bid\s*=\s*(['"])[^'"]+\1[^>]*>$/i.test(raw) || /^<\/a\s*>$/i.test(raw)
+}
+
 export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
+  if (isAnchorTag(state, node) && !cursorInside(state, node.from, node.to)) {
+    out.push({ from: node.from, to: node.to, tag: "replace:HTMLTag", deco: Decoration.replace({}) })
+    return
+  }
+
   const headingClass = HEADING_CLASS[node.name]
   if (headingClass) {
     out.push({
@@ -97,7 +109,8 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Highlight":      return foldPair(node, state, out, "HighlightMark", "omd-highlight")
     case "Underline":      return foldPair(node, state, out, "UnderlineMark", "omd-u")
     case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
-    case "Link":           return foldLink(node, state, out)
+    case "Link":
+    case "Autolink":       return foldLink(node, state, out)
     case "Image": {
       const inQuote = hasAncestor(node.node, "Blockquote")
       if (markActive(state, node.from, node.to, inQuote)) return

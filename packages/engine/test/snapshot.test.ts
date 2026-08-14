@@ -814,6 +814,13 @@ describe("fixture snapshots", () => {
         "replace:LinkMark@173-174",
         "replace:LinkMark@182-183",
         "mark:omd-link@173-183",
+        "replace:LinkMark@277-278",
+        "replace:LinkMark@306-307",
+        "mark:omd-link@277-307",
+        "replace:LinkMark@321-322",
+        "replace:LinkMark@333-334",
+        "mark:omd-link@321-334",
+        "mark:omd-link@353-377",
       ]
     `)
   })

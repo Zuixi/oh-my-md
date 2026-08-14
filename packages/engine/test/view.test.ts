@@ -38,6 +38,19 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
 }
 
 describe("view smoke (real EditorView)", () => {
+  it("keeps angle URL/email autolinks and reference labels visible", async () => {
+    const { view, errors } = makeView(
+      "[GitHub][]\n\n[GitHub]: https://github.com\n\n<example@email.com>\n\n<https://www.runoob.com>",
+    )
+    await tick()
+    const text = view.dom.querySelector(".cm-content")?.textContent ?? ""
+    expect(errors.map(String)).toEqual([])
+    expect(text).toContain("GitHub")
+    expect(text).toContain("example@email.com")
+    expect(text).toContain("https://www.runoob.com")
+    view.destroy()
+  })
+
   it("renders a thematic break as an hr without the source markers", async () => {
     const { view, errors } = makeView("before\n\n***\n\nafter")
     await tick()

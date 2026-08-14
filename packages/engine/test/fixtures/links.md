@@ -10,4 +10,4 @@ A shortcut reference: [shortcut] collapses to the matching definition.
 
 An autolink <https://autolink.example.com> and an email <foo@bar.com>.
 
-A bare URL like https://bare.example.com shouldn't autolink inside prose.
+A bare URL like https://bare.example.com autolinks inside prose.

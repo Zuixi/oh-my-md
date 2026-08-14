@@ -9,6 +9,7 @@ import {
   createEditor,
   documentOutline,
   editorStatus,
+  activateLink,
   makeImageResolver,
   resetEditorDocument,
   type CreateEditorOptions,
@@ -128,6 +129,22 @@ describe("desktop editor lifecycle", () => {
 
     expect(editorStatus(view)).toEqual({ cursor: "2:3", mode: "live" })
     expect(documentOutline(view).map(item => item.text)).toEqual(["Title"])
+    view.destroy()
+  })
+
+  it("follows same-document anchor links inside the editor", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "# Guide\n\n[Back](#guide)"),
+    )
+    const link = view.dom.querySelector(".omd-link")
+    expect(link).not.toBeNull()
+    vi.spyOn(view, "posAtCoords").mockReturnValue(10)
+    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    Object.defineProperty(event, "target", { value: link })
+
+    expect(activateLink(view, event)).toBe(true)
+    expect(view.state.selection.main.head).toBe(0)
     view.destroy()
   })
 

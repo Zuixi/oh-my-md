@@ -1,6 +1,7 @@
 import { syntaxTree } from "@codemirror/language"
 import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
+import { linkHref } from "../links"
 
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
@@ -33,6 +34,12 @@ function inline(node: SyntaxNode, state: EditorState): string {
   return children(node, state)
 }
 
+function autolinkHref(value: string): string {
+  return value.includes("@") && !/^[a-z][a-z0-9+.-]*:/i.test(value)
+    ? `mailto:${value}`
+    : value.startsWith("www.") ? `https://${value}` : value
+}
+
 function fencedText(node: SyntaxNode, state: EditorState): string {
   const parts: string[] = []
   for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -43,6 +50,24 @@ function fencedText(node: SyntaxNode, state: EditorState): string {
 
 function cellText(node: SyntaxNode, state: EditorState): string {
   return escapeHtml(state.doc.sliceString(node.from, node.to).replace(/\\\|/g, "|").trim())
+}
+
+function linkLabel(node: SyntaxNode, state: EditorState): string {
+  const marks = Array.from((function* () {
+    for (let child = node.firstChild; child; child = child.nextSibling)
+      if (child.name === "LinkMark") yield child
+  })())
+  if (marks.length < 2) return ""
+
+  let html = ""
+  let pos = marks[0].to
+  for (let child = marks[0].nextSibling; child && child.from < marks[1].from; child = child.nextSibling) {
+    if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
+    html += render(child, state)
+    pos = child.to
+  }
+  if (pos < marks[1].from) html += escapeHtml(state.doc.sliceString(pos, marks[1].from))
+  return html
 }
 
 function renderRow(node: SyntaxNode, state: EditorState, cell: "th" | "td"): string {
@@ -73,13 +98,20 @@ function render(node: SyntaxNode, state: EditorState): string {
     case "Underline": return `<u>${inline(node, state)}</u>`
     case "InlineCode": return `<code>${escapeHtml(state.doc.sliceString(node.from, node.to).replace(/^`+|`+$/g, ""))}</code>`
     case "Link": {
-      let href = ""
-      let label = ""
-      for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (child.name === "URL") href = state.doc.sliceString(child.from, child.to)
-        else if (!SKIP.has(child.name)) label += render(child, state)
-      }
+      const href = linkHref(state, node) ?? ""
+      const label = linkLabel(node, state)
       return `<a href="${escapeHtml(href)}">${label || escapeHtml(href)}</a>`
+    }
+    case "Autolink": {
+      const url = node.getChild("URL")
+      const value = url ? state.doc.sliceString(url.from, url.to) : state.doc.sliceString(node.from, node.to)
+      return `<a href="${escapeHtml(autolinkHref(value))}">${escapeHtml(value)}</a>`
+    }
+    case "HTMLTag": {
+      const raw = state.doc.sliceString(node.from, node.to)
+      if (/^<a\b[^>]*\bid\s*=\s*(['"])[^'"]+\1[^>]*>$/i.test(raw) || /^<\/a\s*>$/i.test(raw))
+        return raw
+      return escapeHtml(raw)
     }
     case "Image": {
       const url = node.getChild("URL")

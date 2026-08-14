@@ -39,7 +39,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-strong { font-weight: 700; }
 .editor-host .omd-em { font-style: italic; }
 .editor-host .omd-del { text-decoration: line-through; }
-.editor-host .omd-link { color: var(--omd-link); }
+.editor-host .omd-link { color: var(--omd-link); cursor: pointer; }
 .editor-host .omd-footnote { font-size: 0.75em; vertical-align: super; color: #0969da; }
 .editor-host .omd-footnote-def { font-size: 0.9em; color: #555; }
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
