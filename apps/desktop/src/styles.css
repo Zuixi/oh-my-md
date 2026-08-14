@@ -272,7 +272,8 @@ html, body, #root { height: 100%; margin: 0; background: var(--omd-bg); color: v
 .normalization-banner-action:focus-visible {
   outline: 2px solid var(--omd-link); outline-offset: 2px;
 }
-.normalization-skipped-status {
+.normalization-skipped-status,
+.save-transient-status {
   margin: 0; padding: 6px 12px; font-size: 12px; line-height: 1.4;
   color: var(--omd-muted); background: var(--omd-chrome);
   border-bottom: 1px solid var(--omd-border);

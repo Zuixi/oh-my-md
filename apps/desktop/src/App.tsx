@@ -18,15 +18,36 @@ import {
   type NormalizationByTab,
 } from "./normalizationState"
 import {
-  canAutosaveTab, createNormalizationHandlers, createSaveQueueRunner,
-  createSessionPersistence, createSkippedStatusNotifier, createTabSaver,
+  createNormalizationHandlers, createSkippedStatusNotifier,
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
+import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import {
+  CONFLICT_ACTION_LABELS,
+  canAutosave,
+  conflictBannerModel,
+  topBanner,
+  type ConflictActionId,
+  type TabSaveQueues,
+} from "./documentSaveCoordinator"
+import {
+  createTransientStatusNotifier,
+  DURABILITY_WARNING,
+  saveStatusLabel,
+  tabHasConflict,
+} from "./documentSaveRunner"
+import {
+  initialSaveState,
+  removeTabSaveState,
+  tabSaveState,
+  type SaveStateByTab,
+} from "./documentSaveState"
+import { SaveConflictBanner } from "./SaveConflictBanner"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type ThemeName } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
-import { defaultServices, errorMessage, wordCount, type DesktopServices } from "./desktopServices"
+import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type DesktopServices } from "./desktopServices"
 import { StatusBar } from "./StatusBar"
 import { TabBar } from "./TabBar"
 import { FileTree } from "./FileTree"
@@ -67,9 +88,19 @@ export default function App({
   const [doc, setDoc] = useState("")
   const docRef = useRef("")
   const docsRef = useRef(new Map<number, string>([[session.id, ""]]))
-  const lastDiskRef = useRef(new Map<string, string>())
   const openRequestRef = useRef(0)
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const tabSaveQueuesRef = useRef<TabSaveQueues>(new Map())
+  const operationSeqRef = useRef(0)
+  const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
+  const [saveStateByTab, setSaveStateByTab] = useState<SaveStateByTab>(saveStateRef.current)
+  const [conflictFocusToken, setConflictFocusToken] = useState(0)
+  const [transientStatus, setTransientStatus] = useState<string | null>(null)
+  const transientStatusTimerRef = useRef<number | null>(null)
+  const showTransientStatus = createTransientStatusNotifier(
+    setTransientStatus,
+    transientStatusTimerRef,
+    id => { transientStatusTimerRef.current = id },
+  )
   const openingRef = useRef(false)
   const mountedRef = useRef(false)
   const [theme, setTheme] = useState<ThemeName>("light")
@@ -129,7 +160,16 @@ export default function App({
     void services.setRecentMenu?.([])
   }
 
-  const saveFile = createTabSaver({
+  function commitSaveState(next: SaveStateByTab) {
+    if (next === saveStateRef.current) return
+    saveStateRef.current = next
+    setSaveStateByTab(next)
+  }
+
+  const { saveFile, pollFileTabs } = createDocumentSaveAppBridge({
+    services,
+    tabSaveQueues: tabSaveQueuesRef.current,
+    operationSeq: operationSeqRef,
     isOpening: () => openingRef.current,
     getTab: tabById,
     getView: tabId => viewsRef.current.get(tabId),
@@ -137,23 +177,16 @@ export default function App({
     getNormalization: () => normalizationRef.current,
     setNormalization: commitNormalization,
     getWorkspace: () => workspaceRef.current,
+    setWorkspace: commitWorkspace,
     getViews: () => viewsRef.current,
-    pickSavePath: () => services.pickSavePath(),
-    writeFile: (path, contents) => services.writeFile(path, contents),
-    readDocumentVersion: path => services.readDocumentVersion(path),
-    allowDocumentAssets: path => services.allowDocumentAssets(path),
-    onPersisted: createSessionPersistence({
-      getWorkspace: () => workspaceRef.current,
-      setWorkspace: commitWorkspace,
-      revealFolder, rememberRecent,
-      recordDiskSnapshot: (path, snapshot) => lastDiskRef.current.set(path, snapshot),
-      syncDoc,
-      clearRecovery: key => { void services.clearRecovery?.(key) },
-    }),
-    onSaveFailed: error => {
-      if (mountedRef.current) services.reportError(errorMessage("Save failed", error))
-    },
-    enqueue: createSaveQueueRunner(saveQueueRef),
+    getSaveStates: () => saveStateRef.current,
+    setSaveStates: commitSaveState,
+    revealFolder,
+    rememberRecent,
+    syncDoc,
+    clearRecovery: key => { void services.clearRecovery?.(key) },
+    onDurabilityWarning: () => showTransientStatus(DURABILITY_WARNING),
+    incrementFocusToken: () => setConflictFocusToken(token => token + 1),
   })
 
   const showSkippedMarkersStatus = createSkippedStatusNotifier(
@@ -295,14 +328,21 @@ export default function App({
 
   useEffect(() => {
     if (!autosaveMs || !activeFilePath || !dirty) return
-    if (!canAutosaveTab(session.id, normalizationByTab)) return
+    const saveState = tabSaveState(saveStateRef.current, session.id)
+    if (!canAutosave({
+      tabId: session.id,
+      dirty,
+      hasPath: true,
+      normalization: normalizationByTab,
+      saveState,
+    })) return
     const tabId = session.id
     const timer = window.setTimeout(
       () => { void saveFileRef.current(tabId, "autosave") },
       autosaveMs,
     )
     return () => window.clearTimeout(timer)
-  }, [doc, activeFilePath, dirty, autosaveMs, session.id, activePendingId])
+  }, [doc, activeFilePath, dirty, autosaveMs, session.id, activePendingId, saveStateByTab])
 
   useEffect(() => {
     if (!workspace.folder || !services.listDir) return
@@ -326,11 +366,10 @@ export default function App({
   }, [watchMs, workspace.folder, services])
 
   useEffect(() => {
-    if (!watchMs || !activeFilePath) return
-    const path = activeFilePath
-    const timer = window.setInterval(() => { void checkExternalRef.current(path) }, watchMs)
+    if (!watchMs) return
+    const timer = window.setInterval(() => { void pollFileTabsRef.current() }, watchMs)
     return () => window.clearInterval(timer)
-  }, [activeFilePath, watchMs])
+  }, [watchMs])
 
   useEffect(() => {
     refreshChrome(viewRef.current)
@@ -356,27 +395,39 @@ export default function App({
       rememberRecent(nextPath)
       return
     }
-    const contents = await services.readFile(nextPath)
-    if (request !== undefined && request !== openRequestRef.current) return
-    const versionProbe = await services.readDocumentVersion(nextPath)
-    if (versionProbe.kind !== "existing") {
-      if (mountedRef.current) {
-        services.reportError(errorMessage("Open failed", new Error("Document version is unavailable")))
+    let snapshot
+    try {
+      snapshot = await services.readDocument(nextPath)
+    } catch (error) {
+      const cmd = toDocumentCommandError(error)
+      if (cmd.code === "invalidPath" && mountedRef.current) {
+        reportUserError("That path is not valid.")
+        return
+      }
+      if (cmd.code === "notUtf8" && mountedRef.current) {
+        reportUserError("Only UTF-8 Markdown files are supported.")
+        return
+      }
+      if (request === openRequestRef.current && mountedRef.current) {
+        services.reportError(errorMessage("Open failed", error))
       }
       return
     }
-    const snapshot = {
-      requestedPath: nextPath,
-      contents,
-      version: versionProbe.version,
+    if (request !== undefined && request !== openRequestRef.current) return
+    if (snapshot.kind === "missing") {
+      if (mountedRef.current) {
+        services.reportError(errorMessage("Open failed", new Error("File not found")))
+      }
+      return
     }
+    const { contents } = snapshot
     await services.allowDocumentAssets(nextPath)
-    lastDiskRef.current.set(nextPath, contents)
     revealFolder(nextPath)
     rememberRecent(nextPath)
     if (inNewTab) {
       const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
       docsRef.current.set(tab.id, contents)
+      commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
       commitWorkspace(addTab(workspaceRef.current, tab))
       syncDoc(contents, tab.id)
       void services.clearRecovery?.(recoveryKey(tab))
@@ -388,7 +439,8 @@ export default function App({
 
   async function runOpen(pickPath: () => Promise<string | null>) {
     const request = ++openRequestRef.current
-    await saveQueueRef.current.catch(() => undefined)
+    const activeId = workspaceRef.current.activeId
+    await (tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve()).catch(() => undefined)
     if (request !== openRequestRef.current || !mountedRef.current) return
     openingRef.current = true
     try {
@@ -428,6 +480,7 @@ export default function App({
   function newTab() {
     const tab = createSession(workspaceRef.current.nextId)
     docsRef.current.set(tab.id, "")
+    commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
     commitWorkspace(addTab(workspaceRef.current, tab))
     syncDoc("", tab.id)
   }
@@ -441,6 +494,7 @@ export default function App({
     const closed = closeTab(workspaceRef.current, id)
     if (!closed.tabs.some(item => item.id === id)) {
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
+      commitSaveState(removeTabSaveState(saveStateRef.current, id))
       recoveryWriterRef.current.forget(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
@@ -490,23 +544,6 @@ export default function App({
     }
   }
 
-  async function checkExternal(path: string) {
-    if (openingRef.current || sessionPath(sessionRef.current) !== path) return
-    const disk = await services.readFile(path)
-    if (disk === lastDiskRef.current.get(path)) return
-    const keepMine = sessionDirty(sessionRef.current, docRef.current)
-      && !services.confirmExternalChange?.()
-    lastDiskRef.current.set(path, disk)
-    if (keepMine || sessionPath(sessionRef.current) !== path) return
-    const versionProbe = await services.readDocumentVersion(path)
-    if (versionProbe.kind !== "existing") return
-    resetTabDocument(openSession(sessionRef.current, {
-      requestedPath: path,
-      contents: disk,
-      version: versionProbe.version,
-    }), disk)
-  }
-
   async function exportCurrent(kind: "html" | "pdf" | "png") {
     const view = viewRef.current
     if (!view) return
@@ -553,13 +590,13 @@ export default function App({
 
   const openFileRef = useRef(openFile)
   const saveFileRef = useRef(saveFile)
-  const checkExternalRef = useRef(checkExternal)
+  const pollFileTabsRef = useRef(pollFileTabs)
   const newTabRef = useRef(newTab)
   const openRecentRef = useRef(openRecent)
   const closeActiveRef = useRef(() => requestCloseTab(workspaceRef.current.activeId))
   openFileRef.current = openFile
   saveFileRef.current = saveFile
-  checkExternalRef.current = checkExternal
+  pollFileTabsRef.current = pollFileTabs
   newTabRef.current = newTab
   openRecentRef.current = openRecent
   closeActiveRef.current = () => requestCloseTab(workspaceRef.current.activeId)
@@ -640,6 +677,19 @@ export default function App({
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
     .map(tab => tab.id)
   const activeNormalization = normalizationByTab[workspace.activeId]
+  const activeSaveState = tabSaveState(saveStateByTab, workspace.activeId)
+  const bannerKind = topBanner(
+    activeSaveState,
+    activeNormalization !== undefined,
+  )
+  const conflictModel = conflictBannerModel(activeSaveState)
+  const conflictIds = workspace.tabs
+    .filter(tab => tabHasConflict(saveStateByTab[tab.id]))
+    .map(tab => tab.id)
+
+  function onConflictAction(_action: ConflictActionId) {
+    /* Task 13 wires conflict handlers */
+  }
 
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
@@ -649,26 +699,42 @@ export default function App({
         words={wordCount(doc)}
         cursor={cursor}
         mode={mode}
-        normalizationReviewRequired={activeNormalization !== undefined}
-        saveStatus="idle"
+        normalizationReviewRequired={bannerKind === "normalization"}
+        saveStatus={saveStatusLabel(activeSaveState)}
       />
       <TabBar
         tabs={workspace.tabs}
         activeId={workspace.activeId}
         dirtyIds={dirtyIds}
-        conflictIds={[]}
+        conflictIds={conflictIds}
         onFocus={activateTab}
         onClose={requestCloseTab}
         onNew={newTab}
       />
-      <NormalizationBanner
-        markerCount={activeNormalization?.notice.markerCount ?? null}
-        busy={(activeNormalization?.action ?? "idle") !== "idle"}
-        onSave={acceptNormalization}
-        onKeepOriginal={keepOriginalNumbers}
-      />
+      {bannerKind === "conflict" && conflictModel ? (
+        <SaveConflictBanner
+          message={conflictModel.message}
+          actions={conflictModel.actions.map(id => ({
+            id,
+            label: CONFLICT_ACTION_LABELS[id],
+          }))}
+          busy={activeSaveState.lifecycle.kind === "saving"}
+          focusToken={conflictFocusToken}
+          onSelect={onConflictAction}
+        />
+      ) : (
+        <NormalizationBanner
+          markerCount={activeNormalization?.notice.markerCount ?? null}
+          busy={(activeNormalization?.action ?? "idle") !== "idle"}
+          onSave={acceptNormalization}
+          onKeepOriginal={keepOriginalNumbers}
+        />
+      )}
       {skippedMarkersMessage ? (
         <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
+      ) : null}
+      {transientStatus ? (
+        <p className="save-transient-status" role="status">{transientStatus}</p>
       ) : null}
       <div className="workspace-body">
         {searchOpen ? (

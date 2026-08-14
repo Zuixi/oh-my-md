@@ -178,7 +178,7 @@ function divergenceBanner(
       }
     case "externalChanged":
       return {
-        message: "The file changed on disk.",
+        message: "The file was updated on disk.",
         actions: ["compare", "reloadDisk", "keepCurrent"],
       }
     case "deletedExternally":
