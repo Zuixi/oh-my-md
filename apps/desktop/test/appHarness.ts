@@ -8,6 +8,11 @@ import {
   type OrderedListNormalizationNotice,
 } from "@omd/engine"
 import App, { type DesktopServices } from "../src/App"
+import type {
+  DiskSnapshot,
+  ExpectedDocumentVersion,
+  SaveDocumentResult,
+} from "../src/desktopServices"
 import type { CreateEditorOptions, EditorDocumentUpdate } from "../src/Editor"
 
 const NO_WATCH_MS = 0
@@ -191,6 +196,16 @@ function harnessServices(): HarnessServices {
   return {
     pickOpenPath: vi.fn(async () => null),
     pickSavePath: vi.fn(async () => null),
+    readDocument: vi.fn(async (_path: string) =>
+      ({ kind: "missing", requestedPath: "" }) satisfies DiskSnapshot),
+    readDocumentVersion: vi.fn(async (_path: string) =>
+      ({ kind: "missing" }) satisfies ExpectedDocumentVersion),
+    saveDocument: vi.fn(async (_path: string, _contents: string, _expected: ExpectedDocumentVersion) =>
+      ({
+        status: "saved",
+        version: { resolvedPath: "", fingerprint: "" },
+        durability: "durable",
+      }) satisfies SaveDocumentResult),
     readFile: vi.fn(async () => ""),
     writeFile: vi.fn(async () => undefined),
     allowDocumentAssets: vi.fn(async () => undefined),
