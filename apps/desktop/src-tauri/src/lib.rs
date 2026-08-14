@@ -125,13 +125,13 @@ fn write_image(path: String, base64: String, document_path: String) -> Result<()
 }
 
 #[tauri::command]
-fn list_dir(path: String) -> Result<Vec<workspace::DirEntry>, String> {
-    workspace::list_dir(path)
+async fn list_dir(path: String) -> Result<Vec<workspace::DirEntry>, String> {
+    workspace::list_dir(path).await
 }
 
 #[tauri::command]
-fn search_markdown(root: String, query: String) -> Result<Vec<workspace::SearchHit>, String> {
-    workspace::search_markdown(root, query)
+async fn search_markdown(root: String, query: String) -> Result<Vec<workspace::SearchHit>, String> {
+    workspace::search_markdown(root, query).await
 }
 
 #[tauri::command]

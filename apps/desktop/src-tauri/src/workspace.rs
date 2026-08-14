@@ -90,8 +90,14 @@ fn reject_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    let root = Path::new(&path);
+pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_sync(&path))
+        .await
+        .map_err(|error| format!("directory listing task failed: {error}"))?
+}
+
+pub(crate) fn list_dir_sync(path: &str) -> Result<Vec<DirEntry>, String> {
+    let root = Path::new(path);
     reject_traversal(root)?;
     if !root.is_dir() {
         return Err("path is not a directory".into());
@@ -118,14 +124,20 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(entries)
 }
 
-pub fn search_markdown(root: String, query: String) -> Result<Vec<SearchHit>, String> {
+pub async fn search_markdown(root: String, query: String) -> Result<Vec<SearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || search_markdown_sync(&root, &query))
+        .await
+        .map_err(|error| format!("markdown search task failed: {error}"))?
+}
+
+pub(crate) fn search_markdown_sync(root: &str, query: &str) -> Result<Vec<SearchHit>, String> {
     if query.is_empty() {
         return Ok(vec![]);
     }
-    let dir = Path::new(&root);
+    let dir = Path::new(root);
     reject_traversal(dir)?;
     let mut hits = Vec::new();
-    walk_markdown(dir, &query, &mut hits)?;
+    walk_markdown(dir, query, &mut hits)?;
     Ok(hits)
 }
 
@@ -178,7 +190,7 @@ mod tests {
 
     #[test]
     fn list_dir_rejects_traversal() {
-        assert!(list_dir("/tmp/../etc".into()).is_err());
+        assert!(list_dir_sync("/tmp/../etc").is_err());
     }
 
     #[test]
@@ -187,7 +199,7 @@ mod tests {
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("note.md"), "hi").unwrap();
         fs::write(root.join("skip.txt"), "no").unwrap();
-        let entries = list_dir(root.to_string_lossy().into_owned()).unwrap();
+        let entries = list_dir_sync(&root.to_string_lossy()).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"sub"));
         assert!(names.contains(&"note.md"));
@@ -200,7 +212,7 @@ mod tests {
         let root = tmp("search");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("a.md"), "alpha\nfind me\n").unwrap();
-        let hits = search_markdown(root.to_string_lossy().into_owned(), "find".into()).unwrap();
+        let hits = search_markdown_sync(&root.to_string_lossy(), "find").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].line, 2);
         fs::remove_dir_all(root).ok();
