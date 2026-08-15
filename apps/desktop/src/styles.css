@@ -291,11 +291,35 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .topbar-tabs::-webkit-scrollbar {
   display: none;
 }
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.topbar-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--omd-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.topbar-action-btn:hover {
+  background: var(--omd-border);
+  color: var(--omd-fg);
+}
 .topbar-breadcrumb {
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 0 8px;
+  padding: 0 4px;
   font-size: 11px;
   color: var(--omd-muted);
   flex-shrink: 0;

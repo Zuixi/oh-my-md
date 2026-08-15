@@ -35,6 +35,8 @@ fn app_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> 
     SubmenuBuilder::new(app, "oh-my-md")
         .item(&PredefinedMenuItem::about(app, None, None)?)
         .separator()
+        .item(&item(app, "preferences", "Settings…", Some("CmdOrCtrl+,"))?)
+        .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
         .separator()
         .item(&PredefinedMenuItem::hide(app, None)?)

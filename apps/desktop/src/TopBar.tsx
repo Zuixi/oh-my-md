@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, PanelLeft, Plus, X } from "lucide-react"
+import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
 
 export function TopBar(props: {
@@ -14,6 +14,7 @@ export function TopBar(props: {
   onFocusTab: (id: number) => void
   onCloseTab: (id: number) => void
   onNewTab: () => void
+  onOpenSettings?: () => void
 }) {
   const workspaceName = props.workspace
     ? props.workspace.replace(/\\/g, "/").split("/").pop() || "Workspace"
@@ -93,17 +94,30 @@ export function TopBar(props: {
           <Plus size={14} aria-hidden="true" />
         </button>
       </div>
-      {breadcrumb.length > 0 && workspaceName ? (
-        <div className="topbar-breadcrumb" data-tauri-drag-region="">
-          <span className="topbar-workspace">{workspaceName}</span>
-          {breadcrumb.map((segment, i) => (
-            <span key={i} className="topbar-segment">
-              <ChevronRight size={11} className="topbar-separator" aria-hidden="true" />
-              <span className="topbar-dir">{segment}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <div className="topbar-actions" data-tauri-drag-region="">
+        {breadcrumb.length > 0 && workspaceName ? (
+          <div className="topbar-breadcrumb">
+            <span className="topbar-workspace">{workspaceName}</span>
+            {breadcrumb.map((segment, i) => (
+              <span key={i} className="topbar-segment">
+                <ChevronRight size={11} className="topbar-separator" aria-hidden="true" />
+                <span className="topbar-dir">{segment}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {props.onOpenSettings ? (
+          <button
+            type="button"
+            className="topbar-action-btn"
+            onClick={props.onOpenSettings}
+            aria-label="Preferences"
+            title="Preferences (⌘,)"
+          >
+            <Settings size={15} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </header>
   )
 }

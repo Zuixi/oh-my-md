@@ -1013,6 +1013,7 @@ export default function App({
         onFocusTab={activateTab}
         onCloseTab={requestCloseTab}
         onNewTab={newTab}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="workspace-body">
         <aside
