@@ -227,6 +227,19 @@ describe("image paste pipeline", () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
+  it("does not open the picker for an untitled document", async () => {
+    const { view, dispatch } = makeView()
+    const options = makeOptions({ getDocPath: () => null })
+    const pick = vi.fn(async () => new File(["png"], "picked.png", { type: "image/png" }))
+
+    await pickAndInsertImage(view, options, pick)
+
+    expect(pick).not.toHaveBeenCalled()
+    expect(options.onError).toHaveBeenCalledWith("Save the file before inserting an image")
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
   it("picks an image file and inserts it at the current selection", async () => {
     const { view, dispatch } = makeView()
     const options = makeOptions()
