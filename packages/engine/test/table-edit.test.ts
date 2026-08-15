@@ -74,4 +74,32 @@ describe("table source transforms", () => {
     expect(deleteTableRow("| no sep", 1)).toBeNull()
     expect(deleteTableColumn("| no sep", 0)).toBeNull()
   })
+
+  it("keeps a trailing newline so the next block is not glued on", () => {
+    const withNl = `${src}\n`
+    expect(replaceTableCell(withNl, 1, 1, "x")).toBe(`| A | B |
+| --- | ---: |
+| 1 | x |
+`)
+    expect(insertTableRow(withNl, 1)).toBe(`| A | B |
+| --- | ---: |
+| 1 | 2 |
+|  |  |
+`)
+  })
+
+  it("returns null when header, separator, or row column counts differ", () => {
+    const raggedSep = `| A | B |
+| --- |
+| 1 | 2 |`
+    const raggedRow = `| A | B |
+| --- | --- |
+| 1 |`
+    expect(replaceTableCell(raggedSep, 1, 1, "x")).toBeNull()
+    expect(insertTableRow(raggedSep, 1)).toBeNull()
+    expect(insertTableColumn(raggedSep, 0)).toBeNull()
+    expect(deleteTableRow(raggedSep, 1)).toBeNull()
+    expect(deleteTableColumn(raggedSep, 0)).toBeNull()
+    expect(replaceTableCell(raggedRow, 1, 0, "x")).toBeNull()
+  })
 })
