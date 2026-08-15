@@ -1,9 +1,12 @@
 import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
-import { Compartment, EditorState } from "@codemirror/state"
+import { Compartment, EditorState, Facet } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
+  classifyLink,
   collectOutline,
   editorExtensions,
+  footnoteAt,
+  footnoteDefinitionPosition,
   headingPositionForAnchor,
   getPendingOrderedListNormalization,
   isLivePreview,
@@ -36,6 +39,7 @@ export interface CreateEditorOptions {
   getDocumentId: () => number
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
+  onOpenMarkdownHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
 }
@@ -54,21 +58,56 @@ export function makeImageResolver(
   }
 }
 
+const markdownHrefHandler = Facet.define<(href: string) => void>()
+const lastFootnoteJump = new WeakMap<EditorView, { id: string; from: number }>()
+
+function activateFootnote(view: EditorView, pos: number): boolean {
+  const fn = footnoteAt(view.state, pos)
+  if (!fn) return false
+  if (fn.kind === "reference") {
+    const dest = footnoteDefinitionPosition(view.state, fn.id)
+    if (dest === null) return true
+    lastFootnoteJump.set(view, { id: fn.id, from: fn.from })
+    view.dispatch({ selection: { anchor: dest }, scrollIntoView: true })
+    return true
+  }
+  const last = lastFootnoteJump.get(view)
+  if (last && last.id.toLowerCase() === fn.id.toLowerCase()) {
+    view.dispatch({ selection: { anchor: last.from }, scrollIntoView: true })
+    lastFootnoteJump.delete(view)
+  }
+  return true
+}
+
 export function activateLink(view: EditorView, event: MouseEvent): boolean {
   if (event.button !== 0) return false
-  const target = event.target instanceof Element ? event.target.closest(".omd-link") : null
-  if (!target) return false
+  const el = event.target instanceof Element ? event.target : null
+  const onFootnote = el?.closest(".omd-footnote, .omd-footnote-def")
+  const onLink = el?.closest(".omd-link")
+  if (!onFootnote && !onLink) return false
   const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
   if (pos === null) return false
+
+  if (onFootnote && activateFootnote(view, pos)) {
+    event.preventDefault()
+    return true
+  }
+  if (!onLink) return false
+
   const targetLink = linkAt(view.state, pos)
   if (!targetLink) return false
 
   event.preventDefault()
   if (targetLink.href.startsWith("#")) {
-    const target = headingPositionForAnchor(view.state, targetLink.href)
-    if (target !== null) view.dispatch({ selection: { anchor: target }, scrollIntoView: true })
-  } else {
-    window.open(targetLink.href, "_blank", "noopener,noreferrer")
+    const heading = headingPositionForAnchor(view.state, targetLink.href)
+    if (heading !== null) view.dispatch({ selection: { anchor: heading }, scrollIntoView: true })
+    return true
+  }
+  const classified = classifyLink(targetLink.href)
+  if (classified.kind === "external") {
+    window.open(classified.href, "_blank", "noopener,noreferrer")
+  } else if (classified.kind === "markdown") {
+    view.state.facet(markdownHrefHandler)[0]?.(classified.href)
   }
   return true
 }
@@ -119,6 +158,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
       }),
+      options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       typewriterExtension(),
       imagePasteHandler({
         getDocPath: options.getDocPath,

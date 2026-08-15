@@ -148,6 +148,65 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("opens local markdown hrefs through the host callback", () => {
+    const onOpenMarkdownHref = vi.fn()
+    const open = vi.spyOn(window, "open").mockReturnValue(null)
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn(), "[n](a.md)"), onOpenMarkdownHref },
+    )
+    const link = view.dom.querySelector(".omd-link")
+    expect(link).not.toBeNull()
+    vi.spyOn(view, "posAtCoords").mockReturnValue(1)
+    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    Object.defineProperty(event, "target", { value: link })
+
+    expect(activateLink(view, event)).toBe(true)
+    expect(onOpenMarkdownHref).toHaveBeenCalledWith("a.md")
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
+    view.destroy()
+  })
+
+  it("opens https links with window.open", () => {
+    const onOpenMarkdownHref = vi.fn()
+    const open = vi.spyOn(window, "open").mockReturnValue(null)
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn(), "[n](https://example.com)"), onOpenMarkdownHref },
+    )
+    const link = view.dom.querySelector(".omd-link")
+    expect(link).not.toBeNull()
+    vi.spyOn(view, "posAtCoords").mockReturnValue(1)
+    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    Object.defineProperty(event, "target", { value: link })
+
+    expect(activateLink(view, event)).toBe(true)
+    expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer")
+    expect(onOpenMarkdownHref).not.toHaveBeenCalled()
+    open.mockRestore()
+    view.destroy()
+  })
+
+  it("jumps from a footnote reference to its definition and back", () => {
+    const doc = "Hi[^a]\n\n[^a]: note"
+    const view = createEditor(document.createElement("div"), editorOptions(vi.fn(), doc))
+    const mark = view.dom.querySelector(".omd-footnote") ?? document.createElement("span")
+    mark.classList.add("omd-footnote")
+    const clickAt = (pos: number) => {
+      vi.spyOn(view, "posAtCoords").mockReturnValue(pos)
+      const event = new MouseEvent("click", { bubbles: true, button: 0 })
+      Object.defineProperty(event, "target", { value: mark })
+      return activateLink(view, event)
+    }
+
+    expect(clickAt(doc.indexOf("[^a]"))).toBe(true)
+    expect(view.state.selection.main.head).toBe(doc.indexOf("[^a]:"))
+    expect(clickAt(doc.indexOf("[^a]:"))).toBe(true)
+    expect(view.state.selection.main.head).toBe(doc.indexOf("[^a]"))
+    view.destroy()
+  })
+
   it("binds markdown formatting shortcuts from the engine keymap", () => {
     const view = createEditor(
       document.createElement("div"),
