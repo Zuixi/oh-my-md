@@ -73,6 +73,41 @@ pub fn clear_recovery(key: String) -> Result<(), String> {
     Ok(())
 }
 
+pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("OMD_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+    std::env::temp_dir().join("oh-my-md-config")
+}
+
+pub fn get_settings() -> Result<String, String> {
+    let path = config_dir().join("settings.json");
+    if !path.exists() {
+        return Ok("{}".into());
+    }
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+pub fn save_settings(contents: String) -> Result<(), String> {
+    let dir = config_dir();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::atomic_write(&dir.join("settings.json"), contents.as_bytes())
+}
+
+pub fn get_session_state() -> Result<String, String> {
+    let path = config_dir().join("session.json");
+    if !path.exists() {
+        return Ok("{}".into());
+    }
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+pub fn save_session_state(contents: String) -> Result<(), String> {
+    let dir = config_dir();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::atomic_write(&dir.join("session.json"), contents.as_bytes())
+}
+
 fn valid_key(key: &str) -> Result<&str, String> {
     if key.is_empty() || key.contains("..") || key.contains('/') || key.contains('\\') {
         return Err("recovery key is invalid".into());
@@ -230,6 +265,25 @@ mod tests {
         clear_recovery("untitled_1".into()).unwrap();
         assert!(list_recoveries().unwrap().is_empty());
         std::env::remove_var("OMD_RECOVERY_DIR");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn settings_and_session_roundtrip() {
+        let dir = tmp("config");
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("OMD_CONFIG_DIR", &dir);
+
+        assert_eq!(get_settings().unwrap(), "{}");
+        assert_eq!(get_session_state().unwrap(), "{}");
+
+        save_settings(r#"{"fontSize":18}"#.into()).unwrap();
+        assert_eq!(get_settings().unwrap(), r#"{"fontSize":18}"#);
+
+        save_session_state(r#"{"folder":"/test"}"#.into()).unwrap();
+        assert_eq!(get_session_state().unwrap(), r#"{"folder":"/test"}"#);
+
+        std::env::remove_var("OMD_CONFIG_DIR");
         fs::remove_dir_all(dir).ok();
     }
 }

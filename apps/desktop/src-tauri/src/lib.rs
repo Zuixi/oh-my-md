@@ -155,6 +155,26 @@ fn clear_recovery(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_settings() -> Result<String, String> {
+    workspace::get_settings()
+}
+
+#[tauri::command]
+fn save_settings(contents: String) -> Result<(), String> {
+    workspace::save_settings(contents)
+}
+
+#[tauri::command]
+fn get_session_state() -> Result<String, String> {
+    workspace::get_session_state()
+}
+
+#[tauri::command]
+fn save_session_state(contents: String) -> Result<(), String> {
+    workspace::save_session_state(contents)
+}
+
+#[tauri::command]
 fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri::Manager;
 
@@ -330,6 +350,10 @@ pub fn run() {
             list_recoveries,
             read_recovery,
             clear_recovery,
+            get_settings,
+            save_settings,
+            get_session_state,
+            save_session_state,
             allow_workspace_dir,
             set_recent_files,
             export::export_preview
