@@ -1,6 +1,9 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+
+static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
 
@@ -115,6 +118,31 @@ fn valid_key(key: &str) -> Result<&str, String> {
     Ok(key)
 }
 
+pub fn authorize_workspace_root(path: &Path) -> Result<PathBuf, String> {
+    let root = canonical_directory(path)?;
+    let mut roots = AUTHORIZED_ROOTS
+        .lock()
+        .map_err(|_| "workspace authorization lock is poisoned".to_string())?;
+    if !roots.iter().any(|existing| existing == &root) {
+        roots.push(root.clone());
+    }
+    Ok(root)
+}
+
+fn assert_inside_authorized(path: &Path) -> Result<(), String> {
+    let roots = AUTHORIZED_ROOTS
+        .lock()
+        .map_err(|_| "workspace authorization lock is poisoned".to_string())?;
+    if roots
+        .iter()
+        .any(|root| path == root || path.starts_with(root))
+    {
+        Ok(())
+    } else {
+        Err("path is outside the authorized workspace".into())
+    }
+}
+
 fn reject_traversal(path: &Path) -> Result<(), String> {
     if path
         .components()
@@ -165,6 +193,7 @@ pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
         return Err("markdown files must use a .md extension".into());
     }
     let parent = canonical_directory(Path::new(&dir))?;
+    assert_inside_authorized(&parent)?;
     let target = parent.join(name);
     if target.exists() {
         return Err("path already exists".into());
@@ -180,6 +209,7 @@ pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
 pub fn create_dir(dir: String, name: String) -> Result<String, String> {
     let name = validate_single_segment(&name)?;
     let parent = canonical_directory(Path::new(&dir))?;
+    assert_inside_authorized(&parent)?;
     let target = parent.join(name);
     if target.exists() {
         return Err("path already exists".into());
@@ -191,6 +221,7 @@ pub fn create_dir(dir: String, name: String) -> Result<String, String> {
 pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
     let to_name = validate_single_segment(&to_name)?;
     let (parent, current_name) = canonical_parent_and_name(Path::new(&from))?;
+    assert_inside_authorized(&parent)?;
     let source = parent.join(current_name);
     let source_metadata = fs::metadata(&source).map_err(|e| e.to_string())?;
     if source_metadata.is_file()
@@ -215,6 +246,7 @@ pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
 
 pub fn delete_path(path: String) -> Result<(), String> {
     let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    assert_inside_authorized(&parent)?;
     let target = parent.join(name);
     let metadata = fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
     if metadata.file_type().is_dir() {
@@ -325,6 +357,7 @@ mod tests {
     fn reset_dir(path: &Path) {
         fs::remove_dir_all(path).ok();
         fs::create_dir_all(path).unwrap();
+        authorize_workspace_root(path).unwrap();
     }
 
     fn path_string(path: &Path) -> String {
@@ -443,6 +476,23 @@ mod tests {
         fs::create_dir_all(&non_empty_dir).unwrap();
         fs::write(non_empty_dir.join("draft.md"), "hello").unwrap();
         assert!(delete_path(path_string(&non_empty_dir)).is_err());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn mutations_reject_paths_outside_authorized_workspace() {
+        let root = tmp("unauthorized");
+        fs::remove_dir_all(&root).ok();
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(create_markdown(path_string(&root), "draft.md".into()).is_err());
+        assert!(create_dir(path_string(&root), "notes".into()).is_err());
+        let file = root.join("draft.md");
+        fs::write(&file, "hello").unwrap();
+        assert!(rename_path(path_string(&file), "other.md".into()).is_err());
+        assert!(delete_path(path_string(&file)).is_err());
+        assert!(file.exists());
 
         fs::remove_dir_all(root).ok();
     }
