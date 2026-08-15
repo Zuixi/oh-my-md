@@ -153,4 +153,28 @@ describe("TopBar", () => {
     )
     expect(screen.queryByRole("button", { name: /show sidebar/i })).toBeNull()
   })
+
+  it("renders preferences button and triggers onOpenSettings when clicked", () => {
+    const onOpenSettings = vi.fn()
+    render(
+      <TopBar
+        workspace="/notes"
+        filePath="/notes/alpha.md"
+        dirty={false}
+        tabs={sampleTabs}
+        activeId={1}
+        dirtyIds={[]}
+        conflictIds={[]}
+        onOpenSettings={onOpenSettings}
+        onFocusTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onNewTab={vi.fn()}
+      />,
+    )
+
+    const settingsBtn = screen.getByRole("button", { name: /preferences/i })
+    expect(settingsBtn).toBeTruthy()
+    fireEvent.click(settingsBtn)
+    expect(onOpenSettings).toHaveBeenCalledOnce()
+  })
 })
