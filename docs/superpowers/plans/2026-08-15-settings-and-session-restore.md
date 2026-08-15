@@ -33,19 +33,19 @@
   - `get_session_state() -> Result<String, String>`
   - `save_session_state(contents: String) -> Result<(), String>`
 
-- [ ] **Step 1: Write failing Rust tests in `apps/desktop/src-tauri/src/workspace.rs`**
+- [x] **Step 1: Write failing Rust tests in `apps/desktop/src-tauri/src/workspace.rs`**
   Add unit tests for `get_settings`, `save_settings`, `get_session_state`, and `save_session_state` verifying roundtrip and empty default handling.
 
-- [ ] **Step 2: Run `cargo test` to verify failure**
+- [x] **Step 2: Run `cargo test` to verify failure**
 
-- [ ] **Step 3: Implement config directory and settings/session functions in `workspace.rs`**
+- [x] **Step 3: Implement config directory and settings/session functions in `workspace.rs`**
   Implement `config_dir()`, `read_config_file(name)`, and `write_config_file(name, contents)` using atomic write.
 
-- [ ] **Step 4: Register commands in `apps/desktop/src-tauri/src/lib.rs`**
+- [x] **Step 4: Register commands in `apps/desktop/src-tauri/src/lib.rs`**
 
-- [ ] **Step 5: Run `cargo test` to verify pass**
+- [x] **Step 5: Run `cargo test` to verify pass**
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
   `feat(tauri): add settings and session state persistence commands`
 
 ---
@@ -64,18 +64,18 @@
 - Produces: `UserSettings`, `DEFAULT_SETTINGS`, `parseSettings`, `sanitizeSettings`, `extractSessionState`, `SavedSessionState`.
 - Extends: `DesktopServices` with `getSettings`, `saveSettings`, `getSessionState`, `saveSessionState`.
 
-- [ ] **Step 1: Write tests for `settings.test.ts` and `sessionRestore.test.ts`**
+- [x] **Step 1: Write tests for `settings.test.ts` and `sessionRestore.test.ts`**
   Validate default values, boundary clamping (e.g. fontSize 12..32, lineHeight 1.2..2.4), and session extraction from workspace.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
   `pnpm --filter @omd/desktop test test/settings.test.ts test/sessionRestore.test.ts`
 
-- [ ] **Step 3: Implement `settings.ts`, `sessionRestore.ts`, and update `desktopServices.ts` & `appHarness.ts`**
+- [x] **Step 3: Implement `settings.ts`, `sessionRestore.ts`, and update `desktopServices.ts` & `appHarness.ts`**
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
   `pnpm --filter @omd/desktop test`
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
   `feat(desktop): add settings and session restore models and services`
 
 ---
@@ -90,18 +90,18 @@
 **Interfaces:**
 - Produces: `<SettingsModal isOpen={boolean} settings={UserSettings} onSave={(settings: UserSettings) => void} onClose={() => void} />`
 
-- [ ] **Step 1: Write tests for `SettingsModal.test.tsx`**
+- [x] **Step 1: Write tests for `SettingsModal.test.tsx`**
   Test rendering, changing theme, font size, line height, tab size, default mode, spellcheck, saving, and pressing Escape / clicking backdrop to close.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
   `pnpm --filter @omd/desktop test test/SettingsModal.test.tsx`
 
-- [ ] **Step 3: Implement `SettingsModal.tsx` and modal styles in `styles.css`**
+- [x] **Step 3: Implement `SettingsModal.tsx` and modal styles in `styles.css`**
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
   `pnpm --filter @omd/desktop test test/SettingsModal.test.tsx`
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
   `feat(desktop): add SettingsModal component and styles`
 
 ---
@@ -118,16 +118,16 @@
 - Wires `⌘,` keydown handler, Command Palette "Settings...", menu command "open-settings".
 - Dynamically applies `--omd-font-size`, `--omd-line-height`, `--omd-font-family` to root element.
 
-- [ ] **Step 1: Write test in `App.test.tsx` for opening Settings on ⌘, and saving settings**
+- [x] **Step 1: Write test in `App.test.tsx` for opening Settings on ⌘, and saving settings**
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
-- [ ] **Step 3: Implement settings loading, CSS variable application, and modal toggling in `App.tsx`**
+- [x] **Step 3: Implement settings loading, CSS variable application, and modal toggling in `App.tsx`**
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
   `pnpm --filter @omd/desktop test`
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
   `feat(desktop): integrate user settings into App and command palette`
 
 ---
@@ -142,13 +142,13 @@
 - On startup: loads `getSessionState()`, reopens folder and tabs.
 - On workspace change: debounced `saveSessionState(state)` to persist active session.
 
-- [ ] **Step 1: Write test in `App.test.tsx` for session state save and startup restore**
+- [x] **Step 1: Write test in `App.test.tsx` for session state save and startup restore**
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
-- [ ] **Step 3: Implement startup session restore and debounced saving in `App.tsx`**
+- [x] **Step 3: Implement startup session restore and debounced saving in `App.tsx`**
 
-- [ ] **Step 4: Run all verification tests (`pnpm verify`)**
+- [x] **Step 4: Run all verification tests (`pnpm verify`)**
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
   `feat(desktop): integrate workspace session restore on app startup`
