@@ -1,5 +1,5 @@
 import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
-import { EditorState } from "@codemirror/state"
+import { Compartment, EditorState } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
   collectOutline,
@@ -37,6 +37,7 @@ export interface CreateEditorOptions {
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
   tabSize?: number
+  spellcheck?: boolean
 }
 
 export function makeImageResolver(
@@ -93,11 +94,22 @@ function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): v
   })
 }
 
+const spellcheckCompartment = new Compartment()
+
+function spellcheckAttr(on: boolean) {
+  return EditorView.contentAttributes.of({ spellcheck: on ? "true" : "false" })
+}
+
+export function setEditorSpellcheck(view: EditorView, on: boolean): void {
+  view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckAttr(on)) })
+}
+
 function createEditorState(options: CreateEditorOptions): EditorState {
   return EditorState.create({
     doc: options.doc,
     extensions: [
       EditorView.lineWrapping,
+      spellcheckCompartment.of(spellcheckAttr(options.spellcheck === true)),
       options.tabSize ? EditorState.tabSize.of(options.tabSize) : [],
       history(),
       drawSelection(),

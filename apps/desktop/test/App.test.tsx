@@ -522,7 +522,7 @@ describe("App document session", () => {
     expect(harness.services.reportError).toHaveBeenCalledOnce()
     expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
     expect(logged).toHaveBeenCalledTimes(2)
-    expect(screen.getByText("3 words")).toBeTruthy()
+    expect(screen.getByText("3 words · 13 chars")).toBeTruthy()
     expectPathShown("unnamed", { dirty: true })
     logged.mockRestore()
   })
@@ -939,6 +939,14 @@ describe("App product shell", () => {
     await waitFor(() => expect(screen.getByText(/hit.md:2/)).toBeTruthy())
     fireEvent.click(screen.getByText(/hit.md:2/))
     await waitFor(() => expect(harness.services.readDocument).toHaveBeenCalledWith("/notes/hit.md"))
+  })
+
+  it("opens document find with meta+f and does not open folder search", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "f", metaKey: true })
+    expect(screen.queryByPlaceholderText("Find in folder…")).toBeNull()
+    expect(screen.getByLabelText("Find")).toBeTruthy()
   })
 
   it("shows files and outline sidebars without a chrome export panel", () => {

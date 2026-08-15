@@ -2,6 +2,7 @@ export type SaveStatus = "idle" | "saving" | "save failed" | "conflict"
 
 export function StatusBar(props: {
   words: number
+  chars: number
   cursor: string
   mode: string
   normalizationReviewRequired: boolean
@@ -15,7 +16,7 @@ export function StatusBar(props: {
       {props.saveStatus !== "idle"
         ? <span className="statusbar-save-status">{props.saveStatus}</span>
         : null}
-      <span>{props.words} words</span>
+      <span>{props.words} words · {props.chars} chars</span>
       <span>{props.cursor}</span>
       <span>{props.mode}</span>
     </div>
