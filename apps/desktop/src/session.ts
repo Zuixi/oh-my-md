@@ -94,6 +94,24 @@ export function markSaved(
   }
 }
 
+export function retargetSessionPath(
+  session: EditorSession,
+  requestedPath: string,
+): EditorSession {
+  if (session.persistence.kind !== "file") return session
+  return {
+    ...session,
+    persistence: {
+      ...session.persistence,
+      requestedPath,
+      version: {
+        ...session.persistence.version,
+        resolvedPath: requestedPath,
+      },
+    },
+  }
+}
+
 export function recoveryKey(session: EditorSession): string {
   return (sessionPath(session) ?? `untitled_${session.id}`).replace(/[/\\: ]/g, "_")
 }

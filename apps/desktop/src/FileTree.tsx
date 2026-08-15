@@ -1,6 +1,7 @@
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState, type MouseEvent } from "react"
 import { ChevronRight, FileText, Folder, FolderOpen, PanelLeftClose, Search } from "lucide-react"
 import { ROW_HEIGHT, visibleRowRange, type VisibleRow } from "./fileTreeState"
+import { parentDir } from "./workspace"
 
 export type { TreeEntry } from "./fileTreeState"
 
@@ -15,6 +16,11 @@ export function FileTree(props: {
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onSearch: () => void
+  onNewFile?: (dir: string) => void
+  onNewFolder?: (dir: string) => void
+  onRename?: (entry: VisibleRow["entry"]) => void
+  onDelete?: (entry: VisibleRow["entry"]) => void
+  onReveal?: (path: string) => void
   onCollapse?: () => void
 }) {
   const title = (props.folder ?? "").replace(/\\/g, "/").split("/").pop() || "Files"
@@ -57,6 +63,11 @@ export function FileTree(props: {
           activePath={props.activePath}
           onOpenFile={props.onOpenFile}
           onToggleDir={props.onToggleDir}
+          onNewFile={props.onNewFile}
+          onNewFolder={props.onNewFolder}
+          onRename={props.onRename}
+          onDelete={props.onDelete}
+          onReveal={props.onReveal}
         />
       )}
     </aside>
@@ -75,7 +86,18 @@ function TreeScroller(props: {
   activePath: string | null
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
+  onNewFile?: (dir: string) => void
+  onNewFolder?: (dir: string) => void
+  onRename?: (entry: VisibleRow["entry"]) => void
+  onDelete?: (entry: VisibleRow["entry"]) => void
+  onReveal?: (path: string) => void
 }) {
+  const [menu, setMenu] = useState<{
+    readonly entry: VisibleRow["entry"]
+    readonly dir: string
+    readonly x: number
+    readonly y: number
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(0)
@@ -87,6 +109,20 @@ function TreeScroller(props: {
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (!menu) return
+    const handleClick = () => setMenu(null)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null)
+    }
+    window.addEventListener("click", handleClick)
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("click", handleClick)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [menu])
 
   // Keep the active file visible. Runs again once rows arrive after an
   // auto-reveal expansion; the per-path guard stops it from fighting the user.
@@ -112,7 +148,10 @@ function TreeScroller(props: {
       className="filetree-tree"
       role="tree"
       aria-label={props.title}
-      onScroll={event => setScrollTop(event.currentTarget.scrollTop)}
+      onScroll={event => {
+        setScrollTop(event.currentTarget.scrollTop)
+        if (menu) setMenu(null)
+      }}
     >
       <div style={{ height: props.rows.length * ROW_HEIGHT, position: "relative" }}>
         {props.rows.slice(start, end).map((row, i) => (
@@ -131,11 +170,101 @@ function TreeScroller(props: {
               active={row.entry.path === props.activePath}
               onOpenFile={props.onOpenFile}
               onToggleDir={props.onToggleDir}
+              onContextMenu={event => {
+                event.preventDefault()
+                const dir = row.entry.is_dir ? row.entry.path : parentDir(row.entry.path)
+                if (!dir) return
+                setMenu({
+                  entry: row.entry,
+                  dir,
+                  x: event.clientX,
+                  y: event.clientY,
+                })
+              }}
             />
           </div>
         ))}
       </div>
+      {menu ? (
+        <div
+          role="menu"
+          aria-label={`${menu.entry.name} actions`}
+          style={{
+            position: "fixed",
+            top: menu.y,
+            left: menu.x,
+            zIndex: 50,
+            display: "grid",
+            gap: 4,
+            minWidth: 160,
+            padding: 6,
+            border: "1px solid var(--omd-border, #d0d7de)",
+            borderRadius: 8,
+            background: "var(--omd-panel-bg, #fff)",
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.16)",
+          }}
+          onClick={event => event.stopPropagation()}
+        >
+          <MenuItem
+            label="New File"
+            onSelect={() => {
+              setMenu(null)
+              props.onNewFile?.(menu.dir)
+            }}
+          />
+          <MenuItem
+            label="New Folder"
+            onSelect={() => {
+              setMenu(null)
+              props.onNewFolder?.(menu.dir)
+            }}
+          />
+          <MenuItem
+            label="Rename"
+            onSelect={() => {
+              setMenu(null)
+              props.onRename?.(menu.entry)
+            }}
+          />
+          <MenuItem
+            label="Delete"
+            onSelect={() => {
+              setMenu(null)
+              props.onDelete?.(menu.entry)
+            }}
+          />
+          <MenuItem
+            label="Reveal in Finder"
+            onSelect={() => {
+              setMenu(null)
+              props.onReveal?.(menu.entry.path)
+            }}
+          />
+        </div>
+      ) : null}
     </div>
+  )
+}
+
+function MenuItem(props: { label: string; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={props.onSelect}
+      style={{
+        border: 0,
+        background: "transparent",
+        borderRadius: 6,
+        padding: "6px 8px",
+        textAlign: "left",
+        font: "inherit",
+        color: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      {props.label}
+    </button>
   )
 }
 
@@ -151,6 +280,7 @@ const TreeRow = memo(function TreeRow(props: {
   active: boolean
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
+  onContextMenu: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
   const { entry, depth, expanded } = props.row
   const className = props.active ? "filetree-item is-active" : "filetree-item"
@@ -161,6 +291,7 @@ const TreeRow = memo(function TreeRow(props: {
       style={{ paddingLeft: ROW_INSET + depth * DEPTH_INDENT }}
       aria-expanded={entry.is_dir ? expanded : undefined}
       onClick={() => entry.is_dir ? props.onToggleDir(entry.path) : props.onOpenFile(entry.path)}
+      onContextMenu={props.onContextMenu}
     >
       <span className="filetree-chevron" aria-hidden="true">
         {entry.is_dir ? <ChevronRight size={ICON_SIZE} className={expanded ? "is-open" : undefined} /> : null}

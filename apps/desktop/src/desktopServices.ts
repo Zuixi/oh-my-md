@@ -87,6 +87,10 @@ export interface DesktopServices {
   readFile: (path: string) => Promise<string>
   writeFile: (path: string, contents: string) => Promise<void>
   revealInFinder?: (path: string) => Promise<void>
+  createMarkdown?: (dir: string, name: string) => Promise<string>
+  createDir?: (dir: string, name: string) => Promise<string>
+  renamePath?: (from: string, toName: string) => Promise<string>
+  deletePath?: (path: string) => Promise<void>
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
@@ -100,6 +104,7 @@ export interface DesktopServices {
   clearRecovery?: (key: string) => Promise<void>
   confirmDiscard: () => boolean
   confirmClose?: () => boolean
+  confirmDelete?: (path: string) => boolean
   confirmRestore?: (label: string) => boolean
   confirmExternalChange?: () => boolean
   getSettings?: () => Promise<UserSettings>
@@ -172,6 +177,12 @@ export const defaultServices: DesktopServices = {
     await invoke("write_file", { path, contents })
   },
   revealInFinder: path => invoke("plugin:opener|reveal_item_in_dir", { path }),
+  createMarkdown: (dir, name) => invoke<string>("create_markdown", { dir, name }),
+  createDir: (dir, name) => invoke<string>("create_dir", { dir, name }),
+  renamePath: (from, toName) => invoke<string>("rename_path", { from, toName }),
+  deletePath: async path => {
+    await invoke("delete_path", { path })
+  },
   exportPreview: async (html, path, format) => {
     await invoke("export_preview", { html, path, format })
   },
@@ -203,6 +214,11 @@ export const defaultServices: DesktopServices = {
   confirmDiscard: () =>
     window.confirm("Discard unsaved changes and open another document?"),
   confirmClose: () => window.confirm("Close this tab and discard unsaved changes?"),
+  confirmDelete: (path) => {
+    const normalized = path.replace(/\\/g, "/")
+    const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
+    return window.confirm(`Delete ${name}? This cannot be undone.`)
+  },
   confirmRestore: (label) => window.confirm(`Restore unsaved draft ${label}?`),
   confirmExternalChange: () => window.confirm("File changed on disk. Reload?"),
   getSettings: async () => {
