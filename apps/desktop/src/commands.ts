@@ -30,6 +30,8 @@ const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   "export-pdf": "export-pdf",
   "export-image": "export-image",
   "clear-recents": "clear-recents",
+  preferences: "preferences",
+  settings: "preferences",
 }
 
 export function runMenuCommand(

@@ -36,6 +36,7 @@ export interface CreateEditorOptions {
   getDocumentId: () => number
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
+  tabSize?: number
 }
 
 export function makeImageResolver(
@@ -97,6 +98,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
     doc: options.doc,
     extensions: [
       EditorView.lineWrapping,
+      options.tabSize ? EditorState.tabSize.of(options.tabSize) : [],
       history(),
       drawSelection(),
       dropCursor(),
