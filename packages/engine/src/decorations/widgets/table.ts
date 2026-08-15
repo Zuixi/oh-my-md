@@ -227,6 +227,8 @@ export class TableWidget extends BlockWidget {
   private startEdit(el: HTMLElement, row: number, col: number) {
     if (this.editing?.el === el) return
     this.cancelEdit()
+    this.row = row
+    this.col = col
     const input = document.createElement("input")
     input.type = "text"
     input.className = "omd-table-edit"
@@ -234,7 +236,6 @@ export class TableWidget extends BlockWidget {
     el.replaceChildren(input)
     this.editing = { el, row, col }
     input.addEventListener("mousedown", e => {
-      e.preventDefault()
       e.stopPropagation()
     })
     input.addEventListener("keydown", e => {
