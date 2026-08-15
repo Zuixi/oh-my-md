@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
+import { createFileSession, recoveryKey } from "../src/session"
 import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
@@ -202,5 +203,56 @@ describe("FileTree sidebar menu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }))
 
     await waitFor(() => expect(harness.services.revealInFinder).toHaveBeenCalledWith("/notes/doc.md"))
+  })
+
+  it("creates a file in the workspace root from the empty tree", async () => {
+    const harness = makeAppHarness()
+    let entries: Array<{ name: string; path: string; is_dir: boolean }> = []
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
+    vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
+      entries = [{ name, path: `${dir}/${name}`, is_dir: false }]
+      return `${dir}/${name}`
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    fireEvent.contextMenu(screen.getByRole("tree", { name: "notes" }))
+    await waitFor(() => expect(screen.getByRole("menu", { name: "Folder actions" })).toBeTruthy())
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull()
+    fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+
+    await waitFor(() => {
+      expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled.md")
+      expect(screen.getByText("untitled.md")).toBeTruthy()
+    })
+  })
+
+  it("clears the old recovery draft after renaming a dirty open file", async () => {
+    const harness = makeAppHarness()
+    let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.spyOn(window, "prompt").mockReturnValue("renamed")
+    vi.mocked(harness.services.renamePath).mockImplementation(async (_from, toName) => {
+      entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
+      return `/notes/${toName}`
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    harness.editorForTab(1).emit({ doc: "dirty", docChanged: true, pendingNormalization: null })
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+
+    await waitFor(() => {
+      expect(harness.services.clearRecovery).toHaveBeenCalledWith(
+        recoveryKey(createFileSession(1, "/notes/doc.md", "saved", {
+          resolvedPath: "/notes/doc.md",
+          fingerprint: "0",
+        })),
+      )
+      expectPathShown("/notes/renamed.md", { dirty: true })
+    })
   })
 })

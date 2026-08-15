@@ -399,7 +399,8 @@ export default function App({
   }
 
   function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
-    const nextTabs = workspaceRef.current.tabs.map(tab => {
+    const previousTabs = workspaceRef.current.tabs
+    const nextTabs = previousTabs.map(tab => {
       const path = sessionPath(tab)
       if (!path) return tab
       if (path === from) return retargetSessionPath(tab, to)
@@ -408,7 +409,15 @@ export default function App({
       }
       return tab
     })
-    if (nextTabs.every((tab, index) => tab === workspaceRef.current.tabs[index])) return
+    if (nextTabs.every((tab, index) => tab === previousTabs[index])) return
+    previousTabs.forEach((tab, index) => {
+      const next = nextTabs[index]
+      if (tab === next) return
+      const oldKey = recoveryKey(tab)
+      if (oldKey !== recoveryKey(next)) void services.clearRecovery?.(oldKey)
+      const contents = docsRef.current.get(next.id)
+      if (contents !== undefined && sessionDirty(next, contents)) saveRecovery(next, contents)
+    })
     commitWorkspace({ ...workspaceRef.current, tabs: nextTabs })
     const affectedPaths = nextTabs
       .map(tab => sessionPath(tab))

@@ -58,6 +58,7 @@ export function FileTree(props: {
         <p className="sidebar-empty">Open a folder from the File menu.</p>
       ) : (
         <TreeScroller
+          folder={props.folder}
           rows={props.rows}
           title={title}
           activePath={props.activePath}
@@ -81,6 +82,7 @@ export function FileTree(props: {
  * viewport window can be derived from scrollTop without measuring each row.
  */
 function TreeScroller(props: {
+  folder: string
   rows: VisibleRow[]
   title: string
   activePath: string | null
@@ -93,7 +95,7 @@ function TreeScroller(props: {
   onReveal?: (path: string) => void
 }) {
   const [menu, setMenu] = useState<{
-    readonly entry: VisibleRow["entry"]
+    readonly entry: VisibleRow["entry"] | null
     readonly dir: string
     readonly x: number
     readonly y: number
@@ -148,6 +150,16 @@ function TreeScroller(props: {
       className="filetree-tree"
       role="tree"
       aria-label={props.title}
+      onContextMenu={event => {
+        if (event.defaultPrevented) return
+        event.preventDefault()
+        setMenu({
+          entry: null,
+          dir: props.folder,
+          x: event.clientX,
+          y: event.clientY,
+        })
+      }}
       onScroll={event => {
         setScrollTop(event.currentTarget.scrollTop)
         if (menu) setMenu(null)
@@ -172,6 +184,7 @@ function TreeScroller(props: {
               onToggleDir={props.onToggleDir}
               onContextMenu={event => {
                 event.preventDefault()
+                event.stopPropagation()
                 const dir = row.entry.is_dir ? row.entry.path : parentDir(row.entry.path)
                 if (!dir) return
                 setMenu({
@@ -188,7 +201,7 @@ function TreeScroller(props: {
       {menu ? (
         <div
           role="menu"
-          aria-label={`${menu.entry.name} actions`}
+          aria-label={menu.entry ? `${menu.entry.name} actions` : "Folder actions"}
           style={{
             position: "fixed",
             top: menu.y,
@@ -219,25 +232,31 @@ function TreeScroller(props: {
               props.onNewFolder?.(menu.dir)
             }}
           />
-          <MenuItem
-            label="Rename"
-            onSelect={() => {
-              setMenu(null)
-              props.onRename?.(menu.entry)
-            }}
-          />
-          <MenuItem
-            label="Delete"
-            onSelect={() => {
-              setMenu(null)
-              props.onDelete?.(menu.entry)
-            }}
-          />
+          {menu.entry ? (
+            <>
+              <MenuItem
+                label="Rename"
+                onSelect={() => {
+                  const entry = menu.entry
+                  setMenu(null)
+                  if (entry) props.onRename?.(entry)
+                }}
+              />
+              <MenuItem
+                label="Delete"
+                onSelect={() => {
+                  const entry = menu.entry
+                  setMenu(null)
+                  if (entry) props.onDelete?.(entry)
+                }}
+              />
+            </>
+          ) : null}
           <MenuItem
             label="Reveal in Finder"
             onSelect={() => {
               setMenu(null)
-              props.onReveal?.(menu.entry.path)
+              props.onReveal?.(menu.entry?.path ?? props.folder)
             }}
           />
         </div>
