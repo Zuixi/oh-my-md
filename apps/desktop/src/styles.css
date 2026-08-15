@@ -215,6 +215,22 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-left: 3px solid var(--omd-border); color: #666;
 }
 .editor-host .omd-table pre { margin: 0.2em 0; }
+.editor-host .omd-table-toolbar {
+  display: flex; justify-content: flex-end; gap: 4px;
+  margin: 0 22px 4px 0;
+}
+.editor-host .omd-table-toolbar button {
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 2px 6px; border: 1px solid var(--omd-border);
+  border-radius: 4px; background: var(--omd-chrome); color: var(--omd-muted);
+  cursor: pointer;
+}
+.editor-host .omd-table-edit {
+  width: 100%; box-sizing: border-box;
+  font: inherit; color: inherit;
+  border: 1px solid var(--omd-link); border-radius: 3px;
+  padding: 2px 4px; background: var(--omd-bg);
+}
 .editor-host .omd-code pre {
   margin: 0; padding: 10px 12px; border-radius: 6px;
   font-size: 0.9em; overflow-x: auto;
