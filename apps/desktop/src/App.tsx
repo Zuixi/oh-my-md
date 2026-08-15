@@ -360,6 +360,16 @@ export default function App({
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
       onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
+      onOpenMarkdownHref: href => {
+        const file = (href.split("#")[0] ?? href).replace(/\\/g, "/")
+        const current = sessionPath(sessionRef.current)?.replace(/\\/g, "/")
+        if (!current) {
+          services.reportError(errorMessage("Open failed", new Error("File not found")))
+          return
+        }
+        const dir = current.slice(0, current.lastIndexOf("/") + 1)
+        void openPath(file.startsWith("/") ? file : dir + file, true)
+      },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
     }
