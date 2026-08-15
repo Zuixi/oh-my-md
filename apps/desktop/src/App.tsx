@@ -5,6 +5,7 @@ import {
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
 import { applyToggle, documentStats, type OutlineItem } from "@omd/engine"
+import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
   sessionDirty, sessionPath, type EditorSession,
@@ -348,18 +349,24 @@ export default function App({
     ))
   }
 
-  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+  function imageInsertOptions(tabId: number, documentId: number): ImagePasteOptions {
     return {
-      doc: contents,
-      tabId,
-      documentId,
       getDocPath: () => {
         const tab = tabById(tabId)
         return tab ? sessionPath(tab) : null
       },
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
-      onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
+    }
+  }
+
+  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+    return {
+      doc: contents,
+      tabId,
+      documentId,
+      ...imageInsertOptions(tabId, documentId),
+      onDocumentUpdate: handleDocumentUpdate,
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
@@ -917,6 +924,13 @@ export default function App({
     if (view) try { command(view) } catch { /* mock views */ }
   }
 
+  const insertImage = () => {
+    const view = viewRef.current
+    const active = sessionRef.current
+    if (!view) return
+    void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
+  }
+
   const commands: AppCommand[] = [
     { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
     { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
@@ -950,6 +964,7 @@ export default function App({
     { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
     { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
     { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
+    { id: "insert-image", label: "Insert image…", run: insertImage },
     { id: "find", label: "Find in document", shortcut: "⌘F", run: () => {
       setFindOpen(true)
       setReplaceOpen(false)

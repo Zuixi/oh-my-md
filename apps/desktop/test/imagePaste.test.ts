@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import { pasteImage, type ImagePasteOptions } from "../src/imagePaste"
+import {
+  handleImageDrop,
+  insertImageFile,
+  pasteImage,
+  pickAndInsertImage,
+  type ImagePasteOptions,
+} from "../src/imagePaste"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -14,6 +20,7 @@ function makeView() {
   let doc = { marker: "initial" }
   let selection = { from: 2, to: 4 }
   const dispatch = vi.fn()
+  const posAtCoords = vi.fn(() => 0)
   const view = {
     get state() {
       return {
@@ -22,11 +29,13 @@ function makeView() {
       }
     },
     dispatch,
+    posAtCoords,
   } as unknown as EditorView
 
   return {
     view,
     dispatch,
+    posAtCoords,
     setSelection: (from: number, to: number) => {
       selection = { from, to }
     },
@@ -108,10 +117,112 @@ describe("image paste pipeline", () => {
 
     await pasteImage(new File(["png"], "clip.png", { type: "image/png" }), view, options)
 
-    expect(options.onError).toHaveBeenCalledWith("Save the file before pasting an image")
+    expect(options.onError).toHaveBeenCalledWith("Save the file before inserting an image")
     expect(options.readFile).not.toHaveBeenCalled()
     expect(options.writeImage).not.toHaveBeenCalled()
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it("writes dropped images and inserts Markdown at the drop position", async () => {
+    const { view, dispatch, posAtCoords } = makeView()
+    posAtCoords.mockReturnValue(9)
+    const options = makeOptions()
+    const preventDefault = vi.fn()
+
+    const handled = handleImageDrop(
+      {
+        clientX: 30,
+        clientY: 12,
+        dataTransfer: {
+          files: [new File(["png"], "drop.png", { type: "image/png" })],
+        },
+        preventDefault,
+      } as unknown as DragEvent,
+      view,
+      options,
+    )
+
+    expect(handled).toBe(true)
+    expect(preventDefault).toHaveBeenCalledOnce()
+    await vi.waitFor(() => {
+      expect(options.writeImage).toHaveBeenCalledWith(
+        "/notes/assets/pasted-uuid.png",
+        "base64",
+        "/notes/doc.md",
+      )
+      expect(dispatch).toHaveBeenCalledWith({
+        changes: {
+          from: 9,
+          to: 9,
+          insert: "![](assets/pasted-uuid.png)",
+        },
+      })
+    })
+  })
+
+  it("ignores non-image drops without preventing the event", async () => {
+    const { view, dispatch, posAtCoords } = makeView()
+    posAtCoords.mockReturnValue(9)
+    const options = makeOptions()
+    const preventDefault = vi.fn()
+
+    const handled = await handleImageDrop(
+      {
+        clientX: 30,
+        clientY: 12,
+        dataTransfer: {
+          files: [new File(["text"], "notes.txt", { type: "text/plain" })],
+        },
+        preventDefault,
+      } as unknown as DragEvent,
+      view,
+      options,
+    )
+
+    expect(handled).toBe(false)
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(options.readFile).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it("reports an error when inserting into an untitled document", async () => {
+    const { view, dispatch } = makeView()
+    const options = makeOptions({ getDocPath: () => null })
+
+    await insertImageFile(
+      new File(["png"], "clip.png", { type: "image/png" }),
+      view,
+      options,
+      "image/png",
+    )
+
+    expect(options.onError).toHaveBeenCalledWith("Save the file before inserting an image")
+    expect(options.readFile).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it("picks an image file and inserts it at the current selection", async () => {
+    const { view, dispatch } = makeView()
+    const options = makeOptions()
+    const pick = vi.fn(async () => new File(["png"], "picked.png", { type: "image/png" }))
+
+    await pickAndInsertImage(view, options, pick)
+
+    expect(pick).toHaveBeenCalledOnce()
+    expect(options.writeImage).toHaveBeenCalledWith(
+      "/notes/assets/pasted-uuid.png",
+      "base64",
+      "/notes/doc.md",
+    )
+    expect(dispatch).toHaveBeenCalledWith({
+      changes: {
+        from: 2,
+        to: 4,
+        insert: "![](assets/pasted-uuid.png)",
+      },
+    })
   })
 
   it("rejects GIF before reading or writing", async () => {
@@ -189,7 +300,7 @@ describe("image paste pipeline", () => {
 
     await pasteImage(new File(["png"], "clip.png", { type: "image/png" }), view, options)
 
-    expect(options.onError).toHaveBeenCalledWith("Image paste failed: reader failed")
+    expect(options.onError).toHaveBeenCalledWith("Image insert failed: reader failed")
     expect(options.writeImage).not.toHaveBeenCalled()
     expect(dispatch).not.toHaveBeenCalled()
   })
@@ -204,7 +315,7 @@ describe("image paste pipeline", () => {
 
     await pasteImage(new File(["png"], "clip.png", { type: "image/png" }), view, options)
 
-    expect(options.onError).toHaveBeenCalledWith("Image paste failed: disk full")
+    expect(options.onError).toHaveBeenCalledWith("Image insert failed: disk full")
     expect(dispatch).not.toHaveBeenCalled()
   })
 
@@ -326,7 +437,7 @@ describe("image paste pipeline", () => {
 
     expect(writeImage).toHaveBeenCalledOnce()
     expect(options.onError).toHaveBeenCalledWith(
-      "Document changed before the image could be pasted",
+      "Document changed before the image could be inserted",
     )
   })
 })
