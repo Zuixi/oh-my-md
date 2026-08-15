@@ -93,23 +93,23 @@
 
 #### 06 Core Writing Experience
 
-**文件：** `docs/superpowers/specs/2026-08-13-06-core-writing-experience-design.md`  
-**目标：** 软换行、文档内查找替换、状态栏同步和中文友好的统计。
+**文件：** `docs/superpowers/specs/2026-08-16-06-core-writing-experience-design.md`  
+**目标：** 文档内查找替换、中文友好统计、拼写检查生效、列表 Enter/Tab 续写。
 
 #### 07 Markdown Navigation
 
-**文件：** `docs/superpowers/specs/2026-08-13-07-markdown-navigation-design.md`  
-**目标：** 链接打开策略、脚注跳转/返回和可导航的语义预览。
+**文件：** `docs/superpowers/specs/2026-08-16-07-markdown-navigation-design.md`  
+**目标：** 脚注跳转/返回、本地 `.md` 链接打开；保留锚点与外链。
 
 #### 08 Markdown Rendering Polish
 
 **文件：** `docs/superpowers/specs/2026-08-13-08-markdown-rendering-polish-design.md`  
-**目标：** 表格内联格式、数学兼容、暗色代码主题和拼写检查。
+**目标：** 表格内联格式、数学兼容、暗色代码主题（拼写检查已并入 06）。尚未单独成文。
 
 #### 09 Workspace Operations
 
-**文件：** `docs/superpowers/specs/2026-08-13-09-workspace-operations-design.md`  
-**目标：** 可取消且有界的搜索，以及新建、重命名、删除、移动和 Finder 操作。
+**文件：** `docs/superpowers/specs/2026-08-16-09-workspace-operations-design.md`  
+**目标：** 文件树新建、重命名、删除、Reveal in Finder。
 
 #### 10 Session and Settings
 
@@ -118,8 +118,20 @@
 
 #### 11 Export Pipeline
 
-**文件：** `docs/superpowers/specs/2026-08-13-11-export-pipeline-design.md`  
-**目标：** 生成安全、自包含 HTML，并在 PDF 打印前等待字体、图片、公式和图表完成。
+**文件：** `docs/superpowers/specs/2026-08-16-11-export-pipeline-design.md`  
+**目标：** `exportRichHtml`：KaTeX / Shiki / Mermaid 与预览一致；PDF 等待 `__omdExportReady`。
+
+#### 15 Table Editing
+
+**文件：** `docs/superpowers/specs/2026-08-16-15-table-editing-design.md`  
+**目标：** Live Preview 单元格就地编辑与增删行列。
+
+#### 16 Image Insert
+
+**文件：** `docs/superpowers/specs/2026-08-16-16-image-insert-design.md`  
+**目标：** 拖放与「Insert image…」复用 `write_image`。
+
+差距分析：`docs/superpowers/specs/2026-08-16-industry-gap-analysis.md`。
 
 #### 12 Accessibility
 

@@ -67,3 +67,5 @@ src-tauri/gen/
 .pi/
 .pnpm-store/
 .turbo/
+.worktrees/
+.superpowers/
