@@ -210,7 +210,6 @@ async function renderMermaidHtml(src: string): Promise<string> {
 }
 
 async function renderCodeHtml(src: string, lang: string): Promise<string> {
-  // Inline import to keep lazy loading; mirrors CodeWidget logic.
   const { resolveCodeLanguage, getHighlighterForExport } = await import("./shikiExport")
   const canonical = resolveCodeLanguage(lang)
   if (!canonical) return `<pre><code>${escapeHtml(src)}</code></pre>`
@@ -222,9 +221,51 @@ async function renderCodeHtml(src: string, lang: string): Promise<string> {
   }
 }
 
-async function renderRich(node: SyntaxNode, state: EditorState): Promise<string> {
+async function richChildren(
+  node: SyntaxNode,
+  state: EditorState,
+  opts: ExportRichHtmlOptions,
+): Promise<string> {
+  let html = ""
+  let pos = node.from
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
+    html += await renderRich(child, state, opts)
+    pos = child.to
+  }
+  if (pos < node.to) html += escapeHtml(state.doc.sliceString(pos, node.to))
+  return html
+}
+
+async function richLinkLabel(
+  node: SyntaxNode,
+  state: EditorState,
+  opts: ExportRichHtmlOptions,
+): Promise<string> {
+  const marks: SyntaxNode[] = []
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "LinkMark") marks.push(child)
+  }
+  if (marks.length < 2) return ""
+  let html = ""
+  let pos = marks[0].to
+  for (let child = marks[0].nextSibling; child && child.from < marks[1].from; child = child.nextSibling) {
+    if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
+    html += await renderRich(child, state, opts)
+    pos = child.to
+  }
+  if (pos < marks[1].from) html += escapeHtml(state.doc.sliceString(pos, marks[1].from))
+  return html
+}
+
+async function renderRich(
+  node: SyntaxNode,
+  state: EditorState,
+  opts: ExportRichHtmlOptions,
+): Promise<string> {
   if (SKIP.has(node.name)) return ""
   switch (node.name) {
+    case "Document": return richChildren(node, state, opts)
     case "InlineMath": {
       const tex = state.doc.sliceString(node.from, node.to).replace(/^\$|\$$/g, "")
       return renderMathHtml(tex.trim(), false)
@@ -238,67 +279,73 @@ async function renderRich(node: SyntaxNode, state: EditorState): Promise<string>
       const codeText = fencedText(node, state) || state.doc.sliceString(node.from, node.to)
       const infoNode = node.getChild("CodeInfo")
       const lang = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to).trim() : ""
-      if (lang.toLowerCase() === "mermaid") {
-        return renderMermaidHtml(codeText)
-      }
+      if (lang.toLowerCase() === "mermaid") return renderMermaidHtml(codeText)
       return renderCodeHtml(codeText, lang)
     }
-    default: {
-      // Recursively render children with rich rendering for sub-nodes.
-      if (node.name === "Document") return richChildren(node, state)
-      // For nodes that have children, fall back to rich children rendering.
-      if (node.firstChild) {
-        // Reuse synchronous render for the wrapper tag, but render children async.
-        return richWrap(node, state)
-      }
-      // Leaf nodes: use synchronous render.
-      return render(node, state)
+    case "Image": {
+      const urlNode = node.getChild("URL")
+      const rawSrc = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : ""
+      // Do not inline remote http/https images; only rewrite local relative paths.
+      const isRemote = /^https?:\/\//i.test(rawSrc)
+      const src = (!isRemote && opts.resolveImageSrc) ? (opts.resolveImageSrc(rawSrc) ?? rawSrc) : rawSrc
+      return `<img src="${escapeHtml(src)}" alt="">`
     }
-  }
-}
-
-async function richChildren(node: SyntaxNode, state: EditorState): Promise<string> {
-  let html = ""
-  let pos = node.from
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
-    html += await renderRich(child, state)
-    pos = child.to
-  }
-  if (pos < node.to) html += escapeHtml(state.doc.sliceString(pos, node.to))
-  return html
-}
-
-async function richWrap(node: SyntaxNode, state: EditorState): Promise<string> {
-  // Use the synchronous render for the outer tag structure, but recurse richly on children.
-  // Strategy: render synchronously for all structural nodes except math/code/mermaid.
-  switch (node.name) {
+    case "Link": {
+      const href = linkHref(state, node) ?? ""
+      const label = await richLinkLabel(node, state, opts)
+      return `<a href="${escapeHtml(href)}">${label || escapeHtml(href)}</a>`
+    }
+    case "Table": {
+      let html = "<table>"
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.name === "TableHeader") {
+          html += "<thead><tr>"
+          for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
+            if (cell.name === "TableCell") html += `<th>${await richChildren(cell, state, opts)}</th>`
+          }
+          html += "</tr></thead>"
+        }
+        if (child.name === "TableRow") {
+          html += "<tr>"
+          for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
+            if (cell.name === "TableCell") html += `<td>${await richChildren(cell, state, opts)}</td>`
+          }
+          html += "</tr>"
+        }
+      }
+      return `${html}</table>`
+    }
+    // Structural containers: richly render their children.
     case "ATXHeading1":
-    case "SetextHeading1": return `<h1>${(await richChildren(node, state)).trim()}</h1>`
+    case "SetextHeading1": return `<h1>${(await richChildren(node, state, opts)).trim()}</h1>`
     case "ATXHeading2":
-    case "SetextHeading2": return `<h2>${(await richChildren(node, state)).trim()}</h2>`
-    case "ATXHeading3": return `<h3>${(await richChildren(node, state)).trim()}</h3>`
-    case "ATXHeading4": return `<h4>${(await richChildren(node, state)).trim()}</h4>`
-    case "ATXHeading5": return `<h5>${(await richChildren(node, state)).trim()}</h5>`
-    case "ATXHeading6": return `<h6>${(await richChildren(node, state)).trim()}</h6>`
-    case "Paragraph": return `<p>${await richChildren(node, state)}</p>`
-    case "Emphasis": return `<em>${await richChildren(node, state)}</em>`
-    case "StrongEmphasis": return `<strong>${await richChildren(node, state)}</strong>`
-    case "Strikethrough": return `<del>${await richChildren(node, state)}</del>`
-    case "Highlight": return `<mark>${await richChildren(node, state)}</mark>`
-    case "Underline": return `<u>${await richChildren(node, state)}</u>`
-    case "BulletList": return `<ul>${await richChildren(node, state)}</ul>`
-    case "OrderedList": return `<ol>${await richChildren(node, state)}</ol>`
-    case "ListItem": return `<li>${await richChildren(node, state)}</li>`
-    case "Blockquote": return `<blockquote>${await richChildren(node, state)}</blockquote>`
-    default: return render(node, state)
+    case "SetextHeading2": return `<h2>${(await richChildren(node, state, opts)).trim()}</h2>`
+    case "ATXHeading3": return `<h3>${(await richChildren(node, state, opts)).trim()}</h3>`
+    case "ATXHeading4": return `<h4>${(await richChildren(node, state, opts)).trim()}</h4>`
+    case "ATXHeading5": return `<h5>${(await richChildren(node, state, opts)).trim()}</h5>`
+    case "ATXHeading6": return `<h6>${(await richChildren(node, state, opts)).trim()}</h6>`
+    case "Paragraph": return `<p>${await richChildren(node, state, opts)}</p>`
+    case "Emphasis": return `<em>${await richChildren(node, state, opts)}</em>`
+    case "StrongEmphasis": return `<strong>${await richChildren(node, state, opts)}</strong>`
+    case "Strikethrough": return `<del>${await richChildren(node, state, opts)}</del>`
+    case "Highlight": return `<mark>${await richChildren(node, state, opts)}</mark>`
+    case "Underline": return `<u>${await richChildren(node, state, opts)}</u>`
+    case "BulletList": return `<ul>${await richChildren(node, state, opts)}</ul>`
+    case "OrderedList": return `<ol>${await richChildren(node, state, opts)}</ol>`
+    case "ListItem": return `<li>${await richChildren(node, state, opts)}</li>`
+    case "Blockquote": return `<blockquote>${await richChildren(node, state, opts)}</blockquote>`
+    default:
+      // Any unrecognised container: walk children richly so nested math/code is rendered.
+      if (node.firstChild) return richChildren(node, state, opts)
+      // True leaf: delegate to synchronous renderer.
+      return render(node, state)
   }
 }
 
 export async function exportRichHtml(
   state: EditorState,
-  _options?: ExportRichHtmlOptions,
+  options: ExportRichHtmlOptions = {},
 ): Promise<string> {
-  const body = await renderRich(syntaxTree(state).topNode, state)
+  const body = await renderRich(syntaxTree(state).topNode, state, options)
   return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title></head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
 }

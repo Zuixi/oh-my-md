@@ -53,7 +53,6 @@ describe("exportRichHtml", () => {
     const src = "```mermaid\n!!!invalid syntax!!!\n```"
     const html = await exportRichHtml(makeState(src))
     expect(html).toContain("!!!invalid syntax!!!")
-    expect(html).not.toThrow
   })
 
   it("preserves source document (does not mutate state)", async () => {
@@ -61,5 +60,30 @@ describe("exportRichHtml", () => {
     const state = makeState(doc)
     await exportRichHtml(state)
     expect(state.doc.toString()).toBe(doc)
+  })
+
+  it("renders $a$ inside a table cell with KaTeX, not bare <code>", async () => {
+    const doc = "| math |\n|------|\n| $a$  |\n"
+    const html = await exportRichHtml(makeState(doc))
+    expect(html).toContain("<table>")
+    expect(html).toMatch(/katex|<math/)
+    expect(html).not.toContain("<code>$a$</code>")
+  })
+
+  it("rewrites local relative image src via resolveImageSrc", async () => {
+    const doc = "![alt](./pic.png)"
+    const html = await exportRichHtml(makeState(doc), {
+      resolveImageSrc: (src) => `file:///resolved/${src}`,
+    })
+    expect(html).toContain("file:///resolved/./pic.png")
+  })
+
+  it("does not rewrite remote http image src", async () => {
+    const doc = "![alt](http://example.com/img.png)"
+    const html = await exportRichHtml(makeState(doc), {
+      resolveImageSrc: () => "should-not-be-used",
+    })
+    expect(html).toContain("http://example.com/img.png")
+    expect(html).not.toContain("should-not-be-used")
   })
 })
