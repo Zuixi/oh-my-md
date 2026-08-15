@@ -214,6 +214,72 @@ describe("tables", () => {
     expect(doc).toBe("| a |\n|---|\n| 1 |")
   })
 
+  it("replaces the live table range after the widget position moves", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = `xx\n\n${src}`
+    const dispatches: Array<{ from: number; to: number; insert: string }> = []
+    const view = {
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 4,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          dispatches.push(spec.changes)
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, {
+      header: ["a", "b"],
+      rows: [["1", "2"]],
+      aligns: ["", ""],
+    })
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    input.value = "x"
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+    expect(dispatches[0]).toMatchObject({ from: 4, to: 4 + src.length })
+    expect(doc).toBe("xx\n\n| a | b |\n|---|---|\n| x | 2 |")
+  })
+
+  it("keeps the cell editor when deleting the last data row fails", async () => {
+    const src = "| a |\n|---|\n| 1 |"
+    let doc = src
+    const view = {
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, {
+      header: ["a"],
+      rows: [["1"]],
+      aligns: [""],
+    })
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
+    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    deleteRow.click()
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    expect(input).toBeTruthy()
+    expect(doc).toBe(src)
+    input!.value = "x"
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+    expect(doc).toBe("| a |\n|---|\n| x |")
+  })
+
   it("lets the edit input keep native mousedown for caret placement", async () => {
     const widget = new TableWidget("| a |\n|---|\n| 1 |", 0, {
       header: ["a"],

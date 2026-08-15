@@ -103,6 +103,7 @@ export function renderTableCellContent(parent: HTMLElement, text: string, resolv
 
 export class TableWidget extends BlockWidget {
   private view: EditorView | undefined
+  private wrap: HTMLDivElement | undefined
   private row = 0
   private col = 0
   private editing: { el: HTMLElement; row: number; col: number } | null = null
@@ -125,7 +126,8 @@ export class TableWidget extends BlockWidget {
 
   override toDOM(view: EditorView) {
     this.view = view
-    return super.toDOM(view)
+    this.wrap = super.toDOM(view)
+    return this.wrap
   }
 
   override ignoreEvent(event: Event) {
@@ -287,20 +289,30 @@ export class TableWidget extends BlockWidget {
     if (edit && input) {
       const committed = replaceTableCell(src, edit.row, edit.col, input.value)
       if (committed) src = committed
-      this.editing = null
     }
     const next = act === "insert-row" ? insertTableRow(src, this.row)
       : act === "insert-col" ? insertTableColumn(src, this.col)
       : act === "delete-row" ? deleteTableRow(src, this.row)
       : deleteTableColumn(src, this.col)
+    if (!next) return
+    this.editing = null
     this.replace(next)
+  }
+
+  private livePos() {
+    if (this.view && this.wrap) {
+      try { return this.view.posAtDOM(this.wrap) }
+      catch { /* widget detached */ }
+    }
+    return this.pos
   }
 
   private replace(next: string | null, dest: { row: number; col: number } | null = null) {
     if (!next || !this.view) return
-    if (dest) resumeEdit = { pos: this.pos, row: dest.row, col: dest.col }
+    const from = this.livePos()
+    if (dest) resumeEdit = { pos: from, row: dest.row, col: dest.col }
     this.view.dispatch({
-      changes: { from: this.pos, to: this.pos + this.src.length, insert: next },
+      changes: { from, to: from + this.src.length, insert: next },
     })
   }
 }
