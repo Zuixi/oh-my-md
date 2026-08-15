@@ -268,6 +268,7 @@ function harnessServices(context: HarnessContext): HarnessServices {
       fakeDisk.seed(path, contents)
     }),
     allowDocumentAssets: vi.fn(async () => undefined),
+    allowWorkspaceDir: vi.fn(async () => undefined),
     writeRecovery: vi.fn(async () => undefined),
     confirmDiscard: vi.fn(() => true),
     confirmClose: vi.fn(() => true),

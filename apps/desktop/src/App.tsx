@@ -43,7 +43,7 @@ import {
   type SaveStateByTab,
 } from "./documentSaveState"
 import { NormalizationBanner } from "./NormalizationBanner"
-import { applyTheme, toggleTheme, type ThemeName } from "./theme"
+import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type DesktopServices } from "./desktopServices"
@@ -77,6 +77,15 @@ import {
   toggleUnorderedList,
   insertLink,
 } from "@omd/engine"
+import { SettingsModal } from "./SettingsModal"
+import {
+  DEFAULT_SETTINGS,
+  sanitizeSettings,
+  type UserSettings,
+} from "./settings"
+import {
+  extractSessionState,
+} from "./sessionRestore"
 import "./styles.css"
 
 export type { DesktopServices, RecoveryRecord } from "./desktopServices"
@@ -169,7 +178,12 @@ export default function App({
   )
   const openingRef = useRef(false)
   const mountedRef = useRef(false)
-  const [theme, setTheme] = useState<ThemeName>("light")
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
+  const settingsRef = useRef<UserSettings>(settings)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const sessionSaveTimerRef = useRef<number | null>(null)
+  const sessionRestoredRef = useRef(false)
+  const [theme, setTheme] = useState<AppTheme>("light")
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
@@ -328,6 +342,7 @@ export default function App({
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
       onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
+      tabSize: settingsRef.current.tabSize,
     }
   }
 
@@ -392,7 +407,13 @@ export default function App({
   useEffect(() => {
     mountedRef.current = true
     ensureViews()
-    void restoreDraft()
+    void (async () => {
+      await loadInitialSettings()
+      const restored = await restoreSavedSession()
+      if (!restored) {
+        await restoreDraft()
+      }
+    })()
     return () => {
       mountedRef.current = false
       viewRef.current = null
@@ -405,6 +426,24 @@ export default function App({
   useEffect(() => {
     ensureViews()
   }, [workspace.tabs])
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--omd-font-size", `${settings.fontSize}px`)
+    document.documentElement.style.setProperty("--omd-line-height", `${settings.lineHeight}`)
+    document.documentElement.style.setProperty("--omd-font-family", settings.fontFamily)
+  }, [settings.fontSize, settings.lineHeight, settings.fontFamily])
+
+  useEffect(() => {
+    if (!services.saveSessionState || !mountedRef.current) return
+    if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)
+    sessionSaveTimerRef.current = window.setTimeout(() => {
+      const state = extractSessionState(workspaceRef.current)
+      void services.saveSessionState?.(state)
+    }, 1000)
+    return () => {
+      if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)
+    }
+  }, [workspace.folder, workspace.tabs, workspace.activeId, services])
 
   useEffect(() => {
     applyTheme(theme, customCss)
@@ -503,6 +542,86 @@ export default function App({
     outlineHoverTimerRef.current = window.setTimeout(() => {
       setOutlineHover(false)
     }, 120)
+  }
+
+  function handleSaveSettings(next: UserSettings) {
+    const sanitized = sanitizeSettings(next)
+    setSettings(sanitized)
+    settingsRef.current = sanitized
+    setTheme(sanitized.theme)
+    void services.saveSettings?.(sanitized)
+  }
+
+  async function loadInitialSettings(): Promise<UserSettings> {
+    if (!services.getSettings) return DEFAULT_SETTINGS
+    try {
+      const saved = await services.getSettings()
+      if (saved) {
+        if (mountedRef.current) {
+          setSettings(saved)
+          settingsRef.current = saved
+          setTheme(saved.theme)
+        }
+        return saved
+      }
+    } catch {
+      /* tolerate settings read failure */
+    }
+    return DEFAULT_SETTINGS
+  }
+
+  async function restoreSavedSession(): Promise<boolean> {
+    if (!services.getSessionState) return false
+    try {
+      const state = await services.getSessionState()
+      if (!state || (!state.folder && state.openPaths.length === 0)) return false
+
+      if (state.folder) {
+        commitWorkspace(openFolder(workspaceRef.current, state.folder))
+        void services.allowWorkspaceDir?.(state.folder)
+      }
+
+      if (state.openPaths.length > 0) {
+        let currentWorkspace = workspaceRef.current
+        let activeTabId = currentWorkspace.activeId
+        let firstTabOpened = false
+
+        for (const path of state.openPaths) {
+          try {
+            const snapshot = await services.readDocument(path)
+            if (snapshot.kind === "missing") continue
+            await services.allowDocumentAssets(path)
+            const contents = snapshot.contents
+            if (!firstTabOpened) {
+              const updated = openSession(currentWorkspace.tabs[0], snapshot)
+              docsRef.current.set(updated.id, contents)
+              currentWorkspace = replaceTabSession(currentWorkspace, updated)
+              firstTabOpened = true
+              if (state.activePath === path) activeTabId = updated.id
+            } else {
+              const newSession = openSession(createSession(currentWorkspace.nextId), snapshot)
+              docsRef.current.set(newSession.id, contents)
+              currentWorkspace = addTab(currentWorkspace, newSession)
+              if (state.activePath === path) activeTabId = newSession.id
+            }
+          } catch {
+            /* skip unreadable files */
+          }
+        }
+
+        if (firstTabOpened) {
+          currentWorkspace = focusTab(currentWorkspace, activeTabId)
+          commitWorkspace(currentWorkspace)
+          const active = activeSession(currentWorkspace)
+          syncDoc(docsRef.current.get(active.id) ?? "", active.id)
+          sessionRestoredRef.current = true
+          return true
+        }
+      }
+    } catch {
+      /* tolerate session restore failure */
+    }
+    return false
   }
 
   async function restoreDraft() {
@@ -769,6 +888,7 @@ export default function App({
     { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
     { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
+    { id: "preferences", label: "Preferences / Settings…", shortcut: "⌘,", run: () => setSettingsOpen(true) },
     { id: "sidebar", label: "Toggle sidebar", shortcut: "⌘\\", run: () => setSidebarOpen(open => !open) },
     { id: "outline", label: "Toggle outline", shortcut: "⇧⌘O", run: () => setOutlineOpen(open => !open) },
     { id: "typewriter", label: "Toggle typewriter", run: () => setTypewriter(on => !on) },
@@ -820,7 +940,10 @@ export default function App({
         return
       }
       if (!e.metaKey && !e.ctrlKey) return
-      if (e.key === "\\" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === ",") {
+        e.preventDefault()
+        setSettingsOpen(open => !open)
+      } else if (e.key === "\\") {
         e.preventDefault()
         setSidebarOpen(open => !open)
       } else if (e.key === "O" && e.shiftKey) {
@@ -1043,6 +1166,12 @@ export default function App({
       {paletteOpen ? (
         <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />
       ) : null}
+      <SettingsModal
+        isOpen={settingsOpen}
+        settings={settings}
+        onSave={handleSaveSettings}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   )
 }

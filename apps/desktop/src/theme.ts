@@ -1,7 +1,19 @@
+export type AppTheme = "system" | "light" | "dark"
 export type ThemeName = "light" | "dark"
 
-export function applyTheme(theme: ThemeName, customCss = "") {
-  document.documentElement.dataset.theme = theme
+export function resolveTheme(theme: AppTheme): ThemeName {
+  if (theme === "system") {
+    if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      return "dark"
+    }
+    return "light"
+  }
+  return theme
+}
+
+export function applyTheme(theme: AppTheme | ThemeName, customCss = "") {
+  const resolved = resolveTheme(theme)
+  document.documentElement.dataset.theme = resolved
   let style = document.getElementById("omd-user-theme")
   if (!style) {
     style = document.createElement("style")
@@ -11,6 +23,7 @@ export function applyTheme(theme: ThemeName, customCss = "") {
   style.textContent = customCss
 }
 
-export function toggleTheme(theme: ThemeName): ThemeName {
-  return theme === "light" ? "dark" : "light"
+export function toggleTheme(theme: AppTheme): AppTheme {
+  const resolved = resolveTheme(theme)
+  return resolved === "light" ? "dark" : "light"
 }
