@@ -186,6 +186,30 @@ describe("image paste pipeline", () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
+  it("ignores unsupported image drops without preventing the event", async () => {
+    const { view, dispatch } = makeView()
+    const options = makeOptions()
+    const preventDefault = vi.fn()
+
+    const handled = handleImageDrop(
+      {
+        clientX: 30,
+        clientY: 12,
+        dataTransfer: {
+          files: [new File(["gif"], "clip.gif", { type: "image/gif" })],
+        },
+        preventDefault,
+      } as unknown as DragEvent,
+      view,
+      options,
+    )
+
+    expect(handled).toBe(false)
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
   it("reports an error when inserting into an untitled document", async () => {
     const { view, dispatch } = makeView()
     const options = makeOptions({ getDocPath: () => null })
@@ -223,6 +247,23 @@ describe("image paste pipeline", () => {
         insert: "![](assets/pasted-uuid.png)",
       },
     })
+  })
+
+  it("aborts picking if the document changes while the picker is open", async () => {
+    const { view, dispatch, changeDocument } = makeView()
+    const options = makeOptions()
+    const pick = vi.fn(async () => {
+      changeDocument()
+      return new File(["png"], "picked.png", { type: "image/png" })
+    })
+
+    await pickAndInsertImage(view, options, pick)
+
+    expect(options.onError).toHaveBeenCalledWith(
+      "Document changed before the image could be inserted",
+    )
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
   })
 
   it("rejects GIF before reading or writing", async () => {
