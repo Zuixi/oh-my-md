@@ -40,24 +40,30 @@ function isAlign(cell: string): boolean {
   return t.includes("-") && ALIGN.test(t)
 }
 
-function parseTable(source: string): { header: Line; sep: Line; rows: Line[] } | null {
+type Table = { header: Line; sep: Line; rows: Line[]; nl: boolean }
+
+function parseTable(source: string): Table | null {
+  const nl = source.endsWith("\n")
   const raw = source.split("\n")
   if (raw.length > 0 && raw[raw.length - 1] === "") raw.pop()
   if (raw.length < 2) return null
   const header = parseLine(raw[0])
   const sep = parseLine(raw[1])
-  if (header.cells.length === 0 || sep.cells.length === 0 || !sep.cells.every(isAlign))
-    return null
-  return { header, sep, rows: raw.slice(2).map(parseLine) }
+  const rows = raw.slice(2).map(parseLine)
+  const cols = header.cells.length
+  if (cols === 0 || sep.cells.length !== cols || !sep.cells.every(isAlign)) return null
+  if (rows.some(row => row.cells.length !== cols)) return null
+  return { header, sep, rows, nl }
 }
 
-function dataLine(table: { header: Line; sep: Line; rows: Line[] }, row: number): Line | null {
+function dataLine(table: Table, row: number): Line | null {
   if (row === 0) return table.header
   return table.rows[row - 1] ?? null
 }
 
-function serialize(table: { header: Line; sep: Line; rows: Line[] }): string {
-  return [table.header, table.sep, ...table.rows].map(joinLine).join("\n")
+function serialize(table: Table): string {
+  const body = [table.header, table.sep, ...table.rows].map(joinLine).join("\n")
+  return table.nl ? `${body}\n` : body
 }
 
 function padded(cell: string, value: string): string {
