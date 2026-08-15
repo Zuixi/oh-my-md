@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  createEditor, documentOutline, editorStatus, resetEditorDocument, setEditorSpellcheck,
+  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
@@ -1180,9 +1180,9 @@ export default function App({
       setReplaceOpen(false)
     } },
     { id: "search", label: "Search in folder", shortcut: "⇧⌘F", run: () => setSearchOpen(true) },
-    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
-    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
-    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png") },
+    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "clear-recents", label: "Clear Recents", run: clearRecents },
   ]
   const commandsRef = useRef(commands)
