@@ -207,6 +207,7 @@ fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String
     use tauri::Manager;
 
     let directory = workspace_directory(Path::new(&path))?;
+    workspace::authorize_workspace_root(&directory)?;
     app.asset_protocol_scope()
         .allow_directory(directory, true)
         .map_err(|e| format!("failed to allow workspace directory: {e}"))

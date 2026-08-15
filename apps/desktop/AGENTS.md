@@ -96,13 +96,13 @@ Current Rust commands are:
 - `write_file(path, contents)` — legacy atomic replace; not for editor document saves.
 - `write_image(path, base64, documentPath)` — decode pasted image data into the current document's `assets/` directory. `documentPath` is required.
 - `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
-- `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root.
+- `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root and authorize later create/rename/delete under that root.
 - `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
 - `search_markdown(root, query)` — scan `.md` files under the folder for a string.
-- `create_markdown(dir, name)` — create a new empty `.md` file in an existing workspace directory without overwriting.
-- `create_dir(dir, name)` — create a new empty subdirectory in an existing workspace directory without overwriting.
-- `rename_path(from, toName)` — rename a file or directory within its current parent directory; Markdown files must keep `.md`.
-- `delete_path(path)` — delete a file or an empty directory from the workspace tree.
+- `create_markdown(dir, name)` — create a new empty `.md` file under an authorized workspace root without overwriting.
+- `create_dir(dir, name)` — create a new empty subdirectory under an authorized workspace root without overwriting.
+- `rename_path(from, toName)` — rename a file or directory within its current parent under an authorized workspace root; Markdown files must keep `.md`.
+- `delete_path(path)` — delete a file or an empty directory under an authorized workspace root.
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
 - `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
