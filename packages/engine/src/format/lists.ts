@@ -1,7 +1,7 @@
 import { type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap, type Command } from "@codemirror/view"
 
-const LINE = /^(\s*)(> )*([-*+]|\d+[.)])( \[[ xX]\])?(\s|$)/
+const LINE = /^(\s*)((?:> )*)([-*+]|\d+[.)])( \[[ xX]\])?(\s|$)/
 
 function dispatchSpec(spec: (state: EditorState) => TransactionSpec | null): Command {
   return target => {
