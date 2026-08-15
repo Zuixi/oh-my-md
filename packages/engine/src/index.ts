@@ -10,6 +10,7 @@ export { exportHtml } from "./export/html"
 export { headingPositionForAnchor, headingSlug, linkAt, linkHref, type LinkTarget } from "./links"
 export { applyToggle, isLivePreview } from "./modes/livePreview"
 export { markdownKeymap } from "./format/commands"
+export { documentStats, type DocumentStats } from "./stats"
 export {
   insertLink,
   toggleBlockquote,
