@@ -34,6 +34,16 @@ describe("continueListSpec", () => {
   it("returns null outside lists", () => {
     expect(continueListSpec(state("hello", 5))).toBeNull()
   })
+  it("continues a list inside one quote", () => {
+    const s = state("> - hello", 9)
+    const next = s.update(continueListSpec(s)!)
+    expect(next.state.doc.toString()).toBe("> - hello\n> - ")
+  })
+  it("continues a nested quote list", () => {
+    const s = state("> > - hello", 11)
+    const next = s.update(continueListSpec(s)!)
+    expect(next.state.doc.toString()).toBe("> > - hello\n> > - ")
+  })
 })
 
 describe("indentListSpec", () => {
