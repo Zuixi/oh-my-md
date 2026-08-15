@@ -48,6 +48,13 @@ export {
   type OrderedListNormalizationNotice,
   type OrderedListNormalizationRejectResult,
 } from "./lists/ordered"
+export {
+  deleteTableColumn,
+  deleteTableRow,
+  insertTableColumn,
+  insertTableRow,
+  replaceTableCell,
+} from "./tables/edit"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
