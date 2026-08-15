@@ -1515,7 +1515,7 @@ export default function App({
             replacement={findReplace}
             caseSensitive={findCase}
             replaceOpen={replaceOpen}
-            matchCount={collectMatches(doc, findQuery, findCase).length}
+            matchCount={findOpen ? collectMatches(doc, findQuery, findCase).length : 0}
             activeIndex={findIndex}
             onQuery={query => {
               setFindQuery(query)

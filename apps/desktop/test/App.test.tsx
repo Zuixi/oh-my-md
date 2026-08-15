@@ -8,6 +8,7 @@ import {
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
 import { createAppHarness, expectPathShown, normalizationId, resetMountedApps, versionFor } from "./appHarness"
+import * as findReplaceModule from "../src/findReplace"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -948,6 +949,14 @@ describe("App product shell", () => {
     fireEvent.keyDown(window, { key: "f", metaKey: true })
     expect(screen.queryByPlaceholderText("Find in folder…")).toBeNull()
     expect(screen.getByLabelText("Find")).toBeTruthy()
+  })
+
+  it("skips collectMatches scan while find bar is closed", () => {
+    const spy = vi.spyOn(findReplaceModule, "collectMatches")
+    const harness = makeAppHarness()
+    harness.renderApp()
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 
   it("shows files and outline sidebars without a chrome export panel", () => {
