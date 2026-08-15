@@ -41,7 +41,7 @@ apps/desktop/
     ├── src/lib.rs           # File IO, image write, asset scope, workspace commands
     ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
     ├── src/menu.rs          # Native File / Edit application menu
-    ├── src/workspace.rs     # list_dir, search_markdown, crash-recovery files
+    ├── src/workspace.rs     # workspace tree commands, search, crash-recovery files
     ├── capabilities/        # Tauri permissions
     └── tauri.conf.json      # Desktop application configuration
 ```
@@ -99,6 +99,10 @@ Current Rust commands are:
 - `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root.
 - `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
 - `search_markdown(root, query)` — scan `.md` files under the folder for a string.
+- `create_markdown(dir, name)` — create a new empty `.md` file in an existing workspace directory without overwriting.
+- `create_dir(dir, name)` — create a new empty subdirectory in an existing workspace directory without overwriting.
+- `rename_path(from, toName)` — rename a file or directory within its current parent directory; Markdown files must keep `.md`.
+- `delete_path(path)` — delete a file or an empty directory from the workspace tree.
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
 - `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.

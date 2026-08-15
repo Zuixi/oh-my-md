@@ -125,6 +125,105 @@ fn reject_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_single_segment(name: &str) -> Result<&str, String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err("name must be a single path segment".into());
+    }
+    if Path::new(name).components().count() != 1 {
+        return Err("name must be a single path segment".into());
+    }
+    Ok(name)
+}
+
+fn canonical_directory(path: &Path) -> Result<PathBuf, String> {
+    reject_traversal(path)?;
+    let directory = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if !directory.is_dir() {
+        return Err("path is not a directory".into());
+    }
+    Ok(directory)
+}
+
+fn canonical_parent_and_name(path: &Path) -> Result<(PathBuf, &std::ffi::OsStr), String> {
+    reject_traversal(path)?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| "path must include a file or directory name".to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "path must include a parent directory".to_string())?;
+    Ok((canonical_directory(parent)?, name))
+}
+
+pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
+    let name = validate_single_segment(&name)?;
+    if Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("md")
+    {
+        return Err("markdown files must use a .md extension".into());
+    }
+    let parent = canonical_directory(Path::new(&dir))?;
+    let target = parent.join(name);
+    if target.exists() {
+        return Err("path already exists".into());
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+pub fn create_dir(dir: String, name: String) -> Result<String, String> {
+    let name = validate_single_segment(&name)?;
+    let parent = canonical_directory(Path::new(&dir))?;
+    let target = parent.join(name);
+    if target.exists() {
+        return Err("path already exists".into());
+    }
+    fs::create_dir(&target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
+    let to_name = validate_single_segment(&to_name)?;
+    let (parent, current_name) = canonical_parent_and_name(Path::new(&from))?;
+    let source = parent.join(current_name);
+    let source_metadata = fs::metadata(&source).map_err(|e| e.to_string())?;
+    if source_metadata.is_file()
+        && source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        && Path::new(to_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("md")
+    {
+        return Err("markdown files must keep a .md extension".into());
+    }
+    let target = parent.join(to_name);
+    if target.exists() {
+        return Err("path already exists".into());
+    }
+    fs::rename(&source, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+pub fn delete_path(path: String) -> Result<(), String> {
+    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    let target = parent.join(name);
+    let metadata = fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_dir() {
+        fs::remove_dir(target).map_err(|e| e.to_string())
+    } else {
+        fs::remove_file(target).map_err(|e| e.to_string())
+    }
+}
+
 pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || list_dir_sync(&path))
         .await
@@ -223,6 +322,22 @@ mod tests {
         std::env::temp_dir().join(format!("omd-ws-{}-{}", std::process::id(), name))
     }
 
+    fn reset_dir(path: &Path) {
+        fs::remove_dir_all(path).ok();
+        fs::create_dir_all(path).unwrap();
+    }
+
+    fn path_string(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    fn canonical_string(path: &Path) -> String {
+        fs::canonicalize(path)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn list_dir_rejects_traversal() {
         assert!(list_dir_sync("/tmp/../etc").is_err());
@@ -245,7 +360,7 @@ mod tests {
     #[test]
     fn searches_markdown_lines() {
         let root = tmp("search");
-        fs::create_dir_all(&root).unwrap();
+        reset_dir(&root);
         fs::write(root.join("a.md"), "alpha\nfind me\n").unwrap();
         let hits = search_markdown_sync(&root.to_string_lossy(), "find").unwrap();
         assert_eq!(hits.len(), 1);
@@ -254,9 +369,88 @@ mod tests {
     }
 
     #[test]
+    fn create_markdown_creates_an_empty_md_file() {
+        let root = tmp("create-markdown");
+        reset_dir(&root);
+
+        let created = create_markdown(path_string(&root), "draft.md".into()).unwrap();
+
+        assert_eq!(created, canonical_string(&root.join("draft.md")));
+        assert_eq!(fs::read_to_string(created).unwrap(), "");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn create_markdown_rejects_invalid_names_and_overwrite() {
+        let root = tmp("create-markdown-invalid");
+        reset_dir(&root);
+        fs::write(root.join("draft.md"), "existing").unwrap();
+
+        assert!(create_markdown(path_string(&root), "../draft.md".into()).is_err());
+        assert!(create_markdown(path_string(&root), "nested/draft.md".into()).is_err());
+        assert!(create_markdown(path_string(&root), "draft.txt".into()).is_err());
+        assert!(create_markdown(path_string(&root), "draft.md".into()).is_err());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn create_dir_creates_a_directory() {
+        let root = tmp("create-dir");
+        reset_dir(&root);
+
+        let created = create_dir(path_string(&root), "notes".into()).unwrap();
+
+        assert_eq!(created, canonical_string(&root.join("notes")));
+        assert!(Path::new(&created).is_dir());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rename_path_renames_markdown_files_without_overwrite() {
+        let root = tmp("rename-path");
+        reset_dir(&root);
+        let source = root.join("draft.md");
+        fs::write(&source, "hello").unwrap();
+        fs::write(root.join("taken.md"), "occupied").unwrap();
+
+        assert!(rename_path(path_string(&source), "renamed".into()).is_err());
+        assert!(rename_path(path_string(&source), "taken.md".into()).is_err());
+
+        let renamed = rename_path(path_string(&source), "renamed.md".into()).unwrap();
+
+        assert_eq!(renamed, canonical_string(&root.join("renamed.md")));
+        assert_eq!(fs::read_to_string(&renamed).unwrap(), "hello");
+        assert!(!source.exists());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn delete_path_removes_files_and_empty_dirs_but_not_non_empty_dirs() {
+        let root = tmp("delete-path");
+        reset_dir(&root);
+        let file = root.join("draft.md");
+        fs::write(&file, "hello").unwrap();
+        delete_path(path_string(&file)).unwrap();
+        assert!(!file.exists());
+
+        let empty_dir = root.join("empty");
+        fs::create_dir(&empty_dir).unwrap();
+        delete_path(path_string(&empty_dir)).unwrap();
+        assert!(!empty_dir.exists());
+
+        let non_empty_dir = root.join("non-empty");
+        fs::create_dir_all(&non_empty_dir).unwrap();
+        fs::write(non_empty_dir.join("draft.md"), "hello").unwrap();
+        assert!(delete_path(path_string(&non_empty_dir)).is_err());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn recovery_roundtrip() {
         let dir = tmp("recovery");
-        fs::create_dir_all(&dir).unwrap();
+        reset_dir(&dir);
         std::env::set_var("OMD_RECOVERY_DIR", &dir);
         write_recovery("untitled_1".into(), "draft".into()).unwrap();
         let listed = list_recoveries().unwrap();
@@ -271,7 +465,7 @@ mod tests {
     #[test]
     fn settings_and_session_roundtrip() {
         let dir = tmp("config");
-        fs::create_dir_all(&dir).unwrap();
+        reset_dir(&dir);
         std::env::set_var("OMD_CONFIG_DIR", &dir);
 
         assert_eq!(get_settings().unwrap(), "{}");
