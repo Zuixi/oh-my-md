@@ -188,6 +188,15 @@ describe("desktop editor lifecycle", () => {
     expect(convert).toHaveBeenCalledWith("/notes/opened/assets/photo.png")
   })
 
+  it("sets spellcheck on the content element", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn()), spellcheck: true },
+    )
+    expect(view.contentDOM.getAttribute("spellcheck")).toBe("true")
+    view.destroy()
+  })
+
   it("configures line wrapping on the editor view", () => {
     const view = createEditor(
       document.createElement("div"),

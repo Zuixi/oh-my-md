@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  createEditor, documentOutline, editorStatus, resetEditorDocument,
+  createEditor, documentOutline, editorStatus, resetEditorDocument, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, type OutlineItem } from "@omd/engine"
+import { applyToggle, documentStats, type OutlineItem } from "@omd/engine"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
   sessionDirty, sessionPath, type EditorSession,
@@ -46,7 +46,9 @@ import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
-import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type DesktopServices } from "./desktopServices"
+import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices } from "./desktopServices"
+import { collectMatches, nextIndex, prevIndex, replaceAll } from "./findReplace"
+import { FindReplaceBar } from "./FindReplaceBar"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
@@ -193,6 +195,22 @@ export default function App({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState("")
+  const [findReplace, setFindReplace] = useState("")
+  const [findCase, setFindCase] = useState(false)
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [findIndex, setFindIndex] = useState(-1)
+  const findOpenRef = useRef(false)
+  findOpenRef.current = findOpen
+  const findQueryRef = useRef(findQuery)
+  findQueryRef.current = findQuery
+  const findReplaceRef = useRef(findReplace)
+  findReplaceRef.current = findReplace
+  const findCaseRef = useRef(findCase)
+  findCaseRef.current = findCase
+  const findIndexRef = useRef(findIndex)
+  findIndexRef.current = findIndex
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
   const treePollInFlightRef = useRef(false)
@@ -343,6 +361,7 @@ export default function App({
       onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
       tabSize: settingsRef.current.tabSize,
+      spellcheck: settingsRef.current.spellcheck,
     }
   }
 
@@ -544,8 +563,17 @@ export default function App({
     }, 120)
   }
 
+  function applySpellcheck(on: boolean) {
+    for (const view of viewsRef.current.values()) {
+      try { setEditorSpellcheck(view, on) } catch { /* mock views */ }
+    }
+  }
+
   function handleSaveSettings(next: UserSettings) {
     const sanitized = sanitizeSettings(next)
+    if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
+      applySpellcheck(sanitized.spellcheck)
+    }
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
@@ -558,6 +586,9 @@ export default function App({
       const saved = await services.getSettings()
       if (saved) {
         if (mountedRef.current) {
+          if (saved.spellcheck !== settingsRef.current.spellcheck) {
+            applySpellcheck(saved.spellcheck)
+          }
           setSettings(saved)
           settingsRef.current = saved
           setTheme(saved.theme)
@@ -911,7 +942,8 @@ export default function App({
     { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
     { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
     { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
-    { id: "search", label: "Search in folder", run: () => setSearchOpen(true) },
+    { id: "find", label: "Find in document", shortcut: "⌘F", run: () => setFindOpen(true) },
+    { id: "search", label: "Search in folder", shortcut: "⇧⌘F", run: () => setSearchOpen(true) },
     { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
     { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
     { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png") },
@@ -932,8 +964,83 @@ export default function App({
     }))
   }, [services])
 
+  function closeFind() {
+    setFindOpen(false)
+    setReplaceOpen(false)
+    try { viewRef.current?.focus() } catch { /* mock views */ }
+  }
+
+  function goFind(direction: "next" | "prev") {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const matches = collectMatches(doc, query, findCaseRef.current)
+    if (matches.length === 0) {
+      setFindIndex(-1)
+      return
+    }
+    const index = direction === "next"
+      ? nextIndex(matches.length, findIndexRef.current)
+      : prevIndex(matches.length, findIndexRef.current)
+    const match = matches[index]
+    try {
+      view.dispatch({
+        selection: { anchor: match.from, head: match.to },
+        scrollIntoView: true,
+      })
+    } catch { /* mock views */ }
+    setFindIndex(index)
+  }
+
+  function replaceCurrent() {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const matches = collectMatches(doc, query, findCaseRef.current)
+    if (matches.length === 0) return
+    const index = findIndexRef.current >= 0 && findIndexRef.current < matches.length
+      ? findIndexRef.current
+      : 0
+    const match = matches[index]
+    const replacement = findReplaceRef.current
+    try {
+      view.dispatch({
+        changes: { from: match.from, to: match.to, insert: replacement },
+        selection: { anchor: match.from, head: match.from + replacement.length },
+        scrollIntoView: true,
+      })
+    } catch { /* mock views */ }
+  }
+
+  function replaceEvery() {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const next = replaceAll(doc, query, findReplaceRef.current, findCaseRef.current)
+    if (next === doc) return
+    try {
+      view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
+    } catch { /* mock views */ }
+  }
+
+  const goFindRef = useRef(goFind)
+  const closeFindRef = useRef(closeFind)
+  goFindRef.current = goFind
+  closeFindRef.current = closeFind
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && findOpenRef.current) {
+        e.preventDefault()
+        closeFindRef.current()
+        return
+      }
       if (e.key === "p" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setPaletteOpen(open => !open)
@@ -949,6 +1056,19 @@ export default function App({
       } else if (e.key === "O" && e.shiftKey) {
         e.preventDefault()
         setOutlineOpen(open => !open)
+      } else if ((e.key === "f" || e.key === "F") && e.shiftKey) {
+        e.preventDefault()
+        setSearchOpen(true)
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault()
+        setFindOpen(true)
+      } else if (e.key === "h" || e.key === "H") {
+        e.preventDefault()
+        setFindOpen(true)
+        setReplaceOpen(true)
+      } else if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
+        e.preventDefault()
+        goFindRef.current(e.shiftKey ? "prev" : "next")
       } else if (e.key === "o") {
         e.preventDefault()
         void openFileRef.current()
@@ -976,6 +1096,7 @@ export default function App({
   }, [searchOpen, searchQuery, workspace.folder, services])
 
   const { cursor, mode } = editorStatus(viewRef.current)
+  const stats = documentStats(doc)
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
@@ -1145,6 +1266,29 @@ export default function App({
           {transientStatus ? (
             <p className="save-transient-status" role="status">{transientStatus}</p>
           ) : null}
+          <FindReplaceBar
+            open={findOpen}
+            query={findQuery}
+            replacement={findReplace}
+            caseSensitive={findCase}
+            replaceOpen={replaceOpen}
+            matchCount={collectMatches(doc, findQuery, findCase).length}
+            activeIndex={findIndex}
+            onQuery={query => {
+              setFindQuery(query)
+              setFindIndex(-1)
+            }}
+            onReplacement={setFindReplace}
+            onCaseSensitive={value => {
+              setFindCase(value)
+              setFindIndex(-1)
+            }}
+            onNext={() => goFind("next")}
+            onPrev={() => goFind("prev")}
+            onReplace={replaceCurrent}
+            onReplaceAll={replaceEvery}
+            onClose={closeFind}
+          />
           <div className="editor-stack">
             {workspace.tabs.map(tab => (
               <div
@@ -1158,7 +1302,8 @@ export default function App({
         </div>
       </div>
       <StatusBar
-        words={wordCount(doc)}
+        words={stats.words}
+        chars={stats.chars}
         cursor={cursor}
         mode={mode}
         normalizationReviewRequired={bannerKind === "normalization"}

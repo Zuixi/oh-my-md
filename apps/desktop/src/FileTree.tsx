@@ -45,7 +45,7 @@ export function FileTree(props: {
         >
           <Search size={13} className="filetree-search-icon" aria-hidden="true" />
           <span>Search in folder…</span>
-          <kbd>⌘F</kbd>
+          <kbd>⇧⌘F</kbd>
         </button>
       </div>
       {!props.folder ? (
