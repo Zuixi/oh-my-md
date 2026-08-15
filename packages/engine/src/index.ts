@@ -7,7 +7,7 @@ import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
 
 export { collectOutline, type OutlineItem } from "./outline"
-export { exportHtml } from "./export/html"
+export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
 export {
   classifyLink,
   headingPositionForAnchor,
