@@ -8,7 +8,21 @@ import { listKeymap } from "./format/lists"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml } from "./export/html"
-export { headingPositionForAnchor, headingSlug, linkAt, linkHref, type LinkTarget } from "./links"
+export {
+  classifyLink,
+  headingPositionForAnchor,
+  headingSlug,
+  linkAt,
+  linkHref,
+  type LinkTarget,
+  type ResolvedLink,
+} from "./links"
+export {
+  footnoteAt,
+  footnoteDefinitionPosition,
+  footnoteReferencePosition,
+  type FootnoteTarget,
+} from "./footnotesNav"
 export { applyToggle, isLivePreview } from "./modes/livePreview"
 export { markdownKeymap } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
