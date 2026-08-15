@@ -272,6 +272,12 @@ Two environment gaps produce stray warnings in `pnpm verify` if you break their 
 - **happy-dom leaves `document.compatMode` undefined.** KaTeX checks `document.compatMode !== "CSS1Compat"` at module load and warns "doesn't work in quirks mode" (rendering still works because `renderToString` bypasses the disabled DOM `render`). Fix: `packages/engine/test/setup.ts` pins `compatMode` to `"CSS1Compat"` via `Object.defineProperty`. Keep the engine's `setupFiles` entry in `vitest.config.ts`.
 
 
+## Desktop `defaultKeymap` is registered before engine keymaps
+
+CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding uses `Prec.high`.
+
+`@codemirror/lang-markdown` already wraps its markup-continue Enter in `Prec.high`. `listKeymap` must do the same (`packages/engine/src/format/lists.ts`), or list Tab/Enter lose whenever the markdown command returns false (incomplete syntax tree, non-list markup). Spec-only `continueListSpec` tests cannot see this — instantiate a real `EditorView` with host keymaps first.
+
 ## serde enum-level `rename_all` does not rename variant fields
 
 `#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum only camelCases the **variant names**, not the fields inside struct variants. `DiskSnapshot` shipped with `Existing { requested_path, .. }` relying on the enum-level attribute, so `read_document` returned `requested_path` over IPC while the webview read `requestedPath` — every opened file tab silently became "unnamed" (path `undefined`), with duplicate tabs on re-open and no autosave. Symptom looked frontend; cause was wire-format.

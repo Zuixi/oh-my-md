@@ -1,4 +1,4 @@
-import { type EditorState, type TransactionSpec } from "@codemirror/state"
+import { Prec, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap, type Command } from "@codemirror/view"
 
 const LINE = /^(\s*)((?:> )*)([-*+]|\d+[.)])( \[[ xX]\])?(\s|$)/
@@ -32,7 +32,7 @@ export function continueListSpec(state: EditorState): TransactionSpec | null {
   if (!found) return null
   const { line, match } = found
   if (line.text.slice(match[0].length).trim() === "") {
-    return { changes: { from: line.from, to: line.to, insert: "" } }
+    return { changes: { from: line.from, to: line.to, insert: match[2] ?? "" } }
   }
   const head = state.selection.main.head
   return { changes: { from: head, to: head, insert: `\n${nextMarker(match)}` } }
@@ -54,8 +54,8 @@ export const continueList = dispatchSpec(continueListSpec)
 export const indentList = dispatchSpec(indentListSpec)
 export const outdentList = dispatchSpec(outdentListSpec)
 
-export const listKeymap = keymap.of([
+export const listKeymap = Prec.high(keymap.of([
   { key: "Enter", run: continueList },
   { key: "Tab", run: indentList },
   { key: "Shift-Tab", run: outdentList },
-])
+]))
