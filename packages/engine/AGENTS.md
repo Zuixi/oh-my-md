@@ -92,6 +92,7 @@ pnpm test
 - CSS regressions cannot usually be fixed in this package because engine tests assert structure and ranges, not final desktop appearance.
 - Mermaid, Shiki, and KaTeX may render asynchronously or throw on invalid source; preserve the original Markdown in error output.
 - Do not add `indentOnInput`, `closeBrackets`, or generic `autocompletion` to compensate for preview behavior. Fix the underlying parse/decoration interaction. A `:`-only emoji completion override in `parse/emojiComplete.ts` is the exception; keep it in the engine and do not turn on default word completion in `createEditor`.
+- Engine keymaps that must beat desktop `defaultKeymap` (`Enter`, `Tab`) need `Prec.high`. Desktop registers `defaultKeymap` before `editorExtensions()`, and earlier bindings win.
 
 ## Documentation Maintenance
 

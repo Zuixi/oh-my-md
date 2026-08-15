@@ -1,6 +1,9 @@
-import { EditorState } from "@codemirror/state"
+import { defaultKeymap, historyKeymap } from "@codemirror/commands"
+import { EditorState, type Extension } from "@codemirror/state"
+import { EditorView, keymap } from "@codemirror/view"
 import { describe, expect, it } from "vitest"
-import { continueListSpec, indentListSpec, outdentListSpec } from "../src/format/lists"
+import { editorExtensions } from "../src/index"
+import { continueListSpec, indentListSpec, listKeymap, outdentListSpec } from "../src/format/lists"
 
 function state(doc: string, head: number) {
   return EditorState.create({ doc, selection: { anchor: head } })
@@ -18,6 +21,16 @@ describe("continueListSpec", () => {
     expect(spec).toBeTruthy()
     const next = s.update(spec!)
     expect(next.state.doc.toString()).toBe("- hello\n")
+  })
+  it("keeps the quote when exiting an empty quoted item", () => {
+    const s = state("> - ", 4)
+    const next = s.update(continueListSpec(s)!)
+    expect(next.state.doc.toString()).toBe("> ")
+  })
+  it("keeps the quote when exiting a following empty quoted item", () => {
+    const s = state("> - hello\n> - ", 14)
+    const next = s.update(continueListSpec(s)!)
+    expect(next.state.doc.toString()).toBe("> - hello\n> ")
   })
   it("continues an ordered item with next number", () => {
     const s = state("1. a\n2. b", 9)
@@ -56,5 +69,45 @@ describe("indentListSpec", () => {
     const s = state("  - a", 5)
     const next = s.update(outdentListSpec(s)!)
     expect(next.state.doc.toString()).toBe("- a")
+  })
+})
+
+function pressEnter(view: EditorView) {
+  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }))
+}
+
+function viewWith(extensions: Extension[]) {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  return new EditorView({
+    state: EditorState.create({
+      doc: "- hello",
+      selection: { anchor: 7 },
+      extensions,
+    }),
+    parent,
+  })
+}
+
+describe("listKeymap vs defaultKeymap", () => {
+  const hostKeys = keymap.of([...defaultKeymap, ...historyKeymap])
+
+  it("continues a list on Enter when defaultKeymap is registered first", () => {
+    const view = viewWith([hostKeys, editorExtensions()])
+    pressEnter(view)
+    expect(view.state.doc.toString()).toBe("- hello\n- ")
+    view.destroy()
+  })
+
+  it("continues a list on Enter when only listKeymap follows defaultKeymap", () => {
+    const view = viewWith([hostKeys, listKeymap])
+    pressEnter(view)
+    expect(view.state.doc.toString()).toBe("- hello\n- ")
+    view.destroy()
   })
 })
