@@ -1,0 +1,69 @@
+export type AppTheme = "system" | "light" | "dark"
+export type DefaultEditorMode = "live" | "source"
+export type TabSize = 2 | 4
+
+export interface UserSettings {
+  theme: AppTheme
+  fontSize: number
+  fontFamily: string
+  lineHeight: number
+  tabSize: TabSize
+  defaultMode: DefaultEditorMode
+  spellcheck: boolean
+}
+
+export const DEFAULT_SETTINGS: UserSettings = {
+  theme: "system",
+  fontSize: 16,
+  fontFamily: "system-ui, -apple-system, sans-serif",
+  lineHeight: 1.6,
+  tabSize: 2,
+  defaultMode: "live",
+  spellcheck: false,
+}
+
+export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
+  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS
+  const theme: AppTheme =
+    raw.theme === "light" || raw.theme === "dark" || raw.theme === "system"
+      ? raw.theme
+      : DEFAULT_SETTINGS.theme
+
+  const fontSize = typeof raw.fontSize === "number" && !Number.isNaN(raw.fontSize)
+    ? Math.max(12, Math.min(32, Math.round(raw.fontSize)))
+    : DEFAULT_SETTINGS.fontSize
+
+  const fontFamily = typeof raw.fontFamily === "string" && raw.fontFamily.trim().length > 0
+    ? raw.fontFamily.trim()
+    : DEFAULT_SETTINGS.fontFamily
+
+  const lineHeight = typeof raw.lineHeight === "number" && !Number.isNaN(raw.lineHeight)
+    ? Math.max(1.2, Math.min(2.4, Math.round(raw.lineHeight * 10) / 10))
+    : DEFAULT_SETTINGS.lineHeight
+
+  const tabSize: TabSize = raw.tabSize === 4 ? 4 : 2
+
+  const defaultMode: DefaultEditorMode =
+    raw.defaultMode === "source" ? "source" : "live"
+
+  const spellcheck = Boolean(raw.spellcheck)
+
+  return {
+    theme,
+    fontSize,
+    fontFamily,
+    lineHeight,
+    tabSize,
+    defaultMode,
+    spellcheck,
+  }
+}
+
+export function parseSettings(json: string): UserSettings {
+  try {
+    const parsed = JSON.parse(json)
+    return sanitizeSettings(parsed)
+  } catch {
+    return DEFAULT_SETTINGS
+  }
+}
