@@ -942,7 +942,10 @@ export default function App({
     { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
     { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
     { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
-    { id: "find", label: "Find in document", shortcut: "⌘F", run: () => setFindOpen(true) },
+    { id: "find", label: "Find in document", shortcut: "⌘F", run: () => {
+      setFindOpen(true)
+      setReplaceOpen(false)
+    } },
     { id: "search", label: "Search in folder", shortcut: "⇧⌘F", run: () => setSearchOpen(true) },
     { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
     { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
@@ -1036,6 +1039,7 @@ export default function App({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
       if (e.key === "Escape" && findOpenRef.current) {
         e.preventDefault()
         closeFindRef.current()
@@ -1062,6 +1066,7 @@ export default function App({
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault()
         setFindOpen(true)
+        setReplaceOpen(false)
       } else if (e.key === "h" || e.key === "H") {
         e.preventDefault()
         setFindOpen(true)
