@@ -182,4 +182,51 @@ describe("tables", () => {
     insertRow.click()
     expect(doc).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
   })
+
+  it("toolbar follows the cell reached by Tab", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const view = {
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, {
+      header: ["a", "b"],
+      rows: [["1", "2"]],
+      aligns: ["", ""],
+    })
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+    const deleteCol = wrap.querySelector(".omd-table-toolbar [data-act='delete-col']") as HTMLElement
+    deleteCol.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    deleteCol.click()
+    expect(doc).toBe("| a |\n|---|\n| 1 |")
+  })
+
+  it("lets the edit input keep native mousedown for caret placement", async () => {
+    const widget = new TableWidget("| a |\n|---|\n| 1 |", 0, {
+      header: ["a"],
+      rows: [["1"]],
+      aligns: [""],
+    })
+    const wrap = widget.toDOM({ requestMeasure: () => {} } as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+    input.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(false)
+    expect(wrap.querySelector("input.omd-table-edit")).toBe(input)
+  })
 })
