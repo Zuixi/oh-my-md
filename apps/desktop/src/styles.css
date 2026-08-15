@@ -31,7 +31,12 @@ html[data-theme="dark"] {
 }
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
-.editor-host .cm-content { font-family: -apple-system, "PingFang SC", sans-serif; color: var(--omd-fg); }
+.editor-host .cm-content {
+  font-family: var(--omd-font-family, -apple-system, "PingFang SC", sans-serif);
+  font-size: var(--omd-font-size, 16px);
+  line-height: var(--omd-line-height, 1.6);
+  color: var(--omd-fg);
+}
 .editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
 .editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
@@ -727,3 +732,125 @@ html[data-theme="dark"] .tab:hover {
 }
 .palette kbd { float: right; color: var(--omd-muted); }
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
+
+/* Modal / Settings dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: omd-fade-in 0.12s ease-out;
+}
+.settings-modal {
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  background: var(--omd-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--omd-border);
+  background: var(--omd-chrome);
+}
+.settings-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--omd-fg);
+}
+.settings-close-btn {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--omd-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 4px 8px;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-close-btn:hover {
+  background: var(--omd-border);
+  color: var(--omd-fg);
+}
+.settings-body {
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.settings-section h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--omd-muted);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--omd-border);
+  gap: 12px;
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-row > span {
+  font-size: 13px;
+  color: var(--omd-fg);
+}
+.settings-row input[type="text"],
+.settings-row input[type="number"],
+.settings-row select {
+  padding: 5px 8px;
+  border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  background: var(--omd-bg);
+  color: var(--omd-fg);
+  font-size: 13px;
+  outline: none;
+}
+.settings-row input[type="text"]:focus,
+.settings-row input[type="number"]:focus,
+.settings-row select:focus {
+  border-color: var(--omd-link);
+}
+.settings-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--omd-border);
+  background: var(--omd-chrome);
+}
+.settings-done-btn {
+  padding: 6px 14px;
+  background: var(--omd-link);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-done-btn:hover {
+  opacity: 0.9;
+}
