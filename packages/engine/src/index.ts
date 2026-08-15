@@ -4,12 +4,14 @@ import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } f
 import { imageResolver } from "./decorations/widgets/image"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
+import { listKeymap } from "./format/lists"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml } from "./export/html"
 export { headingPositionForAnchor, headingSlug, linkAt, linkHref, type LinkTarget } from "./links"
 export { applyToggle, isLivePreview } from "./modes/livePreview"
 export { markdownKeymap } from "./format/commands"
+export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { documentStats, type DocumentStats } from "./stats"
 export {
   insertLink,
@@ -43,6 +45,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     markdownLanguageSupport(),
     emojiCompletion,
     markdownKeymap,
+    listKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
     livePreviewCompartment.of(livePreviewExt()),

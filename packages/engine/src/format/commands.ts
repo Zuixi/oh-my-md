@@ -245,6 +245,8 @@ function insertLinkSpec(state: EditorState): TransactionSpec | null {
 
 export const insertLink = dispatchSpec(insertLinkSpec)
 
+export { continueList, indentList, listKeymap, outdentList } from "./lists"
+
 // --- 键位 -------------------------------------------------------------------------
 
 export const markdownKeymap = keymap.of([
