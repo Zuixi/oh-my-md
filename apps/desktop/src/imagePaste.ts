@@ -258,6 +258,10 @@ export async function pickAndInsertImage(
   pick: () => Promise<File | null> = defaultPickImage,
 ): Promise<void> {
   const docPath = options.getDocPath()
+  if (!docPath) {
+    options.onError("Save the file before inserting an image")
+    return
+  }
   const documentId = options.getDocumentId()
   const document = view.state.doc
   const selection = view.state.selection.main
