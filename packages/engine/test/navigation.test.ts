@@ -31,10 +31,20 @@ describe("footnote lookups", () => {
 
   it("finds a definition at the mark and the first reference by id", () => {
     const s = makeState(doc)
-    const def = footnoteAt(s, doc.indexOf("[^a]:"))
+    const markFrom = doc.indexOf("[^a]:")
+    const markTo = markFrom + "[^a]:".length
+    const def = footnoteAt(s, markFrom)
     expect(def?.kind).toBe("definition")
     expect(def?.id).toBe("a")
+    expect(def?.from).toBe(markFrom)
+    expect(def?.to).toBe(markTo)
+    expect(footnoteAt(s, markTo - 1)?.kind).toBe("definition")
     expect(footnoteReferencePosition(s, "a")).toBe(doc.indexOf("[^a]"))
+  })
+
+  it("ignores clicks in the footnote definition body", () => {
+    const s = makeState(doc)
+    expect(footnoteAt(s, doc.indexOf("note"))).toBeNull()
   })
 
   it("looks up definitions case-insensitively and returns null for missing ids", () => {
