@@ -117,4 +117,69 @@ describe("tables", () => {
     await Promise.resolve()
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/facet/x.png")
   })
+
+  it("opens an omd-table-edit input on cell click and commits source on Enter", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const dispatches: unknown[] = []
+    const view = {
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string }; selection?: unknown }) => {
+        dispatches.push(spec)
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, {
+      header: ["a", "b"],
+      rows: [["1", "2"]],
+      aligns: ["", ""],
+    })
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    const td = wrap.querySelector("td")!
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    expect(input).toBeTruthy()
+    expect(input!.value).toBe("1")
+    expect(dispatches.some(d => d !== null && typeof d === "object" && "selection" in d)).toBe(false)
+    input!.value = "x"
+    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+    expect(doc).toBe("| a | b |\n|---|---|\n| x | 2 |")
+  })
+
+  it("inserts a row below from the table toolbar", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const view = {
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, {
+      header: ["a", "b"],
+      rows: [["1", "2"]],
+      aligns: ["", ""],
+    })
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const insertRow = wrap.querySelector(".omd-table-toolbar [data-act='insert-row']") as HTMLElement
+    expect(insertRow).toBeTruthy()
+    insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    insertRow.click()
+    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
+  })
 })

@@ -1,5 +1,15 @@
+import type { EditorView } from "@codemirror/view"
 import { parseCell, type CellNode } from "../../parse/cell"
+import {
+  deleteTableColumn,
+  deleteTableRow,
+  insertTableColumn,
+  insertTableRow,
+  replaceTableCell,
+} from "../../tables/edit"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
+
+let resumeEdit: { pos: number; row: number; col: number } | null = null
 
 export type TableAlignment = "left" | "center" | "right" | ""
 
@@ -92,6 +102,12 @@ export function renderTableCellContent(parent: HTMLElement, text: string, resolv
 }
 
 export class TableWidget extends BlockWidget {
+  private view: EditorView | undefined
+  private row = 0
+  private col = 0
+  private editing: { el: HTMLElement; row: number; col: number } | null = null
+  private cells: HTMLElement[][] = []
+
   constructor(
     src: string,
     pos: number,
@@ -107,32 +123,183 @@ export class TableWidget extends BlockWidget {
     return super.eq(other) && JSON.stringify(this.table) === JSON.stringify(other.table)
   }
 
+  override toDOM(view: EditorView) {
+    this.view = view
+    return super.toDOM(view)
+  }
+
+  override ignoreEvent(event: Event) {
+    return super.ignoreEvent(event)
+      || event.type === "keydown"
+      || event.type === "keyup"
+      || event.type === "keypress"
+      || event.type === "input"
+      || event.type === "click"
+  }
+
   protected get cssClass() { return "omd-table" }
 
   protected renderInto(el: HTMLElement) {
+    const toolbar = document.createElement("div")
+    toolbar.className = "omd-table-toolbar"
+    for (const [act, label, title] of [
+      ["insert-row", "+row", "Insert row below"],
+      ["insert-col", "+col", "Insert column right"],
+      ["delete-row", "−row", "Delete row"],
+      ["delete-col", "−col", "Delete column"],
+    ] as const) {
+      const btn = document.createElement("button")
+      btn.type = "button"
+      btn.dataset.act = act
+      btn.textContent = label
+      btn.title = title
+      btn.tabIndex = -1
+      btn.addEventListener("mousedown", e => {
+        e.preventDefault()
+        e.stopPropagation()
+      })
+      btn.addEventListener("click", e => {
+        e.preventDefault()
+        e.stopPropagation()
+        this.tool(act)
+      })
+      toolbar.appendChild(btn)
+    }
+    el.appendChild(toolbar)
+
+    this.cells = []
     const table = document.createElement("table")
     const thead = document.createElement("thead")
     const hr = document.createElement("tr")
+    const head: HTMLElement[] = []
     for (const [i, c] of this.table.header.entries()) {
       const th = document.createElement("th")
       renderTableCellContent(th, c, this.resolveSrc)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
+      this.bindCell(th, 0, i)
+      head.push(th)
       hr.appendChild(th)
     }
+    this.cells.push(head)
     thead.appendChild(hr)
     table.appendChild(thead)
     const tbody = document.createElement("tbody")
-    for (const row of this.table.rows) {
+    for (const [r, row] of this.table.rows.entries()) {
       const tr = document.createElement("tr")
+      const line: HTMLElement[] = []
       for (let i = 0; i < this.table.header.length; i++) {
         const td = document.createElement("td")
         renderTableCellContent(td, row[i] ?? "", this.resolveSrc)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
+        this.bindCell(td, r + 1, i)
+        line.push(td)
         tr.appendChild(td)
       }
+      this.cells.push(line)
       tbody.appendChild(tr)
     }
     table.appendChild(tbody)
     el.appendChild(table)
+
+    if (resumeEdit && resumeEdit.pos === this.pos) {
+      const { row, col } = resumeEdit
+      resumeEdit = null
+      const cell = this.cells[row]?.[col]
+      if (cell) this.startEdit(cell, row, col)
+    }
+  }
+
+  private cellSource(row: number, col: number) {
+    return row === 0 ? (this.table.header[col] ?? "") : (this.table.rows[row - 1]?.[col] ?? "")
+  }
+
+  private bindCell(el: HTMLElement, row: number, col: number) {
+    el.addEventListener("mousedown", e => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.target instanceof HTMLInputElement) return
+      this.row = row
+      this.col = col
+      this.startEdit(el, row, col)
+    })
+  }
+
+  private startEdit(el: HTMLElement, row: number, col: number) {
+    if (this.editing?.el === el) return
+    this.cancelEdit()
+    const input = document.createElement("input")
+    input.type = "text"
+    input.className = "omd-table-edit"
+    input.value = this.cellSource(row, col)
+    el.replaceChildren(input)
+    this.editing = { el, row, col }
+    input.addEventListener("mousedown", e => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault()
+        this.commitEdit(e.key === "Tab" && e.shiftKey ? -1 : 1)
+      } else if (e.key === "Escape") {
+        e.preventDefault()
+        this.cancelEdit()
+      }
+    })
+    input.focus()
+    input.select()
+  }
+
+  private cancelEdit() {
+    const edit = this.editing
+    if (!edit) return
+    this.editing = null
+    edit.el.replaceChildren()
+    renderTableCellContent(edit.el, this.cellSource(edit.row, edit.col), this.resolveSrc)
+  }
+
+  private commitEdit(move: 1 | -1 | 0) {
+    const edit = this.editing
+    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    if (!edit || !input) return
+    const next = replaceTableCell(this.src, edit.row, edit.col, input.value)
+    if (!next) return
+    this.editing = null
+    const dest = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
+    this.replace(next, dest)
+    if (next && dest && this.cells[dest.row]?.[dest.col])
+      this.startEdit(this.cells[dest.row][dest.col], dest.row, dest.col)
+  }
+
+  private neighbor(row: number, col: number, dir: 1 | -1) {
+    const cols = this.table.header.length
+    const rows = this.table.rows.length + 1
+    const i = row * cols + col + dir
+    if (i < 0 || i >= rows * cols) return null
+    return { row: Math.floor(i / cols), col: i % cols }
+  }
+
+  private tool(act: "insert-row" | "insert-col" | "delete-row" | "delete-col") {
+    let src = this.src
+    const edit = this.editing
+    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    if (edit && input) {
+      const committed = replaceTableCell(src, edit.row, edit.col, input.value)
+      if (committed) src = committed
+      this.editing = null
+    }
+    const next = act === "insert-row" ? insertTableRow(src, this.row)
+      : act === "insert-col" ? insertTableColumn(src, this.col)
+      : act === "delete-row" ? deleteTableRow(src, this.row)
+      : deleteTableColumn(src, this.col)
+    this.replace(next)
+  }
+
+  private replace(next: string | null, dest: { row: number; col: number } | null = null) {
+    if (!next || !this.view) return
+    if (dest) resumeEdit = { pos: this.pos, row: dest.row, col: dest.col }
+    this.view.dispatch({
+      changes: { from: this.pos, to: this.pos + this.src.length, insert: next },
+    })
   }
 }

@@ -154,6 +154,7 @@ Facts to remember:
 - Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
 - Widget `eq` compares `TableData` strings via `JSON.stringify`; parsing happens at render time from the current strings, so there is no stale-state risk and no cell re-parse churn when the table is unchanged.
+- Cell `mousedown` must `preventDefault` + `stopPropagation`. `BlockWidget.toDOM` moves selection into the table source on wrap `mousedown`, which unmounts the widget; without stopping the bubble, in-place `input.omd-table-edit` never stays mounted.
 
 ## Async widgets can outlive their original DOM
 
