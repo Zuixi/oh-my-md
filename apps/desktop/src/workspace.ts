@@ -61,6 +61,24 @@ export function parentDir(path: string): string | null {
   return normalized.slice(0, index)
 }
 
+/** Join href to the document directory and collapse `.` / `..`. Strips `#anchor`. */
+export function resolveMarkdownHref(docPath: string, href: string): string {
+  const file = (href.split("#")[0] ?? href).replace(/\\/g, "/")
+  const current = docPath.replace(/\\/g, "/")
+  const joined = file.startsWith("/") ? file : current.slice(0, current.lastIndexOf("/") + 1) + file
+  const rooted = joined.startsWith("/")
+  const parts: string[] = []
+  for (const part of joined.split("/")) {
+    if (part === "" || part === ".") continue
+    if (part === "..") {
+      parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+  return (rooted ? "/" : "") + parts.join("/")
+}
+
 export function openFolder(workspace: Workspace, folder: string): Workspace {
   return { ...workspace, folder }
 }

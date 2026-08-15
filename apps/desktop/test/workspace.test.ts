@@ -10,6 +10,7 @@ import {
   ensureFolder,
   openFolder,
   parentDir,
+  resolveMarkdownHref,
   replaceActive,
   replaceTabSession,
 } from "../src/workspace"
@@ -84,5 +85,11 @@ describe("workspace tabs", () => {
     const inferred = ensureFolder(createWorkspace(), "/notes/doc.md")
     expect(inferred.folder).toBe("/notes")
     expect(ensureFolder(inferred, "/other/file.md").folder).toBe("/notes")
+  })
+
+  it("normalizes markdown hrefs against the document directory", () => {
+    expect(resolveMarkdownHref("notes/doc.md", "./a.md")).toBe("notes/a.md")
+    expect(resolveMarkdownHref("notes/doc.md", "../a.md")).toBe("a.md")
+    expect(resolveMarkdownHref("notes/doc.md", "a.md#guide")).toBe("notes/a.md")
   })
 })

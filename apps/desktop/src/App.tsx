@@ -11,7 +11,7 @@ import {
 } from "./session"
 import {
   activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, parentDir, replaceTabSession, type Workspace,
+  focusTab, openFolder, parentDir, replaceTabSession, resolveMarkdownHref, type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -361,14 +361,12 @@ export default function App({
       onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
       onOpenMarkdownHref: href => {
-        const file = (href.split("#")[0] ?? href).replace(/\\/g, "/")
-        const current = sessionPath(sessionRef.current)?.replace(/\\/g, "/")
+        const current = sessionPath(sessionRef.current)
         if (!current) {
           services.reportError(errorMessage("Open failed", new Error("File not found")))
           return
         }
-        const dir = current.slice(0, current.lastIndexOf("/") + 1)
-        void openPath(file.startsWith("/") ? file : dir + file, true)
+        void openPath(resolveMarkdownHref(current, href), true)
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
