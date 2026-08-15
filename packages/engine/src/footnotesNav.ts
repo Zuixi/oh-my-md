@@ -17,10 +17,21 @@ function footnoteId(state: EditorState, node: SyntaxNode, kind: FootnoteTarget["
   return state.doc.sliceString(node.from + 2, node.to - 1)
 }
 
-function targetFromNode(state: EditorState, node: SyntaxNode): FootnoteTarget | null {
-  if (node.name !== "FootnoteReference" && node.name !== "FootnoteDefinition") return null
-  const kind = node.name === "FootnoteReference" ? "reference" : "definition"
-  return { id: footnoteId(state, node, kind), kind, from: node.from, to: node.to }
+function covers(pos: number, from: number, to: number): boolean {
+  return pos >= from && pos < to
+}
+
+function targetFromNode(state: EditorState, node: SyntaxNode, pos: number): FootnoteTarget | null {
+  if (node.name === "FootnoteReference") {
+    if (!covers(pos, node.from, node.to) && pos !== node.to) return null
+    return { id: footnoteId(state, node, "reference"), kind: "reference", from: node.from, to: node.to }
+  }
+  const mark = node.name === "FootnoteMark" ? node
+    : node.name === "FootnoteDefinition" ? node.getChild("FootnoteMark")
+    : null
+  const def = node.name === "FootnoteDefinition" ? node : node.parent
+  if (!mark || def?.name !== "FootnoteDefinition" || !covers(pos, mark.from, mark.to)) return null
+  return { id: footnoteId(state, def, "definition"), kind: "definition", from: mark.from, to: mark.to }
 }
 
 export function footnoteAt(state: EditorState, pos: number): FootnoteTarget | null {
@@ -28,7 +39,7 @@ export function footnoteAt(state: EditorState, pos: number): FootnoteTarget | nu
   for (const side of [1, -1] as const) {
     let node: SyntaxNode | null = tree.resolveInner(pos, side)
     while (node) {
-      const target = targetFromNode(state, node)
+      const target = targetFromNode(state, node, pos)
       if (target) return target
       node = node.parent
     }
