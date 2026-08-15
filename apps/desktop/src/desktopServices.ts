@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { exportSaveOptions } from "./exportPath"
 import { parseRecents, RECENTS_STORAGE_KEY } from "./recents"
+import { parseSettings, type UserSettings } from "./settings"
+import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
 
@@ -100,6 +102,10 @@ export interface DesktopServices {
   confirmClose?: () => boolean
   confirmRestore?: (label: string) => boolean
   confirmExternalChange?: () => boolean
+  getSettings?: () => Promise<UserSettings>
+  saveSettings?: (settings: UserSettings) => Promise<void>
+  getSessionState?: () => Promise<SavedSessionState | null>
+  saveSessionState?: (state: SavedSessionState) => Promise<void>
   reportError: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
 }
@@ -199,6 +205,56 @@ export const defaultServices: DesktopServices = {
   confirmClose: () => window.confirm("Close this tab and discard unsaved changes?"),
   confirmRestore: (label) => window.confirm(`Restore unsaved draft ${label}?`),
   confirmExternalChange: () => window.confirm("File changed on disk. Reload?"),
+  getSettings: async () => {
+    try {
+      const json = await invoke<string>("get_settings")
+      return parseSettings(json)
+    } catch {
+      try {
+        const local = localStorage.getItem("omd_user_settings")
+        return parseSettings(local ?? "{}")
+      } catch {
+        return parseSettings("{}")
+      }
+    }
+  },
+  saveSettings: async (settings: UserSettings) => {
+    const json = JSON.stringify(settings, null, 2)
+    try {
+      await invoke("save_settings", { contents: json })
+    } catch {
+      try {
+        localStorage.setItem("omd_user_settings", json)
+      } catch {
+        // ignore
+      }
+    }
+  },
+  getSessionState: async () => {
+    try {
+      const json = await invoke<string>("get_session_state")
+      return parseSessionState(json)
+    } catch {
+      try {
+        const local = localStorage.getItem("omd_saved_session")
+        return parseSessionState(local ?? "{}")
+      } catch {
+        return null
+      }
+    }
+  },
+  saveSessionState: async (state: SavedSessionState) => {
+    const json = JSON.stringify(state, null, 2)
+    try {
+      await invoke("save_session_state", { contents: json })
+    } catch {
+      try {
+        localStorage.setItem("omd_saved_session", json)
+      } catch {
+        // ignore
+      }
+    }
+  },
   reportError: (message) => window.alert(message),
   listenMenu: handler => {
     const pending = listen<string>("menu-command", event => handler(event.payload))

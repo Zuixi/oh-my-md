@@ -20,6 +20,7 @@ import {
   type FakeDisk,
   type SaveDocumentOverride,
 } from "./fakeDisk"
+import { DEFAULT_SETTINGS } from "../src/settings"
 
 const NO_WATCH_MS = 0
 /** Watch interval armed only for the duration of one faked external poll. */
@@ -271,6 +272,10 @@ function harnessServices(context: HarnessContext): HarnessServices {
     confirmDiscard: vi.fn(() => true),
     confirmClose: vi.fn(() => true),
     confirmExternalChange: vi.fn(() => true),
+    getSettings: vi.fn(async () => DEFAULT_SETTINGS),
+    saveSettings: vi.fn(async () => undefined),
+    getSessionState: vi.fn(async () => null),
+    saveSessionState: vi.fn(async () => undefined),
     reportError: vi.fn(),
     revealInFinder: vi.fn(async () => undefined),
     clearRecovery: vi.fn(async () => undefined),
