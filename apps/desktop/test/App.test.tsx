@@ -14,6 +14,7 @@ vi.mock("@omd/engine", async importOriginal => {
   return {
     ...actual,
     exportHtml: () => "<!doctype html><html>exported</html>",
+    exportRichHtml: async () => "<!doctype html><html>exported</html>",
     collectOutline: () => [],
     getPendingOrderedListNormalization: vi.fn(() => null),
     acceptOrderedListNormalization: vi.fn(() => ({
@@ -1069,7 +1070,7 @@ describe("App product shell", () => {
       send = handler
       return () => undefined
     }
-    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.png")
     harness.renderApp()
     act(() => send?.("export-image"))
@@ -1090,7 +1091,7 @@ describe("App product shell", () => {
       send = handler
       return () => undefined
     }
-    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.pdf")
     harness.renderApp()
     act(() => send?.("export-pdf"))
