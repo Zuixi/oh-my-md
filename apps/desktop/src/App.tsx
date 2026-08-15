@@ -8,7 +8,7 @@ import { applyToggle, documentStats, type OutlineItem } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
-  sessionDirty, sessionPath, type EditorSession,
+  retargetSessionPath, sessionDirty, sessionPath, type EditorSession,
 } from "./session"
 import {
   activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
@@ -115,6 +115,41 @@ function sameEntries(
     }
   }
   return true
+}
+
+function replaceTreePrefix(path: string, from: string, to: string): string {
+  if (path === from) return to
+  return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path
+}
+
+function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
+  const prefix = `${path}/`
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath)
+      .filter(([key]) => key !== path && !key.startsWith(prefix))
+      .map(([key, entries]) => [
+        key,
+        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
+      ]),
+  )
+  const expanded = new Set(
+    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
+  )
+  return { childrenByPath, expanded }
+}
+
+function renameTreePath(model: FileTreeModel, from: string, to: string): FileTreeModel {
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath).map(([key, entries]) => [
+      replaceTreePrefix(key, from, to),
+      entries.map(entry => ({
+        ...entry,
+        path: replaceTreePrefix(entry.path, from, to),
+      })),
+    ]),
+  )
+  const expanded = new Set([...model.expanded].map(path => replaceTreePrefix(path, from, to)))
+  return { childrenByPath, expanded }
 }
 
 function readSidebarOpen(): boolean {
@@ -325,6 +360,63 @@ export default function App({
 
   function reportUserError(message: string) {
     if (mountedRef.current) services.reportError(message)
+  }
+
+  function invalidName(name: string): boolean {
+    return (
+      !name
+      || name === "."
+      || name === ".md"
+      || name.includes("/")
+      || name.includes("\\")
+      || name.includes("..")
+    )
+  }
+
+  function normalizeMarkdownName(name: string): string {
+    const trimmed = name.trim()
+    return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`
+  }
+
+  async function refreshTreePath(path: string): Promise<void> {
+    if (!services.listDir) return
+    try {
+      const entries = await services.listDir(path)
+      commitTree(setChildren(treeModelRef.current, path, entries))
+    } catch (error) {
+      services.reportError(errorMessage("Folder listing failed", error))
+    }
+  }
+
+  async function nextUntitledMarkdownName(dir: string): Promise<string> {
+    if (!services.listDir) return "untitled.md"
+    const entries = await services.listDir(dir)
+    const names = new Set(entries.map(entry => entry.name))
+    if (!names.has("untitled.md")) return "untitled.md"
+    let suffix = 2
+    while (names.has(`untitled-${suffix}.md`)) suffix += 1
+    return `untitled-${suffix}.md`
+  }
+
+  function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
+    const nextTabs = workspaceRef.current.tabs.map(tab => {
+      const path = sessionPath(tab)
+      if (!path) return tab
+      if (path === from) return retargetSessionPath(tab, to)
+      if (isDir && path.startsWith(`${from}/`)) {
+        return retargetSessionPath(tab, `${to}${path.slice(from.length)}`)
+      }
+      return tab
+    })
+    if (nextTabs.every((tab, index) => tab === workspaceRef.current.tabs[index])) return
+    commitWorkspace({ ...workspaceRef.current, tabs: nextTabs })
+    const affectedPaths = nextTabs
+      .map(tab => sessionPath(tab))
+      .filter((path): path is string => path !== null)
+      .filter(path => path === to || (isDir && path.startsWith(`${to}/`)))
+    for (const path of new Set(affectedPaths)) {
+      void services.allowDocumentAssets(path)
+    }
   }
 
   function saveRecovery(tab: EditorSession, contents: string) {
@@ -781,24 +873,46 @@ export default function App({
     syncDoc("", tab.id)
   }
 
-  function requestCloseTab(id: number) {
+  function closeTabInternal(
+    id: number,
+    options: { confirm: boolean; allowReplaceLast: boolean },
+  ): boolean {
     const tab = tabById(id)
-    if (!tab) return
+    if (!tab) return false
     const contents = docsRef.current.get(id) ?? ""
-    if (sessionDirty(tab, contents) && !(services.confirmClose ?? services.confirmDiscard)()) return
+    if (
+      options.confirm
+      && sessionDirty(tab, contents)
+      && !(services.confirmClose ?? services.confirmDiscard)()
+    ) {
+      return false
+    }
+    let currentWorkspace = workspaceRef.current
+    if (options.allowReplaceLast && currentWorkspace.tabs.length === 1) {
+      const replacement = createSession(currentWorkspace.nextId)
+      docsRef.current.set(replacement.id, "")
+      commitSaveState({ ...saveStateRef.current, [replacement.id]: initialSaveState() })
+      currentWorkspace = addTab(currentWorkspace, replacement)
+    }
     // Per-tab state is dropped when the tab really disappears; closeTab keeps a lone tab open.
-    const closed = closeTab(workspaceRef.current, id)
+    const closed = closeTab(currentWorkspace, id)
     if (!closed.tabs.some(item => item.id === id)) {
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
       commitSaveState(removeTabSaveState(saveStateRef.current, id))
       recoveryWriterRef.current.forget(id)
+      docsRef.current.delete(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
     commitWorkspace(closed)
-    const active = activeSession(workspaceRef.current)
+    const active = activeSession(closed)
     viewRef.current = viewsRef.current.get(active.id) ?? viewRef.current
     syncDoc(docsRef.current.get(active.id) ?? "", active.id)
+    return !closed.tabs.some(item => item.id === id)
+  }
+
+  function requestCloseTab(id: number) {
+    closeTabInternal(id, { confirm: true, allowReplaceLast: false })
   }
   requestCloseTabRef.current = requestCloseTab
 
@@ -929,6 +1043,93 @@ export default function App({
     const active = sessionRef.current
     if (!view) return
     void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
+  }
+
+  async function createTreeFile(dir: string) {
+    if (!services.createMarkdown) return
+    let defaultName = "untitled.md"
+    try {
+      defaultName = await nextUntitledMarkdownName(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Folder listing failed", error))
+      return
+    }
+    const rawName = window.prompt("New file name", defaultName)
+    if (rawName === null) return
+    const name = normalizeMarkdownName(rawName)
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    try {
+      await services.createMarkdown(dir, name)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Create file failed", error))
+    }
+  }
+
+  async function createTreeFolder(dir: string) {
+    if (!services.createDir) return
+    const rawName = window.prompt("New folder name", "untitled-folder")
+    if (rawName === null) return
+    const name = rawName.trim()
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    try {
+      await services.createDir(dir, name)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Create folder failed", error))
+    }
+  }
+
+  async function renameTreeEntry(entry: TreeEntry) {
+    if (!services.renamePath) return
+    const rawName = window.prompt("Rename", entry.name)
+    if (rawName === null) return
+    const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
+    if (name === entry.name) return
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    const dir = parentDir(entry.path)
+    if (!dir) return
+    try {
+      const nextPath = await services.renamePath(entry.path, name)
+      commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
+      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Rename failed", error))
+    }
+  }
+
+  async function deleteTreeEntry(entry: TreeEntry) {
+    if (!services.deletePath) return
+    const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
+    if (
+      openTab
+      && sessionDirty(openTab, docsRef.current.get(openTab.id) ?? "")
+      && !(services.confirmClose ?? services.confirmDiscard)()
+    ) {
+      return
+    }
+    const confirmDelete = services.confirmDelete
+      ?? (path => defaultServices.confirmDelete?.(path) ?? true)
+    if (!confirmDelete(entry.path)) return
+    try {
+      await services.deletePath(entry.path)
+      commitTree(removeTreePath(treeModelRef.current, entry.path))
+      if (openTab) closeTabInternal(openTab.id, { confirm: false, allowReplaceLast: true })
+      const dir = parentDir(entry.path)
+      if (dir) await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Delete failed", error))
+    }
   }
 
   const commands: AppCommand[] = [
@@ -1190,6 +1391,11 @@ export default function App({
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => setSearchOpen(true)}
+              onNewFile={dir => void createTreeFile(dir)}
+              onNewFolder={dir => void createTreeFolder(dir)}
+              onRename={entry => void renameTreeEntry(entry)}
+              onDelete={entry => void deleteTreeEntry(entry)}
+              onReveal={path => { void services.revealInFinder?.(path) }}
               onCollapse={() => setSidebarOpen(false)}
             />
           )}
