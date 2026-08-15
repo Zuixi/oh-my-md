@@ -60,7 +60,7 @@ function defaultPickImage(): Promise<File | null> {
 
 function droppedImageFile(event: DragEvent): File | null {
   const files = Array.from(event.dataTransfer?.files ?? [])
-  return files.find(file => file.type.startsWith("image/")) ?? null
+  return files.find(file => file.type in EXTENSION_BY_MIME) ?? null
 }
 
 export function imagePasteHandler(options: ImagePasteOptions) {
@@ -257,9 +257,21 @@ export async function pickAndInsertImage(
   options: ImagePasteOptions,
   pick: () => Promise<File | null> = defaultPickImage,
 ): Promise<void> {
+  const docPath = options.getDocPath()
+  const documentId = options.getDocumentId()
+  const document = view.state.doc
+  const selection = view.state.selection.main
   const file = await pick()
   if (!file) return
-  await insertImageFile(file, view, options, file.type)
+  if (
+    options.getDocPath() !== docPath ||
+    options.getDocumentId() !== documentId ||
+    view.state.doc !== document
+  ) {
+    options.onError("Document changed before the image could be inserted")
+    return
+  }
+  await insertImageFile(file, view, options, file.type, selection)
 }
 
 function fileToBase64(file: File): Promise<string> {
