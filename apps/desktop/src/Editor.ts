@@ -226,5 +226,6 @@ export function resetEditorDocument(
   view: EditorView,
   options: CreateEditorOptions,
 ): void {
+  lastFootnoteJump.delete(view)
   view.setState(createEditorState(options))
 }
