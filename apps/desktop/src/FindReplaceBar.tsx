@@ -32,17 +32,20 @@ export function FindReplaceBar(props: {
   function onBarKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.preventDefault()
+      event.stopPropagation()
       props.onClose()
       return
     }
     if (event.key === "Enter") {
       event.preventDefault()
+      event.stopPropagation()
       if (event.shiftKey) props.onPrev()
       else props.onNext()
       return
     }
     if ((event.key === "g" || event.key === "G") && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
+      event.stopPropagation()
       if (event.shiftKey) props.onPrev()
       else props.onNext()
     }
