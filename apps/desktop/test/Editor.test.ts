@@ -207,6 +207,29 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("forgets the footnote jump after the document is reset", () => {
+    const docA = "Hi[^a]\n\n[^a]: note"
+    const docB = "Longer intro[^a]\n\n[^a]: other"
+    const view = createEditor(document.createElement("div"), editorOptions(vi.fn(), docA))
+    const mark = document.createElement("span")
+    mark.classList.add("omd-footnote")
+    const clickAt = (pos: number) => {
+      vi.spyOn(view, "posAtCoords").mockReturnValue(pos)
+      const event = new MouseEvent("click", { bubbles: true, button: 0 })
+      Object.defineProperty(event, "target", { value: mark })
+      return activateLink(view, event)
+    }
+
+    expect(clickAt(docA.indexOf("[^a]"))).toBe(true)
+    resetEditorDocument(view, editorOptions(vi.fn(), docB))
+    const before = view.state.selection.main.head
+    expect(clickAt(docB.indexOf("[^a]:"))).toBe(true)
+    expect(view.state.doc.toString()).toBe(docB)
+    expect(view.state.selection.main.head).toBe(before)
+    expect(view.state.selection.main.head).not.toBe(docA.indexOf("[^a]"))
+    view.destroy()
+  })
+
   it("binds markdown formatting shortcuts from the engine keymap", () => {
     const view = createEditor(
       document.createElement("div"),
