@@ -1,10 +1,12 @@
 import { useState } from "react"
 import { filterCommands, type AppCommand } from "./commands"
+import { useT } from "./i18n"
 
 export function CommandPalette(props: {
   commands: AppCommand[]
   onClose: () => void
 }) {
+  const t = useT()
   const [query, setQuery] = useState("")
   const matches = filterCommands(props.commands, query)
   return (
@@ -13,7 +15,7 @@ export function CommandPalette(props: {
         <input
           autoFocus
           className="palette-input"
-          placeholder="Run a command…"
+          placeholder={t("cmd.placeholder.run")}
           value={query}
           onChange={event => setQuery(event.target.value)}
           onKeyDown={event => {

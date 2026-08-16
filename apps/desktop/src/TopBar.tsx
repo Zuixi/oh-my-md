@@ -1,5 +1,6 @@
 import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
+import { useT } from "./i18n"
 
 export function TopBar(props: {
   workspace: string | null
@@ -16,8 +17,9 @@ export function TopBar(props: {
   onNewTab: () => void
   onOpenSettings?: () => void
 }) {
+  const t = useT()
   const workspaceName = props.workspace
-    ? props.workspace.replace(/\\/g, "/").split("/").pop() || "Workspace"
+    ? props.workspace.replace(/\\/g, "/").split("/").pop() || t("topbar.workspaceFallback")
     : null
 
   const breadcrumb = buildBreadcrumb(props.workspace, props.filePath)
@@ -30,8 +32,8 @@ export function TopBar(props: {
             type="button"
             className="topbar-sidebar-toggle"
             onClick={props.onToggleSidebar}
-            aria-label="Show sidebar"
-            title="Show sidebar (⌘\)"
+            aria-label={t("topbar.aria.showSidebar")}
+            title={t("topbar.title.showSidebar")}
           >
             <PanelLeft size={16} aria-hidden="true" />
           </button>
@@ -50,7 +52,7 @@ export function TopBar(props: {
               type="button"
               className={isActive ? "tab is-active" : "tab"}
               onClick={() => props.onFocusTab(tab.id)}
-              title={path ?? "unnamed"}
+              title={path ?? t("topbar.title.untitled")}
             >
               <FileText size={13} className="tab-icon" aria-hidden="true" />
               <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
@@ -59,13 +61,13 @@ export function TopBar(props: {
               {isDirty ? (
                 <span
                   className="tab-dirty"
-                  aria-label={isActive ? "Unsaved" : undefined}
+                  aria-label={isActive ? t("topbar.aria.unsaved") : undefined}
                 >
                   •
                 </span>
               ) : null}
               {hasConflict ? (
-                <span className="tab-conflict" aria-label="Conflict">
+                <span className="tab-conflict" aria-label={t("topbar.aria.conflict")}>
                   !
                 </span>
               ) : null}
@@ -73,7 +75,7 @@ export function TopBar(props: {
                 role="button"
                 tabIndex={-1}
                 className="tab-close"
-                aria-label="Close tab"
+                aria-label={t("topbar.aria.closeTab")}
                 onClick={event => {
                   event.stopPropagation()
                   props.onCloseTab(tab.id)
@@ -87,8 +89,8 @@ export function TopBar(props: {
         <button
           type="button"
           className="tab-new"
-          aria-label="+"
-          title="New tab"
+          aria-label={t("topbar.aria.newTab")}
+          title={t("topbar.title.newTab")}
           onClick={props.onNewTab}
         >
           <Plus size={14} aria-hidden="true" />
@@ -111,8 +113,8 @@ export function TopBar(props: {
             type="button"
             className="topbar-action-btn"
             onClick={props.onOpenSettings}
-            aria-label="Preferences"
-            title="Preferences (⌘,)"
+            aria-label={t("topbar.aria.preferences")}
+            title={t("topbar.title.preferences")}
           >
             <Settings size={15} aria-hidden="true" />
           </button>

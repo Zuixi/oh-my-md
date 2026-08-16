@@ -14,4 +14,42 @@ export const en: Record<string, string> = {
   "find.action.close": "Close",
   "find.status.zero": "0 matches",
   "find.status.count": "{active} of {total}",
+
+  "cmd.placeholder.run": "Run a command…",
+
+  "search.title": "Search",
+  "search.aria.close": "Close search",
+  "search.placeholder.find": "Find in folder…",
+
+  "statusbar.reviewRequired": "Normalization review required",
+  "statusbar.wordsChars": "{words} words · {chars} chars",
+
+  "outline.title": "Outline",
+
+  "topbar.aria.showSidebar": "Show sidebar",
+  "topbar.title.showSidebar": "Show sidebar (⌘\\)",
+  "topbar.title.untitled": "unnamed",
+  "topbar.aria.unsaved": "Unsaved",
+  "topbar.aria.conflict": "Conflict",
+  "topbar.aria.closeTab": "Close tab",
+  "topbar.aria.newTab": "+",
+  "topbar.title.newTab": "New tab",
+  "topbar.aria.preferences": "Preferences",
+  "topbar.title.preferences": "Preferences (⌘,)",
+  "topbar.workspaceFallback": "Workspace",
+
+  "filetree.title.fallback": "Files",
+  "filetree.aria.hideSidebar": "Hide sidebar",
+  "filetree.title.hideSidebar": "Hide sidebar (⌘\\)",
+  "filetree.aria.search": "Search",
+  "filetree.searchInFolder": "Search in folder…",
+  "filetree.kbd.searchShortcut": "⇧⌘F",
+  "filetree.empty": "Open a folder from the File menu.",
+  "filetree.aria.entryActions": "{name} actions",
+  "filetree.aria.folderActions": "Folder actions",
+  "filetree.menu.newFile": "New File",
+  "filetree.menu.newFolder": "New Folder",
+  "filetree.menu.rename": "Rename",
+  "filetree.menu.delete": "Delete",
+  "filetree.menu.reveal": "Reveal in Finder",
 }
