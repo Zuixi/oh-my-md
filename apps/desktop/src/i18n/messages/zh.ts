@@ -14,4 +14,42 @@ export const zh: Record<string, string> = {
   "find.action.close": "关闭",
   "find.status.zero": "0 个匹配",
   "find.status.count": "{active} / {total}",
+
+  "cmd.placeholder.run": "运行命令…",
+
+  "search.title": "搜索",
+  "search.aria.close": "关闭搜索",
+  "search.placeholder.find": "在文件夹中查找…",
+
+  "statusbar.reviewRequired": "需要规范审查",
+  "statusbar.wordsChars": "{words} 字 · {chars} 字符",
+
+  "outline.title": "大纲",
+
+  "topbar.aria.showSidebar": "显示侧边栏",
+  "topbar.title.showSidebar": "显示侧边栏（⌘\\）",
+  "topbar.title.untitled": "未命名",
+  "topbar.aria.unsaved": "未保存",
+  "topbar.aria.conflict": "冲突",
+  "topbar.aria.closeTab": "关闭标签页",
+  "topbar.aria.newTab": "+",
+  "topbar.title.newTab": "新建标签页",
+  "topbar.aria.preferences": "偏好设置",
+  "topbar.title.preferences": "偏好设置（⌘,）",
+  "topbar.workspaceFallback": "工作区",
+
+  "filetree.title.fallback": "文件",
+  "filetree.aria.hideSidebar": "隐藏侧边栏",
+  "filetree.title.hideSidebar": "隐藏侧边栏（⌘\\）",
+  "filetree.aria.search": "搜索",
+  "filetree.searchInFolder": "在文件夹中搜索…",
+  "filetree.kbd.searchShortcut": "⇧⌘F",
+  "filetree.empty": "从文件菜单打开文件夹。",
+  "filetree.aria.entryActions": "{name} 的操作",
+  "filetree.aria.folderActions": "文件夹操作",
+  "filetree.menu.newFile": "新建文件",
+  "filetree.menu.newFolder": "新建文件夹",
+  "filetree.menu.rename": "重命名",
+  "filetree.menu.delete": "删除",
+  "filetree.menu.reveal": "在访达中显示",
 }

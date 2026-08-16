@@ -1,4 +1,5 @@
 import { Search, X } from "lucide-react"
+import { useT } from "./i18n"
 
 export interface SearchHit {
   path: string
@@ -13,18 +14,19 @@ export function SearchPanel(props: {
   onOpen: (hit: SearchHit) => void
   onClose: () => void
 }) {
+  const t = useT()
   return (
     <div className="search-panel">
       <div className="sidebar-title">
         <div className="sidebar-title-left">
           <Search size={14} className="filetree-search-icon" aria-hidden="true" />
-          <span className="sidebar-title-text">Search</span>
+          <span className="sidebar-title-text">{t("search.title")}</span>
         </div>
         <button
           type="button"
           className="sidebar-collapse-btn"
           onClick={props.onClose}
-          aria-label="Close search"
+          aria-label={t("search.aria.close")}
         >
           <X size={14} />
         </button>
@@ -34,7 +36,7 @@ export function SearchPanel(props: {
           autoFocus
           value={props.query}
           onChange={event => props.onQuery(event.target.value)}
-          placeholder="Find in folder…"
+          placeholder={t("search.placeholder.find")}
         />
       </div>
       {props.hits.map(hit => (
