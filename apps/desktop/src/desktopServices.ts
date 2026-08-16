@@ -75,6 +75,14 @@ export interface UpdateCheck {
   readonly currentVersion: string
 }
 
+export interface ViewMenuState {
+  readonly source: boolean
+  readonly sidebar: boolean
+  readonly outline: boolean
+  readonly typewriter: boolean
+  readonly focus: boolean
+}
+
 export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
@@ -99,6 +107,7 @@ export interface DesktopServices {
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
+  setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
@@ -205,6 +214,9 @@ export const defaultServices: DesktopServices = {
   },
   setRecentMenu: async paths => {
     await invoke("set_recent_files", { paths })
+  },
+  setViewMenuState: async state => {
+    await invoke("set_view_menu_state", { state })
   },
   exportDiagnostics: async () => {
     const path = await save({ filters: [{ name: "Diagnostics", extensions: ["zip"] }] })
