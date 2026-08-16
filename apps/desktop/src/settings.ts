@@ -1,3 +1,5 @@
+import type { StoredLocale } from "./i18n"
+
 export type AppTheme = "system" | "light" | "dark"
 export type DefaultEditorMode = "live" | "source"
 export type TabSize = 2 | 4
@@ -10,6 +12,7 @@ export interface UserSettings {
   tabSize: TabSize
   defaultMode: DefaultEditorMode
   spellcheck: boolean
+  locale: StoredLocale
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -20,6 +23,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   tabSize: 2,
   defaultMode: "live",
   spellcheck: false,
+  locale: "auto",
 }
 
 export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
@@ -48,6 +52,9 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
 
   const spellcheck = Boolean(raw.spellcheck)
 
+  const locale: StoredLocale =
+    raw.locale === "auto" || raw.locale === "en" || raw.locale === "zh" ? raw.locale : "auto"
+
   return {
     theme,
     fontSize,
@@ -56,6 +63,7 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     tabSize,
     defaultMode,
     spellcheck,
+    locale,
   }
 }
 
