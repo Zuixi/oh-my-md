@@ -29,6 +29,7 @@ base64 = "0.23.1"
 blake3 = "1"
 tempfile = "3.27.0"
 thiserror = "2"
+zip = "2"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

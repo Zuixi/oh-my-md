@@ -1,3 +1,4 @@
+mod diagnostics;
 mod documents;
 mod export;
 mod menu;
@@ -400,7 +401,8 @@ pub fn run() {
             save_session_state,
             allow_workspace_dir,
             set_recent_files,
-            export::export_preview
+            export::export_preview,
+            diagnostics::export_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running oh-my-md");
