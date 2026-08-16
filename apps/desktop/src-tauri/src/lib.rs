@@ -90,6 +90,11 @@ fn set_recent_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), Str
 }
 
 #[tauri::command]
+fn set_view_menu_state(app: tauri::AppHandle, state: menu::ViewMenuState) {
+    menu::set_view_state(&app, &state);
+}
+
+#[tauri::command]
 fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
     use base64::Engine;
 
@@ -402,6 +407,7 @@ pub fn run() {
             save_session_state,
             allow_workspace_dir,
             set_recent_files,
+            set_view_menu_state,
             export::export_preview,
             diagnostics::export_diagnostics
         ])
