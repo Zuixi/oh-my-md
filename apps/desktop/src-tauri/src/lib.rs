@@ -413,8 +413,9 @@ pub fn run() {
             allow_workspace_dir,
             set_recent_files,
             set_view_menu_state,
-            export::export_preview,
-            diagnostics::export_diagnostics
+            diagnostics::export_diagnostics,
+            menu::set_menu_locale,
+            export::export_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running oh-my-md");

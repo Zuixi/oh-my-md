@@ -1,3 +1,4 @@
+import { useT } from "./i18n"
 import type { DiffHunk, DiffLine } from "./documentDiff"
 
 export interface DocumentDiffPanelProps {
@@ -7,9 +8,6 @@ export interface DocumentDiffPanelProps {
   readonly onJump: (localLine: number) => void
   readonly onClose: () => void
 }
-
-const DELETED_MESSAGE = "This file was deleted on disk."
-const REFRESHED_MESSAGE = "Disk contents were refreshed."
 
 function linePrefix(kind: DiffLine["kind"]): string {
   switch (kind) {
@@ -37,6 +35,7 @@ function DiffHunkView(props: {
   readonly hunk: DiffHunk
   readonly onJump: (localLine: number) => void
 }) {
+  const t = useT()
   const jumpLine = jumpLocalLine(props.hunk)
 
   return (
@@ -48,7 +47,7 @@ function DiffHunkView(props: {
           className="document-diff-jump"
           onClick={() => props.onJump(jumpLine)}
         >
-          {`Go to line ${jumpLine}`}
+          {t("diff.goToLine", { line: jumpLine })}
         </button>
       </div>
       {props.hunk.lines.map((line, index) => (
@@ -63,19 +62,24 @@ function DiffHunkView(props: {
 }
 
 export function DocumentDiffPanel(props: DocumentDiffPanelProps) {
+  const t = useT()
   return (
-    <section className="document-diff-panel" role="region" aria-label="Document differences">
+    <section
+      className="document-diff-panel"
+      role="region"
+      aria-label={t("diff.title")}
+    >
       <div className="document-diff-panel-header">
-        <span className="document-diff-panel-title">Document differences</span>
+        <span className="document-diff-panel-title">{t("diff.title")}</span>
         <button type="button" className="document-diff-close" onClick={props.onClose}>
-          Close
+          {t("button.close")}
         </button>
       </div>
       {props.deleted ? (
-        <p className="document-diff-notice">{DELETED_MESSAGE}</p>
+        <p className="document-diff-notice">{t("diff.deleted")}</p>
       ) : null}
       {props.refreshed ? (
-        <p className="document-diff-notice document-diff-refreshed">{REFRESHED_MESSAGE}</p>
+        <p className="document-diff-notice document-diff-refreshed">{t("diff.refreshed")}</p>
       ) : null}
       <div className="document-diff-hunks">
         {props.hunks.map((hunk, index) => (

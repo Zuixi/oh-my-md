@@ -12,6 +12,7 @@ import {
   type TabSize,
   type UserSettings,
 } from "./settings"
+import { localeOptions, useT, type StoredLocale } from "./i18n"
 
 export interface SettingsModalProps {
   isOpen: boolean
@@ -23,6 +24,7 @@ export interface SettingsModalProps {
 export function SettingsModal(props: SettingsModalProps) {
   const { isOpen, settings, onSave, onClose } = props
   const modalRef = useRef<HTMLDivElement>(null)
+  const t = useT()
 
   useEffect(() => {
     if (!isOpen) return
@@ -48,16 +50,16 @@ export function SettingsModal(props: SettingsModalProps) {
         ref={modalRef}
         className="settings-modal"
         role="dialog"
-        aria-label="Preferences"
+        aria-label={t("settings.aria.dialog")}
         onClick={e => e.stopPropagation()}
       >
         <div className="settings-header">
-          <h2 className="settings-title">Preferences</h2>
+          <h2 className="settings-title">{t("settings.title")}</h2>
           <button
             type="button"
             className="settings-close-btn"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("settings.aria.close")}
           >
             <X size={16} />
           </button>
@@ -66,10 +68,10 @@ export function SettingsModal(props: SettingsModalProps) {
         <div className="settings-body">
           {/* General Section */}
           <div className="settings-section">
-            <h3 className="settings-section-title">Appearance</h3>
+            <h3 className="settings-section-title">{t("settings.section.appearance")}</h3>
             <div className="settings-row">
               <label htmlFor="setting-theme" className="settings-label">
-                Theme
+                {t("settings.label.theme")}
               </label>
               <select
                 id="setting-theme"
@@ -77,20 +79,20 @@ export function SettingsModal(props: SettingsModalProps) {
                 value={settings.theme}
                 onChange={e => update({ theme: e.target.value as AppTheme })}
               >
-                <option value="system">Follow System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
+                <option value="system">{t("settings.theme.system")}</option>
+                <option value="light">{t("settings.theme.light")}</option>
+                <option value="dark">{t("settings.theme.dark")}</option>
               </select>
             </div>
           </div>
 
           {/* Editor Section */}
           <div className="settings-section">
-            <h3 className="settings-section-title">Editor</h3>
+            <h3 className="settings-section-title">{t("settings.section.editor")}</h3>
 
             <div className="settings-row">
               <label htmlFor="setting-font-size" className="settings-label">
-                Font Size
+                {t("settings.label.fontSize")}
               </label>
               <div className="settings-field-group">
                 <input
@@ -102,13 +104,13 @@ export function SettingsModal(props: SettingsModalProps) {
                   value={settings.fontSize}
                   onChange={e => update({ fontSize: Number(e.target.value) })}
                 />
-                <span className="settings-unit">px</span>
+                <span className="settings-unit">{t("settings.unit.px")}</span>
               </div>
             </div>
 
             <div className="settings-row">
               <label htmlFor="setting-font-family" className="settings-label">
-                Font Family
+                {t("settings.label.fontFamily")}
               </label>
               <select
                 id="setting-font-family"
@@ -126,18 +128,18 @@ export function SettingsModal(props: SettingsModalProps) {
               >
                 {FONT_FAMILY_PRESETS.map(preset => (
                   <option key={preset.value} value={preset.value}>
-                    {preset.label}
+                    {t(preset.labelKey)}
                   </option>
                 ))}
                 {!FONT_FAMILY_PRESETS.some(p => p.value === settings.fontFamily) ? (
-                  <option value="custom">Custom</option>
+                  <option value="custom">{t("settings.font.custom")}</option>
                 ) : null}
               </select>
             </div>
 
             <div className="settings-row">
               <label htmlFor="setting-line-height" className="settings-label">
-                Line Height
+                {t("settings.label.lineHeight")}
               </label>
               <select
                 id="setting-line-height"
@@ -147,7 +149,7 @@ export function SettingsModal(props: SettingsModalProps) {
               >
                 {LINE_HEIGHT_PRESETS.map(preset => (
                   <option key={preset.value} value={preset.value}>
-                    {preset.label}
+                    {t(preset.labelKey)}
                   </option>
                 ))}
               </select>
@@ -155,7 +157,7 @@ export function SettingsModal(props: SettingsModalProps) {
 
             <div className="settings-row">
               <label htmlFor="setting-tab-size" className="settings-label">
-                Tab Size
+                {t("settings.label.tabSize")}
               </label>
               <select
                 id="setting-tab-size"
@@ -163,14 +165,14 @@ export function SettingsModal(props: SettingsModalProps) {
                 value={settings.tabSize}
                 onChange={e => update({ tabSize: Number(e.target.value) as TabSize })}
               >
-                <option value={2}>2 spaces</option>
-                <option value={4}>4 spaces</option>
+                <option value={2}>{t("settings.tabSize.twoSpaces")}</option>
+                <option value={4}>{t("settings.tabSize.fourSpaces")}</option>
               </select>
             </div>
 
             <div className="settings-row">
               <label htmlFor="setting-default-mode" className="settings-label">
-                Default Mode
+                {t("settings.label.defaultMode")}
               </label>
               <select
                 id="setting-default-mode"
@@ -178,14 +180,14 @@ export function SettingsModal(props: SettingsModalProps) {
                 value={settings.defaultMode}
                 onChange={e => update({ defaultMode: e.target.value as DefaultEditorMode })}
               >
-                <option value="live">Live Preview</option>
-                <option value="source">Source Mode</option>
+                <option value="live">{t("settings.mode.live")}</option>
+                <option value="source">{t("settings.mode.source")}</option>
               </select>
             </div>
 
             <div className="settings-row">
               <label htmlFor="setting-spellcheck" className="settings-label">
-                Spellcheck
+                {t("settings.label.spellcheck")}
               </label>
               <input
                 id="setting-spellcheck"
@@ -196,6 +198,28 @@ export function SettingsModal(props: SettingsModalProps) {
               />
             </div>
           </div>
+
+          {/* Language Section */}
+          <div className="settings-section">
+            <h3 className="settings-section-title">{t("settings.section.language")}</h3>
+            <div className="settings-row">
+              <label htmlFor="setting-locale" className="settings-label">
+                {t("settings.section.language")}
+              </label>
+              <select
+                id="setting-locale"
+                className="settings-select"
+                value={settings.locale}
+                onChange={e => update({ locale: e.target.value as StoredLocale })}
+              >
+                {localeOptions.map(o => (
+                  <option key={o.value} value={o.value}>
+                    {t(o.key)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         <div className="settings-footer">
@@ -204,14 +228,14 @@ export function SettingsModal(props: SettingsModalProps) {
             className="settings-btn settings-btn-secondary"
             onClick={() => onSave(DEFAULT_SETTINGS)}
           >
-            Reset to Defaults
+            {t("settings.button.reset")}
           </button>
           <button
             type="button"
             className="settings-btn settings-btn-primary"
             onClick={onClose}
           >
-            Done
+            {t("settings.button.done")}
           </button>
         </div>
       </div>

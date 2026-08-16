@@ -1,6 +1,7 @@
 import { exportRichHtml, type ExportRichHtmlOptions } from "@omd/engine"
 import type { EditorView } from "@codemirror/view"
 import { errorMessage, type DesktopServices } from "./desktopServices"
+import { t } from "./i18n"
 
 export async function exportCurrent(
   services: DesktopServices,
@@ -17,7 +18,7 @@ export async function exportCurrent(
       return
     }
     if (!services.exportPreview) {
-      throw new Error("PDF and image export are only available in the desktop app")
+      throw new Error(t("error.export.desktopOnly"))
     }
     const format = kind === "pdf" ? "pdf" : "png"
     const path = await services.pickExportPath?.(format)

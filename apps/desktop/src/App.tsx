@@ -87,6 +87,7 @@ import {
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
+import { initLocale, setLocale, useT } from "./i18n"
 import {
   MARKDOWN_FILE_EXTENSION,
   STORAGE_KEY_OUTLINE_OPEN,
@@ -192,6 +193,7 @@ export default function App({
   autosaveMs = 1500,
   watchMs = 2000,
 }: AppProps) {
+  const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
   const viewRef = useRef<EditorView | null>(null)
   const viewsRef = useRef(new Map<number, EditorView>())
@@ -225,6 +227,7 @@ export default function App({
   const mountedRef = useRef(false)
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
   const settingsRef = useRef<UserSettings>(settings)
+  const localeInitRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
   const sessionRestoredRef = useRef(false)
@@ -556,7 +559,11 @@ export default function App({
     mountedRef.current = true
     ensureViews()
     void (async () => {
-      await loadInitialSettings()
+      const initial = await loadInitialSettings()
+      if (!localeInitRef.current) {
+        localeInitRef.current = true
+        initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
+      }
       const restored = await restoreSavedSession()
       if (!restored) {
         await restoreDraft()
@@ -703,10 +710,12 @@ export default function App({
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
     }
+    const localeChanged = sanitized.locale !== settingsRef.current.locale
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
     void services.saveSettings?.(sanitized)
+    if (localeChanged) setLocale(sanitized.locale)
   }
 
   async function loadInitialSettings(): Promise<UserSettings> {
@@ -1070,7 +1079,7 @@ export default function App({
       services.reportError(errorMessage("Folder listing failed", error))
       return
     }
-    const rawName = window.prompt("New file name", defaultName)
+    const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)
     if (rawName === null) return
     const name = normalizeMarkdownName(rawName)
     if (invalidName(name)) {
@@ -1087,7 +1096,7 @@ export default function App({
 
   async function createTreeFolder(dir: string) {
     if (!services.createDir) return
-    const rawName = window.prompt("New folder name", "untitled-folder")
+    const rawName = window.prompt(t("filetree.prompt.newFolder"), "untitled-folder")
     if (rawName === null) return
     const name = rawName.trim()
     if (invalidName(name)) {
@@ -1104,7 +1113,7 @@ export default function App({
 
   async function renameTreeEntry(entry: TreeEntry) {
     if (!services.renamePath) return
-    const rawName = window.prompt("Rename", entry.name)
+    const rawName = window.prompt(t("filetree.prompt.rename"), entry.name)
     if (rawName === null) return
     const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
     if (name === entry.name) return
@@ -1149,20 +1158,20 @@ export default function App({
   }
 
   const commands: AppCommand[] = [
-    { id: "open", label: "Open…", shortcut: shortcutFor("open"), run: () => void openFile() },
-    { id: "save", label: "Save", shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
-    { id: "save-as", label: "Save As…", shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
-    { id: "folder", label: "Open Folder…", run: () => void chooseFolder() },
-    { id: "tab", label: "New", shortcut: shortcutFor("tab"), run: newTab },
-    { id: "close", label: "Close", shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
-    { id: "theme", label: "Toggle Theme", run: () => setTheme(current => toggleTheme(current)) },
-    { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
-    { id: "focus", label: "Focus Mode", run: () => setFocusMode(on => !on) },
-    { id: "preferences", label: "Settings…", shortcut: shortcutFor("preferences"), run: () => setSettingsOpen(true) },
-    { id: "sidebar", label: "Show/Hide Sidebar", shortcut: shortcutFor("sidebar"), run: () => setSidebarOpen(open => !open) },
-    { id: "outline", label: "Show/Hide Outline", shortcut: shortcutFor("outline"), run: () => setOutlineOpen(open => !open) },
-    { id: "typewriter", label: "Typewriter Mode", run: () => setTypewriter(on => !on) },
-    { id: "source", label: "Show Source Code", shortcut: shortcutFor("source"), run: () => {
+    { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
+    { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
+    { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
+    { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
+    { id: "tab", label: t("cmd.label.tab"), shortcut: shortcutFor("tab"), run: newTab },
+    { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
+    { id: "theme", label: t("cmd.label.theme"), run: () => setTheme(current => toggleTheme(current)) },
+    { id: "css", label: t("cmd.label.css"), run: () => void loadCustomCss(services, setCustomCss) },
+    { id: "focus", label: t("cmd.label.focus"), run: () => setFocusMode(on => !on) },
+    { id: "preferences", label: t("cmd.label.preferences"), shortcut: shortcutFor("preferences"), run: () => setSettingsOpen(true) },
+    { id: "sidebar", label: t("cmd.label.sidebar"), shortcut: shortcutFor("sidebar"), run: () => setSidebarOpen(open => !open) },
+    { id: "outline", label: t("cmd.label.outline"), shortcut: shortcutFor("outline"), run: () => setOutlineOpen(open => !open) },
+    { id: "typewriter", label: t("cmd.label.typewriter"), run: () => setTypewriter(on => !on) },
+    { id: "source", label: t("cmd.label.source"), shortcut: shortcutFor("source"), run: () => {
       const view = viewRef.current
       if (!view) return
       try {
@@ -1171,31 +1180,31 @@ export default function App({
         setSourceMode(next)
       } catch { /* mock views */ }
     } },
-    { id: "bold", label: "Bold", shortcut: shortcutFor("bold"), run: runFormat(toggleBold) },
-    { id: "italic", label: "Italic", shortcut: shortcutFor("italic"), run: runFormat(toggleItalic) },
-    { id: "strikethrough", label: "Strikethrough", shortcut: shortcutFor("strikethrough"), run: runFormat(toggleStrikethrough) },
-    { id: "inline-code", label: "Inline code", shortcut: shortcutFor("inline-code"), run: runFormat(toggleInlineCode) },
-    { id: "code-block", label: "Code block", shortcut: shortcutFor("code-block"), run: runFormat(toggleCodeBlock) },
-    { id: "heading-1", label: "Heading 1", shortcut: shortcutFor("heading-1"), run: runFormat(toggleHeading(1)) },
-    { id: "heading-2", label: "Heading 2", shortcut: shortcutFor("heading-2"), run: runFormat(toggleHeading(2)) },
-    { id: "heading-3", label: "Heading 3", shortcut: shortcutFor("heading-3"), run: runFormat(toggleHeading(3)) },
-    { id: "heading-4", label: "Heading 4", shortcut: shortcutFor("heading-4"), run: runFormat(toggleHeading(4)) },
-    { id: "heading-5", label: "Heading 5", shortcut: shortcutFor("heading-5"), run: runFormat(toggleHeading(5)) },
-    { id: "heading-6", label: "Heading 6", shortcut: shortcutFor("heading-6"), run: runFormat(toggleHeading(6)) },
-    { id: "ordered-list", label: "Ordered list", shortcut: shortcutFor("ordered-list"), run: runFormat(toggleOrderedList) },
-    { id: "unordered-list", label: "Unordered list", shortcut: shortcutFor("unordered-list"), run: runFormat(toggleUnorderedList) },
-    { id: "blockquote", label: "Blockquote", shortcut: shortcutFor("blockquote"), run: runFormat(toggleBlockquote) },
-    { id: "link", label: "Insert link", shortcut: shortcutFor("link"), run: runFormat(insertLink) },
-    { id: "insert-image", label: "Insert image…", run: insertImage },
-    { id: "find", label: "Find in document", shortcut: shortcutFor("find"), run: () => {
+    { id: "bold", label: t("cmd.label.bold"), shortcut: shortcutFor("bold"), run: runFormat(toggleBold) },
+    { id: "italic", label: t("cmd.label.italic"), shortcut: shortcutFor("italic"), run: runFormat(toggleItalic) },
+    { id: "strikethrough", label: t("cmd.label.strikethrough"), shortcut: shortcutFor("strikethrough"), run: runFormat(toggleStrikethrough) },
+    { id: "inline-code", label: t("cmd.label.inline-code"), shortcut: shortcutFor("inline-code"), run: runFormat(toggleInlineCode) },
+    { id: "code-block", label: t("cmd.label.code-block"), shortcut: shortcutFor("code-block"), run: runFormat(toggleCodeBlock) },
+    { id: "heading-1", label: t("cmd.label.heading-1"), shortcut: shortcutFor("heading-1"), run: runFormat(toggleHeading(1)) },
+    { id: "heading-2", label: t("cmd.label.heading-2"), shortcut: shortcutFor("heading-2"), run: runFormat(toggleHeading(2)) },
+    { id: "heading-3", label: t("cmd.label.heading-3"), shortcut: shortcutFor("heading-3"), run: runFormat(toggleHeading(3)) },
+    { id: "heading-4", label: t("cmd.label.heading-4"), shortcut: shortcutFor("heading-4"), run: runFormat(toggleHeading(4)) },
+    { id: "heading-5", label: t("cmd.label.heading-5"), shortcut: shortcutFor("heading-5"), run: runFormat(toggleHeading(5)) },
+    { id: "heading-6", label: t("cmd.label.heading-6"), shortcut: shortcutFor("heading-6"), run: runFormat(toggleHeading(6)) },
+    { id: "ordered-list", label: t("cmd.label.ordered-list"), shortcut: shortcutFor("ordered-list"), run: runFormat(toggleOrderedList) },
+    { id: "unordered-list", label: t("cmd.label.unordered-list"), shortcut: shortcutFor("unordered-list"), run: runFormat(toggleUnorderedList) },
+    { id: "blockquote", label: t("cmd.label.blockquote"), shortcut: shortcutFor("blockquote"), run: runFormat(toggleBlockquote) },
+    { id: "link", label: t("cmd.label.link"), shortcut: shortcutFor("link"), run: runFormat(insertLink) },
+    { id: "insert-image", label: t("cmd.label.insert-image"), run: insertImage },
+    { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)
       setReplaceOpen(false)
     } },
-    { id: "search", label: "Search in folder", shortcut: shortcutFor("search"), run: () => setSearchOpen(true) },
-    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
-    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
-    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
-    { id: "clear-recents", label: "Clear Recents", run: clearRecents },
+    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => setSearchOpen(true) },
+    { id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
   ]
   const commandsRef = useRef(commands)
   commandsRef.current = commands
@@ -1465,20 +1474,20 @@ export default function App({
             }}
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
-            aria-label={outlineOpen ? "Hide outline" : "Show outline"}
-            title={outlineOpen ? "Hide outline (⇧⌘O)" : "Show outline (⇧⌘O)"}
+            aria-label={outlineOpen ? t("outline.aria.toggleHide") : t("outline.aria.toggleShow")}
+            title={outlineOpen ? t("outline.title.toggleHide") : t("outline.title.toggleShow")}
           >
             {outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>
           {!outlineOpen && outlineHover ? (
-            <div className="outline-hover-popover" role="dialog" aria-label="Outline preview">
+            <div className="outline-hover-popover" role="dialog" aria-label={t("outline.aria.preview")}>
               <div className="outline-hover-header">
-                <span className="outline-hover-title">Outline</span>
-                <span className="outline-hover-hint">Click to expand</span>
+                <span className="outline-hover-title">{t("outline.preview.title")}</span>
+                <span className="outline-hover-hint">{t("outline.preview.hint")}</span>
               </div>
               <div className="outline-hover-body">
                 {outline.length === 0 ? (
-                  <div className="sidebar-empty">No headings</div>
+                  <div className="sidebar-empty">{t("outline.empty")}</div>
                 ) : (
                   outline.map(item => (
                     <button

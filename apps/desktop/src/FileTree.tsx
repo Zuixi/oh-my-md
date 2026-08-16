@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type MouseEvent } from "react"
 import { ChevronRight, FileText, Folder, FolderOpen, PanelLeftClose, Search } from "lucide-react"
 import { ROW_HEIGHT, visibleRowRange, type VisibleRow } from "./fileTreeState"
 import { parentDir } from "./workspace"
+import { useT } from "./i18n"
 
 export type { TreeEntry } from "./fileTreeState"
 
@@ -23,7 +24,8 @@ export function FileTree(props: {
   onReveal?: (path: string) => void
   onCollapse?: () => void
 }) {
-  const title = (props.folder ?? "").replace(/\\/g, "/").split("/").pop() || "Files"
+  const t = useT()
+  const title = (props.folder ?? "").replace(/\\/g, "/").split("/").pop() || t("filetree.title.fallback")
   return (
     <aside className="filetree">
       <div className="sidebar-title">
@@ -33,8 +35,8 @@ export function FileTree(props: {
               type="button"
               className="sidebar-collapse-btn"
               onClick={props.onCollapse}
-              aria-label="Hide sidebar"
-              title="Hide sidebar (⌘\)"
+              aria-label={t("filetree.aria.hideSidebar")}
+              title={t("filetree.title.hideSidebar")}
             >
               <PanelLeftClose size={15} />
             </button>
@@ -47,15 +49,15 @@ export function FileTree(props: {
           type="button"
           className="filetree-search-btn"
           onClick={props.onSearch}
-          aria-label="Search"
+          aria-label={t("filetree.aria.search")}
         >
           <Search size={13} className="filetree-search-icon" aria-hidden="true" />
-          <span>Search in folder…</span>
-          <kbd>⇧⌘F</kbd>
+          <span>{t("filetree.searchInFolder")}</span>
+          <kbd>{t("filetree.kbd.searchShortcut")}</kbd>
         </button>
       </div>
       {!props.folder ? (
-        <p className="sidebar-empty">Open a folder from the File menu.</p>
+        <p className="sidebar-empty">{t("filetree.empty")}</p>
       ) : (
         <TreeScroller
           folder={props.folder}
@@ -94,6 +96,7 @@ function TreeScroller(props: {
   onDelete?: (entry: VisibleRow["entry"]) => void
   onReveal?: (path: string) => void
 }) {
+  const t = useT()
   const [menu, setMenu] = useState<{
     readonly entry: VisibleRow["entry"] | null
     readonly dir: string
@@ -201,7 +204,7 @@ function TreeScroller(props: {
       {menu ? (
         <div
           role="menu"
-          aria-label={menu.entry ? `${menu.entry.name} actions` : "Folder actions"}
+          aria-label={menu.entry ? t("filetree.aria.entryActions", { name: menu.entry.name }) : t("filetree.aria.folderActions")}
           style={{
             position: "fixed",
             top: menu.y,
@@ -219,14 +222,14 @@ function TreeScroller(props: {
           onClick={event => event.stopPropagation()}
         >
           <MenuItem
-            label="New File"
+            label={t("filetree.menu.newFile")}
             onSelect={() => {
               setMenu(null)
               props.onNewFile?.(menu.dir)
             }}
           />
           <MenuItem
-            label="New Folder"
+            label={t("filetree.menu.newFolder")}
             onSelect={() => {
               setMenu(null)
               props.onNewFolder?.(menu.dir)
@@ -235,7 +238,7 @@ function TreeScroller(props: {
           {menu.entry ? (
             <>
               <MenuItem
-                label="Rename"
+                label={t("filetree.menu.rename")}
                 onSelect={() => {
                   const entry = menu.entry
                   setMenu(null)
@@ -243,7 +246,7 @@ function TreeScroller(props: {
                 }}
               />
               <MenuItem
-                label="Delete"
+                label={t("filetree.menu.delete")}
                 onSelect={() => {
                   const entry = menu.entry
                   setMenu(null)
@@ -253,7 +256,7 @@ function TreeScroller(props: {
             </>
           ) : null}
           <MenuItem
-            label="Reveal in Finder"
+            label={t("filetree.menu.reveal")}
             onSelect={() => {
               setMenu(null)
               props.onReveal?.(menu.entry?.path ?? props.folder)

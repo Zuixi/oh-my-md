@@ -13,6 +13,7 @@ import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
+import { t } from "./i18n"
 
 export interface SearchResponse {
   readonly hits: SearchHit[]
@@ -120,6 +121,7 @@ export interface DesktopServices {
   setRecentMenu?: (paths: string[]) => Promise<void>
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
+  setMenuLocale?: (locale: string) => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
@@ -234,6 +236,9 @@ export const defaultServices: DesktopServices = {
     if (typeof path !== "string") return
     await invoke("export_diagnostics", { path })
   },
+  setMenuLocale: async locale => {
+    await invoke("set_menu_locale", { locale })
+  },
   allowDocumentAssets: async (path) => {
     await invoke("allow_document_assets", { documentPath: path })
   },
@@ -247,16 +252,15 @@ export const defaultServices: DesktopServices = {
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
   readRecovery: (key) => invoke<string>("read_recovery", { key }),
   clearRecovery: (key) => invoke("clear_recovery", { key }),
-  confirmDiscard: () =>
-    window.confirm("Discard unsaved changes and open another document?"),
-  confirmClose: () => window.confirm("Close this tab and discard unsaved changes?"),
+  confirmDiscard: () => window.confirm(t("confirm.discard")),
+  confirmClose: () => window.confirm(t("confirm.close")),
   confirmDelete: (path) => {
     const normalized = path.replace(/\\/g, "/")
     const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
-    return window.confirm(`Delete ${name}? This cannot be undone.`)
+    return window.confirm(t("confirm.delete", { name }))
   },
-  confirmRestore: (label) => window.confirm(`Restore unsaved draft ${label}?`),
-  confirmExternalChange: () => window.confirm("File changed on disk. Reload?"),
+  confirmRestore: (label) => window.confirm(t("confirm.restore", { label })),
+  confirmExternalChange: () => window.confirm(t("confirm.externalChange")),
   getSettings: async () => {
     try {
       const json = await invoke<string>("get_settings")
