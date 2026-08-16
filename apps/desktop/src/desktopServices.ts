@@ -282,7 +282,3 @@ export function errorMessage(prefix: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
   return `${prefix}: ${detail}`
 }
-
-export function wordCount(text: string): number {
-  return text.trim() ? text.trim().split(/\s+/).length : 0
-}
