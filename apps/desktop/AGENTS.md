@@ -107,6 +107,7 @@ Current Rust commands are:
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
 - `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
 - `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
+- `set_menu_locale(locale)` — update managed `MenuState.locale` and rebuild the native menu (zh/en; unknown → en). Called by the frontend `initLocale`/`setLocale`; single-field IPC (`{ locale }`), no multi-word casing trap.
 
 The native File menu (New, Open, Open Folder, Open Recent, Close, Save, Save As, Export HTML/PDF/Image) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
 
