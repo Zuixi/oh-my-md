@@ -52,4 +52,19 @@ export const en: Record<string, string> = {
   "filetree.menu.rename": "Rename",
   "filetree.menu.delete": "Delete",
   "filetree.menu.reveal": "Reveal in Finder",
+
+  "diff.title": "Document differences",
+  "diff.goToLine": "Go to line {line}",
+  "diff.deleted": "This file was deleted on disk.",
+  "diff.refreshed": "Disk contents were refreshed.",
+
+  "conflict.bannerLabel": "Save conflict",
+
+  "normalization.headline": "Ordered list numbers were normalized.",
+  "normalization.single": "1 item was renumbered.",
+  "normalization.multiple": "{count} items were renumbered.",
+
+  "button.close": "Close",
+  "button.saveNormalization": "Save normalization",
+  "button.keepOriginal": "Keep original numbers",
 }
