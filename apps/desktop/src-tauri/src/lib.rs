@@ -12,6 +12,7 @@ const MAX_ENCODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
 const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
 const MAX_RECENT_FILES: usize = 10;
+const ASSETS_DIR_NAME: &str = "assets";
 
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
@@ -136,8 +137,12 @@ async fn list_dir(path: String) -> Result<Vec<workspace::DirEntry>, String> {
 }
 
 #[tauri::command]
-async fn search_markdown(root: String, query: String) -> Result<Vec<workspace::SearchHit>, String> {
-    workspace::search_markdown(root, query).await
+async fn search_markdown(
+    root: String,
+    query: String,
+    case_sensitive: bool,
+) -> Result<workspace::SearchResponse, String> {
+    workspace::search_markdown(root, query, case_sensitive).await
 }
 
 #[tauri::command]
@@ -266,7 +271,7 @@ fn validate_image_target(target: &Path, document_path: &Path) -> Result<(), Stri
     let assets_dir = target
         .parent()
         .ok_or_else(|| "image target must have a parent directory".to_string())?;
-    if assets_dir.file_name().and_then(|name| name.to_str()) != Some("assets") {
+    if assets_dir.file_name().and_then(|name| name.to_str()) != Some(ASSETS_DIR_NAME) {
         return Err("image target must be a direct child of an assets directory".into());
     }
 
@@ -280,7 +285,7 @@ fn validate_image_target(target: &Path, document_path: &Path) -> Result<(), Stri
     let expected_assets = document_path
         .parent()
         .ok_or_else(|| "document path must have a parent directory".to_string())?
-        .join("assets");
+        .join(ASSETS_DIR_NAME);
     if assets_dir != expected_assets {
         return Err("image target must be inside the current document's assets directory".into());
     }
@@ -308,7 +313,7 @@ fn validate_document_assets_directory(
         .map_err(|e| format!("failed to resolve document directory: {e}"))?;
     let canonical_assets_dir = std::fs::canonicalize(assets_dir)
         .map_err(|e| format!("failed to resolve image assets directory: {e}"))?;
-    if canonical_assets_dir != canonical_document_dir.join("assets") {
+    if canonical_assets_dir != canonical_document_dir.join(ASSETS_DIR_NAME) {
         return Err("image assets directory resolves outside the document directory".into());
     }
     Ok(())

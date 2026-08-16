@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { EditorView } from "@codemirror/view"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
 import {
   handleImageDrop,
+  imagePasteHandler,
   insertImageFile,
   pasteImage,
   pickAndInsertImage,
@@ -493,5 +495,54 @@ describe("image paste pipeline", () => {
     expect(options.onError).toHaveBeenCalledWith(
       "Document changed before the image could be inserted",
     )
+  })
+})
+
+describe("imagePasteHandler contextmenu selection", () => {
+  it("dispatches selection to clicked position when right clicking outside selection", () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const options = makeOptions()
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello world\nsecond line",
+        selection: { anchor: 0 },
+        extensions: [imagePasteHandler(options)],
+      }),
+      parent,
+    })
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(6)
+
+    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
+    view.contentDOM.dispatchEvent(event)
+
+    expect(view.state.selection.main.anchor).toBe(6)
+    view.destroy()
+    parent.remove()
+  })
+
+  it("preserves non-empty selection when right clicking inside it", () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const options = makeOptions()
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello world\nsecond line",
+        selection: { anchor: 2, head: 8 },
+        extensions: [imagePasteHandler(options)],
+      }),
+      parent,
+    })
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(5)
+
+    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
+    view.dom.dispatchEvent(event)
+
+    expect(view.state.selection.main.from).toBe(2)
+    expect(view.state.selection.main.to).toBe(8)
+    view.destroy()
+    parent.remove()
   })
 })

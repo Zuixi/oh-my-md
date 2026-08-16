@@ -446,23 +446,6 @@ export function initialSaveStatesForTabs(tabs: readonly EditorSession[]): SaveSt
   return next
 }
 
-export const TRANSIENT_STATUS_MS = 4000
-
-export function createTransientStatusNotifier(
-  setMessage: (value: string | null) => void,
-  timerRef: { readonly current: number | null },
-  setTimer: (id: number | null) => void,
-): (message: string) => void {
-  return message => {
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    setMessage(message)
-    setTimer(window.setTimeout(() => {
-      setMessage(null)
-      setTimer(null)
-    }, TRANSIENT_STATUS_MS))
-  }
-}
-
 export function tabHasConflict(state: DocumentSaveState | undefined): boolean {
   return state !== undefined && state.divergence.kind !== "none"
 }

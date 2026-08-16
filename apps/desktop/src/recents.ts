@@ -1,5 +1,6 @@
-export const MAX_RECENTS = 10
-export const RECENTS_STORAGE_KEY = "omd.recent-files"
+import { MAX_RECENTS } from "./constants"
+
+export { MAX_RECENTS }
 
 export function rememberPath(recents: readonly string[], path: string): string[] {
   return [path, ...recents.filter(item => item !== path)].slice(0, MAX_RECENTS)

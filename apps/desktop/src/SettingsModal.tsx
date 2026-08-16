@@ -2,6 +2,10 @@ import { useEffect, useRef } from "react"
 import { X } from "lucide-react"
 import {
   DEFAULT_SETTINGS,
+  FONT_FAMILY_PRESETS,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  LINE_HEIGHT_PRESETS,
   sanitizeSettings,
   type AppTheme,
   type DefaultEditorMode,
@@ -15,12 +19,6 @@ export interface SettingsModalProps {
   onSave: (settings: UserSettings) => void
   onClose: () => void
 }
-
-const FONT_FAMILY_PRESETS = [
-  { label: "System Default", value: "system-ui, -apple-system, sans-serif" },
-  { label: "Monospace", value: "ui-monospace, Menlo, Monaco, Consolas, monospace" },
-  { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
-]
 
 export function SettingsModal(props: SettingsModalProps) {
   const { isOpen, settings, onSave, onClose } = props
@@ -98,8 +96,8 @@ export function SettingsModal(props: SettingsModalProps) {
                 <input
                   id="setting-font-size"
                   type="number"
-                  min={12}
-                  max={32}
+                  min={FONT_SIZE_MIN}
+                  max={FONT_SIZE_MAX}
                   className="settings-input settings-input-number"
                   value={settings.fontSize}
                   onChange={e => update({ fontSize: Number(e.target.value) })}
@@ -147,10 +145,11 @@ export function SettingsModal(props: SettingsModalProps) {
                 value={settings.lineHeight}
                 onChange={e => update({ lineHeight: Number(e.target.value) })}
               >
-                <option value={1.4}>1.4 (Compact)</option>
-                <option value={1.6}>1.6 (Default)</option>
-                <option value={1.8}>1.8 (Spacious)</option>
-                <option value={2.0}>2.0 (Double)</option>
+                {LINE_HEIGHT_PRESETS.map(preset => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
               </select>
             </div>
 

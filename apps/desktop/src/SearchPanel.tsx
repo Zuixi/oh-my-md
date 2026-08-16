@@ -1,15 +1,21 @@
-import { Search, X } from "lucide-react"
+import { X, Search } from "lucide-react"
+import { MAX_SEARCH_HITS } from "./constants"
 
 export interface SearchHit {
   path: string
   line: number
   text: string
+  start: number
+  end: number
 }
 
 export function SearchPanel(props: {
   query: string
   hits: SearchHit[]
+  truncated: boolean
+  caseSensitive: boolean
   onQuery: (query: string) => void
+  onCaseSensitive: (value: boolean) => void
   onOpen: (hit: SearchHit) => void
   onClose: () => void
 }) {
@@ -37,6 +43,17 @@ export function SearchPanel(props: {
           placeholder="Find in folder…"
         />
       </div>
+      <label className="find-replace-case">
+        <input
+          type="checkbox"
+          checked={props.caseSensitive}
+          onChange={event => props.onCaseSensitive(event.target.checked)}
+        />
+        Case
+      </label>
+      {props.truncated ? (
+        <p className="search-truncated-note">Results limited to {MAX_SEARCH_HITS}</p>
+      ) : null}
       {props.hits.map(hit => (
         <button
           key={`${hit.path}:${hit.line}`}
@@ -44,7 +61,12 @@ export function SearchPanel(props: {
           className="search-hit"
           onClick={() => props.onOpen(hit)}
         >
-          {hit.path.split("/").pop()}:{hit.line} {hit.text}
+          <span className="search-hit-location">
+            {hit.path.split("/").pop()}:{hit.line}
+          </span>{" "}
+          {hit.text.slice(0, hit.start)}
+          <mark className="search-hit-mark">{hit.text.slice(hit.start, hit.end)}</mark>
+          {hit.text.slice(hit.end)}
         </button>
       ))}
     </div>

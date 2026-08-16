@@ -911,9 +911,10 @@ describe("App product shell", () => {
     harness.services.listDir = vi.fn(async () => [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
     ])
-    harness.services.searchMarkdown = vi.fn(async () => [
-      { path: "/notes/hit.md", line: 2, text: "found it" },
-    ])
+    harness.services.searchMarkdown = vi.fn(async () => ({
+      hits: [{ path: "/notes/hit.md", line: 2, text: "found it", start: 0, end: 5 }],
+      truncated: false,
+    }))
     vi.mocked(harness.services.readDocument).mockImplementation(async path => {
       harness.seedFile(path, "found it")
       return {
