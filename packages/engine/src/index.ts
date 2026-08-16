@@ -1,13 +1,14 @@
 import { markdownLanguageSupport } from "./parse/markdown"
 import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
-import { imageResolver } from "./decorations/widgets/image"
+import { imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
+export { imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {
   classifyLink,
   headingPositionForAnchor,
@@ -59,6 +60,7 @@ export {
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
   resolveImageSrc?: (src: string) => string
+  imageBrokenLabel?: (src: string) => string
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
@@ -73,5 +75,6 @@ export function editorExtensions(options: EngineOptions = {}) {
     isLivePreview,
     toggleKeymap,
     imageResolver.of(options.resolveImageSrc ?? ((s: string) => s)),
+    imageBrokenLabel.of(options.imageBrokenLabel ?? ((s: string) => `🖼 ${s}（加载失败）`)),
   ]
 }
