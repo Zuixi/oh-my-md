@@ -35,6 +35,7 @@ export function subscribe(fn: () => void): () => void {
 export function initLocale(stored: StoredLocale, setMenuLocale?: MenuLocaleSetter): Locale {
   if (setMenuLocale) menuSetter = setMenuLocale
   current = resolveLocale(stored)
+  emit()
   void notifyMenu()
   return current
 }
