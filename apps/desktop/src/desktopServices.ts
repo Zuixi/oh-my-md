@@ -70,6 +70,11 @@ export interface RecoveryRecord {
   label: string
 }
 
+export interface UpdateCheck {
+  readonly version: string
+  readonly currentVersion: string
+}
+
 export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
@@ -114,6 +119,7 @@ export interface DesktopServices {
   saveSessionState?: (state: SavedSessionState) => Promise<void>
   reportError: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
+  checkForUpdates?: () => Promise<UpdateCheck | null>
 }
 
 function isDocumentErrorCode(code: string): code is DocumentErrorCode {
@@ -275,6 +281,16 @@ export const defaultServices: DesktopServices = {
       } catch {
         // ignore
       }
+    }
+  },
+  checkForUpdates: async () => {
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater")
+      const update = await check()
+      if (!update) return null
+      return { version: update.version, currentVersion: update.currentVersion }
+    } catch {
+      return null
     }
   },
   reportError: (message) => window.alert(message),
