@@ -11,6 +11,7 @@ vi.mock("@omd/engine", async importOriginal => {
   return {
     ...actual,
     exportHtml: () => "<!doctype html><html>exported</html>",
+    exportRichHtml: async () => "<!doctype html><html>exported</html>",
     collectOutline: () => [],
     getPendingOrderedListNormalization: vi.fn(() => null),
     acceptOrderedListNormalization: vi.fn(() => ({

@@ -154,6 +154,7 @@ Facts to remember:
 - Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
 - Widget `eq` compares `TableData` strings via `JSON.stringify`; parsing happens at render time from the current strings, so there is no stale-state risk and no cell re-parse churn when the table is unchanged.
+- Cell `mousedown` must `preventDefault` + `stopPropagation`. `BlockWidget.toDOM` moves selection into the table source on wrap `mousedown`, which unmounts the widget; without stopping the bubble, in-place `input.omd-table-edit` never stays mounted.
 
 ## Async widgets can outlive their original DOM
 
@@ -271,6 +272,12 @@ Two environment gaps produce stray warnings in `pnpm verify` if you break their 
 - **Node 25 shadows `localStorage`.** Node 25 ships an experimental file-backed `globalThis.localStorage` that warns `--localstorage-file was provided without a valid path` on any access, and the happy-dom vitest env wires `window.localStorage` to that same Node object — so a bare `localStorage.getItem()` in app code (recents, outline toggle) warns in every desktop worker. Fix: `apps/desktop/test/setup.ts` installs an in-memory `Storage` on both `globalThis.localStorage` and `window.localStorage`. If you drop that override, the warning returns and tests still pass.
 - **happy-dom leaves `document.compatMode` undefined.** KaTeX checks `document.compatMode !== "CSS1Compat"` at module load and warns "doesn't work in quirks mode" (rendering still works because `renderToString` bypasses the disabled DOM `render`). Fix: `packages/engine/test/setup.ts` pins `compatMode` to `"CSS1Compat"` via `Object.defineProperty`. Keep the engine's `setupFiles` entry in `vitest.config.ts`.
 
+
+## Desktop `defaultKeymap` is registered before engine keymaps
+
+CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding uses `Prec.high`.
+
+`@codemirror/lang-markdown` already wraps its markup-continue Enter in `Prec.high`. `listKeymap` must do the same (`packages/engine/src/format/lists.ts`), or list Tab/Enter lose whenever the markdown command returns false (incomplete syntax tree, non-list markup). Spec-only `continueListSpec` tests cannot see this — instantiate a real `EditorView` with host keymaps first.
 
 ## serde enum-level `rename_all` does not rename variant fields
 

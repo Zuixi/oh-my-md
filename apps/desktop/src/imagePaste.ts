@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { EditorView } from "@codemirror/view"
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+const ACCEPTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const
 const EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -19,6 +20,47 @@ export interface ImagePasteOptions {
 
 const defaultWriteImage = async (path: string, base64: string, documentPath: string) => {
   await invoke("write_image", { path, base64, documentPath })
+}
+
+function defaultPickImage(): Promise<File | null> {
+  return new Promise(resolve => {
+    const input = document.createElement("input")
+    input.type = "file"
+    input.accept = ACCEPTED_IMAGE_MIMES.join(",")
+    input.hidden = true
+    let settled = false
+
+    const cleanup = () => {
+      input.removeEventListener("change", handleChange)
+      input.removeEventListener("cancel", handleCancel)
+      window.removeEventListener("focus", handleWindowFocus)
+      input.remove()
+    }
+
+    const finish = (file: File | null) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(file)
+    }
+
+    const handleChange = () => finish(input.files?.[0] ?? null)
+    const handleCancel = () => finish(null)
+    const handleWindowFocus = () => {
+      window.setTimeout(() => finish(input.files?.[0] ?? null), 0)
+    }
+
+    input.addEventListener("change", handleChange, { once: true })
+    input.addEventListener("cancel", handleCancel, { once: true })
+    window.addEventListener("focus", handleWindowFocus, { once: true })
+    ;(document.body ?? document.documentElement).append(input)
+    input.click()
+  })
+}
+
+function droppedImageFile(event: DragEvent): File | null {
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  return files.find(file => file.type in EXTENSION_BY_MIME) ?? null
 }
 
 export function imagePasteHandler(options: ImagePasteOptions) {
@@ -98,22 +140,41 @@ export function imagePasteHandler(options: ImagePasteOptions) {
       // Keyboard paste (no contextmenu): fall through to CM's default handler.
       return false
     },
+
+    drop(event, view) {
+      return handleImageDrop(event, view, options)
+    },
   })
 }
 
-export async function pasteImage(
+export function handleImageDrop(
+  event: DragEvent,
+  view: EditorView,
+  options: ImagePasteOptions,
+): boolean {
+  const file = droppedImageFile(event)
+  if (!file) return false
+
+  event.preventDefault()
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+  const range = pos === null ? undefined : { from: pos, to: pos }
+  void insertImageFile(file, view, options, file.type, range)
+  return true
+}
+
+export async function insertImageFile(
   file: File,
   view: EditorView,
   options: ImagePasteOptions,
-  clipboardMime = file.type,
+  mime: string,
+  range?: { from: number; to: number },
 ): Promise<void> {
   const docPath = options.getDocPath()
   if (!docPath) {
-    options.onError("Save the file before pasting an image")
+    options.onError("Save the file before inserting an image")
     return
   }
 
-  const mime = file.type || clipboardMime
   const extension = EXTENSION_BY_MIME[mime]
   if (!extension) {
     options.onError(`Unsupported image type: ${mime || "unknown"}`)
@@ -126,7 +187,7 @@ export async function pasteImage(
 
   const documentId = options.getDocumentId()
   const document = view.state.doc
-  const selection = view.state.selection.main
+  const selection = range ?? view.state.selection.main
   const normalizedPath = docPath.replace(/\\/g, "/")
   const dir = normalizedPath.slice(0, normalizedPath.lastIndexOf("/") + 1)
   const id = crypto.randomUUID()
@@ -143,7 +204,7 @@ export async function pasteImage(
     try {
       const base64 = await (options.readFile ?? fileToBase64)(file)
       if (!isCurrentDocument()) {
-        options.onError("Document changed before the image could be pasted")
+        options.onError("Document changed before the image could be inserted")
         return
       }
       await (options.writeImage ?? defaultWriteImage)(
@@ -168,7 +229,7 @@ export async function pasteImage(
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      options.onError(`Image paste failed: ${detail}`)
+      options.onError(`Image insert failed: ${detail}`)
     }
   })
   pasteQueues.set(view, operation)
@@ -180,6 +241,41 @@ export async function pasteImage(
       pasteQueues.delete(view)
     }
   }
+}
+
+export function pasteImage(
+  file: File,
+  view: EditorView,
+  options: ImagePasteOptions,
+  clipboardMime = file.type,
+): Promise<void> {
+  return insertImageFile(file, view, options, file.type || clipboardMime)
+}
+
+export async function pickAndInsertImage(
+  view: EditorView,
+  options: ImagePasteOptions,
+  pick: () => Promise<File | null> = defaultPickImage,
+): Promise<void> {
+  const docPath = options.getDocPath()
+  if (!docPath) {
+    options.onError("Save the file before inserting an image")
+    return
+  }
+  const documentId = options.getDocumentId()
+  const document = view.state.doc
+  const selection = view.state.selection.main
+  const file = await pick()
+  if (!file) return
+  if (
+    options.getDocPath() !== docPath ||
+    options.getDocumentId() !== documentId ||
+    view.state.doc !== document
+  ) {
+    options.onError("Document changed before the image could be inserted")
+    return
+  }
+  await insertImageFile(file, view, options, file.type, selection)
 }
 
 function fileToBase64(file: File): Promise<string> {

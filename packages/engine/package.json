@@ -18,6 +18,7 @@
     "shiki": "^4.4.3"
   },
   "devDependencies": {
+    "@codemirror/commands": "^6.7.1",
     "@types/katex": "^0.16.8",
     "@types/node": "^26.2.0",
     "happy-dom": "^16.0.0",

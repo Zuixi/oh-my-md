@@ -75,7 +75,7 @@ export interface DesktopServices {
   pickSavePath: () => Promise<string | null>
   pickFolder?: () => Promise<string | null>
   pickExportPath?: (format?: "html" | "png" | "pdf") => Promise<string | null>
-  exportPreview?: (html: string, path: string, format: "pdf" | "png") => Promise<void>
+  exportPreview?: (html: string, path: string, format: "pdf" | "png") => Promise<string | null>
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
   readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
@@ -87,6 +87,10 @@ export interface DesktopServices {
   readFile: (path: string) => Promise<string>
   writeFile: (path: string, contents: string) => Promise<void>
   revealInFinder?: (path: string) => Promise<void>
+  createMarkdown?: (dir: string, name: string) => Promise<string>
+  createDir?: (dir: string, name: string) => Promise<string>
+  renamePath?: (from: string, toName: string) => Promise<string>
+  deletePath?: (path: string) => Promise<void>
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
@@ -100,6 +104,7 @@ export interface DesktopServices {
   clearRecovery?: (key: string) => Promise<void>
   confirmDiscard: () => boolean
   confirmClose?: () => boolean
+  confirmDelete?: (path: string) => boolean
   confirmRestore?: (label: string) => boolean
   confirmExternalChange?: () => boolean
   getSettings?: () => Promise<UserSettings>
@@ -172,8 +177,14 @@ export const defaultServices: DesktopServices = {
     await invoke("write_file", { path, contents })
   },
   revealInFinder: path => invoke("plugin:opener|reveal_item_in_dir", { path }),
+  createMarkdown: (dir, name) => invoke<string>("create_markdown", { dir, name }),
+  createDir: (dir, name) => invoke<string>("create_dir", { dir, name }),
+  renamePath: (from, toName) => invoke<string>("rename_path", { from, toName }),
+  deletePath: async path => {
+    await invoke("delete_path", { path })
+  },
   exportPreview: async (html, path, format) => {
-    await invoke("export_preview", { html, path, format })
+    return await invoke<string | null>("export_preview", { html, path, format })
   },
   loadRecents: () => {
     try {
@@ -203,6 +214,11 @@ export const defaultServices: DesktopServices = {
   confirmDiscard: () =>
     window.confirm("Discard unsaved changes and open another document?"),
   confirmClose: () => window.confirm("Close this tab and discard unsaved changes?"),
+  confirmDelete: (path) => {
+    const normalized = path.replace(/\\/g, "/")
+    const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
+    return window.confirm(`Delete ${name}? This cannot be undone.`)
+  },
   confirmRestore: (label) => window.confirm(`Restore unsaved draft ${label}?`),
   confirmExternalChange: () => window.confirm("File changed on disk. Reload?"),
   getSettings: async () => {
@@ -265,8 +281,4 @@ export const defaultServices: DesktopServices = {
 export function errorMessage(prefix: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
   return `${prefix}: ${detail}`
-}
-
-export function wordCount(text: string): number {
-  return text.trim() ? text.trim().split(/\s+/).length : 0
 }

@@ -78,12 +78,13 @@ pub async fn export_preview(
     html: String,
     path: String,
     format: String,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let fmt = ExportFormat::parse(&format)?;
     let target = validate_export(&path, fmt, &html)?;
     let styled = styled_export_html(&html);
-    let bytes = render_bytes(app, styled, fmt).await?;
-    crate::atomic_write(&target, &bytes)
+    let (bytes, warning) = render_bytes(app, styled, fmt).await?;
+    crate::atomic_write(&target, &bytes)?;
+    Ok(warning)
 }
 
 #[cfg(target_os = "macos")]
@@ -91,7 +92,7 @@ async fn render_bytes(
     app: tauri::AppHandle,
     html: String,
     format: ExportFormat,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Option<String>), String> {
     native::render(app, html, format, EXPORT_TIMEOUT_SECS).await
 }
 
@@ -100,7 +101,7 @@ async fn render_bytes(
     app: tauri::AppHandle,
     html: String,
     format: ExportFormat,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Option<String>), String> {
     let _ = (app, html, format);
     Err("PDF and image export are only available on macOS".into())
 }
