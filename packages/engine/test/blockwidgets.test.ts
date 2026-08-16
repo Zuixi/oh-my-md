@@ -141,7 +141,7 @@ describe("block widget pipeline", () => {
   })
 
   it("maps fenced-code language aliases and rejects unknown languages", async () => {
-    const { resolveCodeLanguage } = await import("../src/decorations/widgets/code")
+    const { resolveCodeLanguage } = await import("../src/shiki/languages")
     expect(resolveCodeLanguage("JS")).toBe("javascript")
     expect(resolveCodeLanguage("ts")).toBe("typescript")
     expect(resolveCodeLanguage("unknown-language")).toBe(null)
