@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale, type StoredLocale } from "../src/i18n"
+import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale } from "../src/i18n"
 
 describe("i18n store", () => {
   beforeEach(() => { initLocale("auto") })
@@ -54,9 +54,3 @@ describe("i18n store", () => {
     expect(before).not.toEqual(after)
   })
 })
-
-// Project tsconfig has noUnusedLocals=true; an `import { type X }` that is
-// never used as a value still triggers TS6133. Reference the type so the
-// import is consumed.
-const _storedLocale: StoredLocale = "auto"
-void _storedLocale
