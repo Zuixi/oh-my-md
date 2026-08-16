@@ -1,9 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { SettingsModal } from "../src/SettingsModal"
 import { DEFAULT_SETTINGS, type UserSettings } from "../src/settings"
+import { initLocale } from "../src/i18n"
 
 describe("SettingsModal", () => {
+  afterEach(() => initLocale("en"))
+
   it("does not render when closed", () => {
     render(
       <SettingsModal
@@ -94,5 +97,31 @@ describe("SettingsModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset to Defaults" }))
     expect(onSave).toHaveBeenCalledWith(DEFAULT_SETTINGS)
+  })
+
+  it("calls onSave with the chosen locale when language select changes", () => {
+    const onSave = vi.fn()
+    const customSettings: UserSettings = {
+      theme: "dark",
+      fontSize: 22,
+      fontFamily: "Courier",
+      lineHeight: 2.0,
+      tabSize: 4,
+      defaultMode: "source",
+      spellcheck: true,
+      locale: "auto",
+    }
+
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={customSettings}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh" } })
+    expect(onSave).toHaveBeenCalledWith({ ...customSettings, locale: "zh" })
   })
 })
