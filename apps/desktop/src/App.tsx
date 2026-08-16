@@ -1334,7 +1334,7 @@ export default function App({
   }, [searchOpen, searchQuery, workspace.folder, services])
 
   const { cursor, mode } = editorStatus(viewRef.current)
-  const stats = documentStats(doc)
+  const stats = useMemo(() => documentStats(doc), [doc])
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
