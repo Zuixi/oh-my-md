@@ -94,6 +94,7 @@ export interface DesktopServices {
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
+  exportDiagnostics?: () => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
@@ -198,6 +199,11 @@ export const defaultServices: DesktopServices = {
   },
   setRecentMenu: async paths => {
     await invoke("set_recent_files", { paths })
+  },
+  exportDiagnostics: async () => {
+    const path = await save({ filters: [{ name: "Diagnostics", extensions: ["zip"] }] })
+    if (typeof path !== "string") return
+    await invoke("export_diagnostics", { path })
   },
   allowDocumentAssets: async (path) => {
     await invoke("allow_document_assets", { documentPath: path })
