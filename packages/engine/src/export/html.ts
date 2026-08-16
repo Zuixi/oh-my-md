@@ -186,10 +186,17 @@ export interface ExportRichHtmlOptions {
   resolveImageSrc?: (src: string) => string
 }
 
+const mathHtmlCache = new Map<string, string>()
+
 async function renderMathHtml(tex: string, displayMode: boolean): Promise<string> {
+  const cacheKey = `${displayMode ? "d" : "i"}:${tex}`
+  const cached = mathHtmlCache.get(cacheKey)
+  if (cached !== undefined) return cached
   try {
     const katex = (await import("katex")).default
-    return katex.renderToString(tex, { displayMode, throwOnError: true })
+    const html = katex.renderToString(tex, { displayMode, throwOnError: true })
+    mathHtmlCache.set(cacheKey, html)
+    return html
   } catch {
     return `<code>${escapeHtml(displayMode ? `$$${tex}$$` : `$${tex}$`)}</code>`
   }
@@ -197,10 +204,15 @@ async function renderMathHtml(tex: string, displayMode: boolean): Promise<string
 
 let _mermaidCounter = 0
 
+let _mermaidInitialized = false
+
 async function renderMermaidHtml(src: string): Promise<string> {
   try {
     const mermaid = (await import("mermaid")).default
-    mermaid.initialize({ startOnLoad: false, securityLevel: "strict" })
+    if (!_mermaidInitialized) {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict" })
+      _mermaidInitialized = true
+    }
     const id = `omd-export-mmd-${++_mermaidCounter}`
     const { svg } = await mermaid.render(id, src)
     return svg
@@ -230,7 +242,8 @@ async function richChildren(
   let pos = node.from
   for (let child = node.firstChild; child; child = child.nextSibling) {
     if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
-    html += await renderRich(child, state, opts)
+    const rendered = renderRich(child, state, opts)
+    html += typeof rendered === "string" ? rendered : await rendered
     pos = child.to
   }
   if (pos < node.to) html += escapeHtml(state.doc.sliceString(pos, node.to))
@@ -251,21 +264,21 @@ async function richLinkLabel(
   let pos = marks[0].to
   for (let child = marks[0].nextSibling; child && child.from < marks[1].from; child = child.nextSibling) {
     if (child.from > pos) html += escapeHtml(state.doc.sliceString(pos, child.from))
-    html += await renderRich(child, state, opts)
+    const rendered = renderRich(child, state, opts)
+    html += typeof rendered === "string" ? rendered : await rendered
     pos = child.to
   }
   if (pos < marks[1].from) html += escapeHtml(state.doc.sliceString(pos, marks[1].from))
   return html
 }
 
-async function renderRich(
+function renderRich(
   node: SyntaxNode,
   state: EditorState,
   opts: ExportRichHtmlOptions,
-): Promise<string> {
+): string | Promise<string> {
   if (SKIP.has(node.name)) return ""
   switch (node.name) {
-    case "Document": return richChildren(node, state, opts)
     case "InlineMath": {
       const tex = state.doc.sliceString(node.from, node.to).replace(/^\$|\$$/g, "")
       return renderMathHtml(tex.trim(), false)
@@ -292,48 +305,50 @@ async function renderRich(
     }
     case "Link": {
       const href = linkHref(state, node) ?? ""
-      const label = await richLinkLabel(node, state, opts)
-      return `<a href="${escapeHtml(href)}">${label || escapeHtml(href)}</a>`
+      return richLinkLabel(node, state, opts).then(label =>
+        `<a href="${escapeHtml(href)}">${label || escapeHtml(href)}</a>`)
     }
     case "Table": {
-      let html = "<table>"
-      for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (child.name === "TableHeader") {
-          html += "<thead><tr>"
-          for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
-            if (cell.name === "TableCell") html += `<th>${await richChildren(cell, state, opts)}</th>`
+      return (async () => {
+        let html = "<table>"
+        for (let child = node.firstChild; child; child = child.nextSibling) {
+          if (child.name === "TableHeader") {
+            html += "<thead><tr>"
+            for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
+              if (cell.name === "TableCell") html += `<th>${await richChildren(cell, state, opts)}</th>`
+            }
+            html += "</tr></thead>"
           }
-          html += "</tr></thead>"
-        }
-        if (child.name === "TableRow") {
-          html += "<tr>"
-          for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
-            if (cell.name === "TableCell") html += `<td>${await richChildren(cell, state, opts)}</td>`
+          if (child.name === "TableRow") {
+            html += "<tr>"
+            for (let cell = child.firstChild; cell; cell = cell.nextSibling) {
+              if (cell.name === "TableCell") html += `<td>${await richChildren(cell, state, opts)}</td>`
+            }
+            html += "</tr>"
           }
-          html += "</tr>"
         }
-      }
-      return `${html}</table>`
+        return `${html}</table>`
+      })()
     }
     // Structural containers: richly render their children.
     case "ATXHeading1":
-    case "SetextHeading1": return `<h1>${(await richChildren(node, state, opts)).trim()}</h1>`
+    case "SetextHeading1": return richChildren(node, state, opts).then(s => `<h1>${s.trim()}</h1>`)
     case "ATXHeading2":
-    case "SetextHeading2": return `<h2>${(await richChildren(node, state, opts)).trim()}</h2>`
-    case "ATXHeading3": return `<h3>${(await richChildren(node, state, opts)).trim()}</h3>`
-    case "ATXHeading4": return `<h4>${(await richChildren(node, state, opts)).trim()}</h4>`
-    case "ATXHeading5": return `<h5>${(await richChildren(node, state, opts)).trim()}</h5>`
-    case "ATXHeading6": return `<h6>${(await richChildren(node, state, opts)).trim()}</h6>`
-    case "Paragraph": return `<p>${await richChildren(node, state, opts)}</p>`
-    case "Emphasis": return `<em>${await richChildren(node, state, opts)}</em>`
-    case "StrongEmphasis": return `<strong>${await richChildren(node, state, opts)}</strong>`
-    case "Strikethrough": return `<del>${await richChildren(node, state, opts)}</del>`
-    case "Highlight": return `<mark>${await richChildren(node, state, opts)}</mark>`
-    case "Underline": return `<u>${await richChildren(node, state, opts)}</u>`
-    case "BulletList": return `<ul>${await richChildren(node, state, opts)}</ul>`
-    case "OrderedList": return `<ol>${await richChildren(node, state, opts)}</ol>`
-    case "ListItem": return `<li>${await richChildren(node, state, opts)}</li>`
-    case "Blockquote": return `<blockquote>${await richChildren(node, state, opts)}</blockquote>`
+    case "SetextHeading2": return richChildren(node, state, opts).then(s => `<h2>${s.trim()}</h2>`)
+    case "ATXHeading3": return richChildren(node, state, opts).then(s => `<h3>${s.trim()}</h3>`)
+    case "ATXHeading4": return richChildren(node, state, opts).then(s => `<h4>${s.trim()}</h4>`)
+    case "ATXHeading5": return richChildren(node, state, opts).then(s => `<h5>${s.trim()}</h5>`)
+    case "ATXHeading6": return richChildren(node, state, opts).then(s => `<h6>${s.trim()}</h6>`)
+    case "Paragraph": return richChildren(node, state, opts).then(s => `<p>${s}</p>`)
+    case "Emphasis": return richChildren(node, state, opts).then(s => `<em>${s}</em>`)
+    case "StrongEmphasis": return richChildren(node, state, opts).then(s => `<strong>${s}</strong>`)
+    case "Strikethrough": return richChildren(node, state, opts).then(s => `<del>${s}</del>`)
+    case "Highlight": return richChildren(node, state, opts).then(s => `<mark>${s}</mark>`)
+    case "Underline": return richChildren(node, state, opts).then(s => `<u>${s}</u>`)
+    case "BulletList": return richChildren(node, state, opts).then(s => `<ul>${s}</ul>`)
+    case "OrderedList": return richChildren(node, state, opts).then(s => `<ol>${s}</ol>`)
+    case "ListItem": return richChildren(node, state, opts).then(s => `<li>${s}</li>`)
+    case "Blockquote": return richChildren(node, state, opts).then(s => `<blockquote>${s}</blockquote>`)
     default:
       // Any unrecognised container: walk children richly so nested math/code is rendered.
       if (node.firstChild) return richChildren(node, state, opts)
