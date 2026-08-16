@@ -54,6 +54,7 @@ apps/desktop/
 4. Engine-generated `omd-*` classes are styled in `styles.css`. Coordinate class changes with the engine in the same task.
 5. Native filesystem effects must use narrow Tauri commands. Browser-side code may select paths and orchestrate calls, but must not emulate native path/file operations.
 6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
+7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
 
 ## CodeMirror Host Rules
 
