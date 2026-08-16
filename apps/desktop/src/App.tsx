@@ -86,6 +86,7 @@ import {
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
+import { initLocale, setLocale } from "./i18n"
 import {
   extractSessionState,
 } from "./sessionRestore"
@@ -218,6 +219,7 @@ export default function App({
   const mountedRef = useRef(false)
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
   const settingsRef = useRef<UserSettings>(settings)
+  const localeInitRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
   const sessionRestoredRef = useRef(false)
@@ -543,7 +545,11 @@ export default function App({
     mountedRef.current = true
     ensureViews()
     void (async () => {
-      await loadInitialSettings()
+      const initial = await loadInitialSettings()
+      if (!localeInitRef.current) {
+        localeInitRef.current = true
+        initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
+      }
       const restored = await restoreSavedSession()
       if (!restored) {
         await restoreDraft()
@@ -690,10 +696,12 @@ export default function App({
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
     }
+    const localeChanged = sanitized.locale !== settingsRef.current.locale
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
     void services.saveSettings?.(sanitized)
+    if (localeChanged) setLocale(sanitized.locale)
   }
 
   async function loadInitialSettings(): Promise<UserSettings> {

@@ -94,6 +94,7 @@ export interface DesktopServices {
   loadRecents?: () => string[]
   saveRecents?: (paths: string[]) => void
   setRecentMenu?: (paths: string[]) => Promise<void>
+  setMenuLocale?: (locale: string) => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
@@ -198,6 +199,9 @@ export const defaultServices: DesktopServices = {
   },
   setRecentMenu: async paths => {
     await invoke("set_recent_files", { paths })
+  },
+  setMenuLocale: async locale => {
+    await invoke("set_menu_locale", { locale })
   },
   allowDocumentAssets: async (path) => {
     await invoke("allow_document_assets", { documentPath: path })
