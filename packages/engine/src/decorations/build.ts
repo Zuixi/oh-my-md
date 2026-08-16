@@ -143,10 +143,11 @@ function rebuildRanges(value: LiveDeco, tr: Transaction) {
   if (tr.docChanged) {
     tr.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
       const oldRange = expandRange(tr.startState, fromA, toA)
-      ranges.push({
-        from: tr.changes.mapPos(oldRange.from, -1),
-        to: tr.changes.mapPos(oldRange.to, 1),
-      })
+      ranges.push(expandRange(
+        tr.state,
+        tr.changes.mapPos(oldRange.from, -1),
+        tr.changes.mapPos(oldRange.to, 1),
+      ))
       ranges.push(expandRange(tr.state, fromB, toB))
     })
   }

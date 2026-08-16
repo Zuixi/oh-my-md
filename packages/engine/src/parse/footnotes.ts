@@ -1,4 +1,10 @@
 import type { MarkdownConfig } from "@lezer/markdown"
+import {
+  CHAR_CARET,
+  CHAR_CLOSE_BRACKET,
+  CHAR_NEWLINE,
+  CHAR_OPEN_BRACKET,
+} from "./chars"
 
 // ponytail: continuation lines must be indented >= 4 and directly adjacent;
 // a blank line still ends the definition (full CommonMark allows lazy/blank
@@ -39,10 +45,10 @@ export const Footnotes: MarkdownConfig = {
     name: "FootnoteReference",
     before: "Link", // claim '[^' before the Link parser sees '['
     parse(cx, next, pos) {
-      if (next != 91 /* '[' */ || cx.char(pos + 1) != 94 /* '^' */) return -1
+      if (next != CHAR_OPEN_BRACKET || cx.char(pos + 1) != CHAR_CARET) return -1
       let i = pos + 2
-      while (i < cx.end && cx.char(i) != 93 /* ']' */) {
-        if (cx.char(i) == 91 || cx.char(i) == 10) return -1 // no nested '[' or newline
+      while (i < cx.end && cx.char(i) != CHAR_CLOSE_BRACKET) {
+        if (cx.char(i) == CHAR_OPEN_BRACKET || cx.char(i) == CHAR_NEWLINE) return -1 // no nested '[' or newline
         i++
       }
       if (i == pos + 2 || i >= cx.end) return -1 // empty label or unterminated

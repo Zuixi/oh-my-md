@@ -3,6 +3,9 @@ import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage } from "../../shiki/languages"
 
+// 渲染 debounce：快速打字时 widget 在此窗口内被销毁（回到编辑态）则放弃渲染。
+const RENDER_DEBOUNCE_MS = 150
+
 let highlighterPromise: Promise<HighlighterCore> | null = null
 
 function getHighlighter(): Promise<HighlighterCore> {
@@ -47,7 +50,7 @@ export class CodeWidget extends BlockWidget {
 
       // 性能底线：debounce 150ms。快速打字时 widget 在此期间被销毁（回到编辑态）
       // 则直接放弃，不启动 Shiki，避免阻塞主线程。
-      await new Promise(r => setTimeout(r, 150))
+      await new Promise(r => setTimeout(r, RENDER_DEBOUNCE_MS))
       if (!this.isActive(el)) return
 
       const hl = await getHighlighter()

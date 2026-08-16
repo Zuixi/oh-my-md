@@ -271,6 +271,21 @@ describe("block syntax", () => {
     expect(t).not.toContain("replace:EmphasisMark")
   })
 
+  it("styles fenced code block without language with line styles, not block widget even when cursor is away", () => {
+    const doc = "```\nplain text code\nmore text\n```\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(t).not.toContain("widget:block:code")
+    expect(t.filter(x => x === "line:omd-codeblock")).toHaveLength(4)
+  })
+
+  it("renders fenced code block with language as block widget when cursor is away", () => {
+    const doc = "```js\nconst x = 1\n```\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(t).toContain("widget:block:code")
+  })
+
   it("displays sequential ordered numbers even when source numbers skip", () => {
     const doc = "1. 第一项\n3. 第二项\n7. 第三项\n\ntail"
     const s = makeState(doc).update({ selection: { anchor: doc.length } }).state

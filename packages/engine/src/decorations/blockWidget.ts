@@ -62,9 +62,10 @@ export abstract class BlockWidget extends WidgetType {
     wrap.title = "Click to edit source"
     // 整块点击即回源码（root cause D：只放行 ✎ 时块是砖，用户进不去）
     wrap.addEventListener("mousedown", e => {
+      if (e.button !== 0) return
       e.preventDefault()
       // 用鼠标实际坐标定位，比 posAtDOM(wrap) 更精确，单击和双击均落到正确位置。
-      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.posAtDOM(wrap)
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.pos
       view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
       view.focus()
     })

@@ -139,7 +139,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     })
     return true
   }
-  if (insideBlockquote(node.node)) {
+  if (!lang || insideBlockquote(node.node)) {
     styleCodeblockLines(node, state, out)
     return false
   }
