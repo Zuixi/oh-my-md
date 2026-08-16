@@ -142,7 +142,7 @@
 
 #### 13 Release Engineering
 
-**文件：** `docs/superpowers/specs/2026-08-13-13-release-engineering-design.md`  
+**文件：** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`  
 **目标：** CI、版本同步、macOS 签名公证、安装烟测、自动更新、结构化日志和诊断包。
 
 当前 v1 规格继续不引入完整 E2E 套件；发布门槛使用自动化单元/集成检查、Rust 测试、前端构建、安装烟测和明确的人工 QA。
