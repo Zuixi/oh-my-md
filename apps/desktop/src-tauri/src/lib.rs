@@ -389,6 +389,7 @@ pub fn run() {
             save_session_state,
             allow_workspace_dir,
             set_recent_files,
+            menu::set_menu_locale,
             export::export_preview
         ])
         .run(tauri::generate_context!())
