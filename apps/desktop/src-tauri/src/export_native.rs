@@ -40,7 +40,9 @@ const DISPATCH_TIME_NOW: DispatchTimeT = 0;
 const NSEC_PER_MSEC: i64 = 1_000_000;
 
 extern "C" {
-    fn dispatch_get_main_queue() -> DispatchQueueT;
+    // dispatch_get_main_queue() is a C macro expanding to (&_dispatch_main_q);
+    // the linkable symbol is the global queue object itself.
+    static _dispatch_main_q: c_void;
     fn dispatch_time(when: DispatchTimeT, delta: i64) -> DispatchTimeT;
     fn dispatch_after_f(
         when: DispatchTimeT,
@@ -65,7 +67,7 @@ fn schedule_poll(state: PollState, delay_ms: u64) {
     let ctx = Box::into_raw(Box::new(state)) as *mut c_void;
     unsafe {
         let when = dispatch_time(DISPATCH_TIME_NOW, (delay_ms as i64) * NSEC_PER_MSEC);
-        let queue = dispatch_get_main_queue();
+        let queue = (&raw const _dispatch_main_q).cast_mut().cast::<c_void>();
         dispatch_after_f(when, queue, ctx, poll_trampoline);
     }
 }
