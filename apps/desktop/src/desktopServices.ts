@@ -2,11 +2,22 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { exportSaveOptions } from "./exportPath"
-import { parseRecents, RECENTS_STORAGE_KEY } from "./recents"
+import { parseRecents } from "./recents"
+import {
+  MARKDOWN_EXTENSIONS,
+  STORAGE_KEY_RECENTS,
+  STORAGE_KEY_SESSION,
+  STORAGE_KEY_SETTINGS,
+} from "./constants"
 import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
+
+export interface SearchResponse {
+  readonly hits: SearchHit[]
+  readonly truncated: boolean
+}
 
 export interface DocumentVersion {
   readonly resolvedPath: string
@@ -112,7 +123,7 @@ export interface DesktopServices {
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
-  searchMarkdown?: (root: string, query: string) => Promise<SearchHit[]>
+  searchMarkdown?: (root: string, query: string, caseSensitive?: boolean) => Promise<SearchResponse>
   writeRecovery?: (key: string, contents: string) => Promise<void>
   listRecoveries?: () => Promise<RecoveryRecord[]>
   readRecovery?: (key: string) => Promise<string>
@@ -175,7 +186,7 @@ async function pickPath(kind: "file" | "folder" | "save", extensions: string[]):
 }
 
 export const defaultServices: DesktopServices = {
-  pickOpenPath: () => pickPath("file", ["md", "markdown", "mdx"]),
+  pickOpenPath: () => pickPath("file", [...MARKDOWN_EXTENSIONS]),
   pickSavePath: () => pickPath("save", ["md"]),
   pickFolder: () => pickPath("folder", []),
   pickExportPath: async (format = "html") => {
@@ -204,13 +215,13 @@ export const defaultServices: DesktopServices = {
   },
   loadRecents: () => {
     try {
-      return parseRecents(localStorage.getItem(RECENTS_STORAGE_KEY))
+      return parseRecents(localStorage.getItem(STORAGE_KEY_RECENTS))
     } catch {
       return []
     }
   },
   saveRecents: paths => {
-    localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(paths))
+    localStorage.setItem(STORAGE_KEY_RECENTS, JSON.stringify(paths))
   },
   setRecentMenu: async paths => {
     await invoke("set_recent_files", { paths })
@@ -230,7 +241,8 @@ export const defaultServices: DesktopServices = {
     await invoke("allow_workspace_dir", { path })
   },
   listDir: (path) => invoke<TreeEntry[]>("list_dir", { path }),
-  searchMarkdown: (root, query) => invoke<SearchHit[]>("search_markdown", { root, query }),
+  searchMarkdown: (root, query, caseSensitive = false) =>
+    invoke<SearchResponse>("search_markdown", { root, query, caseSensitive }),
   writeRecovery: (key, contents) => invoke("write_recovery", { key, contents }),
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
   readRecovery: (key) => invoke<string>("read_recovery", { key }),
@@ -251,7 +263,7 @@ export const defaultServices: DesktopServices = {
       return parseSettings(json)
     } catch {
       try {
-        const local = localStorage.getItem("omd_user_settings")
+        const local = localStorage.getItem(STORAGE_KEY_SETTINGS)
         return parseSettings(local ?? "{}")
       } catch {
         return parseSettings("{}")
@@ -264,7 +276,7 @@ export const defaultServices: DesktopServices = {
       await invoke("save_settings", { contents: json })
     } catch {
       try {
-        localStorage.setItem("omd_user_settings", json)
+        localStorage.setItem(STORAGE_KEY_SETTINGS, json)
       } catch {
         // ignore
       }
@@ -276,7 +288,7 @@ export const defaultServices: DesktopServices = {
       return parseSessionState(json)
     } catch {
       try {
-        const local = localStorage.getItem("omd_saved_session")
+        const local = localStorage.getItem(STORAGE_KEY_SESSION)
         return parseSessionState(local ?? "{}")
       } catch {
         return null
@@ -289,7 +301,7 @@ export const defaultServices: DesktopServices = {
       await invoke("save_session_state", { contents: json })
     } catch {
       try {
-        localStorage.setItem("omd_saved_session", json)
+        localStorage.setItem(STORAGE_KEY_SESSION, json)
       } catch {
         // ignore
       }

@@ -4,7 +4,7 @@ import {
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, documentStats, type OutlineItem } from "@omd/engine"
+import { applyToggle, documentStats, isLivePreview, type OutlineItem } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
@@ -32,11 +32,11 @@ import {
   type TabSaveQueues,
 } from "./documentSaveCoordinator"
 import {
-  createTransientStatusNotifier,
   DURABILITY_WARNING,
   saveStatusLabel,
   tabHasConflict,
 } from "./documentSaveRunner"
+import { createTransientStatusNotifier } from "./transientStatus"
 import {
   initialSaveState,
   removeTabSaveState,
@@ -46,6 +46,7 @@ import {
 import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
+import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices } from "./desktopServices"
 import { collectMatches, nextIndex, prevIndex, replaceAll } from "./findReplace"
@@ -87,7 +88,11 @@ import {
   type UserSettings,
 } from "./settings"
 import {
-  extractSessionState,
+  MARKDOWN_FILE_EXTENSION,
+  STORAGE_KEY_OUTLINE_OPEN,
+  STORAGE_KEY_SIDEBAR_OPEN,
+} from "./constants"
+import { extractSessionState,
 } from "./sessionRestore"
 import "./styles.css"
 
@@ -99,9 +104,11 @@ interface AppProps {
   watchMs?: number
 }
 
-const OUTLINE_OPEN_KEY = "omd-outline-open"
-const SIDEBAR_OPEN_KEY = "omd-sidebar-open"
 const OUTLINE_DEBOUNCE_MS = 150
+const OUTLINE_HOVER_OPEN_MS = 180
+const OUTLINE_HOVER_CLOSE_MS = 120
+const SEARCH_DEBOUNCE_MS = 200
+const SESSION_SAVE_DEBOUNCE_MS = 1000
 
 /** Shallow directory listing equality; a mismatch means disk changed. */
 function sameEntries(
@@ -154,7 +161,7 @@ function renameTreePath(model: FileTreeModel, from: string, to: string): FileTre
 
 function readSidebarOpen(): boolean {
   try {
-    return localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0"
+    return localStorage.getItem(STORAGE_KEY_SIDEBAR_OPEN) !== "0"
   } catch {
     return true
   }
@@ -162,13 +169,13 @@ function readSidebarOpen(): boolean {
 
 function writeSidebarOpen(open: boolean): void {
   try {
-    localStorage.setItem(SIDEBAR_OPEN_KEY, open ? "1" : "0")
+    localStorage.setItem(STORAGE_KEY_SIDEBAR_OPEN, open ? "1" : "0")
   } catch { /* storage unavailable */ }
 }
 
 function readOutlineOpen(): boolean {
   try {
-    return localStorage.getItem(OUTLINE_OPEN_KEY) === "1"
+    return localStorage.getItem(STORAGE_KEY_OUTLINE_OPEN) === "1"
   } catch {
     return false
   }
@@ -176,7 +183,7 @@ function readOutlineOpen(): boolean {
 
 function writeOutlineOpen(open: boolean): void {
   try {
-    localStorage.setItem(OUTLINE_OPEN_KEY, open ? "1" : "0")
+    localStorage.setItem(STORAGE_KEY_OUTLINE_OPEN, open ? "1" : "0")
   } catch { /* storage unavailable (tests, private mode) */ }
 }
 
@@ -227,10 +234,14 @@ export default function App({
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
   const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
+  const [sourceMode, setSourceMode] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
+  const [searchTruncated, setSearchTruncated] = useState(false)
+  const [searchCase, setSearchCase] = useState(false)
+  const searchRequestRef = useRef(0)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState("")
   const [findReplace, setFindReplace] = useState("")
@@ -366,7 +377,7 @@ export default function App({
     return (
       !name
       || name === "."
-      || name === ".md"
+      || name === `.${MARKDOWN_FILE_EXTENSION}`
       || name.includes("/")
       || name.includes("\\")
       || name.includes("..")
@@ -375,7 +386,9 @@ export default function App({
 
   function normalizeMarkdownName(name: string): string {
     const trimmed = name.trim()
-    return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`
+    return trimmed.toLowerCase().endsWith(`.${MARKDOWN_FILE_EXTENSION}`)
+      ? trimmed
+      : `${trimmed}.${MARKDOWN_FILE_EXTENSION}`
   }
 
   async function refreshTreePath(path: string): Promise<void> {
@@ -389,13 +402,13 @@ export default function App({
   }
 
   async function nextUntitledMarkdownName(dir: string): Promise<string> {
-    if (!services.listDir) return "untitled.md"
+    if (!services.listDir) return `untitled.${MARKDOWN_FILE_EXTENSION}`
     const entries = await services.listDir(dir)
     const names = new Set(entries.map(entry => entry.name))
-    if (!names.has("untitled.md")) return "untitled.md"
+    if (!names.has(`untitled.${MARKDOWN_FILE_EXTENSION}`)) return `untitled.${MARKDOWN_FILE_EXTENSION}`
     let suffix = 2
-    while (names.has(`untitled-${suffix}.md`)) suffix += 1
-    return `untitled-${suffix}.md`
+    while (names.has(`untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`)) suffix += 1
+    return `untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`
   }
 
   function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
@@ -574,7 +587,7 @@ export default function App({
     sessionSaveTimerRef.current = window.setTimeout(() => {
       const state = extractSessionState(workspaceRef.current)
       void services.saveSessionState?.(state)
-    }, 1000)
+    }, SESSION_SAVE_DEBOUNCE_MS)
     return () => {
       if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)
     }
@@ -669,14 +682,14 @@ export default function App({
     outlineHoverTimerRef.current = window.setTimeout(() => {
       setOutline(documentOutline(viewRef.current))
       setOutlineHover(true)
-    }, 180)
+    }, OUTLINE_HOVER_OPEN_MS)
   }
 
   function handleOutlineMouseLeave() {
     if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
     outlineHoverTimerRef.current = window.setTimeout(() => {
       setOutlineHover(false)
-    }, 120)
+    }, OUTLINE_HOVER_CLOSE_MS)
   }
 
   function applySpellcheck(on: boolean) {
@@ -1031,16 +1044,10 @@ export default function App({
     onSkippedMarkers: showSkippedMarkersStatus,
   })
 
-  const openFileRef = useRef(openFile)
   const pollFileTabsRef = useRef(pollFileTabs)
-  const newTabRef = useRef(newTab)
   const openRecentRef = useRef(openRecent)
-  const closeActiveRef = useRef(() => requestCloseTab(workspaceRef.current.activeId))
-  openFileRef.current = openFile
   pollFileTabsRef.current = pollFileTabs
-  newTabRef.current = newTab
   openRecentRef.current = openRecent
-  closeActiveRef.current = () => requestCloseTab(workspaceRef.current.activeId)
 
   const runFormat = (command: (view: EditorView) => boolean): (() => void) => () => {
     const view = viewRef.current
@@ -1056,7 +1063,7 @@ export default function App({
 
   async function createTreeFile(dir: string) {
     if (!services.createMarkdown) return
-    let defaultName = "untitled.md"
+    let defaultName = `untitled.${MARKDOWN_FILE_EXTENSION}`
     try {
       defaultName = await nextUntitledMarkdownName(dir)
     } catch (error) {
@@ -1142,44 +1149,49 @@ export default function App({
   }
 
   const commands: AppCommand[] = [
-    { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
-    { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
-    { id: "save-as", label: "Save As…", shortcut: "⇧⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
+    { id: "open", label: "Open…", shortcut: shortcutFor("open"), run: () => void openFile() },
+    { id: "save", label: "Save", shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
+    { id: "save-as", label: "Save As…", shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: "Open Folder…", run: () => void chooseFolder() },
-    { id: "tab", label: "New", shortcut: "⌘N", run: newTab },
-    { id: "close", label: "Close", shortcut: "⌘W", run: () => requestCloseTab(workspaceRef.current.activeId) },
-    { id: "theme", label: "Toggle theme", run: () => setTheme(current => toggleTheme(current)) },
+    { id: "tab", label: "New", shortcut: shortcutFor("tab"), run: newTab },
+    { id: "close", label: "Close", shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
+    { id: "theme", label: "Toggle Theme", run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: "Load custom CSS", run: () => void loadCustomCss(services, setCustomCss) },
-    { id: "focus", label: "Toggle focus mode", run: () => setFocusMode(on => !on) },
-    { id: "preferences", label: "Preferences / Settings…", shortcut: "⌘,", run: () => setSettingsOpen(true) },
-    { id: "sidebar", label: "Toggle sidebar", shortcut: "⌘\\", run: () => setSidebarOpen(open => !open) },
-    { id: "outline", label: "Toggle outline", shortcut: "⇧⌘O", run: () => setOutlineOpen(open => !open) },
-    { id: "typewriter", label: "Toggle typewriter", run: () => setTypewriter(on => !on) },
-    { id: "source", label: "Toggle live/source", shortcut: "⌘E", run: () => {
+    { id: "focus", label: "Focus Mode", run: () => setFocusMode(on => !on) },
+    { id: "preferences", label: "Settings…", shortcut: shortcutFor("preferences"), run: () => setSettingsOpen(true) },
+    { id: "sidebar", label: "Show/Hide Sidebar", shortcut: shortcutFor("sidebar"), run: () => setSidebarOpen(open => !open) },
+    { id: "outline", label: "Show/Hide Outline", shortcut: shortcutFor("outline"), run: () => setOutlineOpen(open => !open) },
+    { id: "typewriter", label: "Typewriter Mode", run: () => setTypewriter(on => !on) },
+    { id: "source", label: "Show Source Code", shortcut: shortcutFor("source"), run: () => {
       const view = viewRef.current
-      if (view) try { view.dispatch(applyToggle(view.state)) } catch { /* mock views */ }
+      if (!view) return
+      try {
+        const next = !view.state.field(isLivePreview)
+        view.dispatch(applyToggle(view.state))
+        setSourceMode(next)
+      } catch { /* mock views */ }
     } },
-    { id: "bold", label: "Bold", shortcut: "⌘B", run: runFormat(toggleBold) },
-    { id: "italic", label: "Italic", shortcut: "⌘I", run: runFormat(toggleItalic) },
-    { id: "strikethrough", label: "Strikethrough", shortcut: "⇧⌘X", run: runFormat(toggleStrikethrough) },
-    { id: "inline-code", label: "Inline code", shortcut: "⇧⌘`", run: runFormat(toggleInlineCode) },
-    { id: "code-block", label: "Code block", shortcut: "⇧⌘K", run: runFormat(toggleCodeBlock) },
-    { id: "heading-1", label: "Heading 1", shortcut: "⌘1", run: runFormat(toggleHeading(1)) },
-    { id: "heading-2", label: "Heading 2", shortcut: "⌘2", run: runFormat(toggleHeading(2)) },
-    { id: "heading-3", label: "Heading 3", shortcut: "⌘3", run: runFormat(toggleHeading(3)) },
-    { id: "heading-4", label: "Heading 4", shortcut: "⌘4", run: runFormat(toggleHeading(4)) },
-    { id: "heading-5", label: "Heading 5", shortcut: "⌘5", run: runFormat(toggleHeading(5)) },
-    { id: "heading-6", label: "Heading 6", shortcut: "⌘6", run: runFormat(toggleHeading(6)) },
-    { id: "ordered-list", label: "Ordered list", shortcut: "⌥⌘7", run: runFormat(toggleOrderedList) },
-    { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
-    { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
-    { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
+    { id: "bold", label: "Bold", shortcut: shortcutFor("bold"), run: runFormat(toggleBold) },
+    { id: "italic", label: "Italic", shortcut: shortcutFor("italic"), run: runFormat(toggleItalic) },
+    { id: "strikethrough", label: "Strikethrough", shortcut: shortcutFor("strikethrough"), run: runFormat(toggleStrikethrough) },
+    { id: "inline-code", label: "Inline code", shortcut: shortcutFor("inline-code"), run: runFormat(toggleInlineCode) },
+    { id: "code-block", label: "Code block", shortcut: shortcutFor("code-block"), run: runFormat(toggleCodeBlock) },
+    { id: "heading-1", label: "Heading 1", shortcut: shortcutFor("heading-1"), run: runFormat(toggleHeading(1)) },
+    { id: "heading-2", label: "Heading 2", shortcut: shortcutFor("heading-2"), run: runFormat(toggleHeading(2)) },
+    { id: "heading-3", label: "Heading 3", shortcut: shortcutFor("heading-3"), run: runFormat(toggleHeading(3)) },
+    { id: "heading-4", label: "Heading 4", shortcut: shortcutFor("heading-4"), run: runFormat(toggleHeading(4)) },
+    { id: "heading-5", label: "Heading 5", shortcut: shortcutFor("heading-5"), run: runFormat(toggleHeading(5)) },
+    { id: "heading-6", label: "Heading 6", shortcut: shortcutFor("heading-6"), run: runFormat(toggleHeading(6)) },
+    { id: "ordered-list", label: "Ordered list", shortcut: shortcutFor("ordered-list"), run: runFormat(toggleOrderedList) },
+    { id: "unordered-list", label: "Unordered list", shortcut: shortcutFor("unordered-list"), run: runFormat(toggleUnorderedList) },
+    { id: "blockquote", label: "Blockquote", shortcut: shortcutFor("blockquote"), run: runFormat(toggleBlockquote) },
+    { id: "link", label: "Insert link", shortcut: shortcutFor("link"), run: runFormat(insertLink) },
     { id: "insert-image", label: "Insert image…", run: insertImage },
-    { id: "find", label: "Find in document", shortcut: "⌘F", run: () => {
+    { id: "find", label: "Find in document", shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)
       setReplaceOpen(false)
     } },
-    { id: "search", label: "Search in folder", shortcut: "⇧⌘F", run: () => setSearchOpen(true) },
+    { id: "search", label: "Search in folder", shortcut: shortcutFor("search"), run: () => setSearchOpen(true) },
     { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
@@ -1199,6 +1211,24 @@ export default function App({
       openRecent: path => { void openRecentRef.current(path) },
     }))
   }, [services])
+
+  // Mirror the active tab's editor mode into React so the native View menu
+  // checkbox can reflect it. The active view is read, not tracked per tab.
+  useEffect(() => {
+    setSourceMode(editorStatus(viewRef.current).mode === "source")
+  }, [workspace.activeId])
+
+  // Push view-mode state to the native menu checkboxes. The menu item click
+  // itself flows back through the same commands and settles here.
+  useEffect(() => {
+    void services.setViewMenuState?.({
+      source: sourceMode,
+      sidebar: sidebarOpen,
+      outline: outlineOpen,
+      typewriter,
+      focus: focusMode,
+    })
+  }, [services, sourceMode, sidebarOpen, outlineOpen, typewriter, focusMode])
 
   function closeFind() {
     setFindOpen(false)
@@ -1284,42 +1314,24 @@ export default function App({
         return
       }
       if (!e.metaKey && !e.ctrlKey) return
-      if (e.key === ",") {
+      // Find/replace navigation stays editor-scoped: only active while the bar is open.
+      if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
         e.preventDefault()
-        setSettingsOpen(open => !open)
-      } else if (e.key === "\\") {
-        e.preventDefault()
-        setSidebarOpen(open => !open)
-      } else if (e.key === "O" && e.shiftKey) {
-        e.preventDefault()
-        setOutlineOpen(open => !open)
-      } else if ((e.key === "f" || e.key === "F") && e.shiftKey) {
-        e.preventDefault()
-        setSearchOpen(true)
-      } else if (e.key === "f" || e.key === "F") {
-        e.preventDefault()
-        setFindOpen(true)
-        setReplaceOpen(false)
-      } else if (e.key === "h" || e.key === "H") {
+        goFindRef.current(e.shiftKey ? "prev" : "next")
+        return
+      }
+      if (e.key === "h" || e.key === "H") {
         e.preventDefault()
         setFindOpen(true)
         setReplaceOpen(true)
-      } else if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
-        e.preventDefault()
-        goFindRef.current(e.shiftKey ? "prev" : "next")
-      } else if (e.key === "o") {
-        e.preventDefault()
-        void openFileRef.current()
-      } else if (e.key === "n") {
-        e.preventDefault()
-        newTabRef.current()
-      } else if (e.key === "w") {
-        e.preventDefault()
-        closeActiveRef.current()
-      } else if (e.key === "s") {
-        e.preventDefault()
-        void saveFileRef.current(workspaceRef.current.activeId, "explicit", e.shiftKey)
+        return
       }
+      const binding = WINDOW_SHORTCUTS.find(shortcut => matchesWindowShortcut(shortcut, e))
+      if (!binding) return
+      const command = commandsRef.current.find(candidate => candidate.id === binding.id)
+      if (!command) return
+      e.preventDefault()
+      command.run()
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
@@ -1327,11 +1339,19 @@ export default function App({
 
   useEffect(() => {
     if (!searchOpen || !workspace.folder || !searchQuery || !services.searchMarkdown) return
+    const request = ++searchRequestRef.current
     const timer = window.setTimeout(() => {
-      void services.searchMarkdown?.(workspace.folder!, searchQuery).then(setSearchHits)
-    }, 200)
+      void services.searchMarkdown?.(workspace.folder!, searchQuery, searchCase)
+        .then(response => {
+          if (searchRequestRef.current === request) {
+            setSearchHits(response.hits)
+            setSearchTruncated(response.truncated)
+          }
+        })
+        .catch(() => { /* stale or failed search; ignore */ })
+    }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [searchOpen, searchQuery, workspace.folder, services])
+  }, [searchOpen, searchQuery, searchCase, workspace.folder, services])
 
   const { cursor, mode } = editorStatus(viewRef.current)
   const stats = useMemo(() => documentStats(doc), [doc])
@@ -1385,7 +1405,10 @@ export default function App({
             <SearchPanel
               query={searchQuery}
               hits={searchHits}
+              truncated={searchTruncated}
+              caseSensitive={searchCase}
               onQuery={setSearchQuery}
+              onCaseSensitive={setSearchCase}
               onClose={() => setSearchOpen(false)}
               onOpen={hit => {
                 pendingJumpRef.current = hit.line

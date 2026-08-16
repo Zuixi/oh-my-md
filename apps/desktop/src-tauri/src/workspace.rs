@@ -1,11 +1,19 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+use regex::RegexBuilder;
 
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
+const MARKDOWN_FILE_EXTENSION: &str = "md";
+
+const MAX_SEARCH_HITS: usize = 500;
+const MAX_LINE_BYTES: usize = 200;
+const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
@@ -19,6 +27,14 @@ pub struct SearchHit {
     pub path: String,
     pub line: usize,
     pub text: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+    pub truncated: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -188,7 +204,7 @@ pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
     if Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
-        != Some("md")
+        != Some(MARKDOWN_FILE_EXTENSION)
     {
         return Err("markdown files must use a .md extension".into());
     }
@@ -228,11 +244,11 @@ pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
         && source
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(MARKDOWN_FILE_EXTENSION))
         && Path::new(to_name)
             .extension()
             .and_then(|extension| extension.to_str())
-            != Some("md")
+            != Some(MARKDOWN_FILE_EXTENSION)
     {
         return Err("markdown files must keep a .md extension".into());
     }
@@ -290,53 +306,143 @@ pub(crate) fn list_dir_sync(path: &str) -> Result<Vec<DirEntry>, String> {
     Ok(entries)
 }
 
-pub async fn search_markdown(root: String, query: String) -> Result<Vec<SearchHit>, String> {
-    tauri::async_runtime::spawn_blocking(move || search_markdown_sync(&root, &query))
-        .await
-        .map_err(|error| format!("markdown search task failed: {error}"))?
+pub async fn search_markdown(
+    root: String,
+    query: String,
+    case_sensitive: bool,
+) -> Result<SearchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        search_markdown_sync(&root, &query, case_sensitive)
+    })
+    .await
+    .map_err(|error| format!("markdown search task failed: {error}"))?
 }
 
-pub(crate) fn search_markdown_sync(root: &str, query: &str) -> Result<Vec<SearchHit>, String> {
-    if query.is_empty() {
-        return Ok(vec![]);
+pub(crate) fn search_markdown_sync(
+    root: &str,
+    query: &str,
+    case_sensitive: bool,
+) -> Result<SearchResponse, String> {
+    if query.trim().is_empty() {
+        return Ok(SearchResponse {
+            hits: vec![],
+            truncated: false,
+        });
     }
     let dir = Path::new(root);
     reject_traversal(dir)?;
-    let mut hits = Vec::new();
-    walk_markdown(dir, query, &mut hits)?;
-    Ok(hits)
+    let matcher = build_matcher(query, case_sensitive)?;
+
+    let mut builder = ignore::WalkBuilder::new(dir);
+    builder
+        .hidden(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .max_filesize(Some(MAX_FILE_BYTES));
+    let walker = builder.build_parallel();
+
+    let results = Mutex::new(Vec::new());
+    let truncated = AtomicBool::new(false);
+
+    walker.run(|| {
+        Box::new(|entry| {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                return ignore::WalkState::Continue;
+            }
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !is_markdown(name) {
+                return ignore::WalkState::Continue;
+            }
+            let content = match std::fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+            let content = match std::str::from_utf8(&content) {
+                Ok(text) => text,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+            let mut hits = results.lock().unwrap();
+            if hits.len() >= MAX_SEARCH_HITS {
+                truncated.store(true, Ordering::Relaxed);
+                return ignore::WalkState::Quit;
+            }
+            for (index, line) in content.lines().enumerate() {
+                if hits.len() >= MAX_SEARCH_HITS {
+                    truncated.store(true, Ordering::Relaxed);
+                    return ignore::WalkState::Quit;
+                }
+                if let Some(m) = matcher.find(line) {
+                    let (text, start, end) = truncate_line(line, m.start(), m.end());
+                    hits.push(SearchHit {
+                        path: path.to_string_lossy().into_owned(),
+                        line: index + 1,
+                        text,
+                        start,
+                        end,
+                    });
+                }
+            }
+            ignore::WalkState::Continue
+        })
+    });
+
+    let mut hits = results.into_inner().unwrap();
+    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    let capped = hits.len() >= MAX_SEARCH_HITS;
+    hits.truncate(MAX_SEARCH_HITS);
+    Ok(SearchResponse {
+        hits,
+        truncated: truncated.load(Ordering::Relaxed) || capped,
+    })
 }
 
-fn walk_markdown(dir: &Path, query: &str, hits: &mut Vec<SearchHit>) -> Result<(), String> {
-    if !dir.is_dir() {
-        return Ok(());
+fn build_matcher(query: &str, case_sensitive: bool) -> Result<regex::Regex, String> {
+    RegexBuilder::new(&regex::escape(query))
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn byte_to_utf16(s: &str, byte: usize) -> usize {
+    s[..byte].encode_utf16().count()
+}
+
+fn floor_char_boundary(s: &str, byte: usize) -> usize {
+    let mut b = byte.min(s.len());
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
     }
-    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        if path.is_dir() {
-            walk_markdown(&path, query, hits)?;
-            continue;
-        }
-        if !is_markdown(&name) {
-            continue;
-        }
-        let contents = fs::read_to_string(&path).unwrap_or_default();
-        for (index, line) in contents.lines().enumerate() {
-            if line.contains(query) {
-                hits.push(SearchHit {
-                    path: path.to_string_lossy().into_owned(),
-                    line: index + 1,
-                    text: line.to_string(),
-                });
-            }
-        }
+    b
+}
+
+fn truncate_line(line: &str, start: usize, end: usize) -> (String, usize, usize) {
+    let start = start.min(line.len());
+    let end = end.max(start).min(line.len());
+    if line.len() <= MAX_LINE_BYTES {
+        return (
+            line.to_string(),
+            byte_to_utf16(line, start),
+            byte_to_utf16(line, end),
+        );
     }
-    Ok(())
+    let from = floor_char_boundary(line, start.saturating_sub(MAX_LINE_BYTES / 2));
+    let mut to = (from + MAX_LINE_BYTES).min(line.len());
+    while to > from && !line.is_char_boundary(to) {
+        to -= 1;
+    }
+    let slice = &line[from..to];
+    let prefix = if from > 0 { "…" } else { "" };
+    let suffix = if to < line.len() { "…" } else { "" };
+    let pad = prefix.encode_utf16().count();
+    let text = format!("{prefix}{slice}{suffix}");
+    let start_u = byte_to_utf16(slice, start.saturating_sub(from)) + pad;
+    let end_u = byte_to_utf16(slice, end.saturating_sub(from)) + pad;
+    (text, start_u, end_u)
 }
 
 fn is_markdown(name: &str) -> bool {
@@ -395,10 +501,111 @@ mod tests {
         let root = tmp("search");
         reset_dir(&root);
         fs::write(root.join("a.md"), "alpha\nfind me\n").unwrap();
-        let hits = search_markdown_sync(&root.to_string_lossy(), "find").unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].line, 2);
+        let response = search_markdown_sync(&root.to_string_lossy(), "find", false).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].line, 2);
+        assert_eq!(response.hits[0].start, 0);
+        assert_eq!(response.hits[0].end, 4);
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_matches_case_insensitive_by_default() {
+        let root = tmp("search-case");
+        reset_dir(&root);
+        fs::write(root.join("note.md"), "Hello world\n").unwrap();
+        let response = search_markdown_sync(&root.to_string_lossy(), "hello", false).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].line, 1);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_case_sensitive_respects_case() {
+        let root = tmp("search-case-sens");
+        reset_dir(&root);
+        fs::write(root.join("note.md"), "Hello\nhello\n").unwrap();
+        let response = search_markdown_sync(&root.to_string_lossy(), "hello", true).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].line, 2);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_skips_hidden_files() {
+        let root = tmp("search-hidden");
+        reset_dir(&root);
+        fs::write(root.join("visible.md"), "needle").unwrap();
+        fs::write(root.join(".secret.md"), "needle").unwrap();
+        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert!(response.hits[0].path.ends_with("visible.md"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_caps_results_and_marks_truncated() {
+        let root = tmp("search-cap");
+        reset_dir(&root);
+        for i in 0..600 {
+            fs::write(root.join(format!("f{i}.md")), "needle").unwrap();
+        }
+        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        assert!(response.truncated);
+        assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_truncates_long_lines_and_reports_offsets() {
+        let root = tmp("search-truncate");
+        reset_dir(&root);
+        let long = format!("prefix {} needle", "a".repeat(500));
+        fs::write(root.join("long.md"), &long).unwrap();
+        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let hit = &response.hits[0];
+        assert!(hit.text.len() <= MAX_LINE_BYTES + 6);
+        let units: Vec<u16> = hit.text.encode_utf16().skip(hit.start).take(6).collect();
+        assert_eq!(units, "needle".encode_utf16().collect::<Vec<_>>());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_reports_utf16_offsets_across_emoji() {
+        let root = tmp("search-emoji");
+        reset_dir(&root);
+        fs::write(root.join("emoji.md"), "🦀 needle\n").unwrap();
+        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let hit = &response.hits[0];
+        assert_eq!(hit.start, 3);
+        assert_eq!(hit.end, 9);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_response_json_uses_plain_field_names() {
+        let response = SearchResponse {
+            hits: vec![SearchHit {
+                path: "/a.md".into(),
+                line: 1,
+                text: "x needle y".into(),
+                start: 2,
+                end: 8,
+            }],
+            truncated: false,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        for key in [
+            "\"path\"",
+            "\"line\"",
+            "\"text\"",
+            "\"start\"",
+            "\"end\"",
+            "\"hits\"",
+            "\"truncated\"",
+        ] {
+            assert!(json.contains(key), "missing {key} in {json}");
+        }
     }
 
     #[test]

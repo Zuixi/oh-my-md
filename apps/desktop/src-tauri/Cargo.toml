@@ -30,6 +30,9 @@ base64 = "0.23.1"
 blake3 = "1"
 tempfile = "3.27.0"
 thiserror = "2"
+# ignore 0.4.33+/globset 0.4.20+ require rustc 1.88; pinned for the 1.87 toolchain.
+ignore = "=0.4.22"
+regex = "1"
 zip = "2"
 
 [target.'cfg(unix)'.dependencies]

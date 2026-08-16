@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { EditorView } from "@codemirror/view"
+import { ASSETS_DIR_NAME, MAX_IMAGE_BYTES } from "./constants"
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const ACCEPTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const
 const EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
   "image/png": "png",
@@ -94,6 +94,7 @@ export function imagePasteHandler(options: ImagePasteOptions) {
         } else {
           // Otherwise use the click point as a collapsed cursor.
           contextMenuTarget = { from: clickPos, to: clickPos }
+          view.dispatch({ selection: { anchor: clickPos } })
         }
       } else {
         contextMenuTarget = null
@@ -192,7 +193,7 @@ export async function insertImageFile(
   const dir = normalizedPath.slice(0, normalizedPath.lastIndexOf("/") + 1)
   const id = crypto.randomUUID()
   const name = `pasted-${id}.${extension}`
-  const relativePath = `assets/${name}`
+  const relativePath = `${ASSETS_DIR_NAME}/${name}`
 
   const isCurrentDocument = () =>
     options.getDocPath() === docPath &&

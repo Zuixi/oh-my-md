@@ -211,9 +211,9 @@ function TreeScroller(props: {
             gap: 4,
             minWidth: 160,
             padding: 6,
-            border: "1px solid var(--omd-border, #d0d7de)",
+            border: "1px solid var(--omd-border)",
             borderRadius: 8,
-            background: "var(--omd-panel-bg, #fff)",
+            background: "var(--omd-panel-bg)",
             boxShadow: "0 8px 24px rgba(15, 23, 42, 0.16)",
           }}
           onClick={event => event.stopPropagation()}
