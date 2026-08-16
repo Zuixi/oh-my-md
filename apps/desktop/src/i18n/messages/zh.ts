@@ -52,4 +52,19 @@ export const zh: Record<string, string> = {
   "filetree.menu.rename": "重命名",
   "filetree.menu.delete": "删除",
   "filetree.menu.reveal": "在访达中显示",
+
+  "diff.title": "文档差异",
+  "diff.goToLine": "跳转到第 {line} 行",
+  "diff.deleted": "文件已在磁盘上删除。",
+  "diff.refreshed": "已重新加载磁盘内容。",
+
+  "conflict.bannerLabel": "保存冲突",
+
+  "normalization.headline": "有序列表编号已规范化。",
+  "normalization.single": "已重新编号 1 项。",
+  "normalization.multiple": "已重新编号 {count} 项。",
+
+  "button.close": "关闭",
+  "button.saveNormalization": "保存规范化",
+  "button.keepOriginal": "保留原始编号",
 }
