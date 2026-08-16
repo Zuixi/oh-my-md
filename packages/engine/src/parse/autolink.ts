@@ -1,4 +1,16 @@
 import type { InlineParser } from "@lezer/markdown"
+import {
+  CHAR_AT,
+  CHAR_LOWER_A,
+  CHAR_LOWER_F,
+  CHAR_LOWER_H,
+  CHAR_LOWER_W,
+  CHAR_LOWER_Z,
+  CHAR_NINE,
+  CHAR_UPPER_A,
+  CHAR_UPPER_Z,
+  CHAR_ZERO,
+} from "./chars"
 
 const URL_PATTERN = /^(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>()]+/i
 const EMAIL_PATTERN = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
@@ -16,8 +28,8 @@ export const BareAutolink: InlineParser = {
   name: "BareAutolink",
   before: "Link",
   parse(cx, next, pos) {
-    if (next !== 0x68 && next !== 0x77 && next !== 0x66 && next !== 0x40 &&
-        !(next >= 0x30 && next <= 0x39) && !((next >= 0x41 && next <= 0x5a) || (next >= 0x61 && next <= 0x7a))) {
+    if (next !== CHAR_LOWER_H && next !== CHAR_LOWER_W && next !== CHAR_LOWER_F && next !== CHAR_AT &&
+        !(next >= CHAR_ZERO && next <= CHAR_NINE) && !((next >= CHAR_UPPER_A && next <= CHAR_UPPER_Z) || (next >= CHAR_LOWER_A && next <= CHAR_LOWER_Z))) {
       return -1
     }
     if (cx.hasOpenLink) return -1

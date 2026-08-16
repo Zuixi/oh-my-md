@@ -184,7 +184,9 @@ describe("fixture snapshots", () => {
     expect(specsFor("code-fenced.md")).toMatchInlineSnapshot(`
       [
         "widget:block:code@28-77",
-        "widget:block:code@110-128",
+        "line:omd-codeblock@110-110",
+        "line:omd-codeblock@114-114",
+        "line:omd-codeblock@125-125",
         "line:omd-codeblock@152-152",
         "line:omd-codeblock@174-174",
       ]

@@ -18,6 +18,7 @@ packages/engine/
 │   ├── index.ts                 # Public editorExtensions, collectOutline, exportHtml
 │   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
 │   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
+│   │   └── chars.ts             # Named ASCII char-code constants (no magic numbers)
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
 │   ├── outline.ts               # Read-only heading outline from the Lezer tree
 │   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
@@ -39,6 +40,7 @@ packages/engine/
 4. The engine emits semantic `omd-*` class names; visual declarations belong in `apps/desktop/src/styles.css`.
 5. Expose desktop-facing behavior through `src/index.ts`: `editorExtensions(options)`, plus read-only `collectOutline(state)` and `exportHtml(state)`, plus the ordered-list normalization commands (`getPendingOrderedListNormalization`, `acceptOrderedListNormalization`, `rejectOrderedListNormalization`), plus navigation lookups (`classifyLink`, `footnoteAt`, `footnoteDefinitionPosition`, `footnoteReferencePosition`), plus table source transforms (`replaceTableCell`, `insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`). Do not make desktop consumers assemble engine internals or re-parse Markdown. Commands stay pure: they return a `TransactionSpec` (or a `"stale"` result) and never dispatch. Read pending and build accept/reject transactions in the same tick as the triggering update; stale offsets if deferred.
 6. Keep generic host choices such as editor dimensions, base typography, history, and non-Markdown keymaps in `apps/desktop/src/Editor.ts`.
+7. **Shortcut labels are derived, not duplicated.** The formatting keymap is data: `markdownKeyBindings` (`format/commands.ts`) and `toggleKeyBindings` (`modes/livePreview.ts`) carry `id`/`key`/`display`/`run`; the CM keymap uses `key` and the desktop palette imports the derived `markdownShortcutLabels` / `toggleShortcutLabels` via `src/index.ts`. Change a shortcut in the binding entry only and keep `display` matching `key` — `test/shortcuts.test.ts` guards the pair.
 
 ## Ordered-list normalization invariants
 
@@ -65,6 +67,7 @@ packages/engine/
 - Extend Lezer Markdown instead of introducing a second Markdown parser.
 - Preserve existing syntax limitations unless the task explicitly changes them; encode intentional limitations in tests.
 - Keep format-specific parsing in `parse/` and rendering decisions in `decorations/`.
+- Use the named ASCII constants in `parse/chars.ts` (`CHAR_EQ`, `CHAR_UNDERSCORE`, …) when inspecting `cx.char(...)` — never bare character codes.
 - Check child and parent node behavior when adding rules; block replacements can suppress inline decorations by design.
 
 ## Testing

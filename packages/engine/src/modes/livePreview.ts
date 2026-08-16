@@ -1,5 +1,5 @@
 import { Compartment, StateEffect, StateField, type EditorState, type TransactionSpec } from "@codemirror/state"
-import { keymap } from "@codemirror/view"
+import { keymap, type Command } from "@codemirror/view"
 import { livePreviewField } from "../decorations/build"
 import { orderedRenumber } from "../lists/ordered"
 
@@ -31,6 +31,22 @@ export function applyToggle(state: EditorState): TransactionSpec {
   }
 }
 
-export const toggleKeymap = keymap.of([
-  { key: "Mod-e", run: v => { v.dispatch(applyToggle(v.state)); return true } },
-])
+export interface ToggleKeyBinding {
+  id: string
+  key: string
+  display: string
+  run: Command
+}
+
+export const toggleKeyBindings: readonly ToggleKeyBinding[] = [
+  { id: "source", key: "Mod-e", display: "⌘E", run: v => {
+    v.dispatch(applyToggle(v.state))
+    return true
+  } },
+]
+
+export const toggleKeymap = keymap.of(toggleKeyBindings.map(({ key, run }) => ({ key, run })))
+
+export const toggleShortcutLabels: Readonly<Record<string, string>> = Object.fromEntries(
+  toggleKeyBindings.map(binding => [binding.id, binding.display]),
+)

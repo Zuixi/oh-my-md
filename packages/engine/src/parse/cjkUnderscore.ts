@@ -1,5 +1,6 @@
 import type { InlineContext, MarkdownConfig } from "@lezer/markdown"
 import { isEscaped, skipInlineCode } from "./scan"
+import { CHAR_UNDERSCORE } from "./chars"
 
 const CJK = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u
 const PUNCT = /[\p{S}\p{P}]/u
@@ -24,9 +25,9 @@ function findCloser(cx: InlineContext, from: number, size: number): number {
     if (isEscaped(cx, i)) { i++; continue }
     const skipped = skipInlineCode(cx, i)
     if (skipped != i) { i = skipped; continue }
-    if (cx.char(i) != 95) { i++; continue }
+    if (cx.char(i) != CHAR_UNDERSCORE) { i++; continue }
     let end = i + 1
-    while (cx.char(end) == 95) end++
+    while (cx.char(end) == CHAR_UNDERSCORE) end++
     if (end - i >= size) {
       const before = cx.slice(i - 1, i)
       const after = cx.slice(end, end + 1)
@@ -45,9 +46,9 @@ export const CjkUnderscore: MarkdownConfig = {
     after: "InlineCode",
     before: "Emphasis",
     parse(cx, next, pos) {
-      if (next != 95 || isEscaped(cx, pos)) return -1
+      if (next != CHAR_UNDERSCORE || isEscaped(cx, pos)) return -1
       let runEnd = pos + 1
-      while (cx.char(runEnd) == 95) runEnd++
+      while (cx.char(runEnd) == CHAR_UNDERSCORE) runEnd++
       const size = runEnd - pos
       if (size > 2) return -1
       const before = cx.slice(pos - 1, pos)

@@ -1,4 +1,5 @@
 import type { MarkdownConfig } from "@lezer/markdown"
+import { CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
 
 // ponytail: 只支持 $$...$$ 与 $...$（不支持 \[...\] / \(...\)）；未闭合的 $$
 // 块吞到 EOF（katex widget 会显示错误+原文）。行间规则仿 footnotes.ts。
@@ -46,15 +47,15 @@ export const Math: MarkdownConfig = {
     name: "InlineMath",
     before: "Link",
     parse(cx, next, pos) {
-      if (next != 36 /* $ */) return -1
+      if (next != CHAR_DOLLAR) return -1
       const after = cx.char(pos + 1)
-      if (after == 36 || after == 32 || after == 10) return -1  // $$ 或 "$ " 或行尾
+      if (after == CHAR_DOLLAR || after == CHAR_SPACE || after == CHAR_NEWLINE) return -1  // $$ 或 "$ " 或行尾
       let i = pos + 1
-      while (i < cx.end && cx.char(i) != 36) {
-        if (cx.char(i) == 10) return -1
+      while (i < cx.end && cx.char(i) != CHAR_DOLLAR) {
+        if (cx.char(i) == CHAR_NEWLINE) return -1
         i++
       }
-      if (i == pos + 1 || i >= cx.end || cx.char(i - 1) == 32) return -1  // 空/未闭合/"x $"
+      if (i == pos + 1 || i >= cx.end || cx.char(i - 1) == CHAR_SPACE) return -1  // 空/未闭合/"x $"
       return cx.addElement(cx.elt("InlineMath", pos, i + 1, [
         cx.elt("MathMark", pos, pos + 1),
         cx.elt("MathMark", i, i + 1),

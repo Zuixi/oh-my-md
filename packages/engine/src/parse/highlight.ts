@@ -1,5 +1,6 @@
 import type { InlineContext, MarkdownConfig } from "@lezer/markdown"
 import { isEscaped, parseHtmlPair, skipInlineCode } from "./scan"
+import { CHAR_EQ, CHAR_LT } from "./chars"
 
 function findEqClose(cx: InlineContext, pos: number): number {
   let i = pos + 2
@@ -7,7 +8,7 @@ function findEqClose(cx: InlineContext, pos: number): number {
     if (isEscaped(cx, i)) { i++; continue }
     const skipped = skipInlineCode(cx, i)
     if (skipped != i) { i = skipped; continue }
-    if (cx.char(i) == 61 && cx.char(i + 1) == 61 && cx.char(i + 2) != 61) return i
+    if (cx.char(i) == CHAR_EQ && cx.char(i + 1) == CHAR_EQ && cx.char(i + 2) != CHAR_EQ) return i
     i++
   }
   return -1
@@ -24,7 +25,7 @@ export const Highlight: MarkdownConfig = {
     name: "HighlightEq",
     after: "InlineCode",
     parse(cx, next, pos) {
-      if (next != 61 || cx.char(pos + 1) != 61 || cx.char(pos + 2) == 61) return -1
+      if (next != CHAR_EQ || cx.char(pos + 1) != CHAR_EQ || cx.char(pos + 2) == CHAR_EQ) return -1
       if (isEscaped(cx, pos)) return -1
       const close = findEqClose(cx, pos)
       if (close < 0 || close == pos + 2) return -1
@@ -40,7 +41,7 @@ export const Highlight: MarkdownConfig = {
     after: "InlineCode",
     before: "HTMLTag",
     parse(cx, next, pos) {
-      if (next != 60) return -1
+      if (next != CHAR_LT) return -1
       for (const spec of HTML_PAIRS) {
         const end = parseHtmlPair(cx, pos, spec.tag, spec.node, spec.mark)
         if (end >= 0) return end

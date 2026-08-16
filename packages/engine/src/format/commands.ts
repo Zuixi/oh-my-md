@@ -249,21 +249,48 @@ export { continueList, indentList, listKeymap, outdentList } from "./lists"
 
 // --- 键位 -------------------------------------------------------------------------
 
-export const markdownKeymap = keymap.of([
-  { key: "Mod-b", run: toggleBold },
-  { key: "Mod-i", run: toggleItalic },
-  { key: "Mod-Shift-x", run: toggleStrikethrough },
-  { key: "Mod-`", run: toggleInlineCode },
-  { key: "Mod-Shift-~", run: toggleInlineCode },
-  { key: "Mod-Shift-k", run: toggleCodeBlock },
-  { key: "Mod-1", run: toggleHeading(1) },
-  { key: "Mod-2", run: toggleHeading(2) },
-  { key: "Mod-3", run: toggleHeading(3) },
-  { key: "Mod-4", run: toggleHeading(4) },
-  { key: "Mod-5", run: toggleHeading(5) },
-  { key: "Mod-6", run: toggleHeading(6) },
-  { key: "Mod-Alt-7", run: toggleOrderedList },
-  { key: "Mod-Alt-8", run: toggleUnorderedList },
-  { key: "Mod-Alt-9", run: toggleBlockquote },
-  { key: "Mod-k", run: insertLink },
-])
+export interface MarkdownKeyBinding {
+  /** Command id shared with the desktop command palette. */
+  id: string
+  /** CodeMirror key syntax ("Mod-b", "Mod-Alt-7", …). */
+  key: string
+  /** macOS display label for the palette; must match `key`. */
+  display?: string
+  run: Command
+}
+
+/**
+ * Single source of truth for the Markdown formatting keymap. `markdownKeymap`
+ * uses `key` for the editor binding and the palette shows `display`, so a
+ * shortcut change is made in exactly one place. Alternate keys for the same
+ * command may appear without `display` (the palette shows the primary binding).
+ */
+export const markdownKeyBindings: readonly MarkdownKeyBinding[] = [
+  { id: "bold", key: "Mod-b", display: "⌘B", run: toggleBold },
+  { id: "italic", key: "Mod-i", display: "⌘I", run: toggleItalic },
+  { id: "strikethrough", key: "Mod-Shift-x", display: "⇧⌘X", run: toggleStrikethrough },
+  { id: "inline-code", key: "Mod-`", display: "⇧⌘`", run: toggleInlineCode },
+  { id: "inline-code", key: "Mod-Shift-~", run: toggleInlineCode },
+  { id: "code-block", key: "Mod-Shift-k", display: "⇧⌘K", run: toggleCodeBlock },
+  { id: "heading-1", key: "Mod-1", display: "⌘1", run: toggleHeading(1) },
+  { id: "heading-2", key: "Mod-2", display: "⌘2", run: toggleHeading(2) },
+  { id: "heading-3", key: "Mod-3", display: "⌘3", run: toggleHeading(3) },
+  { id: "heading-4", key: "Mod-4", display: "⌘4", run: toggleHeading(4) },
+  { id: "heading-5", key: "Mod-5", display: "⌘5", run: toggleHeading(5) },
+  { id: "heading-6", key: "Mod-6", display: "⌘6", run: toggleHeading(6) },
+  { id: "ordered-list", key: "Mod-Alt-7", display: "⌥⌘7", run: toggleOrderedList },
+  { id: "unordered-list", key: "Mod-Alt-8", display: "⌥⌘8", run: toggleUnorderedList },
+  { id: "blockquote", key: "Mod-Alt-9", display: "⌥⌘9", run: toggleBlockquote },
+  { id: "link", key: "Mod-k", display: "⌘K", run: insertLink },
+] as const
+
+export const markdownKeymap = keymap.of(
+  markdownKeyBindings.map(({ key, run }) => ({ key, run })),
+)
+
+export const markdownShortcutLabels: Readonly<Record<string, string>> = Object.fromEntries(
+  markdownKeyBindings
+    .filter((binding): binding is MarkdownKeyBinding & { display: string } =>
+      binding.display !== undefined)
+    .map(binding => [binding.id, binding.display]),
+)
