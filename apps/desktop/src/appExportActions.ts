@@ -1,4 +1,4 @@
-import { exportHtml } from "@omd/engine"
+import { exportRichHtml, type ExportRichHtmlOptions } from "@omd/engine"
 import type { EditorView } from "@codemirror/view"
 import { errorMessage, type DesktopServices } from "./desktopServices"
 
@@ -6,10 +6,11 @@ export async function exportCurrent(
   services: DesktopServices,
   view: EditorView | null,
   kind: "html" | "pdf" | "png",
+  exportOptions: ExportRichHtmlOptions = {},
 ): Promise<void> {
   if (!view) return
   try {
-    const html = exportHtml(view.state)
+    const html = await exportRichHtml(view.state, exportOptions)
     if (kind === "html") {
       const path = await services.pickExportPath?.("html")
       if (path) await services.writeFile(path, html)
@@ -20,7 +21,10 @@ export async function exportCurrent(
     }
     const format = kind === "pdf" ? "pdf" : "png"
     const path = await services.pickExportPath?.(format)
-    if (path) await services.exportPreview(html, path, format)
+    if (path) {
+      const warning = await services.exportPreview(html, path, format)
+      if (warning) services.reportError(`Export warning: ${warning}`)
+    }
   } catch (error) {
     services.reportError(errorMessage("Export failed", error))
   }

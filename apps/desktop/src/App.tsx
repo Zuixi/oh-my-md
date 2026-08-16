@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  createEditor, documentOutline, editorStatus, resetEditorDocument,
+  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, type OutlineItem } from "@omd/engine"
+import { applyToggle, documentStats, type OutlineItem } from "@omd/engine"
+import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
-  sessionDirty, sessionPath, type EditorSession,
+  retargetSessionPath, sessionDirty, sessionPath, type EditorSession,
 } from "./session"
 import {
   activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, parentDir, replaceTabSession, type Workspace,
+  focusTab, openFolder, parentDir, replaceTabSession, resolveMarkdownHref, type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -46,7 +47,9 @@ import { NormalizationBanner } from "./NormalizationBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { rememberPath } from "./recents"
-import { defaultServices, errorMessage, toDocumentCommandError, wordCount, type DesktopServices } from "./desktopServices"
+import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices } from "./desktopServices"
+import { collectMatches, nextIndex, prevIndex, replaceAll } from "./findReplace"
+import { FindReplaceBar } from "./FindReplaceBar"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
@@ -112,6 +115,41 @@ function sameEntries(
     }
   }
   return true
+}
+
+function replaceTreePrefix(path: string, from: string, to: string): string {
+  if (path === from) return to
+  return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path
+}
+
+function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
+  const prefix = `${path}/`
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath)
+      .filter(([key]) => key !== path && !key.startsWith(prefix))
+      .map(([key, entries]) => [
+        key,
+        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
+      ]),
+  )
+  const expanded = new Set(
+    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
+  )
+  return { childrenByPath, expanded }
+}
+
+function renameTreePath(model: FileTreeModel, from: string, to: string): FileTreeModel {
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath).map(([key, entries]) => [
+      replaceTreePrefix(key, from, to),
+      entries.map(entry => ({
+        ...entry,
+        path: replaceTreePrefix(entry.path, from, to),
+      })),
+    ]),
+  )
+  const expanded = new Set([...model.expanded].map(path => replaceTreePrefix(path, from, to)))
+  return { childrenByPath, expanded }
 }
 
 function readSidebarOpen(): boolean {
@@ -193,6 +231,22 @@ export default function App({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState("")
+  const [findReplace, setFindReplace] = useState("")
+  const [findCase, setFindCase] = useState(false)
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [findIndex, setFindIndex] = useState(-1)
+  const findOpenRef = useRef(false)
+  findOpenRef.current = findOpen
+  const findQueryRef = useRef(findQuery)
+  findQueryRef.current = findQuery
+  const findReplaceRef = useRef(findReplace)
+  findReplaceRef.current = findReplace
+  const findCaseRef = useRef(findCase)
+  findCaseRef.current = findCase
+  const findIndexRef = useRef(findIndex)
+  findIndexRef.current = findIndex
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
   const treePollInFlightRef = useRef(false)
@@ -308,6 +362,72 @@ export default function App({
     if (mountedRef.current) services.reportError(message)
   }
 
+  function invalidName(name: string): boolean {
+    return (
+      !name
+      || name === "."
+      || name === ".md"
+      || name.includes("/")
+      || name.includes("\\")
+      || name.includes("..")
+    )
+  }
+
+  function normalizeMarkdownName(name: string): string {
+    const trimmed = name.trim()
+    return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`
+  }
+
+  async function refreshTreePath(path: string): Promise<void> {
+    if (!services.listDir) return
+    try {
+      const entries = await services.listDir(path)
+      commitTree(setChildren(treeModelRef.current, path, entries))
+    } catch (error) {
+      services.reportError(errorMessage("Folder listing failed", error))
+    }
+  }
+
+  async function nextUntitledMarkdownName(dir: string): Promise<string> {
+    if (!services.listDir) return "untitled.md"
+    const entries = await services.listDir(dir)
+    const names = new Set(entries.map(entry => entry.name))
+    if (!names.has("untitled.md")) return "untitled.md"
+    let suffix = 2
+    while (names.has(`untitled-${suffix}.md`)) suffix += 1
+    return `untitled-${suffix}.md`
+  }
+
+  function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
+    const previousTabs = workspaceRef.current.tabs
+    const nextTabs = previousTabs.map(tab => {
+      const path = sessionPath(tab)
+      if (!path) return tab
+      if (path === from) return retargetSessionPath(tab, to)
+      if (isDir && path.startsWith(`${from}/`)) {
+        return retargetSessionPath(tab, `${to}${path.slice(from.length)}`)
+      }
+      return tab
+    })
+    if (nextTabs.every((tab, index) => tab === previousTabs[index])) return
+    previousTabs.forEach((tab, index) => {
+      const next = nextTabs[index]
+      if (tab === next) return
+      const oldKey = recoveryKey(tab)
+      if (oldKey !== recoveryKey(next)) void services.clearRecovery?.(oldKey)
+      const contents = docsRef.current.get(next.id)
+      if (contents !== undefined && sessionDirty(next, contents)) saveRecovery(next, contents)
+    })
+    commitWorkspace({ ...workspaceRef.current, tabs: nextTabs })
+    const affectedPaths = nextTabs
+      .map(tab => sessionPath(tab))
+      .filter((path): path is string => path !== null)
+      .filter(path => path === to || (isDir && path.startsWith(`${to}/`)))
+    for (const path of new Set(affectedPaths)) {
+      void services.allowDocumentAssets(path)
+    }
+  }
+
   function saveRecovery(tab: EditorSession, contents: string) {
     void recoveryWriterRef.current.save(
       { tabId: tab.id, key: recoveryKey(tab), path: sessionPath(tab), contents },
@@ -330,19 +450,34 @@ export default function App({
     ))
   }
 
-  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+  function imageInsertOptions(tabId: number, documentId: number): ImagePasteOptions {
     return {
-      doc: contents,
-      tabId,
-      documentId,
       getDocPath: () => {
         const tab = tabById(tabId)
         return tab ? sessionPath(tab) : null
       },
       getDocumentId: () => tabById(tabId)?.documentId ?? documentId,
-      onDocumentUpdate: handleDocumentUpdate,
       onError: reportUserError,
+    }
+  }
+
+  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+    return {
+      doc: contents,
+      tabId,
+      documentId,
+      ...imageInsertOptions(tabId, documentId),
+      onDocumentUpdate: handleDocumentUpdate,
+      onOpenMarkdownHref: href => {
+        const current = sessionPath(sessionRef.current)
+        if (!current) {
+          services.reportError(errorMessage("Open failed", new Error("File not found")))
+          return
+        }
+        void openPath(resolveMarkdownHref(current, href), true)
+      },
       tabSize: settingsRef.current.tabSize,
+      spellcheck: settingsRef.current.spellcheck,
     }
   }
 
@@ -544,8 +679,17 @@ export default function App({
     }, 120)
   }
 
+  function applySpellcheck(on: boolean) {
+    for (const view of viewsRef.current.values()) {
+      try { setEditorSpellcheck(view, on) } catch { /* mock views */ }
+    }
+  }
+
   function handleSaveSettings(next: UserSettings) {
     const sanitized = sanitizeSettings(next)
+    if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
+      applySpellcheck(sanitized.spellcheck)
+    }
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
@@ -558,6 +702,9 @@ export default function App({
       const saved = await services.getSettings()
       if (saved) {
         if (mountedRef.current) {
+          if (saved.spellcheck !== settingsRef.current.spellcheck) {
+            applySpellcheck(saved.spellcheck)
+          }
           setSettings(saved)
           settingsRef.current = saved
           setTheme(saved.theme)
@@ -735,24 +882,46 @@ export default function App({
     syncDoc("", tab.id)
   }
 
-  function requestCloseTab(id: number) {
+  function closeTabInternal(
+    id: number,
+    options: { confirm: boolean; allowReplaceLast: boolean },
+  ): boolean {
     const tab = tabById(id)
-    if (!tab) return
+    if (!tab) return false
     const contents = docsRef.current.get(id) ?? ""
-    if (sessionDirty(tab, contents) && !(services.confirmClose ?? services.confirmDiscard)()) return
+    if (
+      options.confirm
+      && sessionDirty(tab, contents)
+      && !(services.confirmClose ?? services.confirmDiscard)()
+    ) {
+      return false
+    }
+    let currentWorkspace = workspaceRef.current
+    if (options.allowReplaceLast && currentWorkspace.tabs.length === 1) {
+      const replacement = createSession(currentWorkspace.nextId)
+      docsRef.current.set(replacement.id, "")
+      commitSaveState({ ...saveStateRef.current, [replacement.id]: initialSaveState() })
+      currentWorkspace = addTab(currentWorkspace, replacement)
+    }
     // Per-tab state is dropped when the tab really disappears; closeTab keeps a lone tab open.
-    const closed = closeTab(workspaceRef.current, id)
+    const closed = closeTab(currentWorkspace, id)
     if (!closed.tabs.some(item => item.id === id)) {
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
       commitSaveState(removeTabSaveState(saveStateRef.current, id))
       recoveryWriterRef.current.forget(id)
+      docsRef.current.delete(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
     commitWorkspace(closed)
-    const active = activeSession(workspaceRef.current)
+    const active = activeSession(closed)
     viewRef.current = viewsRef.current.get(active.id) ?? viewRef.current
     syncDoc(docsRef.current.get(active.id) ?? "", active.id)
+    return !closed.tabs.some(item => item.id === id)
+  }
+
+  function requestCloseTab(id: number) {
+    closeTabInternal(id, { confirm: true, allowReplaceLast: false })
   }
   requestCloseTabRef.current = requestCloseTab
 
@@ -878,6 +1047,100 @@ export default function App({
     if (view) try { command(view) } catch { /* mock views */ }
   }
 
+  const insertImage = () => {
+    const view = viewRef.current
+    const active = sessionRef.current
+    if (!view) return
+    void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
+  }
+
+  async function createTreeFile(dir: string) {
+    if (!services.createMarkdown) return
+    let defaultName = "untitled.md"
+    try {
+      defaultName = await nextUntitledMarkdownName(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Folder listing failed", error))
+      return
+    }
+    const rawName = window.prompt("New file name", defaultName)
+    if (rawName === null) return
+    const name = normalizeMarkdownName(rawName)
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    try {
+      await services.createMarkdown(dir, name)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Create file failed", error))
+    }
+  }
+
+  async function createTreeFolder(dir: string) {
+    if (!services.createDir) return
+    const rawName = window.prompt("New folder name", "untitled-folder")
+    if (rawName === null) return
+    const name = rawName.trim()
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    try {
+      await services.createDir(dir, name)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Create folder failed", error))
+    }
+  }
+
+  async function renameTreeEntry(entry: TreeEntry) {
+    if (!services.renamePath) return
+    const rawName = window.prompt("Rename", entry.name)
+    if (rawName === null) return
+    const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
+    if (name === entry.name) return
+    if (invalidName(name)) {
+      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      return
+    }
+    const dir = parentDir(entry.path)
+    if (!dir) return
+    try {
+      const nextPath = await services.renamePath(entry.path, name)
+      commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
+      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
+      await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Rename failed", error))
+    }
+  }
+
+  async function deleteTreeEntry(entry: TreeEntry) {
+    if (!services.deletePath) return
+    const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
+    if (
+      openTab
+      && sessionDirty(openTab, docsRef.current.get(openTab.id) ?? "")
+      && !(services.confirmClose ?? services.confirmDiscard)()
+    ) {
+      return
+    }
+    const confirmDelete = services.confirmDelete
+      ?? (path => defaultServices.confirmDelete?.(path) ?? true)
+    if (!confirmDelete(entry.path)) return
+    try {
+      await services.deletePath(entry.path)
+      commitTree(removeTreePath(treeModelRef.current, entry.path))
+      if (openTab) closeTabInternal(openTab.id, { confirm: false, allowReplaceLast: true })
+      const dir = parentDir(entry.path)
+      if (dir) await refreshTreePath(dir)
+    } catch (error) {
+      services.reportError(errorMessage("Delete failed", error))
+    }
+  }
+
   const commands: AppCommand[] = [
     { id: "open", label: "Open…", shortcut: "⌘O", run: () => void openFile() },
     { id: "save", label: "Save", shortcut: "⌘S", run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
@@ -911,10 +1174,15 @@ export default function App({
     { id: "unordered-list", label: "Unordered list", shortcut: "⌥⌘8", run: runFormat(toggleUnorderedList) },
     { id: "blockquote", label: "Blockquote", shortcut: "⌥⌘9", run: runFormat(toggleBlockquote) },
     { id: "link", label: "Insert link", shortcut: "⌘K", run: runFormat(insertLink) },
-    { id: "search", label: "Search in folder", run: () => setSearchOpen(true) },
-    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html") },
-    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf") },
-    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png") },
+    { id: "insert-image", label: "Insert image…", run: insertImage },
+    { id: "find", label: "Find in document", shortcut: "⌘F", run: () => {
+      setFindOpen(true)
+      setReplaceOpen(false)
+    } },
+    { id: "search", label: "Search in folder", shortcut: "⇧⌘F", run: () => setSearchOpen(true) },
+    { id: "export-html", label: "Export HTML", run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-pdf", label: "Export PDF", run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
+    { id: "export-image", label: "Export Image", run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "clear-recents", label: "Clear Recents", run: clearRecents },
   ]
   const commandsRef = useRef(commands)
@@ -932,8 +1200,84 @@ export default function App({
     }))
   }, [services])
 
+  function closeFind() {
+    setFindOpen(false)
+    setReplaceOpen(false)
+    try { viewRef.current?.focus() } catch { /* mock views */ }
+  }
+
+  function goFind(direction: "next" | "prev") {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const matches = collectMatches(doc, query, findCaseRef.current)
+    if (matches.length === 0) {
+      setFindIndex(-1)
+      return
+    }
+    const index = direction === "next"
+      ? nextIndex(matches.length, findIndexRef.current)
+      : prevIndex(matches.length, findIndexRef.current)
+    const match = matches[index]
+    try {
+      view.dispatch({
+        selection: { anchor: match.from, head: match.to },
+        scrollIntoView: true,
+      })
+    } catch { /* mock views */ }
+    setFindIndex(index)
+  }
+
+  function replaceCurrent() {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const matches = collectMatches(doc, query, findCaseRef.current)
+    if (matches.length === 0) return
+    const index = findIndexRef.current >= 0 && findIndexRef.current < matches.length
+      ? findIndexRef.current
+      : 0
+    const match = matches[index]
+    const replacement = findReplaceRef.current
+    try {
+      view.dispatch({
+        changes: { from: match.from, to: match.to, insert: replacement },
+        selection: { anchor: match.from, head: match.from + replacement.length },
+        scrollIntoView: true,
+      })
+    } catch { /* mock views */ }
+  }
+
+  function replaceEvery() {
+    const view = viewRef.current
+    const query = findQueryRef.current
+    if (!view || query === "") return
+    let doc: string
+    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
+    const next = replaceAll(doc, query, findReplaceRef.current, findCaseRef.current)
+    if (next === doc) return
+    try {
+      view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
+    } catch { /* mock views */ }
+  }
+
+  const goFindRef = useRef(goFind)
+  const closeFindRef = useRef(closeFind)
+  goFindRef.current = goFind
+  closeFindRef.current = closeFind
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      if (e.key === "Escape" && findOpenRef.current) {
+        e.preventDefault()
+        closeFindRef.current()
+        return
+      }
       if (e.key === "p" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setPaletteOpen(open => !open)
@@ -949,6 +1293,20 @@ export default function App({
       } else if (e.key === "O" && e.shiftKey) {
         e.preventDefault()
         setOutlineOpen(open => !open)
+      } else if ((e.key === "f" || e.key === "F") && e.shiftKey) {
+        e.preventDefault()
+        setSearchOpen(true)
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault()
+        setFindOpen(true)
+        setReplaceOpen(false)
+      } else if (e.key === "h" || e.key === "H") {
+        e.preventDefault()
+        setFindOpen(true)
+        setReplaceOpen(true)
+      } else if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
+        e.preventDefault()
+        goFindRef.current(e.shiftKey ? "prev" : "next")
       } else if (e.key === "o") {
         e.preventDefault()
         void openFileRef.current()
@@ -976,6 +1334,7 @@ export default function App({
   }, [searchOpen, searchQuery, workspace.folder, services])
 
   const { cursor, mode } = editorStatus(viewRef.current)
+  const stats = useMemo(() => documentStats(doc), [doc])
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
@@ -1041,6 +1400,11 @@ export default function App({
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => setSearchOpen(true)}
+              onNewFile={dir => void createTreeFile(dir)}
+              onNewFolder={dir => void createTreeFolder(dir)}
+              onRename={entry => void renameTreeEntry(entry)}
+              onDelete={entry => void deleteTreeEntry(entry)}
+              onReveal={path => { void services.revealInFinder?.(path) }}
               onCollapse={() => setSidebarOpen(false)}
             />
           )}
@@ -1145,6 +1509,29 @@ export default function App({
           {transientStatus ? (
             <p className="save-transient-status" role="status">{transientStatus}</p>
           ) : null}
+          <FindReplaceBar
+            open={findOpen}
+            query={findQuery}
+            replacement={findReplace}
+            caseSensitive={findCase}
+            replaceOpen={replaceOpen}
+            matchCount={findOpen ? collectMatches(doc, findQuery, findCase).length : 0}
+            activeIndex={findIndex}
+            onQuery={query => {
+              setFindQuery(query)
+              setFindIndex(-1)
+            }}
+            onReplacement={setFindReplace}
+            onCaseSensitive={value => {
+              setFindCase(value)
+              setFindIndex(-1)
+            }}
+            onNext={() => goFind("next")}
+            onPrev={() => goFind("prev")}
+            onReplace={replaceCurrent}
+            onReplaceAll={replaceEvery}
+            onClose={closeFind}
+          />
           <div className="editor-stack">
             {workspace.tabs.map(tab => (
               <div
@@ -1158,7 +1545,8 @@ export default function App({
         </div>
       </div>
       <StatusBar
-        words={wordCount(doc)}
+        words={stats.words}
+        chars={stats.chars}
         cursor={cursor}
         mode={mode}
         normalizationReviewRequired={bannerKind === "normalization"}

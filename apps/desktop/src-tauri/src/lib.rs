@@ -135,6 +135,34 @@ async fn search_markdown(root: String, query: String) -> Result<Vec<workspace::S
 }
 
 #[tauri::command]
+async fn create_markdown(dir: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::create_markdown(dir, name))
+        .await
+        .map_err(|error| format!("create markdown task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn create_dir(dir: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::create_dir(dir, name))
+        .await
+        .map_err(|error| format!("create directory task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn rename_path(from: String, to_name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::rename_path(from, to_name))
+        .await
+        .map_err(|error| format!("rename path task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn delete_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::delete_path(path))
+        .await
+        .map_err(|error| format!("delete path task failed: {error}"))?
+}
+
+#[tauri::command]
 fn write_recovery(key: String, contents: String) -> Result<(), String> {
     workspace::write_recovery(key, contents)
 }
@@ -179,6 +207,7 @@ fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String
     use tauri::Manager;
 
     let directory = workspace_directory(Path::new(&path))?;
+    workspace::authorize_workspace_root(&directory)?;
     app.asset_protocol_scope()
         .allow_directory(directory, true)
         .map_err(|e| format!("failed to allow workspace directory: {e}"))
@@ -346,6 +375,10 @@ pub fn run() {
             allow_document_assets,
             list_dir,
             search_markdown,
+            create_markdown,
+            create_dir,
+            rename_path,
+            delete_path,
             write_recovery,
             list_recoveries,
             read_recovery,

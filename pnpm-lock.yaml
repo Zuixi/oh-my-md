@@ -111,6 +111,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@codemirror/commands':
+        specifier: ^6.7.1
+        version: 6.10.4
       '@types/katex':
         specifier: ^0.16.8
         version: 0.16.8

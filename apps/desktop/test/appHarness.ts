@@ -51,7 +51,16 @@ export interface FakeEditorHandle {
 export type HarnessServices = DesktopServices & Required<
   Pick<
     DesktopServices,
-    "writeRecovery" | "confirmClose" | "confirmExternalChange" | "revealInFinder" | "clearRecovery"
+    | "writeRecovery"
+    | "confirmClose"
+    | "confirmDelete"
+    | "confirmExternalChange"
+    | "revealInFinder"
+    | "clearRecovery"
+    | "createMarkdown"
+    | "createDir"
+    | "renamePath"
+    | "deletePath"
   >
 >
 
@@ -269,9 +278,18 @@ function harnessServices(context: HarnessContext): HarnessServices {
     }),
     allowDocumentAssets: vi.fn(async () => undefined),
     allowWorkspaceDir: vi.fn(async () => undefined),
+    createMarkdown: vi.fn(async (dir: string, name: string) => `${dir.replace(/\/$/, "")}/${name}`),
+    createDir: vi.fn(async (dir: string, name: string) => `${dir.replace(/\/$/, "")}/${name}`),
+    renamePath: vi.fn(async (from: string, toName: string) => {
+      const parts = from.replace(/\\/g, "/").split("/")
+      parts[parts.length - 1] = toName
+      return parts.join("/")
+    }),
+    deletePath: vi.fn(async () => undefined),
     writeRecovery: vi.fn(async () => undefined),
     confirmDiscard: vi.fn(() => true),
     confirmClose: vi.fn(() => true),
+    confirmDelete: vi.fn(() => true),
     confirmExternalChange: vi.fn(() => true),
     getSettings: vi.fn(async () => DEFAULT_SETTINGS),
     saveSettings: vi.fn(async () => undefined),

@@ -67,6 +67,7 @@ describe("StatusBar save status", () => {
     render(
       <StatusBar
         words={0}
+        chars={0}
         cursor="1:1"
         mode="live"
         normalizationReviewRequired={false}
@@ -74,5 +75,19 @@ describe("StatusBar save status", () => {
       />,
     )
     expect(screen.getByText("conflict")).toBeTruthy()
+  })
+
+  it("shows CJK-aware word and char counts", () => {
+    render(
+      <StatusBar
+        words={4}
+        chars={4}
+        cursor="1:1"
+        mode="live"
+        normalizationReviewRequired={false}
+        saveStatus="idle"
+      />,
+    )
+    expect(screen.getByText("4 words · 4 chars")).toBeTruthy()
   })
 })

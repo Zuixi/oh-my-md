@@ -8,12 +8,14 @@ import {
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
 import { createAppHarness, expectPathShown, normalizationId, resetMountedApps, versionFor } from "./appHarness"
+import * as findReplaceModule from "../src/findReplace"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
   return {
     ...actual,
     exportHtml: () => "<!doctype html><html>exported</html>",
+    exportRichHtml: async () => "<!doctype html><html>exported</html>",
     collectOutline: () => [],
     getPendingOrderedListNormalization: vi.fn(() => null),
     acceptOrderedListNormalization: vi.fn(() => ({
@@ -522,7 +524,7 @@ describe("App document session", () => {
     expect(harness.services.reportError).toHaveBeenCalledOnce()
     expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
     expect(logged).toHaveBeenCalledTimes(2)
-    expect(screen.getByText("3 words")).toBeTruthy()
+    expect(screen.getByText("3 words · 13 chars")).toBeTruthy()
     expectPathShown("unnamed", { dirty: true })
     logged.mockRestore()
   })
@@ -941,6 +943,22 @@ describe("App product shell", () => {
     await waitFor(() => expect(harness.services.readDocument).toHaveBeenCalledWith("/notes/hit.md"))
   })
 
+  it("opens document find with meta+f and does not open folder search", () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "f", metaKey: true })
+    expect(screen.queryByPlaceholderText("Find in folder…")).toBeNull()
+    expect(screen.getByLabelText("Find")).toBeTruthy()
+  })
+
+  it("skips collectMatches scan while find bar is closed", () => {
+    const spy = vi.spyOn(findReplaceModule, "collectMatches")
+    const harness = makeAppHarness()
+    harness.renderApp()
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
   it("shows files and outline sidebars without a chrome export panel", () => {
     const harness = makeAppHarness()
     harness.renderApp()
@@ -1061,7 +1079,7 @@ describe("App product shell", () => {
       send = handler
       return () => undefined
     }
-    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.png")
     harness.renderApp()
     act(() => send?.("export-image"))
@@ -1082,7 +1100,7 @@ describe("App product shell", () => {
       send = handler
       return () => undefined
     }
-    harness.services.exportPreview = vi.fn(async () => undefined)
+    harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.pdf")
     harness.renderApp()
     act(() => send?.("export-pdf"))
