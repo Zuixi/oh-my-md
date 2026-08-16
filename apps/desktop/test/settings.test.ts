@@ -16,6 +16,7 @@ describe("settings model", () => {
       tabSize: 2,
       defaultMode: "live",
       spellcheck: false,
+      locale: "auto",
     })
   })
 
@@ -44,6 +45,7 @@ describe("settings model", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      locale: "auto",
     } satisfies UserSettings)
 
     const parsed = parseSettings(json)
@@ -55,10 +57,30 @@ describe("settings model", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      locale: "auto",
     })
   })
 
   it("handles corrupted JSON gracefully", () => {
     expect(parseSettings("invalid json{")).toEqual(DEFAULT_SETTINGS)
+  })
+
+  it("defaults locale to auto", () => {
+    expect(DEFAULT_SETTINGS.locale).toBe("auto")
+  })
+
+  it("sanitizes invalid locale to auto", () => {
+    expect(sanitizeSettings({ ...DEFAULT_SETTINGS, locale: "fr" as never }).locale).toBe("auto")
+    expect(sanitizeSettings(null).locale).toBe("auto")
+  })
+
+  it("keeps valid locale", () => {
+    expect(sanitizeSettings({ ...DEFAULT_SETTINGS, locale: "zh" }).locale).toBe("zh")
+    expect(sanitizeSettings({ ...DEFAULT_SETTINGS, locale: "en" }).locale).toBe("en")
+  })
+
+  it("parseSettings tolerates missing locale", () => {
+    const s = parseSettings(JSON.stringify({ theme: "dark" }))
+    expect(s.locale).toBe("auto")
   })
 })

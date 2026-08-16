@@ -17,6 +17,7 @@ import {
 import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
 import { CONTENT_MAX_WIDTH } from "./constants"
+import { t } from "./i18n"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
 /**
@@ -158,6 +159,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       keymap.of([...defaultKeymap, ...historyKeymap]),
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
+        imageBrokenLabel: (src: string) => t("image.broken", { src }),
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       typewriterExtension(),

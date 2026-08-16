@@ -1,4 +1,5 @@
 import type { DocumentVersion, ExistingDiskSnapshot } from "./desktopServices"
+import { t } from "./i18n"
 
 export type SessionPersistence =
   | { readonly kind: "untitled"; readonly savedContents: string }
@@ -50,7 +51,7 @@ export function sessionDirty(session: EditorSession, doc: string): boolean {
 
 export function sessionLabel(session: EditorSession): string {
   const path = sessionPath(session)
-  if (!path) return "unnamed"
+  if (!path) return t("session.unnamed")
   const normalized = path.replace(/\\/g, "/")
   const name = normalized.slice(normalized.lastIndexOf("/") + 1)
   return name || path

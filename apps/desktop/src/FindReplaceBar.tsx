@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent } from "react"
+import { useT } from "./i18n"
 
 export function FindReplaceBar(props: {
   open: boolean
@@ -17,6 +18,7 @@ export function FindReplaceBar(props: {
   onReplaceAll: () => void
   onClose: () => void
 }) {
+  const t = useT()
   const queryRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -26,8 +28,8 @@ export function FindReplaceBar(props: {
   if (!props.open) return null
 
   const status = props.matchCount === 0
-    ? "0 matches"
-    : `${props.activeIndex + 1} of ${props.matchCount}`
+    ? t("find.status.zero")
+    : t("find.status.count", { active: props.activeIndex + 1, total: props.matchCount })
 
   function onBarKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
@@ -55,17 +57,17 @@ export function FindReplaceBar(props: {
     <div className="find-replace-bar" role="search" onKeyDown={onBarKeyDown}>
       <input
         ref={queryRef}
-        aria-label="Find"
+        aria-label={t("find.aria.find")}
         value={props.query}
         onChange={event => props.onQuery(event.target.value)}
-        placeholder="Find in document…"
+        placeholder={t("find.placeholder.find")}
       />
       {props.replaceOpen ? (
         <input
-          aria-label="Replace"
+          aria-label={t("find.aria.replace")}
           value={props.replacement}
           onChange={event => props.onReplacement(event.target.value)}
-          placeholder="Replace…"
+          placeholder={t("find.placeholder.replace")}
         />
       ) : null}
       <label className="find-replace-case">
@@ -74,18 +76,18 @@ export function FindReplaceBar(props: {
           checked={props.caseSensitive}
           onChange={event => props.onCaseSensitive(event.target.checked)}
         />
-        Case
+        {t("find.label.case")}
       </label>
-      <button type="button" onClick={props.onPrev}>Previous</button>
-      <button type="button" onClick={props.onNext}>Next</button>
+      <button type="button" onClick={props.onPrev}>{t("find.button.previous")}</button>
+      <button type="button" onClick={props.onNext}>{t("find.button.next")}</button>
       {props.replaceOpen ? (
         <>
-          <button type="button" onClick={props.onReplace}>Replace</button>
-          <button type="button" onClick={props.onReplaceAll}>Replace all</button>
+          <button type="button" onClick={props.onReplace}>{t("find.button.replace")}</button>
+          <button type="button" onClick={props.onReplaceAll}>{t("find.button.replaceAll")}</button>
         </>
       ) : null}
       <span className="find-replace-status">{status}</span>
-      <button type="button" onClick={props.onClose} aria-label="Close find">Close</button>
+      <button type="button" onClick={props.onClose} aria-label={t("find.aria.close")}>{t("find.action.close")}</button>
     </div>
   )
 }

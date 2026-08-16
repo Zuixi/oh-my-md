@@ -1,3 +1,5 @@
+import { useT } from "./i18n"
+
 export interface NormalizationBannerProps {
   /** `null` means no review is pending: the live region stays mounted but silent. */
   readonly markerCount: number | null
@@ -7,17 +9,22 @@ export interface NormalizationBannerProps {
 }
 
 const SINGLE_MARKER = 1
-const NORMALIZATION_HEADLINE = "Ordered list numbers were normalized."
 
-function renumberedSummary(markerCount: number): string {
+function renumberedSummary(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  markerCount: number,
+): string {
   return markerCount === SINGLE_MARKER
-    ? "1 item was renumbered."
-    : `${markerCount} items were renumbered.`
+    ? t("normalization.single")
+    : t("normalization.multiple", { count: markerCount })
 }
 
-function bannerMessage(markerCount: number | null): string {
+function bannerMessage(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  markerCount: number | null,
+): string {
   if (markerCount === null) return ""
-  return `${NORMALIZATION_HEADLINE} ${renumberedSummary(markerCount)}`
+  return `${t("normalization.headline")} ${renumberedSummary(t, markerCount)}`
 }
 
 /**
@@ -38,6 +45,7 @@ function bannerMessage(markerCount: number | null): string {
  * to nothing visible.
  */
 export function NormalizationBanner(props: NormalizationBannerProps) {
+  const t = useT()
   const pending = props.markerCount !== null
 
   function save() {
@@ -53,7 +61,7 @@ export function NormalizationBanner(props: NormalizationBannerProps) {
   return (
     <div className={pending ? "normalization-banner" : "normalization-banner is-idle"}>
       <span className="normalization-banner-text" role="status">
-        {bannerMessage(props.markerCount)}
+        {bannerMessage(t, props.markerCount)}
       </span>
       {pending ? (
         <span className="normalization-banner-actions">
@@ -63,7 +71,7 @@ export function NormalizationBanner(props: NormalizationBannerProps) {
             aria-disabled={props.busy}
             onClick={save}
           >
-            Save normalization
+            {t("button.saveNormalization")}
           </button>
           <button
             type="button"
@@ -71,7 +79,7 @@ export function NormalizationBanner(props: NormalizationBannerProps) {
             aria-disabled={props.busy}
             onClick={keepOriginal}
           >
-            Keep original numbers
+            {t("button.keepOriginal")}
           </button>
         </span>
       ) : null}

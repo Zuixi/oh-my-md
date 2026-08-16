@@ -57,6 +57,7 @@ apps/desktop/
 4. Engine-generated `omd-*` classes are styled in `styles.css`. Coordinate class changes with the engine in the same task.
 5. Native filesystem effects must use narrow Tauri commands. Browser-side code may select paths and orchestrate calls, but must not emulate native path/file operations.
 6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
+7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
 
 ## CodeMirror Host Rules
 
@@ -109,8 +110,9 @@ Current Rust commands are:
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
 - `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
- - `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
+- `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
 - `set_view_menu_state(state)` — mirror the frontend view-mode state (source/sidebar/outline/typewriter/focus) into the checkable View menu items (`CheckMenuItem::set_checked` on stable ids).
+- `set_menu_locale(locale)` — update managed `MenuState.locale` and rebuild the native menu (zh/en; unknown → en). Called by the frontend `initLocale`/`setLocale`; single-field IPC (`{ locale }`), no multi-word casing trap.
 
 The native menu (`menu.rs`) has File / Edit / Format / View / Window top-level menus. Item clicks emit `menu-command` to the webview, except the `window-*` items which are handled natively in Rust (`handle_window_command`) and never forwarded. Do not use `PredefinedMenuItem` for window actions — their macOS selectors go through the responder chain and do not act on the Tauri window. Do not reimplement those actions as sidebar buttons.
 

@@ -64,6 +64,7 @@ describe("App Settings & Session Restore integration", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      locale: "auto",
     }
 
     vi.mocked(harness.services.getSettings!).mockResolvedValue(customSettings)

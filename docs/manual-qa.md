@@ -140,6 +140,17 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] Save As missing 目标竞态出现 symlink 时只允许换路径/取消
 - [ ] PermissionDenied 可 Retry、Save copy 和 Reveal in Finder
 
+## 语种切换（i18n）
+
+- 启动 OS=zh-CN：界面与原生菜单均为中文。
+- 启动 OS=en：均为英文。
+- Settings 选 `zh → en` 运行时切换：webview 文案、原生菜单、aria-label 同步变更，无需重启；焦点保留。
+- 选 `auto` 并在系统设置切换语言后重启 oh-my-md：跟随系统。
+- 切换后 `Cmd+S` / 打开 / 导出 等菜单操作正常。
+- broken 图片在 `zh` 显示中文「加载失败」、`en` 显示英文等价。
+
+**已知限制（i18n）**：错误提示 alert（Open failed / Folder listing failed / Export failed 等）、保存冲突横幅动作标签（Compare/Overwrite/Save copy…）、以及持久化/跳过标记状态横幅（DURABILITY_WARNING/SKIPPED_MARKERS_STATUS）在 zh 下仍为英文——这些是模块级常量或测试断言钉住的文案，需独立重构，不在本次 i18n 范围内。
+
 ## 自动化验证命令
 - 引擎单测：`pnpm test`
 - Desktop 类型检查与自动化：`pnpm --filter @omd/desktop test`

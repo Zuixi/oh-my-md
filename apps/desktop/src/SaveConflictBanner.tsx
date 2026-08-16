@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import { useT } from "./i18n"
 import type { ConflictActionId } from "./documentSaveCoordinator"
 
 export interface SaveConflictBannerAction {
@@ -20,6 +21,7 @@ export interface SaveConflictBannerProps {
  * conflict is active).
  */
 export function SaveConflictBanner(props: SaveConflictBannerProps) {
+  const t = useT()
   const firstActionRef = useRef<HTMLButtonElement>(null)
   const previousFocusTokenRef = useRef(props.focusToken)
 
@@ -36,7 +38,11 @@ export function SaveConflictBanner(props: SaveConflictBannerProps) {
 
   return (
     <div className="save-conflict-banner">
-      <span className="save-conflict-banner-text" role="status" aria-label="Save conflict">
+      <span
+        className="save-conflict-banner-text"
+        role="status"
+        aria-label={t("conflict.bannerLabel")}
+      >
         {props.message}
       </span>
       <span className="save-conflict-banner-actions">
