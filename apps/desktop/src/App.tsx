@@ -86,7 +86,7 @@ import {
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
-import { initLocale, setLocale } from "./i18n"
+import { initLocale, setLocale, useT } from "./i18n"
 import {
   extractSessionState,
 } from "./sessionRestore"
@@ -186,6 +186,7 @@ export default function App({
   autosaveMs = 1500,
   watchMs = 2000,
 }: AppProps) {
+  const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
   const viewRef = useRef<EditorView | null>(null)
   const viewsRef = useRef(new Map<number, EditorView>())
@@ -1071,7 +1072,7 @@ export default function App({
       services.reportError(errorMessage("Folder listing failed", error))
       return
     }
-    const rawName = window.prompt("New file name", defaultName)
+    const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)
     if (rawName === null) return
     const name = normalizeMarkdownName(rawName)
     if (invalidName(name)) {
@@ -1088,7 +1089,7 @@ export default function App({
 
   async function createTreeFolder(dir: string) {
     if (!services.createDir) return
-    const rawName = window.prompt("New folder name", "untitled-folder")
+    const rawName = window.prompt(t("filetree.prompt.newFolder"), "untitled-folder")
     if (rawName === null) return
     const name = rawName.trim()
     if (invalidName(name)) {
@@ -1105,7 +1106,7 @@ export default function App({
 
   async function renameTreeEntry(entry: TreeEntry) {
     if (!services.renamePath) return
-    const rawName = window.prompt("Rename", entry.name)
+    const rawName = window.prompt(t("filetree.prompt.rename"), entry.name)
     if (rawName === null) return
     const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
     if (name === entry.name) return
@@ -1450,20 +1451,20 @@ export default function App({
             }}
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
-            aria-label={outlineOpen ? "Hide outline" : "Show outline"}
-            title={outlineOpen ? "Hide outline (⇧⌘O)" : "Show outline (⇧⌘O)"}
+            aria-label={outlineOpen ? t("outline.aria.toggleHide") : t("outline.aria.toggleShow")}
+            title={outlineOpen ? t("outline.title.toggleHide") : t("outline.title.toggleShow")}
           >
             {outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>
           {!outlineOpen && outlineHover ? (
-            <div className="outline-hover-popover" role="dialog" aria-label="Outline preview">
+            <div className="outline-hover-popover" role="dialog" aria-label={t("outline.aria.preview")}>
               <div className="outline-hover-header">
-                <span className="outline-hover-title">Outline</span>
-                <span className="outline-hover-hint">Click to expand</span>
+                <span className="outline-hover-title">{t("outline.preview.title")}</span>
+                <span className="outline-hover-hint">{t("outline.preview.hint")}</span>
               </div>
               <div className="outline-hover-body">
                 {outline.length === 0 ? (
-                  <div className="sidebar-empty">No headings</div>
+                  <div className="sidebar-empty">{t("outline.empty")}</div>
                 ) : (
                   outline.map(item => (
                     <button

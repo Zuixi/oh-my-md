@@ -23,8 +23,20 @@ export const zh: Record<string, string> = {
 
   "statusbar.reviewRequired": "需要规范审查",
   "statusbar.wordsChars": "{words} 字 · {chars} 字符",
+  "statusbar.status.idle": "",
+  "statusbar.status.saving": "保存中",
+  "statusbar.status.saveFailed": "保存失败",
+  "statusbar.status.conflict": "冲突",
 
   "outline.title": "大纲",
+  "outline.aria.toggleShow": "显示大纲",
+  "outline.aria.toggleHide": "隐藏大纲",
+  "outline.title.toggleShow": "显示大纲（⇧⌘O）",
+  "outline.title.toggleHide": "隐藏大纲（⇧⌘O）",
+  "outline.aria.preview": "大纲预览",
+  "outline.preview.title": "大纲",
+  "outline.preview.hint": "点击展开",
+  "outline.empty": "无标题",
 
   "topbar.aria.showSidebar": "显示侧边栏",
   "topbar.title.showSidebar": "显示侧边栏（⌘\\）",
@@ -52,6 +64,9 @@ export const zh: Record<string, string> = {
   "filetree.menu.rename": "重命名",
   "filetree.menu.delete": "删除",
   "filetree.menu.reveal": "在访达中显示",
+  "filetree.prompt.newFile": "新建文件名",
+  "filetree.prompt.newFolder": "新建文件夹名",
+  "filetree.prompt.rename": "重命名",
 
   "diff.title": "文档差异",
   "diff.goToLine": "跳转到第 {line} 行",

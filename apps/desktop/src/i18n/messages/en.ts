@@ -23,8 +23,20 @@ export const en: Record<string, string> = {
 
   "statusbar.reviewRequired": "Normalization review required",
   "statusbar.wordsChars": "{words} words · {chars} chars",
+  "statusbar.status.idle": "",
+  "statusbar.status.saving": "saving",
+  "statusbar.status.saveFailed": "save failed",
+  "statusbar.status.conflict": "conflict",
 
   "outline.title": "Outline",
+  "outline.aria.toggleShow": "Show outline",
+  "outline.aria.toggleHide": "Hide outline",
+  "outline.title.toggleShow": "Show outline (⇧⌘O)",
+  "outline.title.toggleHide": "Hide outline (⇧⌘O)",
+  "outline.aria.preview": "Outline preview",
+  "outline.preview.title": "Outline",
+  "outline.preview.hint": "Click to expand",
+  "outline.empty": "No headings",
 
   "topbar.aria.showSidebar": "Show sidebar",
   "topbar.title.showSidebar": "Show sidebar (⌘\\)",
@@ -52,6 +64,9 @@ export const en: Record<string, string> = {
   "filetree.menu.rename": "Rename",
   "filetree.menu.delete": "Delete",
   "filetree.menu.reveal": "Reveal in Finder",
+  "filetree.prompt.newFile": "New file name",
+  "filetree.prompt.newFolder": "New folder name",
+  "filetree.prompt.rename": "Rename",
 
   "diff.title": "Document differences",
   "diff.goToLine": "Go to line {line}",
