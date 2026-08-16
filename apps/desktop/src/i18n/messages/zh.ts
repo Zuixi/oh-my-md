@@ -153,4 +153,12 @@ export const zh: Record<string, string> = {
   "settings.language.auto": "跟随系统",
   "settings.language.en": "English",
   "settings.language.zh": "中文",
+
+  "confirm.discard": "放弃未保存的更改并打开另一个文档？",
+  "confirm.close": "关闭此标签页并放弃未保存的更改？",
+  "confirm.delete": "删除 {name}？此操作无法撤销。",
+  "confirm.restore": "恢复未保存草稿 {label}？",
+  "confirm.externalChange": "文件已在磁盘上更改。重新加载？",
+  "error.export.desktopOnly": "PDF 与图片导出仅在桌面应用可用",
+  "session.unnamed": "未命名",
 }

@@ -7,6 +7,7 @@ import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
+import { t } from "./i18n"
 
 export interface DocumentVersion {
   readonly resolvedPath: string
@@ -215,16 +216,15 @@ export const defaultServices: DesktopServices = {
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
   readRecovery: (key) => invoke<string>("read_recovery", { key }),
   clearRecovery: (key) => invoke("clear_recovery", { key }),
-  confirmDiscard: () =>
-    window.confirm("Discard unsaved changes and open another document?"),
-  confirmClose: () => window.confirm("Close this tab and discard unsaved changes?"),
+  confirmDiscard: () => window.confirm(t("confirm.discard")),
+  confirmClose: () => window.confirm(t("confirm.close")),
   confirmDelete: (path) => {
     const normalized = path.replace(/\\/g, "/")
     const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
-    return window.confirm(`Delete ${name}? This cannot be undone.`)
+    return window.confirm(t("confirm.delete", { name }))
   },
-  confirmRestore: (label) => window.confirm(`Restore unsaved draft ${label}?`),
-  confirmExternalChange: () => window.confirm("File changed on disk. Reload?"),
+  confirmRestore: (label) => window.confirm(t("confirm.restore", { label })),
+  confirmExternalChange: () => window.confirm(t("confirm.externalChange")),
   getSettings: async () => {
     try {
       const json = await invoke<string>("get_settings")
