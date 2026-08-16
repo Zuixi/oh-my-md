@@ -153,4 +153,12 @@ export const en: Record<string, string> = {
   "settings.language.auto": "Auto",
   "settings.language.en": "English",
   "settings.language.zh": "中文",
+
+  "confirm.discard": "Discard unsaved changes and open another document?",
+  "confirm.close": "Close this tab and discard unsaved changes?",
+  "confirm.delete": "Delete {name}? This cannot be undone.",
+  "confirm.restore": "Restore unsaved draft {label}?",
+  "confirm.externalChange": "File changed on disk. Reload?",
+  "error.export.desktopOnly": "PDF and image export are only available in the desktop app",
+  "session.unnamed": "unnamed",
 }
