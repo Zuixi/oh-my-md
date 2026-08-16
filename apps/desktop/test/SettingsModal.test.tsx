@@ -80,6 +80,7 @@ describe("SettingsModal", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      locale: "auto",
     }
 
     render(
