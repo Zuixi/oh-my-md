@@ -16,6 +16,9 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
+│   ├── constants.ts         # TS↔Rust contract values + localStorage keys (drift-tested)
+│   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
+│   ├── transientStatus.ts   # Shared transient-status timer for save/normalization status lines
 │   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
 │   ├── FileTree.tsx         # Sidebar tree with Lucide icons
 │   ├── session.ts           # EditorSession: path, dirty baseline, documentId
@@ -98,7 +101,7 @@ Current Rust commands are:
 - `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
 - `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root and authorize later create/rename/delete under that root.
 - `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
-- `search_markdown(root, query)` — scan `.md` files under the folder for a string.
+- `search_markdown(root, query, case_sensitive)` — parallel scan of `.md` files under the folder (ripgrep `ignore` + `regex` crates). Returns `SearchResponse { hits, truncated }`; each `SearchHit` carries UTF-16 code-unit offsets `start`/`end` into a possibly truncated `text`. Case-insensitive by default; skips hidden files, `.gitignore`, non-UTF-8, and files over 5 MB; caps at 500 hits with `truncated=true`.
 - `create_markdown(dir, name)` — create a new empty `.md` file under an authorized workspace root without overwriting.
 - `create_dir(dir, name)` — create a new empty subdirectory under an authorized workspace root without overwriting.
 - `rename_path(from, toName)` — rename a file or directory within its current parent under an authorized workspace root; Markdown files must keep `.md`.
@@ -106,18 +109,23 @@ Current Rust commands are:
 - `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
 - `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
 - `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
-- `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
+ - `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
+- `set_view_menu_state(state)` — mirror the frontend view-mode state (source/sidebar/outline/typewriter/focus) into the checkable View menu items (`CheckMenuItem::set_checked` on stable ids).
 
-The native File menu (New, Open, Open Folder, Open Recent, Close, Save, Save As, Export HTML/PDF/Image) emits `menu-command` to the webview. Do not reimplement those actions as sidebar buttons.
+The native menu (`menu.rs`) has File / Edit / Format / View / Window top-level menus. Item clicks emit `menu-command` to the webview, except the `window-*` items which are handled natively in Rust (`handle_window_command`) and never forwarded. Do not use `PredefinedMenuItem` for window actions — their macOS selectors go through the responder chain and do not act on the Tauri window. Do not reimplement those actions as sidebar buttons.
+
+**Shortcut wiring is single-sourced and drift-guarded.** Window-level shortcuts live only in `shortcuts.ts` `WINDOW_SHORTCUTS` — the same table feeds the command palette display and the `App.tsx` keydown dispatch. Format/mode shortcut labels come from the engine (`markdownShortcutLabels`/`toggleShortcutLabels`) so the palette cannot drift from the CM keymap. Native menu item ids and accelerators must match `commands.ts` `MENU_TO_COMMAND` and the shortcut labels (window or engine format); `test/crossLayerMenu.test.ts` parses `src-tauri/src/menu.rs` (both `item(` and `check_item(`) and guards all. Note that macOS menu accelerators intercept keys before the webview, so a menu accelerator for an engine shortcut (e.g. ⌘E) makes the App command the only live path on the desktop. When adding or changing a shortcut, touch the single source and let the tests verify — never add a second literal.
 
 When adding or changing a command:
 
 1. Keep the IPC entrypoint thin and return `Result<_, String>` or a deliberately introduced shared error shape.
-2. Validate frontend argument names against the Rust command signature.
-3. Register the command in `tauri::generate_handler!`.
-4. Check whether Tauri capabilities or plugins must change.
-5. Add Rust tests for native behavior and failure paths.
-6. For any payload with multi-word fields, add a Rust test asserting the **serialized JSON field names** (see IPC casing trap below).
+2. **Update both sides of the wire in the same change.** Any signature change (added/removed/renamed argument, changed return shape) must touch the Rust command, the `desktopServices.ts` invoke caller, and every TS consumer together. Leaving the frontend on the old contract makes Tauri reject the call (missing/extra arg) or the UI read the wrong shape silently — TypeScript compiles fine, and desktop tests mock services at the TS boundary, so they never catch it. Concrete failure: `search_markdown` gained `case_sensitive` and returned `SearchResponse` while `desktopServices.ts` still invoked `{ root, query }` and typed the result as `SearchHit[]` — folder search stopped working until both sides were aligned.
+3. Validate frontend argument names against the Rust command signature (Tauri maps snake_case Rust params to camelCase JS keys).
+4. Register the command in `tauri::generate_handler!`.
+5. Check whether Tauri capabilities or plugins must change.
+6. Add Rust tests for native behavior and failure paths.
+7. For any payload with multi-word fields, add a Rust test asserting the **serialized JSON field names** (see IPC casing trap below).
+8. **Shared limits stay in sync across the wire.** Limits that both sides enforce (image bytes, recent-files cap, search hit cap, markdown extensions, `assets` dir, `.md` create/rename rule) are named constants on each side — `apps/desktop/src/constants.ts` and the Rust `lib.rs`/`workspace.rs` — guarded by `apps/desktop/test/crossLayerConstants.test.ts`, which parses the Rust const definitions and asserts equality. Never change one side's literal without the other and the test.
 
 **IPC casing trap (verified 2026-08-14).** `#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum camelCases only the *variant names*, never fields inside struct variants — those need their own variant-level `#[serde(rename_all = "camelCase")]` (see `SaveDocumentResult` for the correct pattern). `DiskSnapshot` once relied on the enum-level attribute, so `read_document` sent `requested_path` while the webview read `requestedPath`; every opened file silently became an "unnamed" tab. TypeScript gives no protection: `snapshot.requestedPath` compiles fine and is `undefined` at runtime, and desktop tests mock `services.readDocument` at the TS boundary so they can never catch wire-format drift. Only a Rust-side `serde_json::to_string` assertion (e.g. `disk_snapshot_serializes_requested_path_as_camel_case`) guards the contract.
 

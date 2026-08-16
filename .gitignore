@@ -69,3 +69,6 @@ src-tauri/gen/
 .turbo/
 .worktrees/
 .superpowers/
+
+# Local competitor analysis (not committed / pushed)
+docs/competitors/

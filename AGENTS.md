@@ -13,6 +13,7 @@
 | React lifecycle, editor hosting, styles, shortcuts, image paste, Tauri IPC   | `[apps/desktop/AGENTS.md](./apps/desktop/AGENTS.md)`                                                             |
 | Product scope or architecture decisions                                      | `[docs/superpowers/specs/2026-08-10-oh-my-md-design.md](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md)` |
 | Known rendering, testing, or integration traps                               | `[docs/memory/known-gotchas.md](./docs/memory/known-gotchas.md)`                                                 |
+| Finding or writing a doc (spec, plan, QA, guide, competitor note)            | `[docs/AGENTS.md](./docs/AGENTS.md)`                                                                            |
 | A bug spanning domains                                                       | Read this file, then every affected domain guide                                                                 |
 
 
@@ -77,6 +78,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 5. **Keep the engine framework-independent.** It must not import React or Tauri. It may use browser DOM APIs for CodeMirror widgets; tests provide `happy-dom`.
 6. **Preserve source text.** Preview is a projection of the Markdown document. Decorations and widgets must not silently rewrite user content.
 7. **IPC field casing is a tested contract.** TypeScript types cannot catch wire-format drift (runtime `undefined` compiles fine), and desktop tests mock services at the TS boundary. Any Rust payload with multi-word fields needs a serialized-JSON assertion in Rust tests — see the "IPC casing trap" in `apps/desktop/AGENTS.md`.
+8. **IPC changes span both sides — or they silently do nothing.** A Tauri command change to arguments or return type must update the Rust command, the `desktopServices.ts` invoke caller, and every TypeScript consumer in the same change. Leaving the frontend on the old contract makes the invoke reject (missing/extra arg) or the UI read the wrong shape — it compiles, passes tests (which mock services at the TS boundary), and fails only at runtime. This is what broke folder search: `search_markdown` gained `case_sensitive` and returned `SearchResponse` while `desktopServices.ts` still called it with `{ root, query }` and typed the result as `SearchHit[]`.
 
 
 
@@ -85,6 +87,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Write strict TypeScript and avoid `any`; use named exports except framework/config files that conventionally require default exports.
 - Do not enable `indentOnInput`, `closeBrackets`, or generic `autocompletion` in `createEditor`; they conflict with current live-preview behavior. Gemoji completion is a `:`-only override inside `editorExtensions`.
 - Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
+- Do not hard-code values that have a named home. Shared/cross-layer limits and storage keys live in `apps/desktop/src/constants.ts` (drift-guarded against Rust/CSS by `apps/desktop/test/crossLayerConstants.test.ts`); ASCII punctuation in the engine parsers uses the named constants in `packages/engine/src/parse/chars.ts`; shortcut labels are owned by the engine keymap and `apps/desktop/src/shortcuts.ts`; native menu wiring must match `commands.ts` `MENU_TO_COMMAND` (guarded by `apps/desktop/test/crossLayerMenu.test.ts`). If a value must agree across two sides (TS↔Rust, TS↔CSS, keymap↔palette), define it on both sides as a named constant and add a drift test — never leave one side as a bare literal.
 - Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
 - Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.
 - Dangerous shell commands are blocked by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Cursor currently ignores hook `permission: ask`, so the guard returns `deny`. Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh). To run a blocked command, execute it yourself in the integrated terminal (human terminals do not trigger hooks).
