@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Strip any Co-authored-by trailers, then require `<type>: <why>`.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+exec python3 "$root/.githooks/commitmsg.py" "$1"

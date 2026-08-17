@@ -1,0 +1,12 @@
+---
+description: Rust conventions
+globs: "**/*.rs, **/Cargo.toml, **/Cargo.lock"
+alwaysApply: false
+---
+
+# Rust
+
+- `cargo fmt`. `snake_case` modules/fns; `PascalCase` types; `SCREAMING_SNAKE_CASE` consts. `lib.rs` is a facade. `///` on all `pub` items.
+- Libraries: `thiserror` + `Result`. Bins may use `anyhow`. Minimize `unsafe`; wrap with `// SAFETY:`.
+- Secrets via `std::env::var`. `cargo audit` on dep changes. Bound untrusted JSON. Canonicalize paths inside an allow-list dir.
+- Unit tests in-file; integration in `tests/`; doctests on public API. No shared mutable globals.

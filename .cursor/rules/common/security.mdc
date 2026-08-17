@@ -1,0 +1,12 @@
+---
+description: Secrets, auth, user input, queries, or security review
+alwaysApply: false
+---
+
+# Security
+
+Before commit: no hardcoded secrets; validate input; parameterized queries; encode output; CSRF on cookie auth; authn/authz; rate limits on public endpoints; errors do not leak internals.
+
+Secrets from env or a secret manager. Fail at startup if missing. Rotate anything exposed.
+
+If a security issue is found: stop, fix CRITICAL, rotate, grep for the same pattern. Launch `security-review` only when the user asks.

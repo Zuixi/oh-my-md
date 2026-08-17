@@ -1,0 +1,10 @@
+---
+description: TDD and behavior-focused tests
+alwaysApply: true
+---
+
+# Testing
+
+New behavior: write the test first, watch it fail, then implement. Name tests after behavior, not implementation.
+
+When a function signature changes, update every mock to match. Fix the code, not the test (unless the test is wrong).
