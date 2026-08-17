@@ -9,7 +9,7 @@ const messages: Record<Locale, Record<string, string>> = { en, zh }
 
 export type MenuLocaleSetter = (locale: Locale) => void | Promise<void>
 
-let current: Locale = "en"
+let current: Locale
 let listeners = new Set<() => void>()
 let menuSetter: MenuLocaleSetter = () => {}
 
@@ -18,6 +18,11 @@ export function resolveLocale(stored: StoredLocale): Locale {
   const nav = (typeof navigator !== "undefined" && navigator.language) || "en"
   return nav.toLowerCase().startsWith("zh") ? "zh" : "en"
 }
+
+// resolveLocale is a function declaration (hoisted), so it is safe to call at
+// module init. This lets auto-mode users render in the correct locale on the
+// first frame instead of briefly rendering English.
+current = resolveLocale("auto")
 
 function emit(): void {
   for (const fn of listeners) fn()

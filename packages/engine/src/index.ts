@@ -1,14 +1,14 @@
 import { markdownLanguageSupport } from "./parse/markdown"
 import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
-import { imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
-export { imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {
   classifyLink,
   headingPositionForAnchor,
@@ -76,6 +76,6 @@ export function editorExtensions(options: EngineOptions = {}) {
     isLivePreview,
     toggleKeymap,
     imageResolver.of(options.resolveImageSrc ?? ((s: string) => s)),
-    imageBrokenLabel.of(options.imageBrokenLabel ?? ((s: string) => `🖼 ${s}（加载失败）`)),
+    imageBrokenLabel.of(options.imageBrokenLabel ?? defaultBroken),
   ]
 }

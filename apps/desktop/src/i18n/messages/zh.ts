@@ -11,7 +11,6 @@ export const zh: Record<string, string> = {
   "find.button.replace": "替换",
   "find.button.replaceAll": "全部替换",
   "find.aria.close": "关闭查找",
-  "find.action.close": "关闭",
   "find.status.zero": "0 个匹配",
   "find.status.count": "{active} / {total}",
 
@@ -106,8 +105,13 @@ export const zh: Record<string, string> = {
 
   "diff.title": "文档差异",
   "diff.goToLine": "跳转到第 {line} 行",
+  "diff.hunkHeader": "@@ 本地 {local}，磁盘 {disk} @@",
   "diff.deleted": "文件已在磁盘上删除。",
   "diff.refreshed": "已重新加载磁盘内容。",
+
+  "dialog.filter.file": "文件",
+  "dialog.filter.files": "文件",
+  "dialog.filter.diagnostics": "诊断信息",
 
   "conflict.bannerLabel": "保存冲突",
   "conflict.action.compare": "比较",
