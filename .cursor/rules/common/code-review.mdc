@@ -1,0 +1,16 @@
+---
+description: After writing or modifying code, before commit or PR
+alwaysApply: false
+---
+
+# Code Review
+
+Review the diff yourself. Do not spawn a fictional reviewer agent.
+
+Before merge: unit + integration tests for the change; E2E for critical user flows; coverage still ≥ 80% on product code. Skip that bar for scripts, one-off tools, and this rules folder.
+
+Checklist: names, 50/800/4 limits, errors handled, no secrets, no debug leftovers.
+
+Auth, payments, user data, queries, filesystem, crypto, outbound HTTP → `common/security.mdc`. Task `security-review` only if the user asks.
+
+CRITICAL/HIGH block merge. Watch injection, XSS, path traversal, CSRF, N+1, unbounded lists, mutation.

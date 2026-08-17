@@ -1,0 +1,3 @@
+#!/bin/bash
+# Intentionally empty. Root `cargo audit` does not apply to this workspace layout.
+exit 0

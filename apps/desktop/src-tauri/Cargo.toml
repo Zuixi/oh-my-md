@@ -1,0 +1,72 @@
+[package]
+name = "appsdesktop"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "appsdesktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-log = "2"
+log = "0.4"
+base64 = "0.23.1"
+blake3 = "1"
+tempfile = "3.27.0"
+thiserror = "2"
+# ignore 0.4.33+/globset 0.4.20+ require rustc 1.88; pinned for the 1.87 toolchain.
+ignore = "=0.4.22"
+regex = "1"
+zip = "2"
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSBitmapImageRep",
+    "NSGraphics",
+    "NSImage",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSData",
+    "NSDictionary",
+    "NSError",
+    "NSGeometry",
+    "NSObject",
+    "NSString",
+    "NSValue",
+    "objc2-core-foundation",
+] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKNavigation",
+    "WKNavigationDelegate",
+    "WKPDFConfiguration",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+] }
+

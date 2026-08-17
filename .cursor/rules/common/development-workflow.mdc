@@ -1,0 +1,11 @@
+---
+description: New feature, new library, or multi-file implementation
+alwaysApply: false
+---
+
+# Feature Workflow
+
+1. Search GitHub (`gh search`) and confirm APIs with Context7 or vendor docs before inventing. Web search last.
+2. Architectural trade-offs → Plan mode. Independent work → parallel `Task` (`generalPurpose`).
+3. TDD, then review your own diff (`common/code-review.mdc`). `security-review` / `bugbot` only if the user asks.
+4. Commit only when asked (`common/git-workflow.mdc`). PR: CI green, no conflicts, branch current.

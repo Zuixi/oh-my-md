@@ -1,0 +1,11 @@
+---
+description: Swift conventions
+globs: "**/*.swift, **/Package.swift"
+alwaysApply: false
+---
+
+# Swift
+
+- Prefer `let` and `struct`. SwiftFormat/SwiftLint. Swift 6 concurrency: `Sendable`, actors, structured concurrency.
+- Secrets in **Keychain**, never UserDefaults. Keep ATS on. Validate deep links and API payloads.
+- New tests: Swift Testing (`@Test`, `#expect`). Fresh state per test. Actors for shared mutable state; inject `any Protocol` for tests.

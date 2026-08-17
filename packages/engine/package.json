@@ -1,0 +1,28 @@
+{
+  "name": "@omd/engine",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsc --noEmit && vitest run"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@lezer/common": "^1.5.2",
+    "@lezer/markdown": "^1.4.0",
+    "katex": "^0.18.4",
+    "mermaid": "^11.16.1",
+    "shiki": "^4.4.3"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.7.1",
+    "@types/katex": "^0.16.8",
+    "@types/node": "^26.2.0",
+    "happy-dom": "^16.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

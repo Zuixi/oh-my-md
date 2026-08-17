@@ -1,0 +1,189 @@
+# Changelog
+
+All notable changes to this project are documented here, generated from conventional commits.
+
+## Unreleased
+
+### Bug Fixes
+
+- Four M2 runtime root causes — StateField block decorations, replace-only atomic ranges, inclusive block boundary, click-to-edit widget (555bd63)
+- Dblclick-to-edit, perf — remove pos from BlockWidget.eq, add Shiki debounce+cache, expand lang support to 63 langs (2168df7)
+- Stabilize M2 — incremental preview, atomic save, image paste (afd05b2)
+- Fix up/down arrow jumps and right-click paste bug; add setext headings folding (279db6c)
+- Render CJK underscore emphasis, HRs, footnotes, and highlight (6002fd9)
+- Render <u> as underline in live preview (2ceb953)
+- Hide quote markers while typing on the same line (762eecc)
+- Write PNG exports from createPDF so a file actually appears (07a5098)
+- Keep normalization actions focusable and announceable (c8bba68)
+- Report a failing recovery write once per tab so a broken recovery directory cannot block editing (2a77d96)
+- Harden file tree reveal and virtualized row height (f456999)
+- Support autolinks and reference links (a2fedab)
+- Serialize DiskSnapshot variant fields as camelCase so opened files keep their name (2a314a4)
+- Strip any Co-authored-by trailer in commit-msg hook (d5e9019)
+- Keep quote prefixes when continuing lists (4975aec)
+- Prevent find next from firing twice (9ad8a29)
+- Give list Enter precedence and keep quote on exit (3915de9)
+- Hit-test footnote definition marks only (6cc7500)
+- Normalize local markdown link paths (e4f3c8a)
+- Clear footnote jump on document reset (1d2f6d1)
+- Keep table trailing newline and reject ragged tables (18ab109)
+- Keep table toolbar on the keyboard-focused cell (a784d70)
+- Replace the live table range after the widget moves (1aef6af)
+- Keep image picker on the starting document (1c673d0)
+- Skip the image picker on untitled documents (a12b0ba)
+- Confine workspace mutations to authorized roots (c51f3cd)
+- Create from empty tree and drop stale recovery on rename (0a87eaa)
+- Richly render nested math and honor image resolver (ba22e9c)
+- Skip find matching while the bar is closed (f7d8847)
+- Link against _dispatch_main_q instead of the dispatch_get_main_queue macro (0d6c583)
+### Chores
+
+- Drop unused Range import caught by desktop tsc (f01e3ca)
+- Add pnpm verify workspace gate (5a2bb5f)
+- Add build.sh and test.sh entry points (b12af41)
+- Add opencode permission gate for dangerous commands (f1e8dc0)
+- Remove unused wordCount helper (a435e53)
+- Merge daily-writing-gaps into m2-block-widgets (d5b384e)
+### Documentation
+
+- Capture M2 incident lessons in known-gotchas; fix two outdated facts (27badda)
+- Document safe list normalization workflow (4ed9267)
+- Document conflict-safe guarded save (51617eb)
+- Plan filetree layout performance (d7fa1d5)
+- Note stale rust target artifacts break the link (eb94b50)
+- Add user settings and session restore design spec and plan (6d71dfd)
+- Complete settings and session restore implementation plan (3a4d2c6)
+- Record editor gap analysis and writing specs (0e47551)
+- Add Apache-2.0 license and README (c815809)
+### Features
+
+- Keep ordered-list source in sync with preview numbers (18a94ef)
+- Render nested quotes, entities, and gemoji in live preview (c273171)
+- Add the product shell so folders stay expandable from a File menu (d27802d)
+- Export PDF and images through native WKWebView (58d97ef)
+- Track pending ordered-list normalization so rewrites stay reversible (a9aa258)
+- Keep ordered-list normalization revertible across parse-progress batches (9fe814d)
+- Project normalization state per tab so async work cannot cross documents (c4da1ff)
+- Let users review ordered-list normalization without a modal (770f1f1)
+- Show pending list normalization for the tab it belongs to (2dc4851)
+- Confirm automatic list normalization (e248fa7)
+- Read documents with content fingerprints (52b5342)
+- Classify document version conflicts (0c267f8)
+- Serialize saves per resolved path (11ae38c)
+- Guard document saves with double version compare (7a45ba8)
+- Preserve permissions and user metadata on save (6555652)
+- Model per-tab save lifecycle and divergence (8be4df8)
+- Add typed document IPC contracts for guarded save (66be269)
+- Add document save coordinator pure functions (2224a58)
+- Add read-only unified diff for conflict compare (a88cdac)
+- Add accessible save conflict UI (c9c0593)
+- Save documents through guarded versioned writes (6a8c950)
+- Resolve save conflicts without silent overwrite (50f9ed4)
+- Arrange shell into sticky three-column layout (21decb4)
+- Redesign topbar to modern macOS single-row tab bar (beceabb)
+- Add sticky sidebar collapse toggle and independent search bar (699a26b)
+- Improve line wrapping, outline popover, and markdown table rendering (0554552)
+- Render full markdown inside table cells (f5932d7)
+- Add settings and session state persistence commands (b97de99)
+- Add settings and session restore models and services (40473d3)
+- Add settings and preferences modal component (2c82055)
+- Integrate user preferences and workspace session restore in desktop app (e5aced8)
+- Add visible Settings button in TopBar and native macOS app menu (08e32b4)
+- Count CJK-aware document stats (e3e12a5)
+- Continue and indent lists from the keyboard (f8aab62)
+- Add literal find and replace helpers (d35838e)
+- Add document find, spellcheck, and CJK status counts (0b8701d)
+- Resolve footnote and local markdown targets (4bd6964)
+- Open local markdown links and jump footnotes (c2790b5)
+- Transform markdown table cells and axes (d4c1b35)
+- Edit live-preview tables in place (c871ee0)
+- Insert images by drop and file picker (dab2f72)
+- Add workspace create rename and delete commands (75aedca)
+- Manage files from the sidebar menu (da2b032)
+- Export HTML with math code and diagrams (2848067)
+- Wait for export render before PDF capture (f7f786e)
+- Single-source version with sync script and drift test (cdd6226)
+### Performance
+
+- Keep file tree and outline off the keystroke path (9dc2fe7)
+- Guard and dedupe file tree polling (bcedcd4)
+- Virtualize large file tree rows (7ced4c3)
+- Reveal opened files in the file tree (3c4aac3)
+- Move folder scans off the main thread (1690a24)
+- Remove specific agent authorized features for genera agent (51e7924)
+- Count stats in one pass and memoize status bar counts (f2d682f)
+- Await only async nodes and cache math in rich export (907f9e0)
+### Refactor
+
+- Stamp editor updates with tab and document identity so a late callback cannot write into another document (eead3d9)
+- Bind session path, baseline, and version (5f142d4)
+- Share shiki language loaders between widget and export (021796b)
+### Testing
+
+- Cover width-changing ordered-list markers so reject cannot half-revert (eb06d20)
+- Isolate the two-batch merge case so it counts what its name claims (29a13b3)
+- Cover the legacy editor callback and make the ordered-list test double fail loudly instead of diverging from the engine (006dc56)
+- Cover stale normalization save identity gaps (f9bee3e)
+## v0.2.0 - 2026-08-12
+
+### Bug Fixes
+
+- Resolve live-preview input issues and update .gitignore (3f5c8f1)
+- Wrap iterate enter callback in block to satisfy boolean|void return type (13f9a7a)
+- Add katex dep so its CSS resolves from the desktop bundle (6b179c6)
+- Enable tauri protocol-asset feature required by assetProtocol; commit lockfile (b9d6996)
+### Chores
+
+- Run tsc --noEmit before vitest to catch type-only bugs vitest misses (9e5c81c)
+- Commit Cargo.lock for protocol-asset feature (892ef03)
+### Documentation
+
+- Sync manual-qa with current implementation; clarify M1 table scope in spec (a167f2e)
+- M2 block widgets implementation plan (7d04d18)
+- M2 manual QA items + updated baselines (9545eb8)
+### Features
+
+- Custom Footnotes Lezer extension + superscript/label-fold decorations (ed7d976)
+- List nesting/indent styles, fenced-code block styling, footnote continuation lines (e3d3377)
+- BlockWidget lifecycle base + pipeline subtree-skip/conflict-filter/atomic-ranges (29ac1b2)
+- TableWidget with align support + source edit toggle (d35480e)
+- CodeWidget with lazy-loaded shiki highlighting + source edit fallback (f269c5d)
+- Lezer math extension — $$ block + $ inline (ff12046)
+- KaTeX rendering for $$ block and $ inline math (lazy-loaded) (c217c2b)
+- MermaidWidget — lazy mermaid, 500ms debounce, strict security (3d22b46)
+- Write_image command (base64 decode + mkdir -p) (149eb91)
+- Paste screenshot → write to assets/ → insert relative image link (5266d5e)
+- ImageWidget with host-injected src resolver + asset protocol (ccd59a4)
+### Refactor
+
+- Apply ponytail-review — drop unused highlight dep, dedupe foldLineMark, simplify markTo (0a76ca0)
+### Testing
+
+- Cargo tests for read_file/write_file (roundtrip + missing-file error) (7916e02)
+## v0.1.0 - 2026-08-10
+
+### Chores
+
+- Track pnpm-lock.yaml for reproducible installs (8ca1e64)
+- Sync pnpm-lock.yaml after adding @types/node (2fe3849)
+- Gitignore .pi/ agent artifacts (c3267ec)
+### Documentation
+
+- Add oh-my-md design spec (Typora competitor) (d1c2c87)
+- Fix spec filename date (88bca9b)
+- M1 engine implementation plan (26fede2)
+- V0.1 (M1) manual QA checklist (128da56)
+### Features
+
+- Monorepo scaffold + engine package skeleton (90930cd)
+- Lezer markdown language with GFM (footnotes deferred to custom extension) (8e91d11)
+- Decoration pipeline core + heading folding (6a75781)
+- Fold bold/italic/strikethrough/inline-code/link syntax marks (8e64415)
+- List/task-checkbox/blockquote/horizontal-rule decorations (eb8912f)
+- Live/source mode switch via compartment + Cmd-E toggle (7f3c825)
+- Tauri 2 + React shell mounting CM6 editor with live preview (a326794)
+- Read_file/write_file commands + dialog plugin (7d4fcae)
+### Testing
+
+- Verify GFM table parse (widget deferred to M2) (666ce28)
+- Fixture snapshot regression harness for core markdown structures (e945e21)
