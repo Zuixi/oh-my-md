@@ -132,6 +132,8 @@ export const en: Record<string, string> = {
   "normalization.headline": "Ordered list numbers were normalized.",
   "normalization.single": "1 item was renumbered.",
   "normalization.multiple": "{count} items were renumbered.",
+  "normalization.skippedMarkers": "Original numbers were restored where they were unchanged.",
+  "save.durabilityWarning": "Saved, but the folder could not be flushed to disk.",
 
   "button.close": "Close",
   "button.saveNormalization": "Save normalization",

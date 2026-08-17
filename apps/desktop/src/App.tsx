@@ -352,7 +352,7 @@ export default function App({
     rememberRecent,
     syncDoc,
     clearRecovery: key => { void services.clearRecovery?.(key) },
-    onDurabilityWarning: () => showTransientStatus(DURABILITY_WARNING),
+    onDurabilityWarning: () => showTransientStatus(t(DURABILITY_WARNING)),
     incrementFocusToken: () => setConflictFocusToken(token => token + 1),
     reportStatus: showTransientStatus,
     onSaveFailed: conflictSave.onSaveFailed,

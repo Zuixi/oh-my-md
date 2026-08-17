@@ -132,6 +132,8 @@ export const zh: Record<string, string> = {
   "normalization.headline": "有序列表编号已规范化。",
   "normalization.single": "已重新编号 1 项。",
   "normalization.multiple": "已重新编号 {count} 项。",
+  "normalization.skippedMarkers": "未更改处的原始编号已还原。",
+  "save.durabilityWarning": "已保存，但文件夹无法刷入磁盘。",
 
   "button.close": "关闭",
   "button.saveNormalization": "保存规范化",
