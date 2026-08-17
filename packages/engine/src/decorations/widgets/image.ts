@@ -7,10 +7,10 @@ export const imageResolver = Facet.define<(src: string) => string, (src: string)
   combine: values => values[values.length - 1] ?? ((s: string) => s),
 })
 
-const defaultBroken = (src: string) => `🖼 ${src}（加载失败）`
-
 // 缺省文案保持原样（🖼 ${src}（加载失败）），以便现有 view 测试与回归不破。
 // Desktop 通过 EngineOptions.imageBrokenLabel 注入本地化文案。
+export const defaultBroken = (src: string) => `🖼 ${src}（加载失败）`
+
 export const imageBrokenLabel = Facet.define<(src: string) => string, (src: string) => string>({
   combine: values => values[values.length - 1] ?? defaultBroken,
 })

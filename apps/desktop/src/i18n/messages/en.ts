@@ -11,7 +11,6 @@ export const en: Record<string, string> = {
   "find.button.replace": "Replace",
   "find.button.replaceAll": "Replace all",
   "find.aria.close": "Close find",
-  "find.action.close": "Close",
   "find.status.zero": "0 matches",
   "find.status.count": "{active} of {total}",
 
@@ -106,8 +105,13 @@ export const en: Record<string, string> = {
 
   "diff.title": "Document differences",
   "diff.goToLine": "Go to line {line}",
+  "diff.hunkHeader": "@@ local {local}, disk {disk} @@",
   "diff.deleted": "This file was deleted on disk.",
   "diff.refreshed": "Disk contents were refreshed.",
+
+  "dialog.filter.file": "File",
+  "dialog.filter.files": "Files",
+  "dialog.filter.diagnostics": "Diagnostics",
 
   "conflict.bannerLabel": "Save conflict",
   "conflict.action.compare": "Compare",

@@ -87,7 +87,7 @@ export function FindReplaceBar(props: {
         </>
       ) : null}
       <span className="find-replace-status">{status}</span>
-      <button type="button" onClick={props.onClose} aria-label={t("find.aria.close")}>{t("find.action.close")}</button>
+      <button type="button" onClick={props.onClose} aria-label={t("find.aria.close")}>{t("button.close")}</button>
     </div>
   )
 }

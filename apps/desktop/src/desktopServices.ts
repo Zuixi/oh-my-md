@@ -180,10 +180,10 @@ async function pickPath(kind: "file" | "folder" | "save", extensions: string[]):
     return typeof path === "string" ? path : null
   }
   if (kind === "save") {
-    const path = await save({ filters: [{ name: extensions[0] ?? "File", extensions }] })
+    const path = await save({ filters: [{ name: t("dialog.filter.file"), extensions }] })
     return typeof path === "string" ? path : null
   }
-  const path = await open({ filters: [{ name: "Files", extensions }] })
+  const path = await open({ filters: [{ name: t("dialog.filter.files"), extensions }] })
   return typeof path === "string" ? path : null
 }
 
@@ -232,7 +232,7 @@ export const defaultServices: DesktopServices = {
     await invoke("set_view_menu_state", { state })
   },
   exportDiagnostics: async () => {
-    const path = await save({ filters: [{ name: "Diagnostics", extensions: ["zip"] }] })
+    const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
     await invoke("export_diagnostics", { path })
   },

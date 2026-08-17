@@ -41,7 +41,7 @@ function DiffHunkView(props: {
   return (
     <div className="document-diff-hunk">
       <div className="document-diff-hunk-header">
-        <span>{`@@ local ${props.hunk.localStart}, disk ${props.hunk.diskStart} @@`}</span>
+        <span>{t("diff.hunkHeader", { local: props.hunk.localStart, disk: props.hunk.diskStart })}</span>
         <button
           type="button"
           className="document-diff-jump"
