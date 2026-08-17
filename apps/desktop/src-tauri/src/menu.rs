@@ -38,6 +38,40 @@ pub struct MenuLabels {
     pub export_html: &'static str,
     pub export_pdf: &'static str,
     pub export_image: &'static str,
+    pub edit: &'static str,
+    pub find: &'static str,
+    pub find_in_document: &'static str,
+    pub search_in_folder: &'static str,
+    pub format: &'static str,
+    pub bold: &'static str,
+    pub italic: &'static str,
+    pub strikethrough: &'static str,
+    pub inline_code: &'static str,
+    pub code_block: &'static str,
+    pub heading_1: &'static str,
+    pub heading_2: &'static str,
+    pub heading_3: &'static str,
+    pub heading_4: &'static str,
+    pub heading_5: &'static str,
+    pub heading_6: &'static str,
+    pub unordered_list: &'static str,
+    pub ordered_list: &'static str,
+    pub blockquote: &'static str,
+    pub insert_link: &'static str,
+    pub insert_image: &'static str,
+    pub view: &'static str,
+    pub show_source_code: &'static str,
+    pub show_hide_sidebar: &'static str,
+    pub show_hide_outline: &'static str,
+    pub typewriter_mode: &'static str,
+    pub focus_mode: &'static str,
+    pub toggle_theme: &'static str,
+    pub load_custom_css: &'static str,
+    pub window: &'static str,
+    pub minimize: &'static str,
+    pub zoom: &'static str,
+    pub toggle_full_screen: &'static str,
+    pub bring_all_to_front: &'static str,
 }
 
 pub fn menu_strings(locale: &str) -> MenuLabels {
@@ -59,6 +93,40 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             export_html: "HTML…",
             export_pdf: "PDF…",
             export_image: "图片…",
+            edit: "编辑",
+            find: "查找",
+            find_in_document: "在文档中查找",
+            search_in_folder: "在文件夹中搜索",
+            format: "格式",
+            bold: "加粗",
+            italic: "斜体",
+            strikethrough: "删除线",
+            inline_code: "行内代码",
+            code_block: "代码块",
+            heading_1: "一级标题",
+            heading_2: "二级标题",
+            heading_3: "三级标题",
+            heading_4: "四级标题",
+            heading_5: "五级标题",
+            heading_6: "六级标题",
+            unordered_list: "无序列表",
+            ordered_list: "有序列表",
+            blockquote: "引用",
+            insert_link: "插入链接",
+            insert_image: "插入图片…",
+            view: "视图",
+            show_source_code: "显示源码",
+            show_hide_sidebar: "显示/隐藏侧边栏",
+            show_hide_outline: "显示/隐藏大纲",
+            typewriter_mode: "打字机模式",
+            focus_mode: "专注模式",
+            toggle_theme: "切换主题",
+            load_custom_css: "加载自定义 CSS",
+            window: "窗口",
+            minimize: "最小化",
+            zoom: "缩放",
+            toggle_full_screen: "切换全屏",
+            bring_all_to_front: "前置全部窗口",
         },
         _ => MenuLabels {
             app_menu: "oh-my-md",
@@ -77,6 +145,40 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             export_html: "HTML…",
             export_pdf: "PDF…",
             export_image: "Image…",
+            edit: "Edit",
+            find: "Find",
+            find_in_document: "Find in Document",
+            search_in_folder: "Search in Folder",
+            format: "Format",
+            bold: "Bold",
+            italic: "Italic",
+            strikethrough: "Strikethrough",
+            inline_code: "Inline Code",
+            code_block: "Code Block",
+            heading_1: "Heading 1",
+            heading_2: "Heading 2",
+            heading_3: "Heading 3",
+            heading_4: "Heading 4",
+            heading_5: "Heading 5",
+            heading_6: "Heading 6",
+            unordered_list: "Bulleted List",
+            ordered_list: "Numbered List",
+            blockquote: "Blockquote",
+            insert_link: "Insert Link",
+            insert_image: "Insert Image…",
+            view: "View",
+            show_source_code: "Show Source Code",
+            show_hide_sidebar: "Show/Hide Sidebar",
+            show_hide_outline: "Show/Hide Outline",
+            typewriter_mode: "Typewriter Mode",
+            focus_mode: "Focus Mode",
+            toggle_theme: "Toggle Theme",
+            load_custom_css: "Load Custom CSS",
+            window: "Window",
+            minimize: "Minimize",
+            zoom: "Zoom",
+            toggle_full_screen: "Toggle Full Screen",
+            bring_all_to_front: "Bring All to Front",
         },
     }
 }
@@ -161,10 +263,11 @@ fn rebuild_from_state<R: Runtime>(
     let menu = MenuBuilder::new(app)
         .item(&app_submenu(app, &l)?)
         .item(&file_submenu(app, recents, &l)?)
-        .item(&edit_submenu(app)?)
-        .item(&format_submenu(app)?)
-        .item(&view_submenu(app)?)
-        .item(&window_submenu(app)?)
+        .item(&edit_submenu(app, &l)?)
+        .item(&find_submenu(app, &l)?)
+        .item(&format_submenu(app, &l)?)
+        .item(&view_submenu(app, &l)?)
+        .item(&window_submenu(app, &l)?)
         .build()?;
     app.set_menu(menu)?;
     if let Some(checked) = previous_checked {
@@ -327,8 +430,8 @@ fn export_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::
         .build()
 }
 
-fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> {
-    SubmenuBuilder::new(app, "Edit")
+fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, l.edit)
         .undo()
         .redo()
         .separator()
@@ -337,129 +440,129 @@ fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>>
         .paste()
         .select_all()
         .separator()
-        .item(&find_submenu(app)?)
+        .item(&find_submenu(app, l)?)
         .build()
 }
 
-fn find_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> {
-    SubmenuBuilder::new(app, "Find")
-        .item(&item(app, "find", "Find in Document", Some("CmdOrCtrl+F"))?)
+fn find_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, l.find)
+        .item(&item(app, "find", l.find_in_document, Some("CmdOrCtrl+F"))?)
         .item(&item(
             app,
             "search",
-            "Search in Folder",
+            l.search_in_folder,
             Some("CmdOrCtrl+Shift+F"),
         )?)
         .build()
 }
 
-fn format_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> {
-    SubmenuBuilder::new(app, "Format")
-        .item(&item(app, "bold", "Bold", Some("CmdOrCtrl+B"))?)
-        .item(&item(app, "italic", "Italic", Some("CmdOrCtrl+I"))?)
+fn format_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, l.format)
+        .item(&item(app, "bold", l.bold, Some("CmdOrCtrl+B"))?)
+        .item(&item(app, "italic", l.italic, Some("CmdOrCtrl+I"))?)
         .item(&item(
             app,
             "strikethrough",
-            "Strikethrough",
+            l.strikethrough,
             Some("CmdOrCtrl+Shift+X"),
         )?)
         .item(&item(
             app,
             "inline-code",
-            "Inline Code",
+            l.inline_code,
             Some("CmdOrCtrl+Shift+`"),
         )?)
         .item(&item(
             app,
             "code-block",
-            "Code Block",
+            l.code_block,
             Some("CmdOrCtrl+Shift+K"),
         )?)
         .separator()
-        .item(&item(app, "heading-1", "Heading 1", Some("CmdOrCtrl+1"))?)
-        .item(&item(app, "heading-2", "Heading 2", Some("CmdOrCtrl+2"))?)
-        .item(&item(app, "heading-3", "Heading 3", Some("CmdOrCtrl+3"))?)
-        .item(&item(app, "heading-4", "Heading 4", Some("CmdOrCtrl+4"))?)
-        .item(&item(app, "heading-5", "Heading 5", Some("CmdOrCtrl+5"))?)
-        .item(&item(app, "heading-6", "Heading 6", Some("CmdOrCtrl+6"))?)
+        .item(&item(app, "heading-1", l.heading_1, Some("CmdOrCtrl+1"))?)
+        .item(&item(app, "heading-2", l.heading_2, Some("CmdOrCtrl+2"))?)
+        .item(&item(app, "heading-3", l.heading_3, Some("CmdOrCtrl+3"))?)
+        .item(&item(app, "heading-4", l.heading_4, Some("CmdOrCtrl+4"))?)
+        .item(&item(app, "heading-5", l.heading_5, Some("CmdOrCtrl+5"))?)
+        .item(&item(app, "heading-6", l.heading_6, Some("CmdOrCtrl+6"))?)
         .separator()
         .item(&item(
             app,
             "unordered-list",
-            "Bulleted List",
+            l.unordered_list,
             Some("CmdOrCtrl+Alt+8"),
         )?)
         .item(&item(
             app,
             "ordered-list",
-            "Numbered List",
+            l.ordered_list,
             Some("CmdOrCtrl+Alt+7"),
         )?)
         .item(&item(
             app,
             "blockquote",
-            "Blockquote",
+            l.blockquote,
             Some("CmdOrCtrl+Alt+9"),
         )?)
         .separator()
-        .item(&item(app, "link", "Insert Link", Some("CmdOrCtrl+K"))?)
-        .item(&item(app, "insert-image", "Insert Image…", None)?)
+        .item(&item(app, "link", l.insert_link, Some("CmdOrCtrl+K"))?)
+        .item(&item(app, "insert-image", l.insert_image, None)?)
         .build()
 }
 
-fn view_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> {
-    SubmenuBuilder::new(app, "View")
+fn view_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, l.view)
         .item(&check_item(
             app,
             "view-source",
-            "Show Source Code",
+            l.show_source_code,
             Some("CmdOrCtrl+E"),
         )?)
         .item(&check_item(
             app,
             "view-sidebar",
-            "Show/Hide Sidebar",
+            l.show_hide_sidebar,
             Some("CmdOrCtrl+\\"),
         )?)
         .item(&check_item(
             app,
             "view-outline",
-            "Show/Hide Outline",
+            l.show_hide_outline,
             Some("CmdOrCtrl+Shift+O"),
         )?)
         .separator()
         .item(&check_item(
             app,
             "view-typewriter",
-            "Typewriter Mode",
+            l.typewriter_mode,
             None,
         )?)
-        .item(&check_item(app, "view-focus", "Focus Mode", None)?)
+        .item(&check_item(app, "view-focus", l.focus_mode, None)?)
         .separator()
-        .item(&item(app, "toggle-theme", "Toggle Theme", None)?)
-        .item(&item(app, "load-css", "Load Custom CSS", None)?)
+        .item(&item(app, "toggle-theme", l.toggle_theme, None)?)
+        .item(&item(app, "load-css", l.load_custom_css, None)?)
         .build()
 }
 
-fn window_submenu<R: Runtime, M: Manager<R>>(app: &M) -> tauri::Result<Submenu<R>> {
+fn window_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
     // Regular items with stable ids, handled natively in `handle_window_command`.
     // Predefined window items are avoided: their macOS selectors go through the
     // responder chain and do not act on the Tauri window.
-    SubmenuBuilder::new(app, "Window")
+    SubmenuBuilder::new(app, l.window)
         .item(&item(
             app,
             "window-minimize",
-            "Minimize",
+            l.minimize,
             Some("CmdOrCtrl+M"),
         )?)
-        .item(&item(app, "window-zoom", "Zoom", None)?)
+        .item(&item(app, "window-zoom", l.zoom, None)?)
         .separator()
-        .item(&item(app, "window-fullscreen", "Toggle Full Screen", None)?)
+        .item(&item(app, "window-fullscreen", l.toggle_full_screen, None)?)
         .separator()
         .item(&item(
             app,
             "window-bring-all-to-front",
-            "Bring All to Front",
+            l.bring_all_to_front,
             None,
         )?)
         .build()
@@ -514,6 +617,30 @@ mod tests {
         assert_eq!(l.file, "File");
         assert_eq!(l.new, "New");
         assert_eq!(l.save, "Save");
+    }
+
+    #[test]
+    fn menu_strings_zh_returns_format_view_window_chinese() {
+        let l = menu_strings("zh");
+        assert_eq!(l.edit, "编辑");
+        assert_eq!(l.find, "查找");
+        assert_eq!(l.format, "格式");
+        assert_eq!(l.bold, "加粗");
+        assert_eq!(l.italic, "斜体");
+        assert_eq!(l.code_block, "代码块");
+        assert_eq!(l.view, "视图");
+        assert_eq!(l.show_source_code, "显示源码");
+        assert_eq!(l.window, "窗口");
+        assert_eq!(l.minimize, "最小化");
+    }
+
+    #[test]
+    fn menu_strings_en_returns_format_view_window_english() {
+        let l = menu_strings("en");
+        assert_eq!(l.format, "Format");
+        assert_eq!(l.bold, "Bold");
+        assert_eq!(l.view, "View");
+        assert_eq!(l.window, "Window");
     }
 
     #[test]
