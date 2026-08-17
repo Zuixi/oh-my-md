@@ -264,7 +264,6 @@ fn rebuild_from_state<R: Runtime>(
         .item(&app_submenu(app, &l)?)
         .item(&file_submenu(app, recents, &l)?)
         .item(&edit_submenu(app, &l)?)
-        .item(&find_submenu(app, &l)?)
         .item(&format_submenu(app, &l)?)
         .item(&view_submenu(app, &l)?)
         .item(&window_submenu(app, &l)?)
