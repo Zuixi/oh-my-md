@@ -72,6 +72,18 @@ pub struct MenuLabels {
     pub zoom: &'static str,
     pub toggle_full_screen: &'static str,
     pub bring_all_to_front: &'static str,
+    pub undo: &'static str,
+    pub redo: &'static str,
+    pub cut: &'static str,
+    pub copy: &'static str,
+    pub paste: &'static str,
+    pub select_all: &'static str,
+    pub about: &'static str,
+    pub services: &'static str,
+    pub hide: &'static str,
+    pub hide_others: &'static str,
+    pub show_all: &'static str,
+    pub quit: &'static str,
 }
 
 pub fn menu_strings(locale: &str) -> MenuLabels {
@@ -127,6 +139,18 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             zoom: "缩放",
             toggle_full_screen: "切换全屏",
             bring_all_to_front: "前置全部窗口",
+            undo: "撤销",
+            redo: "重做",
+            cut: "剪切",
+            copy: "拷贝",
+            paste: "粘贴",
+            select_all: "全选",
+            about: "关于 oh-my-md",
+            services: "服务",
+            hide: "隐藏 oh-my-md",
+            hide_others: "隐藏其他",
+            show_all: "全部显示",
+            quit: "退出 oh-my-md",
         },
         _ => MenuLabels {
             app_menu: "oh-my-md",
@@ -179,6 +203,18 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             zoom: "Zoom",
             toggle_full_screen: "Toggle Full Screen",
             bring_all_to_front: "Bring All to Front",
+            undo: "Undo",
+            redo: "Redo",
+            cut: "Cut",
+            copy: "Copy",
+            paste: "Paste",
+            select_all: "Select All",
+            about: "About oh-my-md",
+            services: "Services",
+            hide: "Hide oh-my-md",
+            hide_others: "Hide Others",
+            show_all: "Show All",
+            quit: "Quit oh-my-md",
         },
     }
 }
@@ -357,7 +393,7 @@ pub fn set_menu_locale(
 
 fn app_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
     SubmenuBuilder::new(app, l.app_menu)
-        .item(&PredefinedMenuItem::about(app, None, None)?)
+        .item(&PredefinedMenuItem::about(app, Some(l.about), None)?)
         .separator()
         .item(&item(
             app,
@@ -366,13 +402,13 @@ fn app_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Res
             Some("CmdOrCtrl+,"),
         )?)
         .separator()
-        .item(&PredefinedMenuItem::services(app, None)?)
+        .item(&PredefinedMenuItem::services(app, Some(l.services))?)
         .separator()
-        .item(&PredefinedMenuItem::hide(app, None)?)
-        .item(&PredefinedMenuItem::hide_others(app, None)?)
-        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .item(&PredefinedMenuItem::hide(app, Some(l.hide))?)
+        .item(&PredefinedMenuItem::hide_others(app, Some(l.hide_others))?)
+        .item(&PredefinedMenuItem::show_all(app, Some(l.show_all))?)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
+        .item(&PredefinedMenuItem::quit(app, Some(l.quit))?)
         .build()
 }
 
@@ -431,13 +467,13 @@ fn export_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::
 
 fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
     SubmenuBuilder::new(app, l.edit)
-        .undo()
-        .redo()
+        .undo_with_text(l.undo)
+        .redo_with_text(l.redo)
         .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
+        .cut_with_text(l.cut)
+        .copy_with_text(l.copy)
+        .paste_with_text(l.paste)
+        .select_all_with_text(l.select_all)
         .separator()
         .item(&find_submenu(app, l)?)
         .build()
@@ -653,6 +689,19 @@ mod tests {
         let s = MenuState::default();
         assert_eq!(s.locale, "en");
         assert!(s.recents.is_empty());
+    }
+
+    #[test]
+    fn menu_strings_localizes_predefined_items() {
+        let z = menu_strings("zh");
+        assert_eq!(z.undo, "撤销");
+        assert_eq!(z.copy, "拷贝");
+        assert_eq!(z.select_all, "全选");
+        assert_eq!(z.quit, "退出 oh-my-md");
+        let e = menu_strings("en");
+        assert_eq!(e.undo, "Undo");
+        assert_eq!(e.copy, "Copy");
+        assert_eq!(e.quit, "Quit oh-my-md");
     }
 
     #[test]
