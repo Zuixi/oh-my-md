@@ -7,6 +7,7 @@ import {
 } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
+import { t } from "../src/i18n"
 import { createAppHarness, expectPathShown, normalizationId, resetMountedApps, versionFor } from "./appHarness"
 import * as findReplaceModule from "../src/findReplace"
 
@@ -522,7 +523,7 @@ describe("App document session", () => {
     await editAndSettle(harness, 1, "one two three")
 
     expect(harness.services.reportError).toHaveBeenCalledOnce()
-    expect(harness.services.reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
+    expect(harness.services.reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
     expect(logged).toHaveBeenCalledTimes(2)
     expect(screen.getByText("3 words · 13 chars")).toBeTruthy()
     expectPathShown("unnamed", { dirty: true })
@@ -543,8 +544,8 @@ describe("App document session", () => {
     await editAndSettle(harness, 1, "third")
 
     expect(vi.mocked(harness.services.reportError).mock.calls).toEqual([
-      ["Recovery write failed: first outage"],
-      ["Recovery write failed: second outage"],
+      [`${t("error.recoveryWriteFailed")}: first outage`],
+      [`${t("error.recoveryWriteFailed")}: second outage`],
     ])
     expect(logged).not.toHaveBeenCalled()
     logged.mockRestore()
@@ -823,7 +824,7 @@ describe("App document session", () => {
     await harness.requestOpen("/notes/broken.md", "broken")
     await waitFor(() => {
       expect(harness.services.reportError).toHaveBeenCalledWith(
-        "Open failed: reset failed",
+        `${t("error.openFailed")}: reset failed`,
       )
     })
     fireEvent.keyDown(window, { key: "s", metaKey: true })

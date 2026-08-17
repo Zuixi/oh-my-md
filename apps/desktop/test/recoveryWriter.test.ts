@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { t } from "../src/i18n"
 import { createRecoveryWriter, type RecoveryDraft, type RecoveryHost } from "../src/recoveryWriter"
 
 function draftFor(tabId: number): RecoveryDraft {
@@ -24,10 +25,10 @@ describe("recovery writer", () => {
     await writer.save(draftFor(1), host)
 
     expect(reportError).toHaveBeenCalledOnce()
-    expect(reportError).toHaveBeenCalledWith("Recovery write failed: disk full")
+    expect(reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
     expect(logged).toHaveBeenCalledTimes(2)
     expect(logged.mock.calls[0]).toEqual([
-      "Recovery write failed: disk full",
+      `${t("error.recoveryWriteFailed")}: disk full`,
       { key: "notes_1_md", path: "/notes/1.md" },
       new Error("disk full"),
     ])
@@ -47,8 +48,8 @@ describe("recovery writer", () => {
     await writer.save(draftFor(1), host)
 
     expect(reportError.mock.calls).toEqual([
-      ["Recovery write failed: first outage"],
-      ["Recovery write failed: second outage"],
+      [`${t("error.recoveryWriteFailed")}: first outage`],
+      [`${t("error.recoveryWriteFailed")}: second outage`],
     ])
     expect(logged).not.toHaveBeenCalled()
   })

@@ -1,4 +1,5 @@
 import { errorMessage } from "./desktopServices"
+import { t } from "./i18n"
 
 export interface RecoveryDraft {
   readonly tabId: number
@@ -49,7 +50,7 @@ function surfaceFailure(
   host: RecoveryHost,
   error: unknown,
 ): void {
-  const message = errorMessage("Recovery write failed", error)
+  const message = errorMessage(t("error.recoveryWriteFailed"), error)
   if (reported.has(draft.tabId)) {
     console.error(message, { key: draft.key, path: draft.path }, error)
     return

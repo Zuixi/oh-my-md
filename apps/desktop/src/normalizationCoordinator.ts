@@ -354,7 +354,7 @@ export function createTabSaver(host: TabSaveHost) {
         }
         const versionProbe = await host.readDocumentVersion(targetPath)
         if (versionProbe.kind !== "existing") {
-          throw new Error("Save succeeded but document version is unavailable")
+          throw new Error(t("error.save.noVersion"))
         }
         await host.allowDocumentAssets(targetPath)
         if (!stillTarget()) {
