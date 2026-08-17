@@ -12,6 +12,7 @@ import type { DocumentErrorCode } from "./desktopServices"
 import type { DocumentSaveState } from "./documentSaveState"
 import { DocumentDiffPanel } from "./DocumentDiffPanel"
 import { SaveConflictBanner } from "./SaveConflictBanner"
+import { useT } from "./i18n"
 
 export const DIFF_RECOMPUTE_MS = 150
 
@@ -31,6 +32,7 @@ export interface ConflictSaveRegionProps {
 }
 
 export function ConflictSaveRegion(props: ConflictSaveRegionProps) {
+  const t = useT()
   const conflictModel = conflictBannerModel(props.activeSaveState, props.saveErrorCode)
   const showBanner = (props.bannerKind === "conflict" || props.bannerKind === "saveFailed")
     && conflictModel !== null
@@ -92,10 +94,10 @@ export function ConflictSaveRegion(props: ConflictSaveRegionProps) {
     <>
       {showBanner && conflictModel ? (
         <SaveConflictBanner
-          message={conflictModel.message}
+          message={t(conflictModel.messageKey)}
           actions={conflictModel.actions.map(id => ({
             id,
-            label: CONFLICT_ACTION_LABELS[id],
+            label: t(CONFLICT_ACTION_LABELS[id]),
           }))}
           busy={props.activeSaveState.lifecycle.kind === "saving"}
           focusToken={props.conflictFocusToken}
