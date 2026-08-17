@@ -400,7 +400,7 @@ export default function App({
       const entries = await services.listDir(path)
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      services.reportError(errorMessage("Folder listing failed", error))
+      services.reportError(errorMessage(t("error.folderListingFailed"), error))
     }
   }
 
@@ -487,7 +487,7 @@ export default function App({
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
-          services.reportError(errorMessage("Open failed", new Error("File not found")))
+          services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
           return
         }
         void openPath(resolveMarkdownHref(current, href), true)
@@ -646,7 +646,7 @@ export default function App({
     void listDir(folder).then(entries => {
       if (!cancelled) commitTree(setChildren(emptyFileTree(), folder, entries))
     }).catch(error => {
-      if (!cancelled) services.reportError(errorMessage("Folder listing failed", error))
+      if (!cancelled) services.reportError(errorMessage(t("error.folderListingFailed"), error))
     })
     return () => { cancelled = true }
   }, [workspace.folder, services])
@@ -819,22 +819,22 @@ export default function App({
     } catch (error) {
       const cmd = toDocumentCommandError(error)
       if (cmd.code === "invalidPath" && mountedRef.current) {
-        reportUserError("That path is not valid.")
+        reportUserError(t("error.invalidPath"))
         return
       }
       if (cmd.code === "notUtf8" && mountedRef.current) {
-        reportUserError("Only UTF-8 Markdown files are supported.")
+        reportUserError(t("error.notUtf8"))
         return
       }
       if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage("Open failed", error))
+        services.reportError(errorMessage(t("error.openFailed"), error))
       }
       return
     }
     if (request !== undefined && request !== openRequestRef.current) return
     if (snapshot.kind === "missing") {
       if (mountedRef.current) {
-        services.reportError(errorMessage("Open failed", new Error("File not found")))
+        services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
       }
       return
     }
@@ -869,7 +869,7 @@ export default function App({
       await openPath(nextPath, false, request)
     } catch (error) {
       if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage("Open failed", error))
+        services.reportError(errorMessage(t("error.openFailed"), error))
       }
     } finally {
       if (request === openRequestRef.current) openingRef.current = false
@@ -999,7 +999,7 @@ export default function App({
       if (!treeModelRef.current.expanded.has(path)) return
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      services.reportError(errorMessage("Folder listing failed", error))
+      services.reportError(errorMessage(t("error.folderListingFailed"), error))
     } finally {
       pendingListDirsRef.current.delete(path)
     }
@@ -1076,21 +1076,21 @@ export default function App({
     try {
       defaultName = await nextUntitledMarkdownName(dir)
     } catch (error) {
-      services.reportError(errorMessage("Folder listing failed", error))
+      services.reportError(errorMessage(t("error.folderListingFailed"), error))
       return
     }
     const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)
     if (rawName === null) return
     const name = normalizeMarkdownName(rawName)
     if (invalidName(name)) {
-      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      reportUserError(t("error.emptyName"))
       return
     }
     try {
       await services.createMarkdown(dir, name)
       await refreshTreePath(dir)
     } catch (error) {
-      services.reportError(errorMessage("Create file failed", error))
+      services.reportError(errorMessage(t("error.createFileFailed"), error))
     }
   }
 
@@ -1100,14 +1100,14 @@ export default function App({
     if (rawName === null) return
     const name = rawName.trim()
     if (invalidName(name)) {
-      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      reportUserError(t("error.emptyName"))
       return
     }
     try {
       await services.createDir(dir, name)
       await refreshTreePath(dir)
     } catch (error) {
-      services.reportError(errorMessage("Create folder failed", error))
+      services.reportError(errorMessage(t("error.createFolderFailed"), error))
     }
   }
 
@@ -1118,7 +1118,7 @@ export default function App({
     const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
     if (name === entry.name) return
     if (invalidName(name)) {
-      reportUserError("Names cannot be empty or contain '/' or '..'.")
+      reportUserError(t("error.emptyName"))
       return
     }
     const dir = parentDir(entry.path)
@@ -1129,7 +1129,7 @@ export default function App({
       retargetOpenTabs(entry.path, nextPath, entry.is_dir)
       await refreshTreePath(dir)
     } catch (error) {
-      services.reportError(errorMessage("Rename failed", error))
+      services.reportError(errorMessage(t("error.renameFailed"), error))
     }
   }
 
@@ -1153,7 +1153,7 @@ export default function App({
       const dir = parentDir(entry.path)
       if (dir) await refreshTreePath(dir)
     } catch (error) {
-      services.reportError(errorMessage("Delete failed", error))
+      services.reportError(errorMessage(t("error.deleteFailed"), error))
     }
   }
 

@@ -40,6 +40,7 @@ import type { NormalizationByTab } from "./normalizationState"
 import { SAVE_COPY_SAME_PATH_MESSAGE } from "./conflictActions"
 import { markSaved, recoveryKey, sessionDirty, sessionPath, sessionVersion, type EditorSession } from "./session"
 import { replaceTabSession, type Workspace } from "./workspace"
+import { t } from "./i18n"
 
 export type SaveMode =
   | { readonly kind: "current" }
@@ -124,7 +125,7 @@ function resolveTargetPath(
 }
 
 function userFacingSaveError(error: DocumentCommandError): string {
-  return error.message || "Save failed"
+  return error.message || t("error.save.failed")
 }
 
 function shouldReportPathError(code: DocumentCommandError["code"]): boolean {

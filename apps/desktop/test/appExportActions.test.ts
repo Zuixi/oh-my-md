@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import { exportRichHtml } from "@omd/engine"
+import { t } from "../src/i18n"
 import { exportCurrent } from "../src/appExportActions"
 import type { DesktopServices } from "../src/desktopServices"
 
@@ -68,7 +69,7 @@ describe("exportCurrent", () => {
     })
     await exportCurrent(services, makeView(), "pdf")
     expect(vi.mocked(services.reportError as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      expect.stringContaining("warning"),
+      expect.stringContaining(t("error.export.warning", { detail: "" }).split(":")[0].trim()),
     )
   })
 })

@@ -24,10 +24,10 @@ export async function exportCurrent(
     const path = await services.pickExportPath?.(format)
     if (path) {
       const warning = await services.exportPreview(html, path, format)
-      if (warning) services.reportError(`Export warning: ${warning}`)
+      if (warning) services.reportError(t("error.export.warning", { detail: warning }))
     }
   } catch (error) {
-    services.reportError(errorMessage("Export failed", error))
+    services.reportError(errorMessage(t("error.export.failed"), error))
   }
 }
 
@@ -41,6 +41,6 @@ export async function loadCustomCss(
     setCustomCss(await services.readFile(path))
   } catch (error) {
     setCustomCss("")
-    services.reportError(errorMessage("Custom CSS failed", error))
+    services.reportError(errorMessage(t("error.css.failed"), error))
   }
 }
