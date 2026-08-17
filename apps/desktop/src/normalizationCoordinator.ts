@@ -16,6 +16,7 @@ import { markSaved, recoveryKey, sessionDirty, sessionPath, type EditorSession }
 import { replaceTabSession, type Workspace } from "./workspace"
 import type { DocumentVersion, ExpectedDocumentVersion } from "./desktopServices"
 import { createTransientStatusNotifier } from "./transientStatus"
+import { t } from "./i18n"
 
 export type SaveTrigger = "autosave" | "explicit"
 
@@ -27,7 +28,7 @@ export interface NormalizationOperationCapture {
 }
 
 export const SKIPPED_MARKERS_STATUS =
-  "Original numbers were restored where they were unchanged."
+  "normalization.skippedMarkers"
 
 export function canAutosaveTab(
   tabId: number,
@@ -296,7 +297,7 @@ export function createSkippedStatusNotifier(
   setTimer: (id: number | null) => void,
 ): () => void {
   const notify = createTransientStatusNotifier(setMessage, timerRef, setTimer)
-  return () => notify(SKIPPED_MARKERS_STATUS)
+  return () => notify(t(SKIPPED_MARKERS_STATUS))
 }
 
 export function createTabSaver(host: TabSaveHost) {

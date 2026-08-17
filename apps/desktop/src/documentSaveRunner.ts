@@ -48,7 +48,7 @@ export type SaveMode =
   | { readonly kind: "recreate" }
 
 export const DURABILITY_WARNING =
-  "Saved, but the folder could not be flushed to disk."
+  "save.durabilityWarning"
 
 export type SaveStatusLabel = "idle" | "saving" | "save failed" | "conflict"
 
