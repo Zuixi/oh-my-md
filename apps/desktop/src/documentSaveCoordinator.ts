@@ -52,25 +52,25 @@ export type WatcherIntent =
   | { readonly kind: "fetchContents" }
 
 export interface ConflictBannerModel {
-  readonly message: string
+  readonly messageKey: string
   readonly actions: readonly ConflictActionId[]
 }
 
 export type TopBannerKind = "conflict" | "saveFailed" | "normalization"
 
 export const CONFLICT_ACTION_LABELS: Readonly<Record<ConflictActionId, string>> = {
-  compare: "Compare",
-  saveCopy: "Save copy",
-  reloadDisk: "Reload disk",
-  overwriteDisk: "Overwrite disk",
-  keepCurrent: "Keep current",
-  recreateFile: "Recreate file",
-  closeDiscard: "Close and discard",
-  reopenPrevious: "Reopen previous file",
-  chooseAnotherPath: "Choose another path",
-  retry: "Retry",
-  revealInFinder: "Reveal in Finder",
-  cancel: "Cancel",
+  compare: "conflict.action.compare",
+  saveCopy: "conflict.action.saveCopy",
+  reloadDisk: "conflict.action.reloadDisk",
+  overwriteDisk: "conflict.action.overwriteDisk",
+  keepCurrent: "conflict.action.keepCurrent",
+  recreateFile: "conflict.action.recreateFile",
+  closeDiscard: "conflict.action.closeDiscard",
+  reopenPrevious: "conflict.action.reopenPrevious",
+  chooseAnotherPath: "conflict.action.chooseAnotherPath",
+  retry: "conflict.action.retry",
+  revealInFinder: "conflict.action.revealInFinder",
+  cancel: "conflict.action.cancel",
 }
 
 export function allocateOperationId(seq: { current: number }): number {
@@ -173,32 +173,32 @@ function divergenceBanner(
   switch (divergence.kind) {
     case "contentConflict":
       return {
-        message: "The file changed on disk while you were editing.",
+        messageKey: "conflict.msg.contentConflict",
         actions: ["compare", "saveCopy", "reloadDisk", "overwriteDisk"],
       }
     case "externalChanged":
       return {
-        message: "The file was updated on disk.",
+        messageKey: "conflict.msg.externalChanged",
         actions: ["compare", "reloadDisk", "keepCurrent"],
       }
     case "deletedExternally":
       return {
-        message: "The file was deleted on disk.",
+        messageKey: "conflict.msg.deletedExternally",
         actions: ["recreateFile", "saveCopy", "closeDiscard"],
       }
     case "createdAtMissingTarget":
       return {
-        message: "Another file was created at this path.",
+        messageKey: "conflict.msg.createdAtMissingTarget",
         actions: ["compare", "chooseAnotherPath"],
       }
     case "pathChanged":
       return {
-        message: "The file path changed on disk.",
+        messageKey: "conflict.msg.pathChanged",
         actions: ["saveCopy", "reopenPrevious", "closeDiscard"],
       }
     case "unexpectedSymlinkAtTarget":
       return {
-        message: "A symlink appeared at the save target.",
+        messageKey: "conflict.msg.unexpectedSymlinkAtTarget",
         actions: ["chooseAnotherPath", "cancel"],
       }
   }
@@ -218,7 +218,7 @@ export function conflictBannerModel(
   if (errorCode === "permissionDenied") {
     actions.push("revealInFinder")
   }
-  return { message: saveState.lifecycle.message, actions }
+  return { messageKey: saveState.lifecycle.message, actions }
 }
 
 function isConflictDivergence(divergence: DiskDivergence): boolean {

@@ -122,7 +122,7 @@ describe("documentSaveCoordinator", () => {
     for (const action of Object.values(CONFLICT_ACTION_LABELS)) {
       expect(action.length).toBeGreaterThan(0)
     }
-    expect(CONFLICT_ACTION_LABELS.reopenPrevious).toBe("Reopen previous file")
+    expect(CONFLICT_ACTION_LABELS.reopenPrevious).toBe("conflict.action.reopenPrevious")
   })
 
   it("derives expected version from session persistence", () => {
