@@ -22,9 +22,10 @@ interface MenuItem { id: string; accelerator: string | null }
 
 function menuItems(): MenuItem[] {
   const items: MenuItem[] = []
-  const re = /\.item\(&(?:item|check_item)\(\s*app\s*,\s*"([^"]+)"\s*,\s*"[^"]*"\s*,\s*Some\("([^"]+)"\)\s*,?\s*\)\?\)/g
+  // 标签槽接受 l.field（i18n 后）或字符串字面量（历史上）：`(?:&?[\w.]+|"[^"]*")`
+  const re = /\.item\(&(?:item|check_item)\(\s*app\s*,\s*"([^"]+)"\s*,\s*(?:&?[\w.]+|"[^"]*")\s*,\s*Some\("([^"]+)"\)\s*,?\s*\)\?\)/g
   for (const match of MENU_RS.matchAll(re)) items.push({ id: match[1], accelerator: match[2] })
-  const noAccel = /\.item\(&(?:item|check_item)\(\s*app\s*,\s*"([^"]+)"\s*,\s*"[^"]*"\s*,\s*None\s*,?\s*\)\?\)/g
+  const noAccel = /\.item\(&(?:item|check_item)\(\s*app\s*,\s*"([^"]+)"\s*,\s*(?:&?[\w.]+|"[^"]*")\s*,\s*None\s*,?\s*\)\?\)/g
   for (const match of MENU_RS.matchAll(noAccel)) items.push({ id: match[1], accelerator: null })
   return items
 }
