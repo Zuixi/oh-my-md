@@ -208,7 +208,7 @@ export const en: Record<string, string> = {
   "confirm.delete": "Delete {name}? It will be moved to the Trash.",
   "confirm.restore": "Restore unsaved draft {label}?",
   "confirm.externalChange": "File changed on disk. Reload?",
-  "error.export.desktopOnly": "PDF and image export are currently only available on macOS",
+  "error.export.desktopOnly": "PDF and image export are only available in the macOS desktop app",
   "error.openFailed": "Open failed",
   "error.folderListingFailed": "Folder listing failed",
   "error.createFileFailed": "Create file failed",

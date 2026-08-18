@@ -208,7 +208,7 @@ export const zh: Record<string, string> = {
   "confirm.delete": "删除 {name}？将移入废纸篓。",
   "confirm.restore": "恢复未保存草稿 {label}？",
   "confirm.externalChange": "文件已在磁盘上更改。重新加载？",
-  "error.export.desktopOnly": "PDF 与图片导出目前仅在 macOS 上可用",
+  "error.export.desktopOnly": "PDF 与图片导出目前仅在 macOS 桌面应用可用",
   "error.openFailed": "打开失败",
   "error.folderListingFailed": "文件夹列出失败",
   "error.createFileFailed": "创建文件失败",
