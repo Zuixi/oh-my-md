@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest"
 import { EditorState } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
-import { isLivePreview } from "@omd/engine"
+import { blockRenderBudget, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, resetMountedApps } from "./appHarness"
 
@@ -121,5 +121,15 @@ describe("large document safe mode", () => {
     // 同 tab 再次载入超大文档：尊重选择，不再强制
     await harness.openFileTab("/b.md", bigDoc(50010))
     expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(false)
+  })
+
+  it("sets a finite block render budget only for safe-mode documents", async () => {
+    const harness = createAppHarness(editor)
+    harness.renderApp()
+    await harness.openFileTab("/big.md", bigDoc(50010))
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    // 打开普通小文档后恢复
+    await harness.openFileTab("/small.md", "small")
+    expect(blockRenderBudget()).toBe(Infinity)
   })
 })
