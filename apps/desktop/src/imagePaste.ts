@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { EditorView } from "@codemirror/view"
 import { ASSETS_DIR_NAME, MAX_IMAGE_BYTES } from "./constants"
+import { isWindows } from "./platform"
 
 const ACCEPTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const
 const EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
@@ -94,7 +95,11 @@ export function imagePasteHandler(options: ImagePasteOptions) {
         } else {
           // Otherwise use the click point as a collapsed cursor.
           contextMenuTarget = { from: clickPos, to: clickPos }
-          view.dispatch({ selection: { anchor: clickPos } })
+          // The selectionchange dispatch works around a WKWebView bug (WebKit-family
+          // engines only); WebView2 is Chromium and must keep native caret behavior.
+          if (!isWindows()) {
+            view.dispatch({ selection: { anchor: clickPos } })
+          }
         }
       } else {
         contextMenuTarget = null
