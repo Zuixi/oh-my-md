@@ -8,10 +8,10 @@ import { makeState } from "./helpers"
 const dir = join(dirname(fileURLToPath(import.meta.url)), "fixtures")
 const files = readdirSync(dir).filter(f => f.endsWith(".md"))
 
-function specsFor(f: string): string[] {
+function specsFor(f: string, to?: number): string[] {
   const doc = readFileSync(join(dir, f), "utf8")
   const state = makeState(doc)
-  return collectDecorationSpecs(state, 0, state.doc.length)
+  return collectDecorationSpecs(state, 0, to ?? state.doc.length)
     .map(s => `${s.tag}@${s.from}-${s.to}`)
 }
 
@@ -324,8 +324,12 @@ describe("fixture snapshots", () => {
     `)
   })
 
-  it("large.md", () => {
-    expect(specsFor("large.md")).toMatchInlineSnapshot(`
+  // Full-doc specs are ~6000 entries of repeated block shapes; snapshot the
+  // first 3000 chars (every block form appears in the prefix) to keep the
+  // inline snapshot reviewable. makeState now guarantees a complete tree, so
+  // the prefix is deterministic regardless of CPU load.
+  it("large.md (first 3000 chars)", () => {
+    expect(specsFor("large.md", 3000)).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
         "line:omd-h2@11-11",
