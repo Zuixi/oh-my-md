@@ -300,6 +300,21 @@ describe("fixture snapshots", () => {
     `)
   })
 
+  it("front-matter.md", () => {
+    // specsFor anchors the cursor at doc start, inside the block: the source
+    // view (one styled line per row) renders instead of the chip.
+    expect(specsFor("front-matter.md")).toMatchInlineSnapshot(`
+      [
+        "line:omd-front-matter@0-0",
+        "line:omd-front-matter@4-4",
+        "line:omd-front-matter@32-32",
+        "line:omd-front-matter@45-45",
+        "line:omd-h1@50-50",
+        "replace:HeaderMark@50-52",
+      ]
+    `)
+  })
+
   it("image.md", () => {
     expect(specsFor("image.md")).toMatchInlineSnapshot(`
       [
@@ -898,6 +913,7 @@ describe("fixture coverage", () => {
       "code-inline.md",
       "emphasis.md",
       "footnote.md",
+      "front-matter.md",
       "heading.md",
       "hr.md",
       "image.md",

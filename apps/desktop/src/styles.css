@@ -149,6 +149,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-hr-block { margin: 0.4em 0; }
 .editor-host .omd-hr-block .omd-block-body { padding: 0; }
 .editor-host .omd-hr-block hr { border: none; border-top: 1px solid var(--omd-bar); margin: 0.5em 0; }
+.editor-host .omd-front-matter { padding: 2px 0; }
+.editor-host .omd-front-matter-chip {
+  display: inline-block; padding: 2px 10px; border-radius: 10px;
+  font-size: 0.8em; color: var(--omd-muted); cursor: pointer;
+  background: var(--omd-code-bg); border: 1px solid var(--omd-border);
+}
+.editor-host .omd-front-matter-src {
+  color: var(--omd-muted); font-family: ui-monospace, monospace; font-size: 0.9em;
+}
 .editor-host .omd-checkbox { margin-right: 0.4em; }
 .editor-host .omd-bullet { color: var(--omd-link); }
 .editor-host .omd-list-mark { color: var(--omd-link); }

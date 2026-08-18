@@ -316,3 +316,7 @@ The hand-written Lezer inline parsers compare `cx.char(i)` against ASCII codes. 
 ## The notify watcher is a hint; FSEvents latency and dropped events are expected
 
 `watcher.rs` coalesces notify events for 300 ms before emitting `workspace-changed`, and macOS FSEvents may batch or reorder paths. The webview handler therefore probes **all** open tabs (fingerprint compare in Rust decides) instead of trusting event paths, and the old poll survives as a 30 s fallback (`watchMs` default in `App.tsx`). Never make an event path the basis for a reload decision — only `read_document_version`/guarded-save comparisons may change document state. Watch paths are canonicalized on both set and update; a non-canonical path in `state.watched` would make `diff_watches` leak watches that `unwatch` can never remove.
+
+## Doc-start `---` is front matter, not a thematic rule
+
+Since the FrontMatter parser landed, the first line `---` of a document always opens a front matter block (unclosed blocks swallow to EOF, matching the math-block tolerance). A document that merely starts with a horizontal rule is therefore rendered as front-matter source until a second `---` appears — this flipped `blocks.test.ts`'s hr-at-doc-start case, which now uses a mid-doc rule. The same ambiguity drives the stats stripper in `stats.ts` (leading `---`…`---` pair stripped from counts) and exists in every front-matter-aware renderer.

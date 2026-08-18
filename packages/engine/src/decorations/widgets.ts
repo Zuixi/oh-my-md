@@ -1,5 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view"
-import { BlockWidget } from "./blockWidget"
+import { BlockWidget, type BlockEmbed } from "./blockWidget"
 
 export class EntityWidget extends WidgetType {
   constructor(readonly ch: string, readonly raw: string) { super() }
@@ -75,5 +75,22 @@ export class HrWidget extends BlockWidget {
   protected get cssClass() { return "omd-hr-block" }
   protected renderInto(el: HTMLElement) {
     el.appendChild(document.createElement("hr"))
+  }
+}
+
+/** Collapsed YAML front matter chip; clicking (BlockWidget base) reveals source. */
+export class FrontMatterWidget extends BlockWidget {
+  private readonly lineCount: number
+  constructor(src: string, pos: number, embed?: BlockEmbed) {
+    super(src, pos, embed)
+    this.lineCount = src.split("\n").length
+  }
+  protected get cssClass() { return "omd-front-matter" }
+  protected renderInto(el: HTMLElement) {
+    const chip = document.createElement("span")
+    chip.className = "omd-front-matter-chip"
+    chip.textContent = "YAML front matter"
+    chip.title = `${this.lineCount} lines`
+    el.appendChild(chip)
   }
 }
