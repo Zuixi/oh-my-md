@@ -51,6 +51,12 @@ export const en: Record<string, string> = {
   "cmd.label.export-pdf": "Export PDF",
   "cmd.label.export-image": "Export Image",
   "cmd.label.clear-recents": "Clear Recents",
+  "cmd.label.check-updates": "Check for Updates…",
+
+  "update.available": "Version {version} is available.",
+  "update.view": "View Release",
+  "update.dismiss": "Later",
+  "update.upToDate": "You are up to date.",
 
   "search.title": "Search",
   "search.aria.close": "Close search",

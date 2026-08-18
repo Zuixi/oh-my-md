@@ -32,6 +32,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   "export-image": "export-image",
   "clear-recents": "clear-recents",
   preferences: "preferences",
+  "check-updates": "check-updates",
   bold: "bold",
   italic: "italic",
   strikethrough: "strikethrough",
