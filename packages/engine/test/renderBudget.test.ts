@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { EditorState, RangeSetBuilder } from "@codemirror/state"
 import { Decoration, EditorView } from "@codemirror/view"
 import { editorExtensions, setBlockRenderBudget } from "../src/index"
@@ -38,6 +38,9 @@ function viewWithMarkers(blocks: number, cursorLine: number): EditorView {
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 
 describe("block render budget", () => {
+  // 预算是模块级全局状态（单窗口应用）；断言中途抛错也不能把有限预算泄漏给后续用例。
+  afterEach(() => { setBlockRenderBudget(Infinity) })
+
   it("renders every block when the budget is infinite (default)", async () => {
     const view = viewWithMarkers(6, 0)
     await flush()

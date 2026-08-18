@@ -9,8 +9,10 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-// 与 packages/engine/bench/generate.ts 逐字节一致的确定性生成器。
-// 内联复刻而非 import：脚本是独立 ESM，不依赖 workspace TS 源码路径。
+// SYNC: packages/engine/bench/generate.ts —— 本函数是 engine 基准生成器的内联复刻
+// （脚本是独立 ESM，不依赖 workspace TS 源码路径；仓库 tsconfig 无 allowJs，无法
+// 反向 import）。修改任一侧的块逻辑时，grep "SYNC:" 同步两处，否则烟测样本与基准
+// 负载漂移，历史对比失真。
 function makeBenchmarkDoc(lines) {
   const blocks = []
   let produced = 0

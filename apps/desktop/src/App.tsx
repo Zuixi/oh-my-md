@@ -271,6 +271,9 @@ export default function App({
   // Spec 05a：拉取式物化——doc 更新只发轻量信号，内容按 250ms 节奏从 view 拉取。
   const pendingDocTabsRef = useRef(new Set<number>())
   const docMaterializeTimerRef = useRef<number | null>(null)
+  // 每键（仅 docChanged，纯选区更新在 reportEditorUpdate 已早退）触发一次 O(UI) 重渲染：
+  // 状态栏光标列号在渲染期读 viewRef（editorStatus），需要每键刷新才能与 05a 前行为一致。
+  // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
   const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
   const safeModeChoiceRef = useRef(new Map<number, boolean>())
@@ -1674,6 +1677,8 @@ export default function App({
 
   // collectMatches is a full-document regex scan; memoized so it reruns only
   // when find inputs or the document actually change, not on every App render.
+  // 注意（Spec 05a）：doc 是 250ms 物化节奏的 React state —— 编辑器里打字时匹配数
+  // 最多滞后 ~250ms 才刷新（与字数统计防抖同语义）；换来的是全文扫描不进每键路径。
   const findPatternError = useMemo(
     () => findOpen && findRegexMode && findQuery !== ""
       ? validateFindPattern({ query: findQuery, caseSensitive: findCase, regex: true, wholeWord: false })
