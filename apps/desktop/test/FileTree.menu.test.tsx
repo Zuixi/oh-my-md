@@ -191,6 +191,26 @@ describe("FileTree sidebar menu", () => {
     expect(screen.queryByText("doc.md")).toBeNull()
   })
 
+  it("sees edits made inside the materialization window when dirty-checking a delete", async () => {
+    // Spec 05a 回归护栏：docsRef 滞后 250ms（物化节奏），删除前的脏检查必须先 flush，
+    // 否则窗口内的编辑被判定为"未修改"→ 跳过确认 → 删文件丢内容。
+    const harness = makeAppHarness()
+    const entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    // confirmClose 返回 false：只要脏检查看到编辑，删除就应被拦下。
+    vi.mocked(harness.services.confirmClose).mockReturnValue(false)
+
+    harness.renderApp({ docMaterializeMs: 250 })
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    harness.editorForTab(1).emit({ doc: "edited just now", docChanged: true, pendingNormalization: null })
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }))
+
+    expect(harness.services.confirmClose).toHaveBeenCalledOnce()
+    expect(harness.services.deletePath).not.toHaveBeenCalled()
+  })
+
   it("reveals the selected path in Finder", async () => {
     const harness = makeAppHarness()
     harness.services.listDir = vi.fn(async () => [
