@@ -180,7 +180,7 @@ export const zh: Record<string, string> = {
 
   "confirm.discard": "放弃未保存的更改并打开另一个文档？",
   "confirm.close": "关闭此标签页并放弃未保存的更改？",
-  "confirm.delete": "删除 {name}？此操作无法撤销。",
+  "confirm.delete": "删除 {name}？将移入废纸篓。",
   "confirm.restore": "恢复未保存草稿 {label}？",
   "confirm.externalChange": "文件已在磁盘上更改。重新加载？",
   "error.export.desktopOnly": "PDF 与图片导出仅在桌面应用可用",
