@@ -41,9 +41,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Enable long paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.87.0
         with:
@@ -74,9 +77,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Enable long paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.87.0
       - name: Install Tauri Linux system dependencies
