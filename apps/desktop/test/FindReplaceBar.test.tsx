@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi, afterEach } from "vitest"
 import { FindReplaceBar } from "../src/FindReplaceBar"
 import { initLocale, setLocale } from "../src/i18n"
@@ -9,12 +9,17 @@ function renderBar(overrides: Partial<Parameters<typeof FindReplaceBar>[0]> = {}
     query: "",
     replacement: "",
     caseSensitive: false,
+    regex: false,
+    wholeWord: false,
+    patternError: null,
     replaceOpen: false,
     matchCount: 0,
     activeIndex: 0,
     onQuery: vi.fn(),
     onReplacement: vi.fn(),
     onCaseSensitive: vi.fn(),
+    onRegex: vi.fn(),
+    onWholeWord: vi.fn(),
     onNext: vi.fn(),
     onPrev: vi.fn(),
     onReplace: vi.fn(),
@@ -72,5 +77,24 @@ describe("FindReplaceBar", () => {
     setLocale("en")
     renderBar({ matchCount: 0, activeIndex: 0 })
     expect(screen.getByText("0 matches")).toBeTruthy()
+  })
+
+  it("toggles regex and whole-word and disables whole-word in regex mode", () => {
+    setLocale("en")
+    const { onRegex, onWholeWord } = renderBar()
+    fireEvent.click(screen.getByLabelText("Regular expression"))
+    expect(onRegex).toHaveBeenCalledWith(true)
+    fireEvent.click(screen.getByLabelText("Whole word"))
+    expect(onWholeWord).toHaveBeenCalledWith(true)
+
+    cleanup()
+    renderBar({ regex: true, wholeWord: true })
+    expect((screen.getByLabelText("Whole word") as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it("announces invalid regex patterns", () => {
+    setLocale("en")
+    renderBar({ regex: true, patternError: "Invalid regular expression" })
+    expect(screen.getByRole("alert").textContent).toContain("Invalid regex")
   })
 })

@@ -974,3 +974,7 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   font-size: 12px;
   color: var(--omd-muted);
 }
+.find-replace-error {
+  font-size: 12px;
+  color: var(--omd-error-fg);
+}

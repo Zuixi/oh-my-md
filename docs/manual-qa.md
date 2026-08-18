@@ -90,7 +90,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 原生菜单含 File / Edit / Format / View / Window 五组，且与命令面板共用同一命令：File 含 New/Open/Open Folder/Open Recent/Close/Save/Save As/Export▸(HTML/PDF/Image)；Edit 含剪贴板 + Find▸(Find ⌘F / Search in Folder ⇧⌘F)；Format 含 ⌘B/⌘I/⇧⌘X/⇧⌘`/⇧⌘K、⌘1–⌘6、⌥⌘7/8/9、⌘K 链接、Insert Image；View 含 Show Source Code ⌘E / Sidebar ⌘\ / Outline ⇧⌘O / Typewriter / Focus / Toggle Theme / Load Custom CSS，其中前五项为勾选项、勾选状态与 UI 实际一致且切标签后刷新；Window 含 Minimize ⌘M / Zoom / Toggle Full Screen / Bring All to Front
 - [ ] Window 菜单四项真实生效：Minimize 最小化窗口（⌘M 同）、Zoom 在最大化/还原间切换、Toggle Full Screen 进出全屏、Bring All to Front 把窗口带到最前；从菜单触发与快捷键/红绿灯按钮行为一致
 - [ ] 通过原生菜单触发格式/视图命令与快捷键结果一致（菜单 accelerator 会先于 webview 拦截按键）；⌘E 切 Source 后 View 菜单 Show Source Code 勾选状态同步
-- [ ] ⌘F 打开文档查找条（不打开文件夹搜索）；Enter / ⌘G 下一个，⇧Enter / ⇧⌘G 上一个；Escape 关闭并焦点回编辑器；⌘H 展开替换；Replace 改当前匹配，Replace all 一次改完全部；区分大小写可选
+- [ ] ⌘F 打开文档查找条（不打开文件夹搜索）；Enter / ⌘G 下一个，⇧Enter / ⇧⌘G 上一个；Escape 关闭并焦点回编辑器；⌘H 展开替换；Replace 改当前匹配，Replace all 一次改完全部；区分大小写可选；`.*` 正则模式（`$1` 捕获替换生效、无效正则显示 role=alert 提示且不跳转）；全字匹配仅文本模式可用（正则开启时禁用），中文查询在全字模式下仍可命中
 - [ ] ⇧⌘F 或 FileTree「Search in folder…」打开文件夹搜索 `.md`，点结果打开并定位；命中词高亮；默认大小写不敏感，Case 开关可区分大小写；超过 500 条命中显示封顶提示；快速改查询不闪旧结果
 - [ ] 列表项 Enter 续写同类型 marker，空项退出列表；Tab / Shift-Tab 仅在列表项缩进/反缩进
 - [ ] Settings → Spellcheck 打开后编辑区可对英文词显示原生拼写红线；关闭后 `.cm-content` 为 `spellcheck="false"`；改设置立即作用于当前文档
