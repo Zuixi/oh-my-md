@@ -3,7 +3,8 @@
   "private": true,
   "main": "src/index.ts",
   "scripts": {
-    "test": "tsc --noEmit && vitest run"
+    "test": "tsc --noEmit && vitest run",
+    "bench": "vitest bench --run --reporter=verbose"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

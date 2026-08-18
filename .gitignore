@@ -72,3 +72,6 @@ src-tauri/gen/
 
 # Local competitor analysis (not committed / pushed)
 docs/competitors/
+
+# Benchmarks
+packages/engine/bench/.last-run.json
