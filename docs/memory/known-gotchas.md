@@ -340,3 +340,29 @@ sets `continue-on-error: true`. Never convert these to hard assertions;
 regressions are judged by comparing runs on the same machine (same
 `makeBenchmarkDoc` input, which is deterministic by design — do not introduce
 randomness into the generator).
+
+## The complete-tree trap: never force a full parse in production
+
+Steady-state CM only parses up to `viewport.to + 100000` (`Work.MaxParseAhead` in
+@codemirror/language's idle worker); partial-tree typing is O(edit) — 1.5ms p95 at
+10MB/380k lines. If any production path forces the tree to `doc.length`
+(`forceParsing`/`ensureSyntaxTree`), every subsequent keystroke restarts fragment
+matching over the whole tree: measured 23.5ms at 1MB and 70.6ms at 10MB per
+keystroke. `apps/desktop/test/crossLayerNoFullTree.test.ts` guards this by scanning
+`packages/engine/src` and `apps/desktop/src` for those calls; test helpers and
+benchmarks may force full parses (they own their docs). Also mind the
+giant-paragraph cliff: one Lezer `advance()` parses an entire leaf block, so a
+multi-MB single paragraph (no blank lines) costs seconds per keystroke.
+
+## Editing hot path owns zero O(doc) work (Spec 05a)
+
+The per-keystroke path must never materialize the document: `EditorDocumentUpdate`
+carries no `doc` string (rope flattening cost 5-15ms at 10MB + GC churn), App
+materializes content on a 250ms trailing cadence (`DOC_MATERIALIZE_MS`) by pulling
+`view.state.doc.toString()`, and every consumer of `docsRef` flushes first — the
+save bridges do it inside `getContents`, plus `runOpen`/`requestCloseTab`. Recovery
+writes are an 800ms trailing debounce with same-content dedupe
+(`RECOVERY_DEBOUNCE_MS`); a crash may lose at most ~1s of typing. When tests need
+synchronous docsRef visibility after `emit`, render the harness with
+`docMaterializeMs: 0` (the `autosaveMs`/`watchMs` seam precedent) — timing tests
+pass the real 250.

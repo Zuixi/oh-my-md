@@ -38,16 +38,16 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml  # Rust
 
 ## 性能
 
-大文档基准（`pnpm --filter @omd/engine bench`，M-series 开发机，advisory）：
+大文档基准（`pnpm --filter @omd/engine bench`，M-series 开发机，advisory；逐键为 steady 口径 = 生产稳态部分树，见 known-gotchas「complete-tree trap」）：
 
-| 指标 | 10k 行 | 50k 行（安全模式） | 预算 |
-|---|---|---|---|
-| 逐键事务 p95 | 12.5 ms（live）/ 1.4 ms（source） | 6.2 ms（source） | < 16 ms |
-| 冷启动解析 | 45 ms | 315 ms | — |
-| 装饰重建 | 7 ms | — | — |
-| documentStats | — | 12.3 ms | < 8 ms（超限，已按需化） |
+| 指标 | 10k 行 | 50k 行（安全模式） | 10MB/38 万行 | 20MB/75 万行 | 预算 |
+|---|---|---|---|---|---|
+| 逐键事务 p95 | 6 ms（live）/ 2.3 ms（source） | 2.3 ms（source） | 2.5 ms（source） | 2.4 ms（source） | < 16 ms |
+| 冷启动解析 | 45 ms | 307 ms | — | — | — |
+| 装饰重建 | 6 ms | — | — | — | — |
+| documentStats | — | 12.5 ms | — | — | < 8 ms（超限，已按需化） |
 
-> 50k 行以上自动进入安全模式：默认源码模式、按需字数统计、复杂块渲染延迟到接近视口（可手动切回，本次会话内记住）。
+> 50k 行以上自动进入安全模式：默认源码模式、按需字数统计、复杂块渲染延迟到接近视口（可手动切回，本次会话内记住）。超大文档（10-20MB）逐键路径零 O(doc) 应用层工作：编辑载荷不携带文档字符串、恢复写入防抖 800ms、内容按 250ms 节奏从编辑器拉取（保存/关闭前同步 flush）。完整树是 worst case（10k 行 ~12ms/键），生产代码禁止强制全树解析（护栏测试守护）。
 
 ## 发布
 
