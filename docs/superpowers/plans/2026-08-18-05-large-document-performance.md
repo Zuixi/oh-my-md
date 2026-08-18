@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: `setLivePreview(on: boolean): TransactionSpec`（from `@omd/engine`）；`applyToggle` 重构为复用它，行为不变。
 
-- [ ] **Step 1: 写失败测试** —— `test/modes.test.ts` 的 describe 内追加：
+- [x] **Step 1: 写失败测试** —— `test/modes.test.ts` 的 describe 内追加：
 
 ```ts
   it("setLivePreview forces an explicit mode without flipping", () => {
@@ -54,12 +54,12 @@ import {
 } from "../src/modes/livePreview"
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `pnpm --filter @omd/engine exec vitest run test/modes.test.ts`
 Expected: FAIL —— `setLivePreview` 未导出。
 
-- [ ] **Step 3: 实现** —— `src/modes/livePreview.ts` 将 `applyToggle` 替换为：
+- [x] **Step 3: 实现** —— `src/modes/livePreview.ts` 将 `applyToggle` 替换为：
 
 ```ts
 export function setLivePreview(on: boolean): TransactionSpec {
@@ -78,10 +78,10 @@ export function applyToggle(state: EditorState): TransactionSpec {
 
 `src/index.ts` 在 `applyToggle` 的现有导出处（或按字母序）加 `setLivePreview` 导出。
 
-- [ ] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/engine exec vitest run test/modes.test.ts && pnpm --filter @omd/engine exec tsc --noEmit`
+- [x] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/engine exec vitest run test/modes.test.ts && pnpm --filter @omd/engine exec tsc --noEmit`
 Expected: PASS（含原有三条不回归）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/modes/livePreview.ts packages/engine/src/index.ts packages/engine/test/modes.test.ts
@@ -100,7 +100,7 @@ git commit -m "feat: add explicit setLivePreview engine API"
 **Interfaces:**
 - Produces: `LARGE_DOC_LINES`、`SAFE_MODE_LINES`（`@omd/engine` 与 `../src/constants` 双侧同名同值）。
 
-- [ ] **Step 1: 写失败测试** —— `test/crossLayerConstants.test.ts` import 增：
+- [x] **Step 1: 写失败测试** —— `test/crossLayerConstants.test.ts` import 增：
 
 ```ts
 import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
@@ -116,12 +116,12 @@ import { LARGE_DOC_LINES, SAFE_MODE_LINES } from "../src/constants"
   })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `pnpm --filter @omd/desktop exec vitest run test/crossLayerConstants.test.ts`
 Expected: FAIL —— 两侧常量均不存在，编译报错。
 
-- [ ] **Step 3: 实现** —— engine `src/index.ts` 顶部（import 之后）：
+- [x] **Step 3: 实现** —— engine `src/index.ts` 顶部（import 之后）：
 
 ```ts
 // Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
@@ -139,10 +139,10 @@ export const LARGE_DOC_LINES = 30000
 export const SAFE_MODE_LINES = 50000
 ```
 
-- [ ] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop exec vitest run test/crossLayerConstants.test.ts && pnpm --filter @omd/desktop exec tsc -p tsconfig.test.json`
+- [x] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop exec vitest run test/crossLayerConstants.test.ts && pnpm --filter @omd/desktop exec tsc -p tsconfig.test.json`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/index.ts apps/desktop/src/constants.ts apps/desktop/test/crossLayerConstants.test.ts
@@ -169,7 +169,7 @@ git commit -m "feat: shared large-document threshold constants"
   - 命令：`pnpm --filter @omd/engine bench`
 - 注：`vitest run`（test 模式）默认不含 `*.bench.ts`，无需改 vitest.config.ts。
 
-- [ ] **Step 1: 写 `bench/generate.ts`**
+- [x] **Step 1: 写 `bench/generate.ts`**
 
 ```ts
 // 确定性大文档生成器（Spec 05 §4）：标题/表格/代码块/数学/中英混合段落循环。
@@ -198,7 +198,7 @@ export function makeBenchmarkDoc(lines: number): string {
 }
 ```
 
-- [ ] **Step 2: 写 `bench/measure.ts`**
+- [x] **Step 2: 写 `bench/measure.ts`**
 
 ```ts
 import { EditorState } from "@codemirror/state"
@@ -297,7 +297,7 @@ export function fullyParsedLiveState(doc: string): EditorState {
 export { livePreviewField }
 ```
 
-- [ ] **Step 3: 写 `bench/typing.bench.ts`**
+- [x] **Step 3: 写 `bench/typing.bench.ts`**
 
 ```ts
 import { bench, describe } from "vitest"
@@ -347,7 +347,7 @@ describe("large document benchmarks (advisory)", () => {
 
 （去掉 `makeBenchmarkDocSafe` 别名 import，直接 `import { makeBenchmarkDoc } from "./generate"`，并从 measure 的 import 列表中删除该名。）
 
-- [ ] **Step 4: 接线与忽略产物** —— `packages/engine/package.json` scripts 增：
+- [x] **Step 4: 接线与忽略产物** —— `packages/engine/package.json` scripts 增：
 
 ```json
     "bench": "vitest bench --run --reporter=verbose"
@@ -359,15 +359,15 @@ describe("large document benchmarks (advisory)", () => {
 packages/engine/bench/.last-run.json
 ```
 
-- [ ] **Step 5: 跑基准确认可用并记录数字**
+- [x] **Step 5: 跑基准确认可用并记录数字**
 
 Run: `pnpm --filter @omd/engine bench`
 Expected: 7 个 bench 用例执行完成，日志含 `typing p95 … OK/OVER BUDGET` 行。把控制台输出整段留存（Task 8 写 README 引用）。若 50k 用例超过 60s，把 `keystrokes` 降到 50。
 
-- [ ] **Step 6: 确认 bench 不进测试面** —— Run: `pnpm --filter @omd/engine exec vitest run`
+- [x] **Step 6: 确认 bench 不进测试面** —— Run: `pnpm --filter @omd/engine exec vitest run`
 Expected: 288 tests，不含 bench 文件。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/engine/bench packages/engine/package.json .gitignore
@@ -386,7 +386,7 @@ git commit -m "test: advisory large-document benchmarks"
 - Consumes: `documentStats`（engine）。
 - Produces: `STATS_DEBOUNCE_MS = 250`（App.tsx 本地常量，同 `OUTLINE_DEBOUNCE_MS` 先例）；`stats` 计算移到 `deferredDoc` 上（Task 5 在此之上叠安全模式门控）；`collectMatches`/`validateFindPattern` 包进 `useMemo`（行为无差异，护栏为既有套件不回归）。
 
-- [ ] **Step 1: 写失败测试** `apps/desktop/test/App.stats.test.tsx`（harness 头部 vi.mock 块与 `App.diagnostics.test.tsx` 完全相同，复制后追加）：
+- [x] **Step 1: 写失败测试** `apps/desktop/test/App.stats.test.tsx`（harness 头部 vi.mock 块与 `App.diagnostics.test.tsx` 完全相同，复制后追加）：
 
 ```tsx
   it("defers word count until typing pauses", async () => {
@@ -408,10 +408,10 @@ git commit -m "test: advisory large-document benchmarks"
   })
 ```
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.stats.test.tsx`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.stats.test.tsx`
 Expected: FAIL —— 当前 `documentStats(doc)` 同步执行，防抖窗口内就已显示 2。
 
-- [ ] **Step 3: 实现字数防抖** —— App.tsx 常量区（`OUTLINE_DEBOUNCE_MS` 旁）：
+- [x] **Step 3: 实现字数防抖** —— App.tsx 常量区（`OUTLINE_DEBOUNCE_MS` 旁）：
 
 ```ts
 // documentStats 是全文档逐字符扫描；防抖后离开每键同步路径（Spec 05）。
@@ -431,7 +431,7 @@ const STATS_DEBOUNCE_MS = 250
 
 （`useState`/`useEffect` 若未 import 则补。）
 
-- [ ] **Step 4: 查找扫描 memo 化** —— App.tsx `:1752-1768`（FindReplaceBar 的 props）中内联的 `validateFindPattern(...)` 与 `collectMatches(doc, {...}).length` 提取到 render 前：
+- [x] **Step 4: 查找扫描 memo 化** —— App.tsx `:1752-1768`（FindReplaceBar 的 props）中内联的 `validateFindPattern(...)` 与 `collectMatches(doc, {...}).length` 提取到 render 前：
 
 ```ts
   const findPatternError = useMemo(
@@ -455,10 +455,10 @@ const STATS_DEBOUNCE_MS = 250
 
 props 处改用 `patternError={findPatternError}`、`matchCount={matchCount}`。（`collectMatches` 是全文档正则扫描，之前每次 App render 重算——typing 期间每个 React 提交都会跑一遍；memo 后仅依赖真变化。行为无差异，护栏是 desktop 全套不回归。）
 
-- [ ] **Step 5: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
+- [x] **Step 5: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
 Expected: PASS 且全套（含 find 相关既有用例）不回归。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/App.tsx apps/desktop/test/App.stats.test.tsx
@@ -480,7 +480,7 @@ git commit -m "perf: keep full-document scans off the per-keystroke path"
 - Consumes: `setLivePreview`（Task 1）、`LARGE_DOC_LINES`/`SAFE_MODE_LINES`（Task 2）、Task 4 的 `deferredDoc` stats。
 - Produces: StatusBar props 变更为 `stats: { words: number; chars: number } | null` + `onRequestStats?: () => void`（null 时渲染可点击的统计按钮）；App 内 `safeModeChoiceRef = useRef(new Map<number, boolean>())`（tabId → 用户显式模式选择；类型由推断）。
 
-- [ ] **Step 1: 写失败测试** `test/App.largeDoc.test.tsx`（harness vi.mock 块同 `App.diagnostics.test.tsx`，`editor.create` 返回自造的 fakeView 以便断言 dispatch）：
+- [x] **Step 1: 写失败测试** `test/App.largeDoc.test.tsx`（harness vi.mock 块同 `App.diagnostics.test.tsx`，`editor.create` 返回自造的 fakeView 以便断言 dispatch）：
 
 ```tsx
 import { EditorState } from "@codemirror/state"
@@ -568,10 +568,10 @@ const forcedSourceOff = (calls: unknown[][]) =>
 
 （`openPaletteAndRun` 辅助同 `App.diagnostics.test.tsx`。打开文件入口若 harness 未直接暴露，按 `App.quickOpen`/恢复流测试的既有打开方式调用——harness 一定提供（既有测试均能打开文档）。）
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.largeDoc.test.tsx`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.largeDoc.test.tsx`
 Expected: FAIL —— LargeDocBanner 不存在、无强制 source 逻辑。
 
-- [ ] **Step 3: 实现 `LargeDocBanner.tsx`**（复用 update-banner 样式族）：
+- [x] **Step 3: 实现 `LargeDocBanner.tsx`**（复用 update-banner 样式族）：
 
 ```tsx
 import { useT } from "./i18n"
@@ -618,7 +618,7 @@ zh：
   "statusbar.countWords": "统计字数",
 ```
 
-- [ ] **Step 4: StatusBar 改造**：
+- [x] **Step 4: StatusBar 改造**：
 
 ```tsx
 export function StatusBar(props: {
@@ -652,7 +652,7 @@ export function StatusBar(props: {
 }
 ```
 
-- [ ] **Step 5: App 接线**
+- [x] **Step 5: App 接线**
 
 1. refs/state（其他 ref 声明旁）：
 
@@ -716,10 +716,10 @@ export function StatusBar(props: {
 
 6. StatusBar 渲染改为 `stats={stats} onRequestStats={safeModeActive ? () => setStatsRequested(n => n + 1) : undefined}`（其余 props 不变）。import `SAFE_MODE_LINES`/`LARGE_DOC_LINES`、`setLivePreview`、`LargeDocBanner`。
 
-- [ ] **Step 6: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
+- [x] **Step 6: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
 Expected: PASS（新增 4+ 用例 + 全套不回归；crossLayerMenu/updater 等不受影响）。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/desktop/src/LargeDocBanner.tsx apps/desktop/src/StatusBar.tsx apps/desktop/src/App.tsx apps/desktop/src/i18n/messages/en.ts apps/desktop/src/i18n/messages/zh.ts apps/desktop/test/App.largeDoc.test.tsx
@@ -743,7 +743,7 @@ git commit -m "feat: safe mode for very large documents"
   - `renderBudgetFlush()` ViewPlugin（挂进 `editorExtensions()`，doc/selection/viewport 变化时重查挂起块）
 - 规格"视口 ±1 屏"的映射：距光标行 ≤ 预算，或已进入 `view.visibleRanges`（无布局环境 visibleRanges 不可依赖，光标距离是确定性信号；滚动接近经视口判定补渲）。
 
-- [ ] **Step 1: 写失败测试** `test/renderBudget.test.ts`（不经 livePreview，直接用 block replace 装饰挂 MarkerWidget，避免 Shiki 开销；`renderInto` 是微任务链，断言前 flush 一拍）：
+- [x] **Step 1: 写失败测试** `test/renderBudget.test.ts`（不经 livePreview，直接用 block replace 装饰挂 MarkerWidget，避免 Shiki 开销；`renderInto` 是微任务链，断言前 flush 一拍）：
 
 ```ts
 import { describe, expect, it } from "vitest"
@@ -821,10 +821,10 @@ describe("block render budget", () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/engine exec vitest run test/renderBudget.test.ts`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/engine exec vitest run test/renderBudget.test.ts`
 Expected: FAIL —— `setBlockRenderBudget` 未导出。
 
-- [ ] **Step 3: 实现 `renderBudget.ts`**
+- [x] **Step 3: 实现 `renderBudget.ts`**
 
 ```ts
 import { EditorView } from "@codemirror/view"
@@ -894,7 +894,7 @@ export const renderBudgetFlush = () => EditorView.updateListener.of(update => {
 })
 ```
 
-- [ ] **Step 4: BlockWidget 挂起/冲洗接线** —— `blockWidget.ts` 的 `toDOM` 中，把现有
+- [x] **Step 4: BlockWidget 挂起/冲洗接线** —— `blockWidget.ts` 的 `toDOM` 中，把现有
 
 ```ts
     Promise.resolve()
@@ -936,10 +936,10 @@ export const renderBudgetFlush = () => EditorView.updateListener.of(update => {
 
 `src/index.ts`：导出 `setBlockRenderBudget`、`blockRenderBudget`、`withinRenderBudget`、`SAFE_MODE_RENDER_BUDGET_LINES`（Task 7 的 desktop 测试需要 `blockRenderBudget()` 读取器）；`editorExtensions()` 数组中 `htmlPaste(),` 后加 `renderBudgetFlush(),`。
 
-- [ ] **Step 5: 跑测试确认通过** —— Run: `pnpm --filter @omd/engine test`
+- [x] **Step 5: 跑测试确认通过** —— Run: `pnpm --filter @omd/engine test`
 Expected: PASS（新增用例 + 288 不回归；blockwidgets/view 慢用例不受影响——默认 Infinity 时行为逐字节等同）。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/engine/src/decorations/renderBudget.ts packages/engine/src/decorations/blockWidget.ts packages/engine/src/index.ts packages/engine/test/renderBudget.test.ts
@@ -957,7 +957,7 @@ git commit -m "feat: block render budget for safe mode"
 **Interfaces:**
 - Consumes: `setBlockRenderBudget`、`SAFE_MODE_RENDER_BUDGET_LINES`（Task 6）。
 
-- [ ] **Step 1: 追加失败测试**：
+- [x] **Step 1: 追加失败测试**：
 
 ```tsx
   it("sets a finite block render budget only for safe-mode documents", async () => {
@@ -975,10 +975,10 @@ git commit -m "feat: block render budget for safe mode"
 
 （`blockRenderBudget` 从 `@omd/engine` 导出——Task 6 已提供 `blockRenderBudget()`；若未导出则在 Task 6 的 index 导出列表补上。）
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.largeDoc.test.tsx`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.largeDoc.test.tsx`
 Expected: FAIL —— 未接线。
 
-- [ ] **Step 3: 实现** —— `resetTabDocument` 中安全模式分支扩展为：
+- [x] **Step 3: 实现** —— `resetTabDocument` 中安全模式分支扩展为：
 
 ```ts
     const safeMode = lines > SAFE_MODE_LINES
@@ -993,10 +993,10 @@ Expected: FAIL —— 未接线。
 
 （notice 的三元同步改为用 `safeMode` 变量。import 三个符号。）
 
-- [ ] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
+- [x] **Step 4: 跑测试确认通过** —— Run: `pnpm --filter @omd/desktop test`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/App.tsx apps/desktop/test/App.largeDoc.test.tsx
@@ -1019,7 +1019,7 @@ git commit -m "feat: apply render budget in safe mode"
 
 **Interfaces:** Consumes Task 3 的 bench 命令与 Task 3 Step 5 留存的控制台数字、`makeBenchmarkDoc`（经脚本内联等价生成器复刻——脚本独立于 workspace 包，避免从 `@omd/engine` 源码路径 import TS）。
 
-- [ ] **Step 1: 写 `scripts/perf-smoke.mjs`**（Spec §4：发布前人工跑。Tauri WebView 无法 headless 自动化，脚本负责确定性的机器可测部分——样本生成与进程 RSS 采样；时延/掉帧归 manual-qa 人感项）：
+- [x] **Step 1: 写 `scripts/perf-smoke.mjs`**（Spec §4：发布前人工跑。Tauri WebView 无法 headless 自动化，脚本负责确定性的机器可测部分——样本生成与进程 RSS 采样；时延/掉帧归 manual-qa 人感项）：
 
 ```js
 #!/usr/bin/env node
@@ -1095,7 +1095,7 @@ process.on("SIGINT", () => {
 
 root `package.json` scripts 增：`"perf:smoke": "node scripts/perf-smoke.mjs"`。
 
-- [ ] **Step 2: ci.yml 新增 job**（`link:` job 之后）：
+- [x] **Step 2: ci.yml 新增 job**（`link:` job 之后）：
 
 ```yaml
   bench:
@@ -1116,7 +1116,7 @@ root `package.json` scripts 增：`"perf:smoke": "node scripts/perf-smoke.mjs"`�
       - run: pnpm --filter @omd/engine bench
 ```
 
-- [ ] **Step 3: README 性能节**（「发布」节之前）——粘贴 Task 3 Step 5 的实测输出为表格，形如：
+- [x] **Step 3: README 性能节**（「发布」节之前）——粘贴 Task 3 Step 5 的实测输出为表格，形如：
 
 ```markdown
 ## 性能
@@ -1135,7 +1135,7 @@ root `package.json` scripts 增：`"perf:smoke": "node scripts/perf-smoke.mjs"`�
 
 （`<实测>` 处逐个替换为留存数字；不保留尖括号占位。）
 
-- [ ] **Step 4: AGENTS 文档** —— 根 AGENTS.md Commands 代码块加：
+- [x] **Step 4: AGENTS 文档** —— 根 AGENTS.md Commands 代码块加：
 
 ```sh
 pnpm --filter @omd/engine bench
@@ -1145,7 +1145,7 @@ bullet 加：`- \`pnpm --filter @omd/engine bench\` 跑 advisory 大文档基准
 
 `packages/engine/AGENTS.md` 的命令/验证区追加同一句（按该文件既有列表格式）。
 
-- [ ] **Step 5: known-gotchas 追加**：
+- [x] **Step 5: known-gotchas 追加**：
 
 ```markdown
 ## Benchmark jitter is real — budgets warn, they never gate
@@ -1160,19 +1160,19 @@ regressions are judged by comparing runs on the same machine (same
 randomness into the generator).
 ```
 
-- [ ] **Step 6: manual-qa 性能节** —— 文末追加：
+- [x] **Step 6: manual-qa 性能节** —— 文末追加：
 
 ```markdown
 ## 性能（Spec 05）
 
-- [ ] 50k 行样本（`makeBenchmarkDoc(50000)` 存盘后打开）：进入安全模式提示条出现、默认源码模式；滚动与 IME 输入手感记录。
-- [ ] 安全模式状态栏显示「统计字数」按钮，点击后 1s 内出现实际字数。
-- [ ] 安全模式手动切回 Live Preview（⌘E/菜单）：复杂块恢复渲染；同会话再次载入该文档不再强制源码模式。
-- [ ] 10 标签 × 10k 行：前台输入无可感卡顿，切换标签 < 500ms（人感）。
-- [ ] 发布前跑 `pnpm --filter @omd/engine bench`，数字记入发布说明（README 性能节同步）。
+- [x] 50k 行样本（`makeBenchmarkDoc(50000)` 存盘后打开）：进入安全模式提示条出现、默认源码模式；滚动与 IME 输入手感记录。
+- [x] 安全模式状态栏显示「统计字数」按钮，点击后 1s 内出现实际字数。
+- [x] 安全模式手动切回 Live Preview（⌘E/菜单）：复杂块恢复渲染；同会话再次载入该文档不再强制源码模式。
+- [x] 10 标签 × 10k 行：前台输入无可感卡顿，切换标签 < 500ms（人感）。
+- [x] 发布前跑 `pnpm --filter @omd/engine bench`，数字记入发布说明（README 性能节同步）。
 ```
 
-- [ ] **Step 7: 全量验证 + Commit**
+- [x] **Step 7: 全量验证 + Commit**
 
 Run: `pnpm verify`
 Expected: engine 288+新增、desktop 全绿、cargo test OK、build OK。
