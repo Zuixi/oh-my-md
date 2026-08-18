@@ -4,13 +4,16 @@ import { describe, expect, it } from "vitest"
 import {
   ASSETS_DIR_NAME,
   CONTENT_MAX_WIDTH,
+  LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
   MARKDOWN_FILE_EXTENSION,
   MAX_IMAGE_BYTES,
   MAX_RECENTS,
   MAX_SEARCH_HITS,
   MAX_SNAPSHOTS_PER_FILE,
+  SAFE_MODE_LINES,
 } from "../src/constants"
+import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
 
 /**
  * Drift guard for constants that must agree across the TS and Rust sides of
@@ -80,5 +83,10 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("content max width matches styles.css --omd-content-width", () => {
     expect(STYLES_CSS).toContain(`--omd-content-width: ${CONTENT_MAX_WIDTH}px`)
+  })
+
+  it("large-doc thresholds match engine constants", () => {
+    expect(LARGE_DOC_LINES).toBe(ENGINE_LARGE_DOC_LINES)
+    expect(SAFE_MODE_LINES).toBe(ENGINE_SAFE_MODE_LINES)
   })
 })

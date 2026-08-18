@@ -7,6 +7,11 @@ import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
 import { htmlPaste } from "./paste/htmlPaste"
 
+// Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
+// crossLayerConstants.test.ts 漂移守护）。归 engine 所有：装饰/渲染档位由语义方定义。
+export const LARGE_DOC_LINES = 30000
+export const SAFE_MODE_LINES = 50000
+
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
