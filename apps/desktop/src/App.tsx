@@ -1376,6 +1376,8 @@ export default function App({
 
   async function deleteTreeEntry(entry: TreeEntry) {
     if (!services.deletePath) return
+    // 脏检查前物化：250ms 窗口内的编辑必须被看见，否则跳过确认删文件丢内容（Spec 05a）。
+    flushPendingDocs()
     const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
     if (
       openTab

@@ -360,7 +360,10 @@ The per-keystroke path must never materialize the document: `EditorDocumentUpdat
 carries no `doc` string (rope flattening cost 5-15ms at 10MB + GC churn), App
 materializes content on a 250ms trailing cadence (`DOC_MATERIALIZE_MS`) by pulling
 `view.state.doc.toString()`, and every consumer of `docsRef` flushes first — the
-save bridges do it inside `getContents`, plus `runOpen`/`requestCloseTab`. Recovery
+save bridges do it inside `getContents`, plus `runOpen`/`requestCloseTab`/
+`deleteTreeEntry` (the tree-delete dirty check missed it once and could delete a
+file whose edits were still inside the 250ms window; the regression test renders
+`docMaterializeMs: 250` to keep the window real). Recovery
 writes are an 800ms trailing debounce with same-content dedupe
 (`RECOVERY_DEBOUNCE_MS`); a crash may lose at most ~1s of typing. When tests need
 synchronous docsRef visibility after `emit`, render the harness with
