@@ -525,7 +525,8 @@ describe("App document session", () => {
     expect(harness.services.reportError).toHaveBeenCalledOnce()
     expect(harness.services.reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
     expect(logged).toHaveBeenCalledTimes(2)
-    expect(screen.getByText("3 words · 13 chars")).toBeTruthy()
+    // Word count is debounced off the per-keystroke path; wait out the window.
+    await waitFor(() => { expect(screen.getByText("3 words · 13 chars")).toBeTruthy() })
     expectPathShown("unnamed", { dirty: true })
     logged.mockRestore()
   })

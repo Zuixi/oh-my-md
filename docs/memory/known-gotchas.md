@@ -324,3 +324,8 @@ The hand-written Lezer inline parsers compare `cx.char(i)` against ASCII codes. 
 ## Doc-start `---` is front matter, not a thematic rule
 
 Since the FrontMatter parser landed, the first line `---` of a document always opens a front matter block (unclosed blocks swallow to EOF, matching the math-block tolerance). A document that merely starts with a horizontal rule is therefore rendered as front-matter source until a second `---` appears — this flipped `blocks.test.ts`'s hr-at-doc-start case, which now uses a mid-doc rule. The same ambiguity drives the stats stripper in `stats.ts` (leading `---`…`---` pair stripped from counts) and exists in every front-matter-aware renderer.
+
+## Statusbar word count is debounced; find scans are memoized
+
+`documentStats` is a full-document scan, so `App.tsx` computes it from `deferredDoc`, which lags `doc` by `STATS_DEBOUNCE_MS` (250 ms). A test that emits an edit and synchronously asserts the statusbar text (`"N words · M chars"`) will fail — wait out the window (`waitFor`) or advance fake timers past 250 ms (`test/App.stats.test.tsx` is the pattern). `collectMatches`/`validateFindPattern` run in `useMemo` keyed on the find inputs and `doc`, so they rerun only on real changes, not per render; assertions about match counts after typing are unaffected because `doc` changes on every edit.
+

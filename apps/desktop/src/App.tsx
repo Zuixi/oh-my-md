@@ -118,6 +118,8 @@ interface AppProps {
 }
 
 const OUTLINE_DEBOUNCE_MS = 150
+// documentStats 是全文档逐字符扫描；防抖后离开每键同步路径（Spec 05）。
+const STATS_DEBOUNCE_MS = 250
 const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
@@ -1555,7 +1557,12 @@ export default function App({
   }, [searchOpen, searchQuery, searchCase, workspace.folder, services])
 
   const { cursor, mode } = editorStatus(viewRef.current)
-  const stats = useMemo(() => documentStats(doc), [doc])
+  const [deferredDoc, setDeferredDoc] = useState(doc)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDeferredDoc(doc), STATS_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [doc])
+  const stats = useMemo(() => documentStats(deferredDoc), [deferredDoc])
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
@@ -1576,6 +1583,26 @@ export default function App({
   const treeRows = useMemo(
     () => workspace.folder ? visibleRows(workspace.folder, treeModel) : [],
     [workspace.folder, treeModel],
+  )
+
+  // collectMatches is a full-document regex scan; memoized so it reruns only
+  // when find inputs or the document actually change, not on every App render.
+  const findPatternError = useMemo(
+    () => findOpen && findRegexMode && findQuery !== ""
+      ? validateFindPattern({ query: findQuery, caseSensitive: findCase, regex: true, wholeWord: false })
+      : null,
+    [findOpen, findRegexMode, findQuery, findCase],
+  )
+  const matchCount = useMemo(
+    () => findOpen
+      ? collectMatches(doc, {
+        query: findQuery,
+        caseSensitive: findCase,
+        regex: findRegexMode,
+        wholeWord: findWholeWord,
+      }).length
+      : 0,
+    [findOpen, doc, findQuery, findCase, findRegexMode, findWholeWord],
   )
 
   return (
@@ -1750,23 +1777,9 @@ export default function App({
             caseSensitive={findCase}
             regex={findRegexMode}
             wholeWord={findWholeWord}
-            patternError={findOpen && findRegexMode && findQuery !== ""
-              ? validateFindPattern({
-                query: findQuery,
-                caseSensitive: findCase,
-                regex: true,
-                wholeWord: false,
-              })
-              : null}
+            patternError={findPatternError}
             replaceOpen={replaceOpen}
-            matchCount={findOpen
-              ? collectMatches(doc, {
-                query: findQuery,
-                caseSensitive: findCase,
-                regex: findRegexMode,
-                wholeWord: findWholeWord,
-              }).length
-              : 0}
+            matchCount={matchCount}
             activeIndex={findIndex}
             onQuery={query => {
               setFindQuery(query)
