@@ -159,6 +159,20 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 命令面板与 File▸Export 菜单在 mac 上仍显示 Export PDF / Export Image（`MACOS_ONLY_COMMANDS` 过滤仅作用于非 mac 平台），导出流程可用
 - [ ] 菜单「导出诊断信息…」生成的 zip 含 `os.txt`（os_info 输出，替代旧 `uname.txt`），且仍不含任何文档正文
 
+## Linux（P1）
+
+在 Linux VM（UTM/arm64 Ubuntu 亦可，交互 QA 不要求与发布同 arch）跑 dev 版（`pnpm install && pnpm dev`）逐项目视；本环境无 VM，执行待人工，未跑项标 **NOT RUN**。
+
+- [ ] 启动无 crash；窗口标题/图标正常。
+- [ ] ☰ 菜单：全部分区/条目可打开；Open Recent 子菜单列出最近文件并打开；Escape/外点关闭。
+- [ ] Ctrl 系快捷键：保存 Ctrl+S、查找 Ctrl+F、格式化 Ctrl+B/I/K、列表 Ctrl+Alt+7/8/9 与键位指南一致。
+- [ ] 打开/保存/另存为对话框；覆盖保存已有文件（内容正确落盘）。
+- [ ] 文件树：reveal（在文件管理器中显示）、删除进回收站（freedesktop Trash）、新建/重命名。
+- [ ] 右键粘贴图片（裁决 D11：WebKitGTK 下右键是否异常移动光标；异常则维持 workaround，正常则把门控收窄为 `isMacOS()`）。
+- [ ] 拖拽 .md 到窗口打开；CJK 中文字体渲染（PingFang 缺失时回落 Noto/YaHei 正常）。
+- [ ] 外部修改文件 → watcher 提示；HTML 导出；PDF/PNG 入口不可见。
+- [ ] Export Diagnostics 产出含 `os.txt` 与日志。
+
 ## 语种切换（i18n）
 
 - 启动 OS=zh-CN：界面与原生菜单均为中文。
