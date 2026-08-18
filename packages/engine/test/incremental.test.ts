@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { EditorState, StateEffect } from "@codemirror/state"
+import { type ChangeDesc, EditorState, StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
 import { editorExtensions } from "../src/index"
@@ -17,8 +17,33 @@ function specKeys(state: EditorState) {
     .sort()
 }
 
-function changedSpecCount(before: EditorState, after: EditorState) {
-  const prev = new Set(specKeys(before))
+// Decoration keys from a full rebuild on the same state — the ground truth the
+// incremental field should match after an update.
+function freshKeys(state: EditorState) {
+  return buildLiveDecorations(state).specs
+    .map(spec => `${spec.tag}:${spec.from}:${spec.to}`)
+    .sort()
+}
+
+// Count specs that truly changed between before and after, ignoring specs that
+// merely shifted position due to a document change. When `changes` is provided
+// (the edit's ChangeDesc), before-specs are mapped through it before comparing,
+// so a spec that moved by the edit delta counts as unchanged. Without `changes`
+// (selection-only updates), all positions are stable and the comparison is
+// exact.
+function changedSpecCount(before: EditorState, after: EditorState, changes?: ChangeDesc) {
+  const prev = new Set(
+    changes
+      ? before.field(livePreviewField).specs
+          .map(spec => {
+            const from = changes.mapPos(spec.from, 1)
+            const to = spec.from === spec.to
+              ? from
+              : changes.mapPos(spec.to, -1)
+            return `${spec.tag}:${from}:${to}`
+          })
+      : specKeys(before),
+  )
   const next = new Set(specKeys(after))
   let changed = 0
   for (const key of prev) if (!next.has(key)) changed++
@@ -36,67 +61,75 @@ function makeDocument(lines = 2000) {
   ).join("\n\n")
 }
 
+// Create an EditorState with a complete syntax tree. Without an EditorView,
+// @codemirror/language's ParseWorker never schedules background parsing, so
+// syntaxTree(state) returns whatever partial tree (near zero for large docs)
+// was produced during EditorState.create. The livePreviewField StateField
+// captures that partial treeLength at creation and only incrementally adds
+// decorations for newly-parsed regions on update — so the field's specs
+// diverge from a full rebuild under CPU load. By mounting a temporary view and
+// calling forceParsing we get a complete tree; the tree survives view.destroy()
+// so the detached state stays fully parsed.
+function liveState(
+  doc: string,
+  selection?: { anchor: number },
+  extensions = editorExtensions(),
+): EditorState {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({
+    state: EditorState.create({
+      doc,
+      extensions,
+      ...(selection ? { selection } : {}),
+    }),
+    parent,
+  })
+  forceParsing(view, doc.length, 10000)
+  const state = view.state
+  view.destroy()
+  parent.remove()
+  return state
+}
+
 describe("incremental live decorations", () => {
   it("rebuilds only syntax-safe regions for a selection move", () => {
     const doc = makeDocument()
-    const state = EditorState.create({ doc, extensions: editorExtensions() })
+    const state = liveState(doc)
     const next = state.update({ selection: { anchor: doc.indexOf("line 1501") } }).state
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
+    expect(specKeys(next)).toEqual(freshKeys(next))
     expect(changedSpecCount(state, next)).toBeLessThan(specKeys(state).length / 10)
   })
 
   it("keeps a local edit local in a widget-dense document", () => {
     const doc = makeDocument()
-    const state = EditorState.create({ doc, extensions: editorExtensions() })
+    const state = liveState(doc)
     const editAt = doc.indexOf("line 1501") + "line 1501".length
-    const next = state.update({ changes: { from: editAt, insert: " edited" } }).state
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
-    expect(changedSpecCount(state, next)).toBeLessThan(specKeys(state).length / 10)
+    const tr = state.update({ changes: { from: editAt, insert: " edited" } })
+    const next = tr.state
+    expect(specKeys(next)).toEqual(freshKeys(next))
+    expect(changedSpecCount(state, next, tr.changes)).toBeLessThan(specKeys(state).length / 10)
   })
 
   it("maps unaffected decorations and rebuilds the edited syntax block", () => {
     const doc = "start\n\n| a |\n|---|\n| 1 |\n\nend with **bold**"
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: doc.length })
     const next = state.update({ changes: { from: 0, insert: "prefix\n" } }).state
     const live = next.field(livePreviewField)
     const ranges: Array<[number, number]> = []
     live.deco.between(0, next.doc.length, (from, to) => { ranges.push([from, to]) })
 
     expect(ranges.some(([from]) => from === doc.indexOf("| a |") + "prefix\n".length)).toBe(true)
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
+    expect(specKeys(next)).toEqual(freshKeys(next))
   })
 
   it("keeps nested quote marks after moving onto an empty quote line", () => {
     const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
     const emptyQuote = doc.indexOf("\n>\n> > >") + 1
     const nested = doc.indexOf("第二层嵌套")
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: doc.length })
     const next = state.update({ selection: { anchor: emptyQuote } }).state
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
+    expect(specKeys(next)).toEqual(freshKeys(next))
     const nestedLine = next.doc.lineAt(nested)
     const marks = next.field(livePreviewField).specs
       .filter(spec => spec.tag === "replace:QuoteMark" && spec.from >= nestedLine.from && spec.to <= nestedLine.to)
@@ -109,17 +142,9 @@ describe("incremental live decorations", () => {
 
   it("keeps quote depth after moving onto a blank line before a nested quote", () => {
     const doc = "最外层\n\n> 第一层嵌套\n>\n> > 第二层嵌套"
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: doc.length })
     const next = state.update({ selection: { anchor: doc.indexOf("\n\n>") + 1 } }).state
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
+    expect(specKeys(next)).toEqual(freshKeys(next))
     const first = next.doc.lineAt(doc.indexOf("第一层嵌套"))
     const nested = next.doc.lineAt(doc.indexOf("第二层嵌套"))
     const depths = next.field(livePreviewField).specs
@@ -133,17 +158,9 @@ describe("incremental live decorations", () => {
     const doc = "> 最外层\n>\n> > 第一层嵌套\n>\n> > > 第二层嵌套\n\noutside"
     const emptyQuote = doc.indexOf("\n>\n> > ") + 1
     const nested = doc.indexOf("第一层嵌套")
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: doc.length })
     const next = state.update({ selection: { anchor: emptyQuote } }).state
-    expect(specKeys(next)).toEqual(specKeys(EditorState.create({
-      doc: next.doc,
-      selection: next.selection,
-      extensions: editorExtensions(),
-    })))
+    expect(specKeys(next)).toEqual(freshKeys(next))
     const nestedLine = next.doc.lineAt(nested)
     const depths = next.field(livePreviewField).specs
       .filter(spec => spec.tag.startsWith("line:omd-blockquote") && spec.from === nestedLine.from)
@@ -153,11 +170,7 @@ describe("incremental live decorations", () => {
 
   it("does not duplicate enclosing block decorations during a local rebuild", () => {
     const doc = "> first\n> second\n> third\n\noutside"
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: doc.length })
     const next = state.update({ selection: { anchor: doc.indexOf("second") } }).state
     const specs = next.field(livePreviewField).specs
     const keys = specs.map(spec => `${spec.tag}:${spec.from}:${spec.to}`)
@@ -167,11 +180,7 @@ describe("incremental live decorations", () => {
 
   it("matches a full rebuild when a fence edit changes following block parsing", () => {
     const doc = "```js\ncode\n```\n\n$$x$$\n\nafter"
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: 0 },
-      extensions: editorExtensions(),
-    })
+    const state = liveState(doc, { anchor: 0 })
     const next = state.update({
       changes: { from: 0, insert: "x" },
       selection: { anchor: 1 },
@@ -186,11 +195,11 @@ describe("incremental live decorations", () => {
 
   it("refreshes resolver-dependent widgets after reconfiguration", () => {
     const doc = "![alt](pic.png)\n\noutside"
-    const state = EditorState.create({
+    const state = liveState(
       doc,
-      selection: { anchor: doc.length },
-      extensions: editorExtensions({ resolveImageSrc: src => `/first/${src}` }),
-    })
+      { anchor: doc.length },
+      editorExtensions({ resolveImageSrc: src => `/first/${src}` }),
+    )
     const imageSrc = (current: EditorState) => {
       const spec = current.field(livePreviewField).specs
         .find(item => item.tag === "widget:image")
@@ -209,7 +218,7 @@ describe("incremental live decorations", () => {
   it("keeps large.md selection and local edits cheaper than a full-document rebuild", () => {
     const doc = fixture("large.md")
     const started = performance.now()
-    const state = EditorState.create({ doc, extensions: editorExtensions() })
+    const state = liveState(doc)
     const initMs = performance.now() - started
 
     const selectAt = Math.min(doc.indexOf("Block 80"), doc.length - 1)
@@ -220,9 +229,10 @@ describe("incremental live decorations", () => {
 
     const editAt = selected.doc.lineAt(selected.selection.main.head).to
     const editStarted = performance.now()
-    const edited = selected.update({ changes: { from: editAt, insert: " edited" } }).state
+    const editTr = selected.update({ changes: { from: editAt, insert: " edited" } })
+    const edited = editTr.state
     const editMs = performance.now() - editStarted
-    expect(changedSpecCount(selected, edited)).toBeLessThan(specKeys(selected).length / 10)
+    expect(changedSpecCount(selected, edited, editTr.changes)).toBeLessThan(specKeys(selected).length / 10)
 
     // Lenient wall-clock gate: selection/edit must not approach a full rebuild.
     expect(selectMs).toBeLessThan(Math.max(initMs, 250))
