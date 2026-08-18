@@ -42,6 +42,9 @@ rules=(
   'curl[^|]*\|[[:space:]]*(ba)?sh|wget[^|]*\|[[:space:]]*(ba)?sh::远程脚本管道执行'
   '(^|[^[:alnum:]_])mkfs([^[:alnum:]_]|$)|diskutil[[:space:]]+erase|dd[[:space:]].*of=/dev::磁盘级操作'
   'chmod[[:space:]]+-R[[:space:]]+777|chown[[:space:]]+-R::递归改权限/属主'
+  'while[[:space:]]+(:|true)([[:space:]]*;|[[:space:]]+do)::CPU死循环占满机器'
+  ':[[:space:]]*\(\)[[:space:]]*\{::fork炸弹'
+  '(^|[^[:alnum:]_])(stress|stress-ng)([^[:alnum:]]|$)::CPU压力测试工具'
 )
 
 for rule in "${rules[@]}"; do
