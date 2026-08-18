@@ -18,17 +18,21 @@ export const isLivePreview = StateField.define<boolean>({
 
 export const toggleLivePreview = StateEffect.define<boolean>()
 
-// Pure: compute the transaction to flip the mode. No EditorView needed → testable headless.
-// NOTE: packet used isLivePreview.get(state), but @codemirror/state 6.7.1 exposes the value
-// via state.field(isLivePreview). Same intent, correct API.
-export function applyToggle(state: EditorState): TransactionSpec {
-  const on = !state.field(isLivePreview)
+// Pure: compute the transaction to force an explicit mode. No EditorView needed → testable headless.
+export function setLivePreview(on: boolean): TransactionSpec {
   return {
     effects: [
       toggleLivePreview.of(on),
       livePreviewCompartment.reconfigure(on ? livePreviewExt() : []),
     ],
   }
+}
+
+// Pure: compute the transaction to flip the mode. No EditorView needed → testable headless.
+// NOTE: packet used isLivePreview.get(state), but @codemirror/state 6.7.1 exposes the value
+// via state.field(isLivePreview). Same intent, correct API.
+export function applyToggle(state: EditorState): TransactionSpec {
+  return setLivePreview(!state.field(isLivePreview))
 }
 
 export interface ToggleKeyBinding {
