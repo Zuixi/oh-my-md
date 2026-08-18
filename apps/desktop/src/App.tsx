@@ -50,7 +50,14 @@ import { runMenuCommand, type AppCommand } from "./commands"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices } from "./desktopServices"
-import { collectMatches, nextIndex, prevIndex, replaceAll } from "./findReplace"
+import {
+  collectMatches,
+  nextIndex,
+  prevIndex,
+  replaceAll,
+  validateFindPattern,
+  type FindQuery,
+} from "./findReplace"
 import { FindReplaceBar } from "./FindReplaceBar"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
@@ -255,6 +262,8 @@ export default function App({
   const [findQuery, setFindQuery] = useState("")
   const [findReplace, setFindReplace] = useState("")
   const [findCase, setFindCase] = useState(false)
+  const [findRegexMode, setFindRegexMode] = useState(false)
+  const [findWholeWord, setFindWholeWord] = useState(false)
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [findIndex, setFindIndex] = useState(-1)
   const findOpenRef = useRef(false)
@@ -265,6 +274,10 @@ export default function App({
   findReplaceRef.current = findReplace
   const findCaseRef = useRef(findCase)
   findCaseRef.current = findCase
+  const findRegexModeRef = useRef(findRegexMode)
+  findRegexModeRef.current = findRegexMode
+  const findWholeWordRef = useRef(findWholeWord)
+  findWholeWordRef.current = findWholeWord
   const findIndexRef = useRef(findIndex)
   findIndexRef.current = findIndex
   const [treeModel, setTreeModel] = useState(emptyFileTree())
@@ -1282,13 +1295,22 @@ export default function App({
     try { viewRef.current?.focus() } catch { /* mock views */ }
   }
 
+  function currentFindQuery(): FindQuery {
+    return {
+      query: findQueryRef.current,
+      caseSensitive: findCaseRef.current,
+      regex: findRegexModeRef.current,
+      wholeWord: findWholeWordRef.current,
+    }
+  }
+
   function goFind(direction: "next" | "prev") {
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, query, findCaseRef.current)
+    const matches = collectMatches(doc, currentFindQuery())
     if (matches.length === 0) {
       setFindIndex(-1)
       return
@@ -1312,7 +1334,7 @@ export default function App({
     if (!view || query === "") return
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, query, findCaseRef.current)
+    const matches = collectMatches(doc, currentFindQuery())
     if (matches.length === 0) return
     const index = findIndexRef.current >= 0 && findIndexRef.current < matches.length
       ? findIndexRef.current
@@ -1334,7 +1356,7 @@ export default function App({
     if (!view || query === "") return
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const next = replaceAll(doc, query, findReplaceRef.current, findCaseRef.current)
+    const next = replaceAll(doc, currentFindQuery(), findReplaceRef.current)
     if (next === doc) return
     try {
       view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
@@ -1593,8 +1615,25 @@ export default function App({
             query={findQuery}
             replacement={findReplace}
             caseSensitive={findCase}
+            regex={findRegexMode}
+            wholeWord={findWholeWord}
+            patternError={findOpen && findRegexMode && findQuery !== ""
+              ? validateFindPattern({
+                query: findQuery,
+                caseSensitive: findCase,
+                regex: true,
+                wholeWord: false,
+              })
+              : null}
             replaceOpen={replaceOpen}
-            matchCount={findOpen ? collectMatches(doc, findQuery, findCase).length : 0}
+            matchCount={findOpen
+              ? collectMatches(doc, {
+                query: findQuery,
+                caseSensitive: findCase,
+                regex: findRegexMode,
+                wholeWord: findWholeWord,
+              }).length
+              : 0}
             activeIndex={findIndex}
             onQuery={query => {
               setFindQuery(query)
@@ -1603,6 +1642,14 @@ export default function App({
             onReplacement={setFindReplace}
             onCaseSensitive={value => {
               setFindCase(value)
+              setFindIndex(-1)
+            }}
+            onRegex={value => {
+              setFindRegexMode(value)
+              setFindIndex(-1)
+            }}
+            onWholeWord={value => {
+              setFindWholeWord(value)
               setFindIndex(-1)
             }}
             onNext={() => goFind("next")}

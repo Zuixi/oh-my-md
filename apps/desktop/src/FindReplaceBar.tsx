@@ -6,12 +6,17 @@ export function FindReplaceBar(props: {
   query: string
   replacement: string
   caseSensitive: boolean
+  regex: boolean
+  wholeWord: boolean
+  patternError: string | null
   replaceOpen: boolean
   matchCount: number
   activeIndex: number
   onQuery: (query: string) => void
   onReplacement: (value: string) => void
   onCaseSensitive: (value: boolean) => void
+  onRegex: (value: boolean) => void
+  onWholeWord: (value: boolean) => void
   onNext: () => void
   onPrev: () => void
   onReplace: () => void
@@ -78,6 +83,27 @@ export function FindReplaceBar(props: {
         />
         {t("find.label.case")}
       </label>
+      <label className="find-replace-case">
+        <input
+          type="checkbox"
+          aria-label={t("find.label.regex")}
+          checked={props.regex}
+          onChange={event => props.onRegex(event.target.checked)}
+        />
+        .*
+      </label>
+      <label className="find-replace-case">
+        <input
+          type="checkbox"
+          aria-label={t("find.label.wholeWord")}
+          checked={props.wholeWord}
+          // Wrapping a user regex in \b changes its meaning, so whole-word is
+          // a text-mode-only option.
+          disabled={props.regex}
+          onChange={event => props.onWholeWord(event.target.checked)}
+        />
+        {t("find.label.wholeWord")}
+      </label>
       <button type="button" onClick={props.onPrev}>{t("find.button.previous")}</button>
       <button type="button" onClick={props.onNext}>{t("find.button.next")}</button>
       {props.replaceOpen ? (
@@ -87,6 +113,11 @@ export function FindReplaceBar(props: {
         </>
       ) : null}
       <span className="find-replace-status">{status}</span>
+      {props.patternError ? (
+        <span className="find-replace-error" role="alert">
+          {t("find.invalidRegex", { detail: props.patternError })}
+        </span>
+      ) : null}
       <button type="button" onClick={props.onClose} aria-label={t("find.aria.close")}>{t("button.close")}</button>
     </div>
   )
