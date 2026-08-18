@@ -25,7 +25,7 @@ export {
   footnoteReferencePosition,
   type FootnoteTarget,
 } from "./footnotesNav"
-export { applyToggle, isLivePreview } from "./modes/livePreview"
+export { applyToggle, isLivePreview, setLivePreview } from "./modes/livePreview"
 export { toggleShortcutLabels } from "./modes/livePreview"
 export { markdownKeymap, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
