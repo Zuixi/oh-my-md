@@ -49,8 +49,11 @@ describe("desktop editor lifecycle", () => {
     })
     view.dispatch({ changes: { from: 5, insert: "!" } })
     expect(onDocumentUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
-      tabId: 7, documentId: 11, doc: "alpha!", docChanged: true,
+      tabId: 7, documentId: 11, docChanged: true,
     }))
+    // Spec 05a：载荷不携带整文档字符串（每键 rope 展平是 O(doc) 应用层工作）。
+    expect("doc" in onDocumentUpdate.mock.calls[0][0]).toBe(false)
+    expect(view.state.doc.toString()).toBe("alpha!")
     view.destroy()
   })
 

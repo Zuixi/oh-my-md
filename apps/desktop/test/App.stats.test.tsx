@@ -38,16 +38,15 @@ describe("statusbar stats debouncing", () => {
     try {
       const harness = createAppHarness(editor)
       harness.renderApp()
-      const opts = editor.create.mock.calls[0][1] as CreateEditorOptions
       act(() => {
-        opts.onDocumentUpdate({
-          tabId: 1, documentId: opts.documentId, doc: "hello world",
-          docChanged: true, pendingNormalization: null,
+        harness.editorForTab(1).emit({
+          doc: "hello world", docChanged: true, pendingNormalization: null,
         })
       })
-      // 防抖窗口内：statusbar 仍显示 0 词（空文档基线）
+      // 防抖窗口内：statusbar 仍显示 0 词（空文档基线）。
+      // 注意两级窗口：物化 250ms（doc 进 App state）+ 统计防抖 250ms。
       expect(document.querySelector(".statusbar")?.textContent).not.toContain("2")
-      act(() => { vi.advanceTimersByTime(300) })
+      act(() => { vi.advanceTimersByTime(600) })
       // 防抖到期：显示 "hello world" 的 2 词
       expect(document.querySelector(".statusbar")?.textContent).toContain("2")
     } finally {

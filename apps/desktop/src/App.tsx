@@ -121,11 +121,15 @@ interface AppProps {
   services?: DesktopServices
   autosaveMs?: number
   watchMs?: number
+  /** Spec 05a 拉取式物化的 trailing 窗口。0 = 同步物化（测试专用时序缝隙，同 autosaveMs 先例）。 */
+  docMaterializeMs?: number
 }
 
 const OUTLINE_DEBOUNCE_MS = 150
 // documentStats 是全文档逐字符扫描；防抖后离开每键同步路径（Spec 05）。
 const STATS_DEBOUNCE_MS = 250
+// Spec 05a：每键不物化整文档字符串；250ms trailing 从 view 拉取（消费前 flush）。
+const DOC_MATERIALIZE_MS = 250
 const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
@@ -216,6 +220,7 @@ export default function App({
   autosaveMs = 1500,
   // Fallback poll only: native notify events drive day-to-day refreshes.
   watchMs = 30000,
+  docMaterializeMs = DOC_MATERIALIZE_MS,
 }: AppProps) {
   const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
@@ -263,6 +268,10 @@ export default function App({
   const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
+  // Spec 05a：拉取式物化——doc 更新只发轻量信号，内容按 250ms 节奏从 view 拉取。
+  const pendingDocTabsRef = useRef(new Set<number>())
+  const docMaterializeTimerRef = useRef<number | null>(null)
+  const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
   const safeModeChoiceRef = useRef(new Map<number, boolean>())
   const [largeDocNotice, setLargeDocNotice] = useState<
@@ -374,7 +383,10 @@ export default function App({
   const conflictSave = useConflictSaveBinding({
     services,
     getTab: tabById,
-    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    getContents: tabId => {
+      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      return docsRef.current.get(tabId) ?? ""
+    },
     getSaveStates: () => saveStateRef.current,
     commitSaveState,
     saveFile: (...args) => saveFileRef.current(...args),
@@ -391,7 +403,10 @@ export default function App({
     isOpening: () => openingRef.current,
     getTab: tabById,
     getView: tabId => viewsRef.current.get(tabId),
-    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    getContents: tabId => {
+      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      return docsRef.current.get(tabId) ?? ""
+    },
     getNormalization: () => normalizationRef.current,
     setNormalization: commitNormalization,
     getWorkspace: () => workspaceRef.current,
@@ -504,12 +519,41 @@ export default function App({
   }
 
   /** Applies an update to the tab it was built for, or drops stale bindings. */
+  /** 把 pending tab 的最新内容从 view 拉进 docsRef/React state，并跟随恢复写节奏。 */
+  function materializePendingDocs() {
+    if (docMaterializeTimerRef.current !== null) {
+      window.clearTimeout(docMaterializeTimerRef.current)
+      docMaterializeTimerRef.current = null
+    }
+    for (const tabId of [...pendingDocTabsRef.current]) {
+      pendingDocTabsRef.current.delete(tabId)
+      const view = viewsRef.current.get(tabId)
+      if (!view) continue
+      const contents = view.state.doc.toString()
+      syncDoc(contents, tabId)
+      const tab = workspaceRef.current.tabs.find(t => t.id === tabId)
+      if (tab) saveRecovery(tab, contents)
+    }
+  }
+
+  function flushPendingDocs() {
+    materializePendingDocs()
+  }
+
   function handleDocumentUpdate(update: EditorDocumentUpdate) {
     const tab = tabById(update.tabId)
     if (!tab || tab.documentId !== update.documentId) return
     if (update.docChanged) {
-      syncDoc(update.doc, update.tabId)
-      saveRecovery(tab, update.doc)
+      pendingDocTabsRef.current.add(update.tabId)
+      if (docMaterializeMs === 0) {
+        materializePendingDocs()
+      } else if (docMaterializeTimerRef.current === null) {
+        docMaterializeTimerRef.current = window.setTimeout(
+          () => materializePendingDocs(),
+          docMaterializeMs,
+        )
+      }
+      setDocVersion(v => v + 1)
     }
     commitNormalization(projectNormalizationNotice(
       normalizationRef.current,
@@ -584,6 +628,8 @@ export default function App({
           : null,
     )
     setStatsRequested(0)
+    // 重载内容即最新：清掉 pending，防止物化用旧 view 内容覆盖（Spec 05a）。
+    pendingDocTabsRef.current.delete(nextSession.id)
     syncDoc(contents, nextSession.id)
     return true
   }
@@ -649,6 +695,7 @@ export default function App({
     })()
     return () => {
       mountedRef.current = false
+      if (docMaterializeTimerRef.current !== null) window.clearTimeout(docMaterializeTimerRef.current)
       viewRef.current = null
       viewsRef.current.forEach(item => item.destroy())
       viewsRef.current.clear()
@@ -961,6 +1008,7 @@ export default function App({
   }
 
   async function runOpen(pickPath: () => Promise<string | null>) {
+    flushPendingDocs()
     const request = ++openRequestRef.current
     const activeId = workspaceRef.current.activeId
     await (tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve()).catch(() => undefined)
@@ -1130,6 +1178,7 @@ export default function App({
   }
 
   function requestCloseTab(id: number) {
+    flushPendingDocs()
     closeTabInternal(id, { confirm: true, allowReplaceLast: false })
   }
   requestCloseTabRef.current = requestCloseTab
