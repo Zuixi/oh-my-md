@@ -187,8 +187,13 @@ fn replace_existing(
         return Ok(result);
     }
 
-    temp.persist(&resolved_target)
-        .map_err(|error| map_write_io_error(requested_path, error.error))?;
+    // The shared helper returns a formatted String (including the Windows
+    // backup-rename fallback), so log the requested path here; the io::Error
+    // kind behind the message is no longer recoverable at this call site.
+    crate::replace_existing(temp, &resolved_target).map_err(|error| {
+        eprintln!("[documents] write io error: path={requested_path:?} error={error}");
+        DocumentError::WriteFailed(error)
+    })?;
 
     let resolved_path = path_to_string(&resolved_target)?;
     let durability = sync_parent(parent);

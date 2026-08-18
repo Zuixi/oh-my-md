@@ -307,10 +307,48 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .as_file()
         .sync_all()
         .map_err(|e| format!("failed to sync temporary file: {e}"))?;
-    temporary
-        .persist(path)
-        .map_err(|e| format!("failed to atomically replace destination: {}", e.error))?;
+    replace_existing(temporary, path)?;
     Ok(())
+}
+
+pub(crate) fn replace_existing(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+) -> Result<(), String> {
+    match temporary.persist(path) {
+        Ok(_) => Ok(()),
+        Err(first) => {
+            if !cfg!(windows) {
+                return Err(format!(
+                    "failed to atomically replace destination: {}",
+                    first.error
+                ));
+            }
+            // Windows can refuse to rename over a destination another handle
+            // holds (indexer, antivirus); retry via a backup rename so the
+            // write still lands, restoring the original if the retry fails.
+            let backup = path.with_extension("omd-save-backup");
+            if let Err(rename_error) = std::fs::rename(path, &backup) {
+                return Err(format!(
+                    "failed to atomically replace destination: {} (backup rename failed: {})",
+                    first.error, rename_error
+                ));
+            }
+            match first.file.persist(path) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(retry) => {
+                    let _ = std::fs::rename(&backup, path);
+                    Err(format!(
+                        "failed to atomically replace destination: {}",
+                        retry.error
+                    ))
+                }
+            }
+        }
+    }
 }
 
 fn validate_image_target(target: &Path, document_path: &Path) -> Result<(), String> {
@@ -623,6 +661,15 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert_ne!(fs::metadata(&path).unwrap().ino(), old_inode);
         fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.md");
+        std::fs::write(&path, "old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
     }
 
     #[test]
