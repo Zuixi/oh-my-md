@@ -564,9 +564,16 @@ export default function App({
         localeInitRef.current = true
         initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
       }
-      const restored = await restoreSavedSession()
-      if (!restored) {
-        await restoreDraft()
+      const pendingOpen = await services.takePendingOpenFiles?.() ?? []
+      if (pendingOpen.length > 0) {
+        // An explicit launch request (double-click / Open With) wins over
+        // restoring the previous session.
+        for (const path of pendingOpen) openRecentRef.current(path)
+      } else {
+        const restored = await restoreSavedSession()
+        if (!restored) {
+          await restoreDraft()
+        }
       }
     })()
     return () => {
@@ -1219,6 +1226,11 @@ export default function App({
     return services.listenMenu(id => runMenuCommand(id, commandsRef.current, {
       openRecent: path => { void openRecentRef.current(path) },
     }))
+  }, [services])
+
+  useEffect(() => {
+    if (!services.listenOpenFile) return
+    return services.listenOpenFile(path => { void openRecentRef.current(path) })
   }, [services])
 
   // Mirror the active tab's editor mode into React so the native View menu

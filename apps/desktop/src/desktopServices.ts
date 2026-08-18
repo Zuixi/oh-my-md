@@ -141,6 +141,8 @@ export interface DesktopServices {
   saveSessionState?: (state: SavedSessionState) => Promise<void>
   reportError: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
+  listenOpenFile?: (handler: (path: string) => void) => () => void
+  takePendingOpenFiles?: () => Promise<string[]>
   checkForUpdates?: () => Promise<UpdateCheck | null>
 }
 
@@ -325,6 +327,17 @@ export const defaultServices: DesktopServices = {
   listenMenu: handler => {
     const pending = listen<string>("menu-command", event => handler(event.payload))
     return () => { void pending.then(unlisten => unlisten()) }
+  },
+  listenOpenFile: handler => {
+    const pending = listen<string>("open-file", event => handler(event.payload))
+    return () => { void pending.then(unlisten => unlisten()) }
+  },
+  takePendingOpenFiles: async () => {
+    try {
+      return await invoke<string[]>("take_pending_open_files")
+    } catch {
+      return []
+    }
   },
 }
 
