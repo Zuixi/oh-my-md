@@ -205,7 +205,8 @@ function writeOutlineOpen(open: boolean): void {
 export default function App({
   services = defaultServices,
   autosaveMs = 1500,
-  watchMs = 2000,
+  // Fallback poll only: native notify events drive day-to-day refreshes.
+  watchMs = 30000,
 }: AppProps) {
   const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
@@ -261,6 +262,8 @@ export default function App({
     loading: boolean
   }>({ open: false, files: [], truncated: false, loading: false })
   const [searchOpen, setSearchOpen] = useState(false)
+  const searchOpenRef = useRef(searchOpen)
+  searchOpenRef.current = searchOpen
   const [searchQuery, setSearchQuery] = useState("")
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
   const [searchTruncated, setSearchTruncated] = useState(false)
@@ -700,6 +703,32 @@ export default function App({
     return () => window.clearInterval(timer)
   }, [watchMs])
 
+  // Native notify events are the primary external-change channel; the slow
+  // interval above is only a safety net for dropped events.
+  useEffect(() => {
+    if (!services.listenWorkspaceChange) return
+    return services.listenWorkspaceChange(() => {
+      void pollFileTabsRef.current()
+      const listDir = services.listDir
+      if (listDir && workspaceRef.current.folder && !searchOpenRef.current) {
+        void refreshTreeRef.current(listDir)
+      }
+    })
+  }, [services])
+
+  // Keep the Rust watch set in sync with the folder and open files outside it.
+  useEffect(() => {
+    if (!services.watchPaths) return
+    const folder = workspace.folder
+    const paths = new Set<string>()
+    if (folder) paths.add(folder)
+    for (const tab of workspace.tabs) {
+      const path = sessionPath(tab)
+      if (path && (!folder || !path.startsWith(`${folder}/`))) paths.add(path)
+    }
+    void services.watchPaths([...paths])
+  }, [workspace.folder, workspace.tabs, services])
+
   // Outline follows the document, but only while the panel is open and only
   // after typing pauses: collectOutline walks the whole syntax tree, so it must
   // stay off the per-keystroke path. activateTab refreshes immediately instead.
@@ -1125,8 +1154,10 @@ export default function App({
 
   const pollFileTabsRef = useRef(pollFileTabs)
   const openRecentRef = useRef(openRecent)
+  const refreshTreeRef = useRef(refreshTree)
   pollFileTabsRef.current = pollFileTabs
   openRecentRef.current = openRecent
+  refreshTreeRef.current = refreshTree
 
   const runFormat = (command: (view: EditorView) => boolean): (() => void) => () => {
     const view = viewRef.current

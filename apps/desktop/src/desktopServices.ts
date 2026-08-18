@@ -149,6 +149,8 @@ export interface DesktopServices {
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   listenDragDrop?: (handler: (paths: string[]) => void) => () => void
+  listenWorkspaceChange?: (handler: (paths: string[]) => void) => () => void
+  watchPaths?: (paths: string[]) => Promise<void>
   takePendingOpenFiles?: () => Promise<string[]>
   openExternal?: (url: string) => Promise<void>
   checkForUpdates?: () => Promise<UpdateCheck | null>
@@ -350,6 +352,17 @@ export const defaultServices: DesktopServices = {
         if (event.payload.type === "drop") handler(event.payload.paths)
       }))
     return () => { void pending.then(unlisten => unlisten()) }
+  },
+  listenWorkspaceChange: handler => {
+    const pending = listen<string[]>("workspace-changed", event => handler(event.payload))
+    return () => { void pending.then(unlisten => unlisten()) }
+  },
+  watchPaths: async paths => {
+    try {
+      await invoke("watch_paths", { paths })
+    } catch {
+      // Watching is only an early hint; the fallback poll keeps correctness.
+    }
   },
   takePendingOpenFiles: async () => {
     try {

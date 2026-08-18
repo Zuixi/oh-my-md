@@ -2,6 +2,7 @@ mod diagnostics;
 mod documents;
 mod export;
 mod menu;
+mod watcher;
 mod workspace;
 
 use std::io::Write;
@@ -25,6 +26,20 @@ static PENDING_OPEN_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    if paths.len() > watcher::MAX_WATCHED_PATHS {
+        return Err("too many watch paths".into());
+    }
+    // Missing paths are skipped: watching is best-effort hinting, and a file
+    // may legitimately not exist yet (fresh tab about to save its first copy).
+    let canonical: Vec<PathBuf> = paths
+        .iter()
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .collect();
+    watcher::set_watched_paths(&app, &canonical)
 }
 
 #[tauri::command]
@@ -445,6 +460,7 @@ pub fn run() {
         .manage(documents::DocumentCoordinator::default())
         .setup(|app| {
             menu::install(app)?;
+            watcher::install(app.handle());
             if let Err(e) = workspace::migrate_legacy_config() {
                 log::warn!("legacy config migration failed: {e}");
             }
@@ -457,6 +473,7 @@ pub fn run() {
             documents::save_document,
             read_file,
             write_file,
+            watch_paths,
             write_png,
             write_image,
             allow_document_assets,
