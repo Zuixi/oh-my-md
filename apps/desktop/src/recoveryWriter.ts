@@ -25,8 +25,6 @@ interface PendingWrite {
 export interface RecoveryWriter {
   /** Schedules one trailing write per tab; settled when the outcome has been surfaced. */
   readonly save: (draft: RecoveryDraft, host: RecoveryHost) => Promise<void>
-  /** Forces every pending write for hosts sharing this `write` function to run now. */
-  readonly flush: (host: RecoveryHost) => Promise<void>
   /** Drops a closed tab: cancels its pending write and reporting state (recycled ids stay clean). */
   readonly forget: (tabId: number) => void
 }
@@ -66,13 +64,6 @@ export function createRecoveryWriter(): RecoveryWriter {
       entry.timer = window.setTimeout(() => { void writeNow(entry) }, RECOVERY_DEBOUNCE_MS)
       pending.set(draft.tabId, entry)
       return Promise.resolve()
-    },
-    flush: async host => {
-      for (const entry of [...pending.values()]) {
-        if (entry.host.write !== host.write) continue
-        window.clearTimeout(entry.timer)
-        await writeNow(entry)
-      }
     },
     forget: tabId => {
       const entry = pending.get(tabId)

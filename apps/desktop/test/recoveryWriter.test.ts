@@ -133,13 +133,13 @@ describe("recovery writer", () => {
     expect(write).toHaveBeenCalledTimes(1)
   })
 
-  it("flush forces pending writes immediately and forget cancels them", async () => {
+  it("settles a pending write on the debounce and forget cancels it", async () => {
     vi.useFakeTimers()
     const write = vi.fn(async () => undefined)
     const writer = createRecoveryWriter()
     const { host } = makeHost(write)
     writer.save(draftFor(1, "x"), host)
-    await writer.flush(host)
+    await settle()
     expect(write).toHaveBeenCalledWith("notes_1_md", "x")
     writer.save(draftFor(2, "y"), host)
     writer.forget(2)

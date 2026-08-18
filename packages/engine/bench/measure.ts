@@ -2,7 +2,7 @@ import { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { forceParsing } from "@codemirror/language"
 import { editorExtensions } from "../src/index"
-import { buildLiveDecorations, livePreviewField } from "../src/decorations/build"
+import { buildLiveDecorations } from "../src/decorations/build"
 import { setLivePreview } from "../src/modes/livePreview"
 import { documentStats } from "../src/stats"
 
@@ -97,6 +97,3 @@ export function fullyParsedLiveState(doc: string): EditorState {
   parent.remove()
   return state
 }
-
-// 抑制未用告警的类型再导出（livePreviewField 供扩展断言用）
-export { livePreviewField }
