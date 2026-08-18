@@ -1,7 +1,7 @@
 # 05 Large Document Performance 设计
 
-**日期：** 2026-08-18
-**状态：** 待用户审核（本轮只立规格，不实现）
+**日期：** 2026-08-18（§1-9 已实现）；§10（05a）2026-08-19 增补
+**状态：** §1-9 已落地；§10 诊断完成、按独立计划实现
 **父设计：** `docs/superpowers/specs/2026-08-10-oh-my-md-design.md`（尖刀之一："万行级文档流畅"）
 **路线图：** `docs/superpowers/specs/2026-08-13-00-product-roadmap-design.md` Phase A-05
 
@@ -76,3 +76,87 @@ README 发布页引用基准数字；AGENTS.md engine 域增 bench 命令；know
 ## 9. 对后续规格提供的稳定接口
 
 基准脚本与预算表是 08 渲染打磨、AI（14）流式插入性能的验收工具；安全模式常量归 engine 所有。
+
+---
+
+## 10. 05a 追问：超大文档（10-20MB）逐键路径（2026-08-19 增补）
+
+**状态：** Spec 05 落地后实测 10/20MB 文件追问"逐键 60ms 能否优化"而立。诊断先行，证据见 §10.1；实现为独立计划 `docs/superpowers/plans/2026-08-19-05a-huge-doc-typing.md`。
+
+### 10.1 诊断证据（M-series 开发机，happy-dom + CM 6.43.8/6.12.4 源码级）
+
+**引擎稳态没有问题。** 部分树（`treeLen < doc.length`）下 10MB/38 万行逐键事务 p95 = **1.5ms**（1MB 同口径 <1ms）。CM 的 idle worker 把后台解析钉在 `viewport.to + 100000`（`Work.MaxParseAhead`，@codemirror/language `languageWatcher.work()`），**生产环境永不补完全树**；打开 10MB 文档本身只需视口解析（`Work.InitViewport`=3000 字符起步）。
+
+**完整树是陷阱，不是目标。** 任何把树补全的路径（`forceParsing(doc.length)`、对全文档 `ensureSyntaxTree`）会让此后每次编辑的 fragment 重启随文档规模增长：实测完整树下 1MB = 23.5ms、10MB = 70.6ms 每键。当前生产代码无此路径（仅 `test/helpers.ts` 用），**必须立为不变量：生产代码禁止把解析推进到 `doc.length`**。
+
+**真实每键 O(doc) 成本全部在 desktop 应用层**（10MB 实测）：
+
+| # | 路径 | 实测成本 | 说明 |
+|---|---|---|---|
+| 1 | `Editor.ts::reportEditorUpdate` 每键 `doc.toString()` | 5-15ms + 每键 10MB 字符串 GC churn | 把 CM Text rope 整体展平，仅为了把内容塞进回调载荷 |
+| 2 | `App::saveRecovery` 每键全文档 Tauri IPC + 写盘 | 最大项（IPC 序列化 + fs 写 10MB/键） | `createRecoveryWriter` 无防抖、无去重；对照：自动保存本身 1500ms 防抖 |
+| 3 | `syncDoc → setDoc` 每键 React setState | 重渲染 + state 持新 10MB 字符串 | React 官方/社区一致建议：高频编辑不要把文档内容写进组件 state |
+
+**排除项（实测无害，记录避免重查）**：lineNumbers gutter（本应用未安装）；`lineWrapping`（viewport 限定，0.1-0.2ms）；`drawSelection`/`highlightSpecialChars`（MatchDecorator 全量重建 bug 于 CM 6.36.0 已修，本仓库 6.43.8）；gutters/docView 更新（viewport 限定）。用户最初假设"禁用行号/换行计算"经测量证伪——**大文档不需要禁用任何 CM 内建能力**。
+
+**已知悬崖（不修，记录）**：无空行巨型单段（如 minified 文本粘进一段）是 lezer-markdown 的 O(块) 每键悬崖（26MB 单段实测 1.2-2.6s/键）；Markdown 正常写作天然分块，安全模式源码下同理。另：CM `LanguageState.apply` 的同步 `work(20ms)` 预算只在 `advance()` 之间检查——一次 advance 解析整个 leaf block，块太大时预算失效。
+
+### 10.2 目标
+
+1. 10MB/20MB 混合负载文档逐键 p95 < 16ms（engine 稳态基准口径 + desktop 每键路径零 O(doc) 工作）。
+2. 恢复写入与文档大小、按键频率解耦：防抖 800ms trailing + 同内容去重（崩溃恢复语义允许 ≤800ms 丢失窗口；关闭标签本就 `forget`）。
+3. 每键不再物化/传播整文档字符串：`EditorDocumentUpdate` 不携带 doc；App 以轻量版本号驱动重渲染，内容按 250ms trailing 物化，消费前同步 flush。
+
+### 10.3 非目标
+
+- Web Worker 解析（同 §1）。
+- CM fragment 机制、lezer 块粒度改造（上游行为）。
+- 巨型单段的 O(块) 悬崖（记 gotcha，遇真实样本再规格）。
+
+### 10.4 设计
+
+**接口变更：**
+
+```ts
+// Editor.ts —— 每键载荷去掉 doc（CM Text 引用也不传：跨层不泄漏 CM 类型）
+interface EditorDocumentUpdate {
+  tabId: number; documentId: number
+  docChanged: boolean
+  pendingNormalization: OrderedListNormalizationNotice | null
+}
+```
+
+**App 数据流（拉取式）：**
+
+```text
+每键 docChanged → docVersion++（轻量 setState，驱动 statusbar 光标等）
+              → pendingDocTabs.add(tabId)，250ms trailing 定时器
+物化（定时器到点或 flushPendingDocs()）：对每个 pending tab 从
+  viewsRef.get(tabId).state.doc.toString() 拉取 → syncDoc（docsRef/docRef/setDoc）
+同步 flush 时机（拉最新内容，杜绝陈旧）：saveFile / save copy / 导出 /
+  会话持久化 / 关闭标签 dirty 判定 / 打开新文件前的 dirty 判定 / 外部变更探测
+```
+
+**恢复写入：** `createRecoveryWriter({ debounceMs: 800 })`——per-tab trailing 防抖；连续编辑合并为一次写；同内容（与上次成功写比较）跳过；`flush()` 供 App 在关键路径强制落盘；`forget(tabId)` 取消挂起定时器。
+
+**基准口径修正：** `measureTyping` 增加 `tree: "steady" | "complete"`（steady = 只强制解析到 `viewport.to + 100000`，镜像生产行为；complete = 现行全树，标注为 worst-case 上限参考）。基准用例两口径并列；README 性能表补 10MB/20MB 行。
+
+### 10.5 约束与不变量
+
+- **生产代码禁止 `forceParsing` / `ensureSyntaxTree` 推进到 `doc.length`**（完整树陷阱；engine 域规则 + gotcha 条目）。
+- 防抖物化不得造成数据丢失：所有消费 docsRef 的路径前必须 flush；保存/导出/关闭拿到的是 view 当前内容。
+- `pendingNormalization` 语义不变：立即传播（规范审查提示不防抖）。
+- 每键路径不得回归：desktop 增测试断言「连续 emit 三次 docChanged → writeRecovery 恰一次（防抖后）」「防抖窗口内 saveFile 落盘内容含最后一次按键」。
+- live region、错误提示等无障碍行为不变。
+
+### 10.6 测试矩阵（增量）
+
+| 用例 | 断言 | 位置 |
+|---|---|---|
+| recovery 防抖 | 3 次快速 save → 800ms 后恰 1 次 write；同内容重复 save 不再写 | `test/recoveryWriter.test.ts` |
+| recovery forget/flush | forget 取消挂起写；flush 立即落盘 | 同上 |
+| 每键不传 doc | EditorDocumentUpdate 无 doc 字段（tsc 强制） | 类型即契约 |
+| 防抖窗口内保存 | saveFile 落盘内容 = view 最新内容（flush 生效） | `test/App.test.tsx` 增例 |
+| typing p95 @10MB/20MB steady | < 16ms（advisory） | `bench/typing.bench.ts` |
+| complete-tree 上限参考 | 数字记录，无预算断言 | 同上 |
+| 生产禁全树 | grep 式护栏：src 下无 `doc.length` 传给 forceParsing/ensureSyntaxTree | engine 单测（读源码断言，防回归） |
