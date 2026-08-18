@@ -66,8 +66,7 @@ describe("StatusBar save status", () => {
   it("shows the save status as its own node", () => {
     render(
       <StatusBar
-        words={0}
-        chars={0}
+        stats={{ words: 0, chars: 0 }}
         cursor="1:1"
         mode="live"
         normalizationReviewRequired={false}
@@ -80,8 +79,7 @@ describe("StatusBar save status", () => {
   it("shows CJK-aware word and char counts", () => {
     render(
       <StatusBar
-        words={4}
-        chars={4}
+        stats={{ words: 4, chars: 4 }}
         cursor="1:1"
         mode="live"
         normalizationReviewRequired={false}

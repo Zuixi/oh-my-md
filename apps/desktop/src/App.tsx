@@ -4,7 +4,7 @@ import {
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, documentStats, isLivePreview, type OutlineItem } from "@omd/engine"
+import { applyToggle, documentStats, isLivePreview, setLivePreview, type OutlineItem } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
@@ -62,6 +62,7 @@ import { FindReplaceBar } from "./FindReplaceBar"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
+import { LargeDocBanner } from "./LargeDocBanner"
 import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
@@ -99,9 +100,11 @@ import {
 } from "./settings"
 import { initLocale, setLocale, useT } from "./i18n"
 import {
+  LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
   MARKDOWN_FILE_EXTENSION,
   RELEASES_URL,
+  SAFE_MODE_LINES,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
 } from "./constants"
@@ -257,6 +260,12 @@ export default function App({
   const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
+  // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
+  const safeModeChoiceRef = useRef(new Map<number, boolean>())
+  const [largeDocNotice, setLargeDocNotice] = useState<
+    { sessionId: number; lines: number; safeMode: boolean } | null
+  >(null)
+  const [statsRequested, setStatsRequested] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [quickOpenState, setQuickOpenState] = useState<{
     open: boolean
@@ -553,6 +562,20 @@ export default function App({
       syncDoc(previousDoc, nextSession.id)
       throw error
     }
+    // Spec 05：超大文档进入安全模式 —— 默认源码模式 + 一次性提示 + 按需字数。
+    // 用户本会话内显式切换过模式的 tab 不再强制。
+    const lines = contents ? contents.split("\n").length : 0
+    if (lines > SAFE_MODE_LINES && safeModeChoiceRef.current.get(nextSession.id) === undefined) {
+      try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
+    }
+    setLargeDocNotice(
+      lines > SAFE_MODE_LINES
+        ? { sessionId: nextSession.id, lines, safeMode: true }
+        : lines > LARGE_DOC_LINES
+          ? { sessionId: nextSession.id, lines, safeMode: false }
+          : null,
+    )
+    setStatsRequested(0)
     syncDoc(contents, nextSession.id)
     return true
   }
@@ -1335,6 +1358,7 @@ export default function App({
       if (!view) return
       try {
         const next = !view.state.field(isLivePreview)
+        safeModeChoiceRef.current.set(workspaceRef.current.activeId, next)
         view.dispatch(applyToggle(view.state))
         setSourceMode(next)
       } catch { /* mock views */ }
@@ -1562,7 +1586,13 @@ export default function App({
     const timer = window.setTimeout(() => setDeferredDoc(doc), STATS_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [doc])
-  const stats = useMemo(() => documentStats(deferredDoc), [deferredDoc])
+  // 安全模式（Spec 05）：字数按需 —— 点击状态栏按钮前不跑全文档扫描。
+  const activeLines = useMemo(() => (deferredDoc ? deferredDoc.split("\n").length : 0), [deferredDoc])
+  const safeModeActive = activeLines > SAFE_MODE_LINES
+  const stats = useMemo(() => {
+    if (safeModeActive && statsRequested === 0) return null
+    return documentStats(deferredDoc)
+  }, [deferredDoc, safeModeActive, statsRequested])
 
   const dirtyIds = workspace.tabs
     .filter(tab => sessionDirty(tab, docsRef.current.get(tab.id) ?? (tab.id === session.id ? doc : "")))
@@ -1767,6 +1797,13 @@ export default function App({
               onDismiss={() => setUpdateVersion(null)}
             />
           ) : null}
+          {largeDocNotice && largeDocNotice.sessionId === workspace.activeId ? (
+            <LargeDocBanner
+              lines={largeDocNotice.lines}
+              safeMode={largeDocNotice.safeMode}
+              onDismiss={() => setLargeDocNotice(null)}
+            />
+          ) : null}
           {transientStatus ? (
             <p className="save-transient-status" role="status">{transientStatus}</p>
           ) : null}
@@ -1817,12 +1854,12 @@ export default function App({
         </div>
       </div>
       <StatusBar
-        words={stats.words}
-        chars={stats.chars}
+        stats={stats}
         cursor={cursor}
         mode={mode}
         normalizationReviewRequired={bannerKind === "normalization"}
         saveStatus={saveStatusLabel(activeSaveState)}
+        onRequestStats={safeModeActive ? () => setStatsRequested(n => n + 1) : undefined}
       />
       {paletteOpen ? (
         <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />

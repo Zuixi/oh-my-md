@@ -83,6 +83,10 @@ export const zh: Record<string, string> = {
 
   "statusbar.reviewRequired": "需要规范审查",
   "statusbar.wordsChars": "{words} 字 · {chars} 字符",
+  "statusbar.countWords": "统计字数",
+  "largeDoc.notice": "文档较大（{lines} 行），全部功能保持可用。",
+  "largeDoc.safeMode": "超大文档（{lines} 行）：已切换到源码模式，字数统计需手动刷新，复杂块渲染延迟到接近视口。",
+  "largeDoc.dismiss": "知道了",
   "statusbar.status.idle": "",
   "statusbar.status.saving": "保存中",
   "statusbar.status.saveFailed": "保存失败",

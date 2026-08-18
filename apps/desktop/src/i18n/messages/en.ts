@@ -83,6 +83,10 @@ export const en: Record<string, string> = {
 
   "statusbar.reviewRequired": "Normalization review required",
   "statusbar.wordsChars": "{words} words · {chars} chars",
+  "statusbar.countWords": "Count words",
+  "largeDoc.notice": "Large document ({lines} lines). All features stay available.",
+  "largeDoc.safeMode": "Very large document ({lines} lines): source mode is on, word count is on demand, and rich blocks render only near the viewport.",
+  "largeDoc.dismiss": "OK",
   "statusbar.status.idle": "",
   "statusbar.status.saving": "saving",
   "statusbar.status.saveFailed": "save failed",
