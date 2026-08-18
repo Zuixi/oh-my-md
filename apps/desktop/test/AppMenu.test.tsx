@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { AppMenu } from "../src/AppMenu"
+import { MACOS_ONLY_COMMANDS, MENU_TO_COMMAND } from "../src/commands"
+import { APP_MENU_TREE } from "../src/menuTree"
 
 function withUserAgent(userAgent: string, run: () => void): void {
   const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
@@ -30,11 +32,40 @@ describe("AppMenu", () => {
     })
   })
   it("lists recent files via recent: ids", () => {
-    render(<AppMenu getRecents={() => ["/tmp/a.md"]} onCommand={() => {}} />)
+    const onCommand = vi.fn()
+    render(<AppMenu getRecents={() => ["/tmp/a.md"]} onCommand={onCommand} />)
     fireEvent.click(screen.getByRole("button", { name: /menu/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /open recent/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /a\.md/i }))
-    // recent: 前缀 id 由 App 侧 runMenuCommand 消费;这里只断言透传
+    // recent: 前缀 id 由 App 侧 runMenuCommand 消费;这里断言透传
+    expect(onCommand).toHaveBeenCalledWith("recent:/tmp/a.md")
+  })
+  it("navigates menu items with arrow keys, wrapping at both ends", () => {
+    render(<AppMenu getRecents={() => []} onCommand={() => {}} />)
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }))
+    const panel = screen.getByRole("menu")
+    const items = () => screen.getAllByRole("menuitem")
+
+    fireEvent.keyDown(panel, { key: "ArrowDown" })
+    expect(document.activeElement).toBe(items()[0])
+    fireEvent.keyDown(panel, { key: "ArrowDown" })
+    expect(document.activeElement).toBe(items()[1])
+    fireEvent.keyDown(panel, { key: "ArrowUp" })
+    expect(document.activeElement).toBe(items()[0])
+    // Wrap-around at both ends.
+    fireEvent.keyDown(panel, { key: "ArrowUp" })
+    expect(document.activeElement).toBe(items()[items().length - 1])
+    fireEvent.keyDown(panel, { key: "ArrowDown" })
+    expect(document.activeElement).toBe(items()[0])
+  })
+  it("keeps macOSOnly entry flags aligned with MACOS_ONLY_COMMANDS", () => {
+    for (const section of APP_MENU_TREE) {
+      for (const entry of section.entries) {
+        if (entry.macOSOnly === true) {
+          expect(MACOS_ONLY_COMMANDS.has(MENU_TO_COMMAND[entry.id] ?? entry.id)).toBe(true)
+        }
+      }
+    }
   })
   it("closes on Escape", () => {
     render(<AppMenu getRecents={() => []} onCommand={() => {}} />)

@@ -18,6 +18,7 @@ export function AppMenu(props: { getRecents: () => string[]; onCommand: (id: str
   const [recentsOpen, setRecentsOpen] = useState(false)
   const [recents, setRecents] = useState<string[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -50,6 +51,25 @@ export function AppMenu(props: { getRecents: () => string[]; onCommand: (id: str
   const visible = (id: string): boolean =>
     !(MACOS_ONLY_COMMANDS.has(MENU_TO_COMMAND[id] ?? id) && !isMacOS())
 
+  // 方向键导航 (spec D2): roving focus among the rendered menu items,
+  // wrapping at both ends. ArrowDown from an unfocused panel starts at the
+  // first item; ArrowUp from an unfocused panel starts at the last.
+  const handlePanelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+    const panel = panelRef.current
+    if (!panel) return
+    const items = Array.from(
+      panel.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'),
+    )
+    if (items.length === 0) return
+    const currentIndex = items.findIndex(item => item === document.activeElement)
+    const nextIndex = currentIndex < 0
+      ? (event.key === "ArrowDown" ? 0 : items.length - 1)
+      : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length
+    event.preventDefault()
+    items[nextIndex].focus()
+  }
+
   const run = (id: string): void => {
     props.onCommand(id)
     setOpen(false)
@@ -69,12 +89,18 @@ export function AppMenu(props: { getRecents: () => string[]; onCommand: (id: str
         <Menu size={16} aria-hidden="true" />
       </button>
       {open ? (
-        <div className="app-menu-panel" role="menu" aria-label={t("menu.aria.open")}>
+        <div
+          className="app-menu-panel"
+          role="menu"
+          aria-label={t("menu.aria.open")}
+          ref={panelRef}
+          onKeyDown={handlePanelKeyDown}
+        >
           {APP_MENU_TREE.map(section => (
             <div className="app-menu-section" key={section.labelKey}>
               <div className="app-menu-section-title">{t(section.labelKey)}</div>
               {section.entries
-                .filter(entry => visible(entry.id))
+                .filter(entry => !(entry.macOSOnly === true && !isMacOS()) && visible(entry.id))
                 .map(entry => (
                   <div className="app-menu-entry" key={entry.id}>
                     {entry.id === "recents" ? (
