@@ -1,5 +1,8 @@
 import { EditorView, WidgetType } from "@codemirror/view"
 import type { EditorState } from "@codemirror/state"
+import {
+  deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
+} from "./renderBudget"
 
 export interface BlockEmbed {
   quoteDepth: number
@@ -35,6 +38,7 @@ export function blockSelected(state: EditorState, from: number, to: number) {
 // 块内 → 装饰重建、widget 消失（销毁态由 CM 回收）。渲染失败显示错误+原文。
 export abstract class BlockWidget extends WidgetType {
   private alive = true
+  private pendingEntry: PendingRender | null = null
 
   constructor(
     readonly src: string,
@@ -54,7 +58,8 @@ export abstract class BlockWidget extends WidgetType {
 
   protected abstract get cssClass(): string
   protected abstract renderInto(el: HTMLElement): void | Promise<void>
-  protected isActive(_el?: HTMLElement) { return this.alive }
+  // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
+  isActive(_el?: HTMLElement) { return this.alive }
 
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
@@ -80,7 +85,7 @@ export abstract class BlockWidget extends WidgetType {
     body.className = "omd-block-body"
     wrap.appendChild(body)
 
-    Promise.resolve()
+    const start = () => Promise.resolve()
       .then(() => this.renderInto(body))
       .then(() => {
         if (this.isActive(body)) view.requestMeasure()
@@ -91,6 +96,12 @@ export abstract class BlockWidget extends WidgetType {
         body.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
         view.requestMeasure()
       })
+    // 预算外（距光标远且不在视口）挂起，由 renderBudgetFlush 在光标/视口接近时补渲。
+    if (withinRenderBudget(view, this.pos)) start()
+    else {
+      this.pendingEntry = { widget: this, view, pos: this.pos, start }
+      deferBlockRender(this.pendingEntry)
+    }
     return wrap
   }
 
@@ -102,5 +113,6 @@ export abstract class BlockWidget extends WidgetType {
 
   destroy(_dom?: HTMLElement) {
     this.alive = false
+    if (this.pendingEntry) dropPendingBlockRender(this.pendingEntry)
   }
 }

@@ -2,6 +2,7 @@ import { markdownLanguageSupport } from "./parse/markdown"
 import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
 import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+import { renderBudgetFlush } from "./decorations/renderBudget"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
@@ -68,6 +69,13 @@ export {
   htmlPaste,
   htmlPasteToMarkdown,
 } from "./paste/htmlPaste"
+export {
+  blockRenderBudget,
+  renderBudgetFlush,
+  SAFE_MODE_RENDER_BUDGET_LINES,
+  setBlockRenderBudget,
+  withinRenderBudget,
+} from "./decorations/renderBudget"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
@@ -80,6 +88,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     markdownLanguageSupport(),
     emojiCompletion,
     htmlPaste(),
+    renderBudgetFlush(),
     markdownKeymap,
     listKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
