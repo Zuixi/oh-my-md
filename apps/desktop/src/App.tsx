@@ -276,7 +276,11 @@ export default function App({
   // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
   const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
-  const safeModeChoiceRef = useRef(new Map<number, boolean>())
+  // Set 记录「用户显式切换过模式」的 tab —— 只需存在性，无需记住切到了哪边（任一显式选择都解除强制）。
+  const safeModeChoiceRef = useRef(new Set<number>())
+  // 处于安全模式渲染预算下的 tab。预算是 engine 全局状态而安全模式是 per-tab 的，
+  // 激活切换时按此集重应用（useEffect on activeId 兜住 focusTab/会话恢复等全部路径）。
+  const safeModeTabsRef = useRef(new Set<number>())
   const [largeDocNotice, setLargeDocNotice] = useState<
     { sessionId: number; lines: number; safeMode: boolean } | null
   >(null)
@@ -543,6 +547,13 @@ export default function App({
     materializePendingDocs()
   }
 
+  /** 预算跟随激活 tab 的安全模式档位（engine 全局状态 ↔ per-tab 判定）。 */
+  function applyRenderBudgetFor(tabId: number) {
+    setBlockRenderBudget(
+      safeModeTabsRef.current.has(tabId) ? SAFE_MODE_RENDER_BUDGET_LINES : Infinity,
+    )
+  }
+
   function handleDocumentUpdate(update: EditorDocumentUpdate) {
     const tab = tabById(update.tabId)
     if (!tab || tab.documentId !== update.documentId) return
@@ -616,13 +627,14 @@ export default function App({
     // + 按需字数。用户本会话内显式切换过模式的 tab 不再强制。
     const lines = contents ? contents.split("\n").length : 0
     const safeMode = lines > SAFE_MODE_LINES
-      && safeModeChoiceRef.current.get(nextSession.id) === undefined
+      && !safeModeChoiceRef.current.has(nextSession.id)
     if (safeMode) {
       try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
-      setBlockRenderBudget(SAFE_MODE_RENDER_BUDGET_LINES)
+      safeModeTabsRef.current.add(nextSession.id)
     } else {
-      setBlockRenderBudget(Infinity)
+      safeModeTabsRef.current.delete(nextSession.id)
     }
+    applyRenderBudgetFor(nextSession.id)
     setLargeDocNotice(
       safeMode
         ? { sessionId: nextSession.id, lines, safeMode: true }
@@ -709,6 +721,12 @@ export default function App({
   useEffect(() => {
     ensureViews()
   }, [workspace.tabs])
+
+  // 预算重应用兜住所有激活路径（activateTab、会话恢复 focusTab 等）；effect 在 DOM
+  // 提交后、CM 视口重测量前运行，widget 渲染前预算已就位。
+  useEffect(() => {
+    applyRenderBudgetFor(workspace.activeId)
+  }, [workspace.activeId])
 
   useEffect(() => {
     document.documentElement.style.setProperty("--omd-font-size", `${settings.fontSize}px`)
@@ -1169,6 +1187,8 @@ export default function App({
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
       commitSaveState(removeTabSaveState(saveStateRef.current, id))
       recoveryWriterRef.current.forget(id)
+      safeModeChoiceRef.current.delete(id)
+      safeModeTabsRef.current.delete(id)
       docsRef.current.delete(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
@@ -1420,7 +1440,7 @@ export default function App({
       if (!view) return
       try {
         const next = !view.state.field(isLivePreview)
-        safeModeChoiceRef.current.set(workspaceRef.current.activeId, next)
+        safeModeChoiceRef.current.add(workspaceRef.current.activeId)
         view.dispatch(applyToggle(view.state))
         setSourceMode(next)
       } catch { /* mock views */ }

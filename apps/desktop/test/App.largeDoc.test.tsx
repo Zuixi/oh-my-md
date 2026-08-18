@@ -132,4 +132,18 @@ describe("large document safe mode", () => {
     await harness.openFileTab("/small.md", "small")
     expect(blockRenderBudget()).toBe(Infinity)
   })
+
+  it("re-applies the render budget when switching tabs", async () => {
+    // 预算是 engine 全局状态，安全模式是 per-tab 的：切 tab 必须重新应用，
+    // 否则小 tab 继承有限预算（远处块懒渲染）或安全 tab 切回后预算失效。
+    const harness = createAppHarness(editor)
+    harness.renderApp()
+    await harness.openFileTab("/big.md", bigDoc(50010))
+    await harness.openInNewTab("/small.md", "small")
+    expect(blockRenderBudget()).toBe(Infinity)
+    harness.activateTab(1)
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    harness.activateTab(2)
+    expect(blockRenderBudget()).toBe(Infinity)
+  })
 })
