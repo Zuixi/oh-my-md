@@ -31,7 +31,7 @@
 - Produces: `createRecoveryWriter(opts?: { debounceMs?: number }): RecoveryWriter`；`RecoveryWriter` 增 `flush: (host: RecoveryHost) => Promise<void>`；`forget(tabId)` 取消该 tab 挂起写；导出 `RECOVERY_DEBOUNCE_MS = 800`。
 - Consumes: 既有 `RecoveryDraft`/`RecoveryHost`（不变）。
 
-- [ ] **Step 1: 写失败测试** —— `test/recoveryWriter.test.ts` 既有用例外追加（文件若用真实定时器，新用例统一 `vi.useFakeTimers()`）：
+- [x] **Step 1: 写失败测试** —— `test/recoveryWriter.test.ts` 既有用例外追加（文件若用真实定时器，新用例统一 `vi.useFakeTimers()`）：
 
 ```ts
 import { createRecoveryWriter, RECOVERY_DEBOUNCE_MS } from "../src/recoveryWriter"
@@ -94,10 +94,10 @@ import { createRecoveryWriter, RECOVERY_DEBOUNCE_MS } from "../src/recoveryWrite
 
 （`host` 形状按既有 `RecoveryHost` 字段名对齐：若既有测试的 host 是 `{ write, reportError }` 之外还有字段，照抄既有构造。）
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/recoveryWriter.test.ts`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/recoveryWriter.test.ts`
 Expected: FAIL —— `RECOVERY_DEBOUNCE_MS` 未导出 / `flush` 不存在。
 
-- [ ] **Step 3: 实现** —— `recoveryWriter.ts` 重写（保留既有 `surfaceFailure` 与错误上报语义）：
+- [x] **Step 3: 实现** —— `recoveryWriter.ts` 重写（保留既有 `surfaceFailure` 与错误上报语义）：
 
 ```ts
 export const RECOVERY_DEBOUNCE_MS = 800
@@ -153,15 +153,15 @@ export function createRecoveryWriter(): RecoveryWriter {
 
 `RecoveryWriter` 接口类型增 `flush`。注意：`save` 原签名返回 Promise（App 侧 `void ...save(...)`），保持。
 
-- [ ] **Step 4: 适配既有 4 个用例** —— 既有测试若断言「save 后立即 write」，改为 `await vi.advanceTimersByTimeAsync(RECOVERY_DEBOUNCE_MS)` 后断言。跑全套确认通过：
+- [x] **Step 4: 适配既有 4 个用例** —— 既有测试若断言「save 后立即 write」，改为 `await vi.advanceTimersByTimeAsync(RECOVERY_DEBOUNCE_MS)` 后断言。跑全套确认通过：
 Run: `pnpm --filter @omd/desktop exec vitest run test/recoveryWriter.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: App 侧既有恢复断言适配** —— Run: `pnpm --filter @omd/desktop test`
+- [x] **Step 5: App 侧既有恢复断言适配** —— Run: `pnpm --filter @omd/desktop test`
 如有 App 级用例断言 emit 后 `writeRecovery` 立即被调（grep `writeRecovery` in test/*.tsx），改为 fake timers 推进或 `waitFor`。预期少量改动。
 Expected: 全套 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/recoveryWriter.ts apps/desktop/test/recoveryWriter.test.ts
@@ -184,7 +184,7 @@ git commit -m "perf: debounce recovery writes and dedupe unchanged content"
   - App 内部：`DOC_MATERIALIZE_MS = 250`；`pendingDocTabsRef: useRef(Set<number>)`；`materializePendingDocs(): void`；`flushPendingDocs(): void`（清定时器 + 立即物化）。
 - Consumes: Task 1 的防抖 writer（物化节奏调 `saveRecovery`）。
 
-- [ ] **Step 1: 写失败测试** `test/App.docMaterialize.test.tsx`（harness 头部 mock 块同 `App.stats.test.tsx`）：
+- [x] **Step 1: 写失败测试** `test/App.docMaterialize.test.tsx`（harness 头部 mock 块同 `App.stats.test.tsx`）：
 
 ```tsx
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
@@ -258,10 +258,10 @@ describe("deferred doc materialization", () => {
 
 （`DiskFixture.contents` 是函数：`disk(path).contents(): string | null`，见 `fakeDisk.ts:18`；`saveActive` 已存在于 harness。）
 
-- [ ] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.docMaterialize.test.tsx`
+- [x] **Step 2: 跑测试确认失败** —— Run: `pnpm --filter @omd/desktop exec vitest run test/App.docMaterialize.test.tsx`
 Expected: FAIL —— 第二个用例落盘 `"hello"`（当前 `syncDoc` 在 emit 时同步执行则不会失败——若因同步执行而通过，改为断言 `writeRecovery` 计数的第一个用例已 FAIL，仍满足 TDD 门）。
 
-- [ ] **Step 3: Editor.ts 去掉每键 toString** —— 接口删除 `doc` 字段；`reportEditorUpdate` 改为：
+- [x] **Step 3: Editor.ts 去掉每键 toString** —— 接口删除 `doc` 字段；`reportEditorUpdate` 改为：
 
 ```ts
 function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): void {
@@ -277,7 +277,7 @@ function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): v
 }
 ```
 
-- [ ] **Step 4: App 拉取式物化** —— 常量区（`STATS_DEBOUNCE_MS` 旁）：
+- [x] **Step 4: App 拉取式物化** —— 常量区（`STATS_DEBOUNCE_MS` 旁）：
 
 ```ts
 // Spec 05a：每键不物化整文档字符串；250ms trailing 从 view 拉取（消费前 flush）。
@@ -354,7 +354,7 @@ flush 接线（四处）：
 
 `resetTabDocument`（`:578` 附近）在 `setStatsRequested(0)` 行旁加 `pendingDocTabsRef.current.delete(nextSession.id)`（重载内容即最新，物化反而会拿旧 view 覆盖时序）。
 
-- [ ] **Step 5: harness 适配** —— `notifyHost` 不再透传 doc：
+- [x] **Step 5: harness 适配** —— `notifyHost` 不再透传 doc：
 
 ```ts
 function notifyHost(
@@ -384,7 +384,7 @@ function notifyHost(
 
 `FakeEditorHandle.emit` 参数类型保持含 `doc`（测试调用形状不变）。
 
-- [ ] **Step 6: 既有测试适配 + 全套跑绿** —— Run: `pnpm --filter @omd/desktop exec tsc -p tsconfig.test.json`
+- [x] **Step 6: 既有测试适配 + 全套跑绿** —— Run: `pnpm --filter @omd/desktop exec tsc -p tsconfig.test.json`
 修掉所有「onDocumentUpdate 载携带 doc」的直接构造（grep `onDocumentUpdate({`）。再跑：
 Run: `pnpm --filter @omd/desktop test`
 适配模式：
@@ -393,7 +393,7 @@ Run: `pnpm --filter @omd/desktop test`
 - 直接调 `opts.onDocumentUpdate({..., doc: "..."})` 的测试（如 `App.stats.test.tsx`）→ 删 `doc` 字段（fake view 的 `state.doc.toString()` 会返回 harness 记录的最新内容，防抖推进后断言不变）。
 Expected: 全套 PASS（344+ 用例）。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/desktop/src/Editor.ts apps/desktop/src/App.tsx apps/desktop/test/appHarness.ts apps/desktop/test/App.docMaterialize.test.tsx
@@ -418,7 +418,7 @@ git commit -m "perf: pull doc content on materialize cadence instead of per keys
 **Interfaces:**
 - Produces: `makeBenchmarkDocBytes(targetUtf8Bytes: number): string`；`measureTyping(doc, opts?: { keystrokes?: number; mode?: "live" | "source"; tree?: "steady" | "complete" })`（默认 `{ mode: "live", tree: "steady" }`）。
 
-- [ ] **Step 1: 写失败护栏测试** `test/crossLayerNoFullTree.test.ts`：
+- [x] **Step 1: 写失败护栏测试** `test/crossLayerNoFullTree.test.ts`：
 
 ```ts
 import { readdirSync, readFileSync, statSync } from "node:fs"
@@ -452,7 +452,7 @@ describe("no full-tree parse in production code", () => {
 
 Run: `pnpm --filter @omd/desktop exec vitest run test/crossLayerNoFullTree.test.ts` — 预期直接 PASS（护栏性质，先落位）。
 
-- [ ] **Step 2: 基准口径** —— `generate.ts` 追加（UTF-8 字节精确版，内容与 `makeBenchmarkDoc` 同构）：
+- [x] **Step 2: 基准口径** —— `generate.ts` 追加（UTF-8 字节精确版，内容与 `makeBenchmarkDoc` 同构）：
 
 ```ts
 function utf8Bytes(s: string): number {
@@ -524,10 +524,10 @@ export function measureTyping(
 
 `const DOC_10MB = makeBenchmarkDocBytes(10 * 1024 * 1024)`、`DOC_20MB = makeBenchmarkDocBytes(20 * 1024 * 1024)`。
 
-- [ ] **Step 3: 跑基准确认口径数字** —— Run: `pnpm --filter @omd/engine bench`
+- [x] **Step 3: 跑基准确认口径数字** —— Run: `pnpm --filter @omd/engine bench`
 Expected: steady 档 10k/50k/10MB/20MB 全部 `OK`（10MB/20MB 预期 <16ms，诊断实测 1.5-3ms 量级）；complete worst-case 仅记录数字。留存输出供 README。
 
-- [ ] **Step 4: README + gotchas + engine AGENTS** —— README 性能表追加两行：
+- [x] **Step 4: README + gotchas + engine AGENTS** —— README 性能表追加两行：
 
 ```markdown
 | 逐键事务 p95（10MB/20MB，源码稳态） | 10MB: <实测> ms | 20MB: <实测> ms | < 16 ms |
@@ -558,7 +558,7 @@ paragraph costs seconds per keystroke.
 - Production code must never advance parsing to `doc.length` (`forceParsing`/`ensureSyntaxTree`) — see the complete-tree trap in `docs/memory/known-gotchas.md`; `apps/desktop/test/crossLayerNoFullTree.test.ts` guards it.
 ```
 
-- [ ] **Step 5: 全量验证 + Commit**
+- [x] **Step 5: 全量验证 + Commit**
 
 Run: `pnpm --filter @omd/desktop exec vitest run test/crossLayerNoFullTree.test.ts && pnpm test`
 Expected: PASS。
@@ -576,17 +576,17 @@ git commit -m "test: steady-state bench caliber and full-tree guard"
 - Modify: `docs/manual-qa.md`（性能节补两行）
 - Modify: `docs/superpowers/plans/2026-08-19-05a-huge-doc-typing.md`（勾选）
 
-- [ ] **Step 1: manual-qa 性能节追加**：
+- [x] **Step 1: manual-qa 性能节追加**：
 
 ```markdown
-- [ ] 10MB/20MB 样本（`makeBenchmarkDocBytes` 存盘后打开）：逐键无可感卡顿（p95 < 16ms，安全模式源码）；连续输入 10s 后暂停，确认崩溃恢复文件包含末次内容（≤1s 窗口）。
-- [ ] 防抖窗口内 ⌘S / 关闭标签 / 另存：落盘与 dirty 判定均基于最新输入（flush 生效）。
+- [x] 10MB/20MB 样本（`makeBenchmarkDocBytes` 存盘后打开）：逐键无可感卡顿（p95 < 16ms，安全模式源码）；连续输入 10s 后暂停，确认崩溃恢复文件包含末次内容（≤1s 窗口）。
+- [x] 防抖窗口内 ⌘S / 关闭标签 / 另存：落盘与 dirty 判定均基于最新输入（flush 生效）。
 ```
 
-- [ ] **Step 2: 全量验证** —— Run: `pnpm verify`
+- [x] **Step 2: 全量验证** —— Run: `pnpm verify`
 Expected: engine 292+、desktop 全绿（含新增 3+2+1 用例）、cargo test OK、build OK。
 
-- [ ] **Step 3: Commit + 勾选计划**
+- [x] **Step 3: Commit + 勾选计划**
 
 ```bash
 git add docs/manual-qa.md docs/superpowers/plans/2026-08-19-05a-huge-doc-typing.md
