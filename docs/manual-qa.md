@@ -77,6 +77,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 ## M3 产品壳
 - [ ] 多标签各有独立撤销；脏点显示；关脏标签会确认；`+` 新建标签
 - [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in Finder（文件删除会先确认，打开且脏时先走现有关标签确认）
+- [ ] 文件树 Delete 确认后文件/目录移入系统废纸篓（Finder 废纸篓可见、可恢复）；非空目录同样可删；确认文案说明移入废纸篓（trash 语义，单测只覆盖缺失路径与越权拒绝，真实移入需人工验证）
 - [ ] 打开深层子目录的 .md（FileTree 点开或搜索面板点结果）会逐级自动展开祖先目录并滚动到该文件；千级文件的目录展开后滚动无卡顿、无空白行（树行虚拟化）
 - [ ] 右侧只有 Outline，没有 Export 面板；导出走 File 菜单或 ⇧⌘P
 - [ ] Outline 可用左侧常驻窄条的按钮或 ⇧⌘O 折叠/展开（命令面板也有 Toggle outline）；折叠状态跨会话记住；折叠后面板 aria-hidden/inert，动画无文字挤压

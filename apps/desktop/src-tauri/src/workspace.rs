@@ -323,12 +323,10 @@ pub fn delete_path(path: String) -> Result<(), String> {
     let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
     assert_inside_authorized(&parent)?;
     let target = parent.join(name);
-    let metadata = fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
-    if metadata.file_type().is_dir() {
-        fs::remove_dir(target).map_err(|e| e.to_string())
-    } else {
-        fs::remove_file(target).map_err(|e| e.to_string())
-    }
+    // Fail fast on a missing target so callers keep their not-found semantics.
+    fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    // Tree deletion moves to the OS Trash; the app never deletes permanently.
+    trash::delete(&target).map_err(|e| e.to_string())
 }
 
 pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
@@ -725,23 +723,11 @@ mod tests {
     }
 
     #[test]
-    fn delete_path_removes_files_and_empty_dirs_but_not_non_empty_dirs() {
-        let root = tmp("delete-path");
+    fn delete_path_rejects_missing_targets() {
+        let root = tmp("delete-missing");
         reset_dir(&root);
-        let file = root.join("draft.md");
-        fs::write(&file, "hello").unwrap();
-        delete_path(path_string(&file)).unwrap();
-        assert!(!file.exists());
 
-        let empty_dir = root.join("empty");
-        fs::create_dir(&empty_dir).unwrap();
-        delete_path(path_string(&empty_dir)).unwrap();
-        assert!(!empty_dir.exists());
-
-        let non_empty_dir = root.join("non-empty");
-        fs::create_dir_all(&non_empty_dir).unwrap();
-        fs::write(non_empty_dir.join("draft.md"), "hello").unwrap();
-        assert!(delete_path(path_string(&non_empty_dir)).is_err());
+        assert!(delete_path(path_string(&root.join("absent.md"))).is_err());
 
         fs::remove_dir_all(root).ok();
     }

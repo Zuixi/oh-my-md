@@ -180,7 +180,7 @@ export const en: Record<string, string> = {
 
   "confirm.discard": "Discard unsaved changes and open another document?",
   "confirm.close": "Close this tab and discard unsaved changes?",
-  "confirm.delete": "Delete {name}? This cannot be undone.",
+  "confirm.delete": "Delete {name}? It will be moved to the Trash.",
   "confirm.restore": "Restore unsaved draft {label}?",
   "confirm.externalChange": "File changed on disk. Reload?",
   "error.export.desktopOnly": "PDF and image export are only available in the desktop app",
