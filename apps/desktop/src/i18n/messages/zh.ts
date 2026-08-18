@@ -51,6 +51,12 @@ export const zh: Record<string, string> = {
   "cmd.label.export-pdf": "导出 PDF",
   "cmd.label.export-image": "导出图片",
   "cmd.label.clear-recents": "清除最近",
+  "cmd.label.check-updates": "检查更新…",
+
+  "update.available": "新版本 {version} 可用。",
+  "update.view": "查看发布页",
+  "update.dismiss": "以后再说",
+  "update.upToDate": "已是最新版本。",
 
   "search.title": "搜索",
   "search.aria.close": "关闭搜索",

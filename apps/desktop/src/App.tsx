@@ -44,6 +44,7 @@ import {
   type SaveStateByTab,
 } from "./documentSaveState"
 import { NormalizationBanner } from "./NormalizationBanner"
+import { UpdateBanner } from "./UpdateBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
@@ -90,6 +91,7 @@ import {
 import { initLocale, setLocale, useT } from "./i18n"
 import {
   MARKDOWN_FILE_EXTENSION,
+  RELEASES_URL,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
 } from "./constants"
@@ -110,6 +112,9 @@ const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
 const SESSION_SAVE_DEBOUNCE_MS = 1000
+
+/** Startup update check delay: late enough to stay off the launch path. */
+const UPDATE_CHECK_DELAY_MS = 8000
 
 /** Shallow directory listing equality; a mismatch means disk changed. */
 function sameEntries(
@@ -223,6 +228,7 @@ export default function App({
     transientStatusTimerRef,
     id => { transientStatusTimerRef.current = id },
   )
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const openingRef = useRef(false)
   const mountedRef = useRef(false)
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
@@ -887,6 +893,17 @@ export default function App({
     return runOpen(async () => path)
   }
 
+  async function checkForUpdatesNow(manual: boolean) {
+    if (!services.checkForUpdates) return
+    const update = await services.checkForUpdates()
+    if (!mountedRef.current) return
+    if (update) {
+      setUpdateVersion(update.version)
+    } else if (manual) {
+      showTransientStatus(t("update.upToDate"))
+    }
+  }
+
   function openFile() {
     return runOpen(() => services.pickOpenPath())
   }
@@ -1212,6 +1229,7 @@ export default function App({
     { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
+    { id: "check-updates", label: t("cmd.label.check-updates"), run: () => void checkForUpdatesNow(true) },
   ]
   const commandsRef = useRef(commands)
   commandsRef.current = commands
@@ -1231,6 +1249,13 @@ export default function App({
   useEffect(() => {
     if (!services.listenOpenFile) return
     return services.listenOpenFile(path => { void openRecentRef.current(path) })
+  }, [services])
+
+  // Background update check after launch settles; failures stay silent.
+  useEffect(() => {
+    if (!services.checkForUpdates) return
+    const timer = window.setTimeout(() => { void checkForUpdatesNow(false) }, UPDATE_CHECK_DELAY_MS)
+    return () => window.clearTimeout(timer)
   }, [services])
 
   // Mirror the active tab's editor mode into React so the native View menu
@@ -1549,6 +1574,16 @@ export default function App({
           />
           {skippedMarkersMessage ? (
             <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
+          ) : null}
+          {updateVersion ? (
+            <UpdateBanner
+              version={updateVersion}
+              onView={() => {
+                setUpdateVersion(null)
+                void services.openExternal?.(RELEASES_URL)
+              }}
+              onDismiss={() => setUpdateVersion(null)}
+            />
           ) : null}
           {transientStatus ? (
             <p className="save-transient-status" role="status">{transientStatus}</p>

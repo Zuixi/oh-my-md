@@ -17,7 +17,8 @@
 - [ ] Apple Developer 账号审批通过（申请于 2026-08-17）。
 - [ ] 生成 "Developer ID Application" 证书并导出 p12。
 - [ ] GitHub 仓库 Settings → Secrets 配置 5 个签名公证 secret：`APPLE_CERTIFICATE`（base64 p12）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`（app-specific）、`APPLE_TEAM_ID`。
-- [ ] 配置 updater 签名 secret：生成密钥对 `pnpm tauri signer generate`（私钥**绝不入库**，离线保管），将 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 加入 secrets。
+- [x] 生成 updater 密钥对（2026-08-18）：公钥已写入 `tauri.conf.json`；私钥离线保管于本机 `~/.tauri/oh-my-md-updater.key`（空口令），**绝不入库**。首次公开发布前评估是否换用带口令密钥。
+- [ ] 将 `TAURI_SIGNING_PRIVATE_KEY`（私钥文件内容）与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空口令可省）加入 GitHub secrets。
 - [ ] 执行 Task B2（签名 + 公证）与 Task B3（release job + `latest.json` 更新清单）。
 - [ ] 真实验证：`v*` tag → Release 出现 `.app`/`.dmg`/`latest.json`，`spctl -a -vv` 无 Gatekeeper 拦截。
 

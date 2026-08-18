@@ -538,6 +538,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted); background: var(--omd-chrome);
   border-bottom: 1px solid var(--omd-border);
 }
+.update-banner {
+  /* WCAG 2.2 SC 2.5.8 Target Size (Minimum). */
+  --min-target: 24px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px; font-size: 13px; line-height: 1.4;
+  color: var(--omd-fg); background: var(--omd-code-bg);
+  border-bottom: 1px solid var(--omd-border);
+  border-left: 3px solid var(--omd-link);
+}
+.update-banner-message { margin: 0; }
+.update-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.update-banner-view,
+.update-banner-dismiss {
+  min-height: var(--min-target); min-width: var(--min-target);
+  padding: 4px 10px; font: inherit; cursor: pointer;
+  color: var(--omd-fg); background: var(--omd-bg);
+  border: 1px solid var(--omd-muted); border-radius: 4px;
+}
+.update-banner-view:focus-visible,
+.update-banner-dismiss:focus-visible {
+  outline: 2px solid var(--omd-link); outline-offset: 2px;
+}
 /* Tabs (inside topbar) */
 .tab {
   display: inline-flex;

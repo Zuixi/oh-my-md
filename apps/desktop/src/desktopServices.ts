@@ -143,6 +143,7 @@ export interface DesktopServices {
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   takePendingOpenFiles?: () => Promise<string[]>
+  openExternal?: (url: string) => Promise<void>
   checkForUpdates?: () => Promise<UpdateCheck | null>
 }
 
@@ -337,6 +338,14 @@ export const defaultServices: DesktopServices = {
       return await invoke<string[]>("take_pending_open_files")
     } catch {
       return []
+    }
+  },
+  openExternal: async url => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener")
+      await openUrl(url)
+    } catch {
+      // Opening the browser is best-effort; never block the editor on it.
     }
   },
 }
