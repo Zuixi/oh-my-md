@@ -36,6 +36,19 @@ pnpm --filter @omd/desktop test             # 桌面（tsc + Vitest）
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml  # Rust
 ```
 
+## 性能
+
+大文档基准（`pnpm --filter @omd/engine bench`，M-series 开发机，advisory）：
+
+| 指标 | 10k 行 | 50k 行（安全模式） | 预算 |
+|---|---|---|---|
+| 逐键事务 p95 | 12.5 ms（live）/ 1.4 ms（source） | 6.2 ms（source） | < 16 ms |
+| 冷启动解析 | 45 ms | 315 ms | — |
+| 装饰重建 | 7 ms | — | — |
+| documentStats | — | 12.3 ms | < 8 ms（超限，已按需化） |
+
+> 50k 行以上自动进入安全模式：默认源码模式、按需字数统计、复杂块渲染延迟到接近视口（可手动切回，本次会话内记住）。
+
 ## 发布
 
 **版本单一来源：** `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 字段。升版本用：

@@ -329,3 +329,14 @@ Since the FrontMatter parser landed, the first line `---` of a document always o
 
 `documentStats` is a full-document scan, so `App.tsx` computes it from `deferredDoc`, which lags `doc` by `STATS_DEBOUNCE_MS` (250 ms). A test that emits an edit and synchronously asserts the statusbar text (`"N words · M chars"`) will fail — wait out the window (`waitFor`) or advance fake timers past 250 ms (`test/App.stats.test.tsx` is the pattern). `collectMatches`/`validateFindPattern` run in `useMemo` keyed on the find inputs and `doc`, so they rerun only on real changes, not per render; assertions about match counts after typing are unaffected because `doc` changes on every edit.
 
+
+## Benchmark jitter is real — budgets warn, they never gate
+
+CI runner and local numbers differ by multiples; any machine under load can
+double a p95. That is why `bench/typing.bench.ts` logs budget verdicts
+(`budgetLine` prints `OK` / `OVER BUDGET (> Nms)` for `TYPING_P95_BUDGET_MS =
+16` and `STATS_BUDGET_MS = 8`) instead of using `expect`, and the CI bench job
+sets `continue-on-error: true`. Never convert these to hard assertions;
+regressions are judged by comparing runs on the same machine (same
+`makeBenchmarkDoc` input, which is deterministic by design — do not introduce
+randomness into the generator).

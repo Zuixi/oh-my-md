@@ -78,3 +78,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/build.sh
+
+  bench:
+    name: Bench (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Spec 05: advisory only — runner 抖动大，基准回归不阻断；>50% 回归读日志人工判断。
+      - run: pnpm --filter @omd/engine bench
