@@ -46,7 +46,7 @@ html[data-theme="dark"] .shiki span {
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
 .editor-host .cm-content {
-  font-family: var(--omd-font-family, -apple-system, "PingFang SC", sans-serif);
+  font-family: var(--omd-font-family, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif);
   font-size: var(--omd-font-size, 16px);
   line-height: var(--omd-line-height, 1.6);
   color: var(--omd-fg);
@@ -266,7 +266,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 2px 6px; border-radius: 4px;
 }
 .editor-host .cm-tooltip-autocomplete > ul {
-  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
@@ -516,10 +516,10 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .document-diff-hunk { display: flex; flex-direction: column; gap: 2px; }
 .document-diff-hunk-header {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
-  color: var(--omd-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--omd-muted); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
 }
 .document-diff-line {
-  display: flex; gap: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: flex; gap: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   white-space: pre-wrap; word-break: break-word;
 }
 .document-diff-line-numbers { color: var(--omd-muted); min-width: 4.5em; }

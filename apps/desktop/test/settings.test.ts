@@ -11,7 +11,7 @@ describe("settings model", () => {
     expect(DEFAULT_SETTINGS).toEqual({
       theme: "system",
       fontSize: 16,
-      fontFamily: "system-ui, -apple-system, sans-serif",
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
       lineHeight: 1.6,
       tabSize: 2,
       defaultMode: "live",
