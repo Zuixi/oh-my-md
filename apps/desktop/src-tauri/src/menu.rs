@@ -306,6 +306,13 @@ fn rebuild_from_state<R: Runtime>(
     recents: &[String],
     locale: &str,
 ) -> tauri::Result<()> {
+    // The native app menu only renders as a global menubar on macOS; on
+    // Windows/Linux the frontend serves an in-app menu instead (spec D2).
+    // Gating here makes install/set_recent_files/set_view_state/set_menu_locale
+    // natural no-ops while keeping every IPC command registered.
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
     let previous_checked = app.menu().as_ref().map(read_view_checks);
     let l = menu_strings(locale);
     let menu = MenuBuilder::new(app)

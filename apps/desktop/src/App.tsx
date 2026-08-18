@@ -1601,6 +1601,12 @@ export default function App({
         onCloseTab={requestCloseTab}
         onNewTab={newTab}
         onOpenSettings={() => setSettingsOpen(true)}
+        menu={{
+          getRecents: () => recentsRef.current,
+          onCommand: id => runMenuCommand(id, commandsRef.current, {
+            openRecent: path => { void openRecentRef.current(path) },
+          }),
+        }}
       />
       <div className="workspace-body">
         <aside

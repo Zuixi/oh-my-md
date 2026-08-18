@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { MENU_TO_COMMAND } from "../src/commands"
+import { APP_MENU_TREE } from "../src/menuTree"
 import { formatBinding } from "../src/platform"
 import { FORMAT_SHORTCUT_BINDINGS, WINDOW_SHORTCUTS } from "../src/shortcuts"
 
@@ -103,6 +104,27 @@ describe("native menu ↔ TS command/shortcut wiring", () => {
         shortcutDisplay(commandId),
         `command "${commandId}" has a shortcut but its menu item shows none`,
       ).toBeUndefined()
+    }
+  })
+})
+
+describe("in-app menu tree parity", () => {
+  const treeIds = new Set(
+    APP_MENU_TREE.flatMap(section => section.entries.map(entry => entry.id)),
+  )
+  it("every tree entry maps to a palette command (recents excluded)", () => {
+    for (const id of treeIds) {
+      if (id === "recents") continue
+      expect(MENU_TO_COMMAND[id], `menuTree id ${id}`).toBeTruthy()
+    }
+  })
+  it("covers every forwarded native menu id", () => {
+    for (const item of menuItems()) {
+      if (isNativeWindowItem(item.id)) continue
+      expect(
+        treeIds.has(item.id),
+        `menu.rs id ${item.id} missing from APP_MENU_TREE`,
+      ).toBe(true)
     }
   })
 })

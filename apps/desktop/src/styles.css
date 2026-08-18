@@ -385,6 +385,94 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted);
   font-weight: 700;
 }
+/* In-app menu (Windows/Linux): ☰ trigger in the topbar, dropdown panel below it */
+.app-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.app-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--omd-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.app-menu-trigger:hover {
+  background: var(--omd-border);
+  color: var(--omd-fg);
+}
+.app-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 264px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--omd-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  z-index: 60;
+  animation: omd-fade-in 0.12s ease-out;
+}
+.app-menu-section + .app-menu-section {
+  border-top: 1px solid var(--omd-border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.app-menu-section-title {
+  padding: 4px 12px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--omd-muted);
+  user-select: none;
+}
+.app-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--omd-fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.app-menu-item:hover {
+  background: var(--omd-border);
+}
+.app-menu-item > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-menu-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--omd-muted);
+}
+.app-menu-recent {
+  padding-left: 24px;
+}
+.app-menu-separator {
+  height: 1px;
+  margin: 4px 12px;
+  background: var(--omd-border);
+}
 /* Outline toggle strip — always-visible column between sidebar-secondary and editor */
 .outline-toggle-strip {
   width: 28px;
