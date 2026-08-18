@@ -148,6 +148,7 @@ export interface DesktopServices {
   reportError: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
+  listenDragDrop?: (handler: (paths: string[]) => void) => () => void
   takePendingOpenFiles?: () => Promise<string[]>
   openExternal?: (url: string) => Promise<void>
   checkForUpdates?: () => Promise<UpdateCheck | null>
@@ -339,6 +340,15 @@ export const defaultServices: DesktopServices = {
   },
   listenOpenFile: handler => {
     const pending = listen<string>("open-file", event => handler(event.payload))
+    return () => { void pending.then(unlisten => unlisten()) }
+  },
+  listenDragDrop: handler => {
+    // Native drag events carry real file paths (HTML File objects do not);
+    // the image drop channel in imagePaste.ts stays on HTML events.
+    const pending = import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
+      getCurrentWebview().onDragDropEvent(event => {
+        if (event.payload.type === "drop") handler(event.payload.paths)
+      }))
     return () => { void pending.then(unlisten => unlisten()) }
   },
   takePendingOpenFiles: async () => {

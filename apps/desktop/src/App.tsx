@@ -98,6 +98,7 @@ import {
 } from "./settings"
 import { initLocale, setLocale, useT } from "./i18n"
 import {
+  MARKDOWN_EXTENSIONS,
   MARKDOWN_FILE_EXTENSION,
   RELEASES_URL,
   STORAGE_KEY_OUTLINE_OPEN,
@@ -1295,6 +1296,17 @@ export default function App({
   useEffect(() => {
     if (!services.listenOpenFile) return
     return services.listenOpenFile(path => { void openRecentRef.current(path) })
+  }, [services])
+
+  useEffect(() => {
+    if (!services.listenDragDrop) return
+    return services.listenDragDrop(paths => {
+      const markdown = paths.find(path => {
+        const ext = path.split(".").pop()?.toLowerCase() ?? ""
+        return MARKDOWN_EXTENSIONS.includes(ext)
+      })
+      if (markdown) void openRecentRef.current(markdown)
+    })
   }, [services])
 
   // Background update check after launch settles; failures stay silent.

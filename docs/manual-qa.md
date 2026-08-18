@@ -79,6 +79,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in Finder（文件删除会先确认，打开且脏时先走现有关标签确认）
 - [ ] 文件树 Delete 确认后文件/目录移入系统废纸篓（Finder 废纸篓可见、可恢复）；非空目录同样可删；确认文案说明移入废纸篓（trash 语义，单测只覆盖缺失路径与越权拒绝，真实移入需人工验证）
 - [ ] 打包构建（`tauri build`）后：Finder 双击 .md/.markdown/.mdx 用 oh-my-md 打开（"打开方式"可选、可设默认）；应用未运行时双击启动并直接打开该文件（不恢复上次会话）；应用运行中双击或拖文件到 Dock 图标在已有窗口打开；重复启动聚焦已有窗口不开新实例（dev 模式无法验证关联，需打包产物）
+- [ ] 拖 .md 文件到编辑器窗口：打开该文件（复用脏标签确认/最近文件/文件树展开逻辑）；拖 .txt 无反应；拖图片仍走原通道插入 `assets/`（回归）；已打开同路径文件时聚焦已有标签
 - [ ] 应用菜单「检查更新…」无更新时状态区出现"已是最新版本"；无网络时静默失败不打断编辑；更新横幅（版本号 + 查看发布页 + 以后再说）需 release CI 产出 `latest.json` 后才能端到端验证（13-B 解锁项）；启动后台检查 8s 延迟、失败无提示
 - [ ] 应用菜单「关于 oh-my-md」弹窗版本号与 `tauri.conf.json` 一致（`pnpm release:version` 单源同步，versionSync 测试守护）；设置/会话/恢复数据位于 `~/Library/Application Support/md.ohmy.desktop/`（首次启动自动从旧 temp 目录迁移，不再受系统清理影响）
 - [ ] 打开深层子目录的 .md（FileTree 点开或搜索面板点结果）会逐级自动展开祖先目录并滚动到该文件；千级文件的目录展开后滚动无卡顿、无空白行（树行虚拟化）
@@ -92,6 +93,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 通过原生菜单触发格式/视图命令与快捷键结果一致（菜单 accelerator 会先于 webview 拦截按键）；⌘E 切 Source 后 View 菜单 Show Source Code 勾选状态同步
 - [ ] ⌘F 打开文档查找条（不打开文件夹搜索）；Enter / ⌘G 下一个，⇧Enter / ⇧⌘G 上一个；Escape 关闭并焦点回编辑器；⌘H 展开替换；Replace 改当前匹配，Replace all 一次改完全部；区分大小写可选；`.*` 正则模式（`$1` 捕获替换生效、无效正则显示 role=alert 提示且不跳转）；全字匹配仅文本模式可用（正则开启时禁用），中文查询在全字模式下仍可命中
 - [ ] ⇧⌘F 或 FileTree「Search in folder…」打开文件夹搜索 `.md`，点结果打开并定位；命中词高亮；默认大小写不敏感，Case 开关可区分大小写；超过 500 条命中显示封顶提示；快速改查询不闪旧结果
+- [ ] ⌘P 或 File 菜单「Quick Open…」打开文件名快开（需已打开文件夹）：子串过滤大小写不敏感、↑↓ 移动高亮、Enter 打开所选、Esc 关闭、点击背景关闭；未打开文件夹时按 ⌘P 出现 transient 提示不弹层；超大文件夹（>5000 个 .md）显示截断提示
 - [ ] 列表项 Enter 续写同类型 marker，空项退出列表；Tab / Shift-Tab 仅在列表项缩进/反缩进
 - [ ] Settings → Spellcheck 打开后编辑区可对英文词显示原生拼写红线；关闭后 `.cm-content` 为 `spellcheck="false"`；改设置立即作用于当前文档
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
