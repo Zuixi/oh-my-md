@@ -1363,6 +1363,7 @@ export default function App({
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => void checkForUpdatesNow(true) },
+    { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
   ]
   const commandsRef = useRef(commands)

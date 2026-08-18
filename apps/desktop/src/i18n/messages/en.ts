@@ -55,6 +55,7 @@ export const en: Record<string, string> = {
   "cmd.label.export-image": "Export Image",
   "cmd.label.clear-recents": "Clear Recents",
   "cmd.label.check-updates": "Check for Updates…",
+  "cmd.label.export-diagnostics": "Export Diagnostics…",
   "cmd.label.quick-open": "Quick Open",
   "cmd.label.history": "Version History",
 

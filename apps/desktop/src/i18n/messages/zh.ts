@@ -55,6 +55,7 @@ export const zh: Record<string, string> = {
   "cmd.label.export-image": "导出图片",
   "cmd.label.clear-recents": "清除最近",
   "cmd.label.check-updates": "检查更新…",
+  "cmd.label.export-diagnostics": "导出诊断信息…",
   "cmd.label.quick-open": "快速打开",
   "cmd.label.history": "版本历史",
 

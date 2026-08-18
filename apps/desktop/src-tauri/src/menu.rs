@@ -82,6 +82,7 @@ pub struct MenuLabels {
     pub select_all: &'static str,
     pub about: &'static str,
     pub check_updates: &'static str,
+    pub export_diagnostics: &'static str,
     pub services: &'static str,
     pub hide: &'static str,
     pub hide_others: &'static str,
@@ -152,6 +153,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             select_all: "全选",
             about: "关于 oh-my-md",
             check_updates: "检查更新…",
+            export_diagnostics: "导出诊断信息…",
             services: "服务",
             hide: "隐藏 oh-my-md",
             hide_others: "隐藏其他",
@@ -219,6 +221,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             select_all: "Select All",
             about: "About oh-my-md",
             check_updates: "Check for Updates…",
+            export_diagnostics: "Export Diagnostics…",
             services: "Services",
             hide: "Hide oh-my-md",
             hide_others: "Hide Others",
@@ -405,6 +408,12 @@ fn app_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Res
         .item(&PredefinedMenuItem::about(app, Some(l.about), None)?)
         .separator()
         .item(&item(app, "check-updates", l.check_updates, None)?)
+        .item(&item(
+            app,
+            "export-diagnostics",
+            l.export_diagnostics,
+            None,
+        )?)
         .separator()
         .item(&item(
             app,
@@ -659,6 +668,7 @@ mod tests {
         assert_eq!(l.no_recent, "无最近文件");
         assert_eq!(l.clear_recents, "清除菜单");
         assert_eq!(l.check_updates, "检查更新…");
+        assert_eq!(l.export_diagnostics, "导出诊断信息…");
     }
 
     #[test]
@@ -668,6 +678,7 @@ mod tests {
         assert_eq!(l.new, "New");
         assert_eq!(l.save, "Save");
         assert_eq!(l.check_updates, "Check for Updates…");
+        assert_eq!(l.export_diagnostics, "Export Diagnostics…");
     }
 
     #[test]
