@@ -6,6 +6,9 @@ mod workspace;
 
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+
+use tauri::{Emitter, Manager};
 
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_ENCODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
@@ -13,6 +16,11 @@ const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
 const MAX_RECENT_FILES: usize = 10;
 const ASSETS_DIR_NAME: &str = "assets";
+
+// Mirrors the event name in apps/desktop/src/desktopServices.ts listenOpenFile.
+const OPEN_FILE_EVENT: &str = "open-file";
+const MAX_PENDING_OPEN_FILES: usize = 16;
+static PENDING_OPEN_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
@@ -365,9 +373,57 @@ fn validate_image_format(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md")
+                || ext.eq_ignore_ascii_case("markdown")
+                || ext.eq_ignore_ascii_case("mdx")
+        })
+}
+
+fn queue_open_file(path: String) {
+    if let Ok(mut pending) = PENDING_OPEN_FILES.lock() {
+        if pending.len() < MAX_PENDING_OPEN_FILES {
+            pending.push(path);
+        }
+    }
+}
+
+fn record_open_file(app: &tauri::AppHandle, path: String) {
+    queue_open_file(path.clone());
+    let _ = app.emit(OPEN_FILE_EVENT, path);
+}
+
+/// Drained by the webview after mount: launch-time Opened events can fire
+/// before the frontend listener is registered.
+#[tauri::command]
+fn take_pending_open_files() -> Vec<String> {
+    PENDING_OPEN_FILES
+        .lock()
+        .map(|mut pending| std::mem::take(&mut *pending))
+        .unwrap_or_default()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A second launch focuses the running window; markdown file
+            // arguments open in this instance (macOS delivers the same via
+            // RunEvent::Opened instead of a second process).
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            for arg in argv.iter().skip(1) {
+                let path = arg.strip_prefix("file://").unwrap_or(arg);
+                if is_markdown_path(Path::new(path)) {
+                    record_open_file(app, path.to_string());
+                }
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -415,12 +471,27 @@ pub fn run() {
             allow_workspace_dir,
             set_recent_files,
             set_view_menu_state,
+            take_pending_open_files,
             diagnostics::export_diagnostics,
             menu::set_menu_locale,
             export::export_preview
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running oh-my-md");
+        .build(tauri::generate_context!())
+        .expect("error while building oh-my-md")
+        .run(|app, event| {
+            // macOS "open with"/double-click/Finder-dock drops arrive here.
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    let Ok(path) = url.to_file_path() else {
+                        continue;
+                    };
+                    if !is_markdown_path(&path) {
+                        continue;
+                    }
+                    record_open_file(app, path.to_string_lossy().into_owned());
+                }
+            }
+        });
 }
 
 #[cfg(test)]
@@ -760,5 +831,22 @@ mod tests {
         let document = directory.join("../document.md");
         assert!(document_directory_for_assets(&document).is_err());
         fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn pending_open_files_queue_is_bounded_and_drains_once() {
+        for i in 0..(MAX_PENDING_OPEN_FILES + 5) {
+            queue_open_file(format!("/tmp/doc-{i}.md"));
+        }
+
+        let drained = take_pending_open_files();
+        assert_eq!(drained.len(), MAX_PENDING_OPEN_FILES);
+        assert_eq!(drained[0], "/tmp/doc-0.md");
+        assert_eq!(
+            drained[MAX_PENDING_OPEN_FILES - 1],
+            format!("/tmp/doc-{}.md", MAX_PENDING_OPEN_FILES - 1)
+        );
+        // A drain consumes the queue; a second drain sees nothing.
+        assert!(take_pending_open_files().is_empty());
     }
 }

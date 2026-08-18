@@ -31,6 +31,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdx"],
+        "name": "Markdown Document",
+        "role": "Editor"
+      }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY"
+    }
   }
 }
