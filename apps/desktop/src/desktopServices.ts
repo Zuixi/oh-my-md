@@ -25,6 +25,12 @@ export interface QuickOpenResponse {
   readonly truncated: boolean
 }
 
+export interface SnapshotEntry {
+  readonly fileName: string
+  readonly mtimeMs: number
+  readonly sizeBytes: number
+}
+
 export interface DocumentVersion {
   readonly resolvedPath: string
   readonly fingerprint: string
@@ -132,6 +138,10 @@ export interface DesktopServices {
   listDir?: (path: string) => Promise<TreeEntry[]>
   searchMarkdown?: (root: string, query: string, caseSensitive?: boolean) => Promise<SearchResponse>
   listMarkdownFiles?: (root: string) => Promise<QuickOpenResponse>
+  snapshotDocument?: (path: string) => Promise<void>
+  listSnapshots?: (path: string) => Promise<SnapshotEntry[]>
+  readSnapshot?: (path: string, fileName: string) => Promise<string>
+  clearSnapshots?: (path: string) => Promise<void>
   writeRecovery?: (key: string, contents: string) => Promise<void>
   listRecoveries?: () => Promise<RecoveryRecord[]>
   readRecovery?: (key: string) => Promise<string>
@@ -262,6 +272,11 @@ export const defaultServices: DesktopServices = {
     invoke<SearchResponse>("search_markdown", { root, query, caseSensitive }),
   listMarkdownFiles: root =>
     invoke<QuickOpenResponse>("list_markdown_files", { root }),
+  snapshotDocument: path => invoke<void>("snapshot_document", { path }),
+  listSnapshots: path => invoke<SnapshotEntry[]>("list_snapshots", { path }),
+  readSnapshot: (path, fileName) =>
+    invoke<string>("read_snapshot", { path, fileName }),
+  clearSnapshots: path => invoke<void>("clear_snapshots", { path }),
   writeRecovery: (key, contents) => invoke("write_recovery", { key, contents }),
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
   readRecovery: (key) => invoke<string>("read_recovery", { key }),

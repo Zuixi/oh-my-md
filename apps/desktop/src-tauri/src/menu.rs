@@ -35,6 +35,7 @@ pub struct MenuLabels {
     pub close: &'static str,
     pub save: &'static str,
     pub save_as: &'static str,
+    pub version_history: &'static str,
     pub export: &'static str,
     pub export_html: &'static str,
     pub export_pdf: &'static str,
@@ -104,6 +105,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             close: "关闭",
             save: "保存",
             save_as: "另存为…",
+            version_history: "版本历史…",
             export: "导出",
             export_html: "HTML…",
             export_pdf: "PDF…",
@@ -170,6 +172,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             close: "Close",
             save: "Save",
             save_as: "Save As…",
+            version_history: "Version History…",
             export: "Export",
             export_html: "HTML…",
             export_pdf: "PDF…",
@@ -436,6 +439,8 @@ fn file_submenu<R: Runtime, M: Manager<R>>(
         .separator()
         .item(&item(app, "save", l.save, Some("CmdOrCtrl+S"))?)
         .item(&item(app, "save-as", l.save_as, Some("CmdOrCtrl+Shift+S"))?)
+        .separator()
+        .item(&item(app, "version-history", l.version_history, None)?)
         .separator()
         .item(&export_submenu(app, l)?)
         .build()

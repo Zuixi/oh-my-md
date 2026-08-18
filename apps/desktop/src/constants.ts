@@ -11,6 +11,9 @@ export const MAX_RECENTS = 10
 
 export const MAX_SEARCH_HITS = 500
 
+/** Version-history snapshots kept per file; must match Rust MAX_SNAPSHOTS_PER_FILE. */
+export const MAX_SNAPSHOTS_PER_FILE = 20
+
 export const MARKDOWN_FILE_EXTENSION = "md"
 
 export const MARKDOWN_EXTENSIONS: readonly string[] = [

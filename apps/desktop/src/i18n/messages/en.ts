@@ -56,6 +56,14 @@ export const en: Record<string, string> = {
   "cmd.label.clear-recents": "Clear Recents",
   "cmd.label.check-updates": "Check for Updates…",
   "cmd.label.quick-open": "Quick Open",
+  "cmd.label.history": "Version History",
+
+  "history.title": "Version History",
+  "history.noFile": "Open a saved file to browse its history",
+  "history.loading": "Loading…",
+  "history.empty": "No snapshots yet. Save the file to create one.",
+  "history.clear": "Clear History",
+  "history.failed": "Could not load version history",
 
   "quickOpen.placeholder": "Go to file…",
   "quickOpen.loading": "Loading…",

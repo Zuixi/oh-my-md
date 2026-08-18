@@ -62,6 +62,8 @@ export function saveStatusLabel(state: DocumentSaveState): SaveStatusLabel {
 
 export interface DocumentSaveHost {
   readonly isOpening: () => boolean
+  /** Fires after a successful save; used for fire-and-forget snapshots. */
+  readonly onSaved?: (path: string) => void
   readonly getTab: (tabId: number) => EditorSession | undefined
   readonly getView: (tabId: number) => EditorView | undefined
   readonly getContents: (tabId: number) => string
@@ -254,6 +256,7 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
           host.setWorkspace(replaceTabSession(host.getWorkspace(), saved))
           host.revealFolder(targetPath)
           host.rememberRecent(targetPath)
+          host.onSaved?.(targetPath)
           host.syncDoc(view.state.doc.toString(), tabId)
           host.clearRecovery(recoveryKey(saved))
           host.setSaveStates(updateTabSaveState(

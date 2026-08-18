@@ -174,6 +174,34 @@ async fn list_markdown_files(root: String) -> Result<workspace::QuickOpenRespons
 }
 
 #[tauri::command]
+async fn snapshot_document(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::snapshot_document(path))
+        .await
+        .map_err(|error| format!("snapshot task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn list_snapshots(path: String) -> Result<Vec<workspace::SnapshotEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::list_snapshots(path))
+        .await
+        .map_err(|error| format!("snapshot listing task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn read_snapshot(path: String, file_name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::read_snapshot(path, file_name))
+        .await
+        .map_err(|error| format!("snapshot read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn clear_snapshots(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::clear_snapshots(path))
+        .await
+        .map_err(|error| format!("snapshot clear task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn create_markdown(dir: String, name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || workspace::create_markdown(dir, name))
         .await
@@ -480,6 +508,10 @@ pub fn run() {
             list_dir,
             search_markdown,
             list_markdown_files,
+            snapshot_document,
+            list_snapshots,
+            read_snapshot,
+            clear_snapshots,
             create_markdown,
             create_dir,
             rename_path,
