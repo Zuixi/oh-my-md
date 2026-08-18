@@ -27,6 +27,7 @@ pub struct MenuLabels {
     pub file: &'static str,
     pub new: &'static str,
     pub open_file: &'static str,
+    pub quick_open: &'static str,
     pub open_folder: &'static str,
     pub open_recent: &'static str,
     pub no_recent: &'static str,
@@ -95,6 +96,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             file: "文件",
             new: "新建",
             open_file: "打开…",
+            quick_open: "快速打开…",
             open_folder: "打开文件夹…",
             open_recent: "最近打开",
             no_recent: "无最近文件",
@@ -160,6 +162,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             file: "File",
             new: "New",
             open_file: "Open…",
+            quick_open: "Quick Open…",
             open_folder: "Open Folder…",
             open_recent: "Open Recent",
             no_recent: "No Recent Files",
@@ -425,6 +428,7 @@ fn file_submenu<R: Runtime, M: Manager<R>>(
     SubmenuBuilder::new(app, l.file)
         .item(&item(app, "new", l.new, Some("CmdOrCtrl+N"))?)
         .item(&item(app, "open-file", l.open_file, Some("CmdOrCtrl+O"))?)
+        .item(&item(app, "quick-open", l.quick_open, Some("CmdOrCtrl+P"))?)
         .item(&item(app, "open-folder", l.open_folder, None)?)
         .item(&recents_submenu(app, recents, l)?)
         .separator()

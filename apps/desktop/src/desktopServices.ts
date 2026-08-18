@@ -20,6 +20,11 @@ export interface SearchResponse {
   readonly truncated: boolean
 }
 
+export interface QuickOpenResponse {
+  readonly paths: string[]
+  readonly truncated: boolean
+}
+
 export interface DocumentVersion {
   readonly resolvedPath: string
   readonly fingerprint: string
@@ -126,6 +131,7 @@ export interface DesktopServices {
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
   searchMarkdown?: (root: string, query: string, caseSensitive?: boolean) => Promise<SearchResponse>
+  listMarkdownFiles?: (root: string) => Promise<QuickOpenResponse>
   writeRecovery?: (key: string, contents: string) => Promise<void>
   listRecoveries?: () => Promise<RecoveryRecord[]>
   readRecovery?: (key: string) => Promise<string>
@@ -251,6 +257,8 @@ export const defaultServices: DesktopServices = {
   listDir: (path) => invoke<TreeEntry[]>("list_dir", { path }),
   searchMarkdown: (root, query, caseSensitive = false) =>
     invoke<SearchResponse>("search_markdown", { root, query, caseSensitive }),
+  listMarkdownFiles: root =>
+    invoke<QuickOpenResponse>("list_markdown_files", { root }),
   writeRecovery: (key, contents) => invoke("write_recovery", { key, contents }),
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
   readRecovery: (key) => invoke<string>("read_recovery", { key }),

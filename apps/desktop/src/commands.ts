@@ -23,6 +23,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   new: "tab",
   "new-tab": "tab",
   "open-file": "open",
+  "quick-open": "quick-open",
   "open-folder": "folder",
   close: "close",
   save: "save",

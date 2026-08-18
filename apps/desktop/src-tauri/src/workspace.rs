@@ -38,6 +38,12 @@ pub struct SearchResponse {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct QuickOpenResponse {
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct RecoveryRecord {
     pub key: String,
     pub label: String,
@@ -458,6 +464,59 @@ pub(crate) fn search_markdown_sync(
     })
 }
 
+const MAX_QUICK_OPEN_FILES: usize = 5000;
+
+pub async fn list_markdown_files(root: String) -> Result<QuickOpenResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || list_markdown_files_sync(&root))
+        .await
+        .map_err(|error| format!("markdown listing task failed: {error}"))?
+}
+
+pub(crate) fn list_markdown_files_sync(root: &str) -> Result<QuickOpenResponse, String> {
+    let dir = Path::new(root);
+    reject_traversal(dir)?;
+
+    let mut builder = ignore::WalkBuilder::new(dir);
+    builder
+        .hidden(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .max_filesize(Some(MAX_FILE_BYTES));
+    let walker = builder.build_parallel();
+
+    let paths = Mutex::new(Vec::new());
+    let truncated = AtomicBool::new(false);
+    walker.run(|| {
+        Box::new(|entry| {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                return ignore::WalkState::Continue;
+            }
+            let name = entry.file_name().to_str().unwrap_or("");
+            if !is_markdown(name) {
+                return ignore::WalkState::Continue;
+            }
+            let mut guard = paths.lock().unwrap();
+            if guard.len() >= MAX_QUICK_OPEN_FILES {
+                truncated.store(true, Ordering::Relaxed);
+                return ignore::WalkState::Quit;
+            }
+            guard.push(entry.path().to_string_lossy().into_owned());
+            ignore::WalkState::Continue
+        })
+    });
+
+    let mut list = paths.into_inner().unwrap();
+    list.sort();
+    Ok(QuickOpenResponse {
+        paths: list,
+        truncated: truncated.load(Ordering::Relaxed),
+    })
+}
+
 fn build_matcher(query: &str, case_sensitive: bool) -> Result<regex::Regex, String> {
     RegexBuilder::new(&regex::escape(query))
         .case_insensitive(!case_sensitive)
@@ -851,5 +910,41 @@ mod tests {
 
         fs::remove_dir_all(&legacy).ok();
         fs::remove_dir_all(&target).ok();
+    }
+
+    #[test]
+    fn quick_open_response_serializes_plain_field_names() {
+        let response = QuickOpenResponse {
+            paths: vec!["/notes/a.md".into()],
+            truncated: true,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(json, r#"{"paths":["/notes/a.md"],"truncated":true}"#);
+    }
+
+    #[test]
+    fn quick_open_lists_markdown_only_sorted_without_hidden() {
+        let root = tmp("quick-open");
+        reset_dir(&root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("b.md"), "b").unwrap();
+        fs::write(root.join("sub/a.md"), "a").unwrap();
+        fs::write(root.join("note.txt"), "x").unwrap();
+        fs::write(root.join(".hidden.md"), "h").unwrap();
+
+        let response = list_markdown_files_sync(&path_string(&root)).unwrap();
+
+        assert_eq!(response.paths.len(), 2);
+        assert!(response.paths[0].ends_with("b.md"));
+        assert!(response.paths[1].ends_with("sub/a.md"));
+        assert!(!response.truncated);
+
+        // A missing root walks to nothing (matching search), traversal is rejected.
+        let missing = list_markdown_files_sync(&path_string(&root.join("nope"))).unwrap();
+        assert!(missing.paths.is_empty());
+        assert!(
+            list_markdown_files_sync(&root.join("..").join("elsewhere").to_string_lossy()).is_err()
+        );
+        fs::remove_dir_all(root).ok();
     }
 }

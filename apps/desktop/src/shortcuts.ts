@@ -26,6 +26,7 @@ export const WINDOW_SHORTCUTS: readonly WindowShortcut[] = [
   { id: "outline", keys: "⇧⌘O", key: "O", shift: true },
   { id: "search", keys: "⇧⌘F", key: "f", shift: true },
   { id: "find", keys: "⌘F", key: "f" },
+  { id: "quick-open", keys: "⌘P", key: "p" },
   { id: "open", keys: "⌘O", key: "o" },
   { id: "tab", keys: "⌘N", key: "n" },
   { id: "close", keys: "⌘W", key: "w" },

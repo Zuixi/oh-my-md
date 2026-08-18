@@ -75,6 +75,7 @@ import {
 } from "./fileTreeState"
 import { OutlinePanel } from "./OutlinePanel"
 import { CommandPalette } from "./CommandPalette"
+import { QuickOpenModal } from "./QuickOpenModal"
 import { SearchPanel, type SearchHit } from "./SearchPanel"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import {
@@ -252,6 +253,12 @@ export default function App({
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [quickOpenState, setQuickOpenState] = useState<{
+    open: boolean
+    files: string[]
+    truncated: boolean
+    loading: boolean
+  }>({ open: false, files: [], truncated: false, loading: false })
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchHits, setSearchHits] = useState<SearchHit[]>([])
@@ -917,6 +924,31 @@ export default function App({
     }
   }
 
+  async function openQuickOpen() {
+    const folder = workspaceRef.current.folder
+    if (!folder) {
+      showTransientStatus(t("quickOpen.noFolder"))
+      return
+    }
+    if (!services.listMarkdownFiles) return
+    setQuickOpenState({ open: true, files: [], truncated: false, loading: true })
+    try {
+      const response = await services.listMarkdownFiles(folder)
+      if (!mountedRef.current) return
+      setQuickOpenState({
+        open: true,
+        files: response.paths,
+        truncated: response.truncated,
+        loading: false,
+      })
+    } catch (error) {
+      if (mountedRef.current) {
+        setQuickOpenState(current => ({ ...current, loading: false }))
+        services.reportError(errorMessage(t("error.openFailed"), error))
+      }
+    }
+  }
+
   function openFile() {
     return runOpen(() => services.pickOpenPath())
   }
@@ -1196,6 +1228,7 @@ export default function App({
 
   const commands: AppCommand[] = [
     { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
+    { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openQuickOpen() },
     { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
     { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
@@ -1680,6 +1713,16 @@ export default function App({
       />
       {paletteOpen ? (
         <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />
+      ) : null}
+      {quickOpenState.open ? (
+        <QuickOpenModal
+          files={quickOpenState.files}
+          folder={workspace.folder}
+          truncated={quickOpenState.truncated}
+          loading={quickOpenState.loading}
+          onChoose={path => { void openRecentRef.current(path) }}
+          onClose={() => setQuickOpenState(current => ({ ...current, open: false }))}
+        />
       ) : null}
       <SettingsModal
         isOpen={settingsOpen}

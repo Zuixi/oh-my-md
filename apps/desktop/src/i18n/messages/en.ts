@@ -55,6 +55,13 @@ export const en: Record<string, string> = {
   "cmd.label.export-image": "Export Image",
   "cmd.label.clear-recents": "Clear Recents",
   "cmd.label.check-updates": "Check for Updates…",
+  "cmd.label.quick-open": "Quick Open",
+
+  "quickOpen.placeholder": "Go to file…",
+  "quickOpen.loading": "Loading…",
+  "quickOpen.empty": "No matching files",
+  "quickOpen.truncated": "File list truncated",
+  "quickOpen.noFolder": "Open a folder to use Quick Open",
 
   "update.available": "Version {version} is available.",
   "update.view": "View Release",
