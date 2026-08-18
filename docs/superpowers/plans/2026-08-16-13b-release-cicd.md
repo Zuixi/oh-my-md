@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`
 
-> **状态（2026-08-18）：** Task B1 已完成（`.github/workflows/ci.yml` 四 job）。B2/B3 **阻塞于 Apple Developer 账号**（2026-08-17 提交申请，审批中），暂缓执行；B4 文档项随发布解锁一并收尾。`TAURI_SIGNING_PRIVATE_KEY` 已于 2026-08-18 配入 GitHub secrets；带口令密钥的取舍留待首次公开发版前决定。B1 的 push 确认跑见 `2026-08-18-13b-release-unblock.md` Task 4。
+> **状态（2026-08-18）：** Task B1 已完成（`.github/workflows/ci.yml` 四 job）。B2/B3 **阻塞于 Apple Developer 账号**（2026-08-17 提交申请，审批中），暂缓执行；B4 文档项已随 `2026-08-18-13b-release-unblock` 落地（README 的 tag 触发说明待 B3 时补充）。`TAURI_SIGNING_PRIVATE_KEY` 已于 2026-08-18 配入 GitHub secrets；带口令密钥的取舍留待首次公开发版前决定。B1 的 push 确认跑见 `2026-08-18-13b-release-unblock.md` Task 4。
 
 ## TODO：Apple 账号解锁清单（B2/B3 启动条件）
 
@@ -24,7 +24,7 @@
 
 ## Global Constraints
 
-- 最低 macOS 12（CI runner 用 `macos-12`）。
+- 最低 macOS 12（CI runner 用 `macos-latest`）。
 - 密钥只进 GitHub Actions secrets：`APPLE_CERTIFICATE`（base64 p12）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`（app-specific password）、`APPLE_TEAM_ID`。
 - Build-once / sign-once：CI 只编译一次，release job 复用 artifact，不重编译。
 - `v*` tag 触发 release；版本号与 tag 一致（`v0.2.0` ↔ `0.2.0`）。
@@ -83,6 +83,8 @@
 
 ### Task B4: 文档收尾 + 烟测清单
 
+> B4 于 5017153 落地；README 中 `v*` tag 触发的说明待 B3 解锁后补充。
+
 **Files:**
 - Modify: `README.md`（补发布流程：`pnpm release:version <x.y.z>` → 打 tag → CI 自动发布）
 - Modify: `docs/manual-qa.md`（增「发布与升级」节，含 13-A/13-B 的烟测项）
@@ -91,18 +93,13 @@
 
 **Interfaces:** 无。
 
-- [ ] **Step 1: 补 README 发布流程**——写清版本号单一来源、tag 触发、secrets 依赖。
-- [ ] **Step 2: 补 manual-qa 烟测清单**——Gatekeeper 放行、真实升级、公证产物 `spctl`、诊断包导出、干净环境安装烟测。
-- [ ] **Step 3: 补 AGENTS.md 与 docs/AGENTS.md**——命令与路由。
-- [ ] **Step 4: Commit** `docs: document release workflow and smoke checklist`
+- [x] **Step 1: 补 README 发布流程**——写清版本号单一来源、tag 触发、secrets 依赖。
+- [x] **Step 2: 补 manual-qa 烟测清单**——Gatekeeper 放行、真实升级、公证产物 `spctl`、诊断包导出、干净环境安装烟测。
+- [x] **Step 3: 补 AGENTS.md 与 docs/AGENTS.md**——命令与路由。
+- [x] **Step 4: Commit** `docs: document release workflow and smoke checklist`
 
 ---
 
 ## 烟测清单（人工，需真实环境）
 
-- [ ] 干净 Mac 双击 `.dmg` 打开，Gatekeeper 无拦截。
-- [ ] `pnpm release:version 0.2.0` 后 `rg '"0\.1\.0"'` 无残留。
-- [ ] `v*` tag 后 Release 出现 `.app`/`.dmg`/`latest.json`。
-- [ ] 旧版本运行中检查到新版本并提示；确认后成功升级。
-- [ ] 菜单「Export Diagnostics…」导出 zip，含日志与版本、无文档正文。
-- [ ] 无网络时更新检查静默失败，不打断编辑。
+见 `docs/manual-qa.md`「发布与升级」节（随 2026-08-18-13b-release-unblock 落地并持续维护）。
