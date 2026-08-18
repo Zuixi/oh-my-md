@@ -4,7 +4,10 @@ import {
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
-import { applyToggle, documentStats, isLivePreview, setLivePreview, type OutlineItem } from "@omd/engine"
+import {
+  applyToggle, documentStats, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES,
+  setBlockRenderBudget, setLivePreview, type OutlineItem,
+} from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
   advanceDocumentIdentity, createSession, openSession, recoveryKey,
@@ -562,14 +565,19 @@ export default function App({
       syncDoc(previousDoc, nextSession.id)
       throw error
     }
-    // Spec 05：超大文档进入安全模式 —— 默认源码模式 + 一次性提示 + 按需字数。
-    // 用户本会话内显式切换过模式的 tab 不再强制。
+    // Spec 05：超大文档进入安全模式 —— 默认源码模式 + 块渲染预算 + 一次性提示
+    // + 按需字数。用户本会话内显式切换过模式的 tab 不再强制。
     const lines = contents ? contents.split("\n").length : 0
-    if (lines > SAFE_MODE_LINES && safeModeChoiceRef.current.get(nextSession.id) === undefined) {
+    const safeMode = lines > SAFE_MODE_LINES
+      && safeModeChoiceRef.current.get(nextSession.id) === undefined
+    if (safeMode) {
       try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
+      setBlockRenderBudget(SAFE_MODE_RENDER_BUDGET_LINES)
+    } else {
+      setBlockRenderBudget(Infinity)
     }
     setLargeDocNotice(
-      lines > SAFE_MODE_LINES
+      safeMode
         ? { sessionId: nextSession.id, lines, safeMode: true }
         : lines > LARGE_DOC_LINES
           ? { sessionId: nextSession.id, lines, safeMode: false }
