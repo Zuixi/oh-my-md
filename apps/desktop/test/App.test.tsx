@@ -164,7 +164,6 @@ describe("App normalization wiring", () => {
     act(() => stale.onDocumentUpdate({
       tabId: 1,
       documentId: stale.documentId,
-      doc: "zombie",
       docChanged: true,
       pendingNormalization: { id: normalizationId(9), markerCount: 3 },
     }))

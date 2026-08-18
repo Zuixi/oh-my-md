@@ -41,11 +41,15 @@ export type EditorMock = {
   reset: Mock<(view: EditorView, options: CreateEditorOptions) => void>
 }
 
+/** Emit keeps accepting `doc` for harness bookkeeping (fake view state), but the
+ * payload forwarded to App never carries it (Spec 05a pull-based materialization). */
+export type FakeEditorEmit = Omit<EditorDocumentUpdate, "tabId" | "documentId"> & { doc: string }
+
 export interface FakeEditorHandle {
   readonly view: EditorView
   getOptions: () => CreateEditorOptions
   setContents: (contents: string) => void
-  emit: (update: Omit<EditorDocumentUpdate, "tabId" | "documentId">) => void
+  emit: (update: FakeEditorEmit) => void
 }
 
 export type HarnessServices = DesktopServices & Required<
@@ -68,7 +72,7 @@ export interface AppHarness {
   readonly services: HarnessServices
   seedFile: (path: string, contents: string) => void
   disk: (path: string) => DiskFixture
-  renderApp: (props?: { autosaveMs?: number; watchMs?: number }) => RenderResult
+  renderApp: (props?: { autosaveMs?: number; watchMs?: number; docMaterializeMs?: number }) => RenderResult
   editorForTab: (tabId: number) => FakeEditorHandle
   allEditors: () => readonly FakeEditorHandle[]
   activateTab: (tabId: number) => void
@@ -157,7 +161,10 @@ function createHandleRecord(
     emit: update => {
       contents = update.doc
       pending = update.pendingNormalization
-      act(() => notifyHost(options, update))
+      act(() => notifyHost(options, {
+        docChanged: update.docChanged,
+        pendingNormalization: update.pendingNormalization,
+      }))
     },
   }
   return {
@@ -227,6 +234,7 @@ interface HarnessContext {
   rendered: RenderResult | null
   autosaveMs: number
   watchMs: number
+  docMaterializeMs: number
 }
 
 let lastMountedApp: RenderResult | null = null
@@ -335,6 +343,7 @@ function appElement(context: HarnessContext, watchMs: number) {
     services: context.services,
     autosaveMs: context.autosaveMs,
     watchMs,
+    docMaterializeMs: context.docMaterializeMs,
   })
 }
 
@@ -441,6 +450,9 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     rendered: null,
     autosaveMs: 0,
     watchMs: NO_WATCH_MS,
+    // 默认同步物化：既有套件保持 emit→docsRef 即时可见的旧语义；
+    // 时序专项测试（App.docMaterialize/App.stats）按需传 250。
+    docMaterializeMs: 0,
   }
   context.services = harnessServices(context)
   installEditorMock(context)
@@ -455,6 +467,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       context.rendered?.unmount()
       context.autosaveMs = props.autosaveMs ?? 0
       context.watchMs = props.watchMs ?? NO_WATCH_MS
+      context.docMaterializeMs = props.docMaterializeMs ?? 0
       context.rendered = render(appElement(context, context.watchMs))
       lastMountedApp = context.rendered
       return context.rendered

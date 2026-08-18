@@ -28,7 +28,8 @@ import { convertFileSrc } from "@tauri-apps/api/core"
 export interface EditorDocumentUpdate {
   readonly tabId: number
   readonly documentId: number
-  readonly doc: string
+  // Spec 05a：doc 字段已移除——每键物化整文档字符串（rope 展平 5-15ms @10MB + GC churn）
+  // 是逐键路径上最大的 O(doc) 应用层工作。App 按物化节奏从 view.state.doc 拉取。
   readonly docChanged: boolean
   readonly pendingNormalization: OrderedListNormalizationNotice | null
 }
@@ -129,7 +130,6 @@ function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): v
   options.onDocumentUpdate({
     tabId: options.tabId,
     documentId: options.documentId,
-    doc: update.state.doc.toString(),
     docChanged: update.docChanged,
     pendingNormalization: pending,
   })
