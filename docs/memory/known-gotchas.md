@@ -102,6 +102,10 @@ Use `packages/engine/test/helpers.ts::makeState` for parser/decoration tests tha
 
 Note: production decorations are provided by a `StateField` and updated incrementally from changed ranges, selection, and syntax-tree progress. Tests that inspect a complete tree should still use `makeState`.
 
+`ensureSyntaxTree` without an `EditorView` only advances parsing to the viewport boundary (near zero for a fresh state), because `@codemirror/language`'s `ParseWorker` schedules background work via `requestIdle`/`setTimeout` only when a view is attached. For large documents in `incremental.test.ts`, this caused flaky failures under CPU load: the `livePreviewField` StateField captured a partial `treeLength` at creation and only added decorations for newly-parsed regions on update, so `specKeys(incremental)` vs `specKeys(fresh)` diverged depending on how far the fresh state's initial parse got. The fix is `liveState` in that file: mount a temporary `EditorView`, call `forceParsing(view, doc.length, 10000)`, then detach — the complete tree survives `view.destroy()`. Compare the incremental field against `buildLiveDecorations(state)` (a direct full rebuild on the same state) rather than a freshly created state, which avoids both the view-attachment requirement and happy-dom DOM lifecycle issues from repeated view creation.
+
+When comparing decoration specs across an edit, `changedSpecCount` must map before-specs through the transaction's `ChangeDesc` so specs that merely shifted position (same tag, moved by the edit delta) don't count as "changed." Without this, any edit in a fully-parsed large document reports a near-total change count because every spec after the edit point shifts.
+
 ## Structure and appearance live in different packages
 
 The engine emits `omd-*` class names and tests structural ranges/widgets. Desktop CSS in `apps/desktop/src/styles.css` supplies the visual result, including KaTeX CSS.
