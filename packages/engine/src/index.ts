@@ -5,6 +5,7 @@ import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/wi
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
+import { htmlPaste } from "./paste/htmlPaste"
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
@@ -57,6 +58,11 @@ export {
   insertTableRow,
   replaceTableCell,
 } from "./tables/edit"
+export {
+  convertHtmlToMarkdown,
+  htmlPaste,
+  htmlPasteToMarkdown,
+} from "./paste/htmlPaste"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
@@ -68,6 +74,7 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
+    htmlPaste(),
     markdownKeymap,
     listKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
