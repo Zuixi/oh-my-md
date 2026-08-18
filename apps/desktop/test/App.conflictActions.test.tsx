@@ -233,7 +233,7 @@ describe("App conflict actions", () => {
     expect(harness.editorForTab(1).view.dispatch).not.toHaveBeenCalled()
   })
 
-  it("permission denied offers retry, save copy, and reveal in Finder", async () => {
+  it("permission denied offers retry, save copy, and reveal in file manager", async () => {
     const harness = makeAppHarness()
     harness.renderApp()
     await harness.openFileTab("/notes/a.md", "saved")
@@ -243,7 +243,7 @@ describe("App conflict actions", () => {
 
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Save copy" })).toBeTruthy()
-    fireEvent.click(screen.getByRole("button", { name: "Reveal in Finder" }))
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in File Manager" }))
     expect(harness.services.revealInFinder).toHaveBeenCalledWith("/notes/a.md")
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }))

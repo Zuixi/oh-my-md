@@ -46,7 +46,8 @@ import {
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
-import { runMenuCommand, type AppCommand } from "./commands"
+import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
+import { isMacOS } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type SnapshotEntry } from "./desktopServices"
@@ -1313,7 +1314,7 @@ export default function App({
     }
   }
 
-  const commands: AppCommand[] = [
+  const allCommands: AppCommand[] = [
     { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
     { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openQuickOpen() },
     { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
@@ -1366,6 +1367,12 @@ export default function App({
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
   ]
+  // Native PDF/image export is macOS-only (spec D3); on macOS the set filters
+  // nothing. Filtering the single definition point covers the palette,
+  // commandsRef, runMenuCommand, and the future native AppMenu alike.
+  const commands: AppCommand[] = allCommands.filter(
+    command => isMacOS() || !MACOS_ONLY_COMMANDS.has(command.id),
+  )
   const commandsRef = useRef(commands)
   commandsRef.current = commands
 

@@ -191,7 +191,7 @@ describe("FileTree sidebar menu", () => {
     expect(screen.queryByText("doc.md")).toBeNull()
   })
 
-  it("reveals the selected path in Finder", async () => {
+  it("reveals the selected path in the file manager", async () => {
     const harness = makeAppHarness()
     harness.services.listDir = vi.fn(async () => [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
@@ -201,7 +201,7 @@ describe("FileTree sidebar menu", () => {
     await harness.openIntoActive("/notes/doc.md", "saved")
 
     await openTreeMenu("doc.md")
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }))
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in File Manager" }))
 
     await waitFor(() => expect(harness.services.revealInFinder).toHaveBeenCalledWith("/notes/doc.md"))
   })
