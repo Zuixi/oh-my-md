@@ -173,6 +173,20 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 外部修改文件 → watcher 提示；HTML 导出；PDF/PNG 入口不可见。
 - [ ] Export Diagnostics 产出含 `os.txt` 与日志。
 
+## Windows（P2）
+
+在 Windows VM（或 CI 产出的 NSIS 包 + VM 安装；P3 前用 dev 版）逐项目视；本环境无 VM，执行待人工，未跑项标 **NOT RUN**。
+
+- [ ] 启动无 crash、无多余控制台窗口（`windows_subsystem` 属性）。
+- [ ] ☰ 菜单全量走查（同 Linux 清单）。
+- [ ] Ctrl 系快捷键全测（同 Linux 清单）。
+- [ ] 双击 .md 经文件关联打开（argv 路径裁决 D12：中文/空格路径正常；失败则修 `lib.rs` 的 argv 处理并补单测）。
+- [ ] 覆盖保存已有文件（裁决 A6：多次保存、保存同时被杀毒扫描不丢数据）。
+- [ ] Explorer reveal、删除进回收站、重命名、新建。
+- [ ] 右键粘贴截图/复制图片（WebView2 无 workaround 门控生效，光标不跳）。
+- [ ] 拖拽 .md 到窗口打开；CJK 字体（YaHei 回落）。
+- [ ] 外部修改 watcher 提示；HTML 导出；PDF/PNG 入口不可见；诊断包含 `os.txt`。
+
 ## 语种切换（i18n）
 
 - 启动 OS=zh-CN：界面与原生菜单均为中文。
