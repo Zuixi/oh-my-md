@@ -2,7 +2,7 @@ import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
 import { cursorInside, nearCursor, type DecoSpec } from "./types"
-import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget } from "./widgets"
+import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
 import { imageResolver } from "./widgets/image"
@@ -358,6 +358,27 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         from: node.from, to: node.to, tag: "widget:block:hr",
         deco: Decoration.replace({
           widget: new HrWidget(
+            state.doc.sliceString(node.from, node.to),
+            node.from,
+            blockEmbed(node.node),
+          ),
+          block: true,
+        }),
+      })
+      return true
+    case "FrontMatter":
+      if (blockSelected(state, node.from, node.to)) {
+        for (let pos = node.from; pos < node.to; ) {
+          const line = state.doc.lineAt(pos)
+          out.push({ from: line.from, to: line.from, tag: "line:omd-front-matter", deco: Decoration.line({ class: "omd-front-matter-src" }) })
+          pos = line.to + 1
+        }
+        return false
+      }
+      out.push({
+        from: node.from, to: node.to, tag: "widget:block:front-matter",
+        deco: Decoration.replace({
+          widget: new FrontMatterWidget(
             state.doc.sliceString(node.from, node.to),
             node.from,
             blockEmbed(node.node),

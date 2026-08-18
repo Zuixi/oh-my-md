@@ -203,8 +203,12 @@ describe("block syntax", () => {
   })
 
   it("styles horizontal rule source when the cursor is on it", () => {
-    expect(tags("---")).toContain("line:omd-hr")
-    expect(tags("---")).not.toContain("widget:block:hr")
+    // Doc-start `---` opens front matter, so the hr variant lives mid-doc.
+    const doc = "intro\n\n---"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(t).toContain("line:omd-hr")
+    expect(t).not.toContain("widget:block:hr")
   })
 
   it("replaces thematic breaks with a rule widget when the cursor is away", () => {
