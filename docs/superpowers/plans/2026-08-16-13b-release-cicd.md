@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`
 
-> **状态（2026-08-18）：** Task B1 已完成（`.github/workflows/ci.yml` 四 job）。B2/B3 **阻塞于 Apple Developer 账号**（2026-08-17 提交申请，审批中），暂缓执行；B4 文档项随发布解锁一并收尾。
+> **状态（2026-08-18）：** Task B1 已完成（`.github/workflows/ci.yml` 四 job）。B2/B3 **阻塞于 Apple Developer 账号**（2026-08-17 提交申请，审批中），暂缓执行；B4 文档项随发布解锁一并收尾。`TAURI_SIGNING_PRIVATE_KEY` 已于 2026-08-18 配入 GitHub secrets；带口令密钥的取舍留待首次公开发版前决定。B1 的 push 确认跑见 `2026-08-18-13b-release-unblock.md` Task 4。
 
 ## TODO：Apple 账号解锁清单（B2/B3 启动条件）
 
@@ -18,7 +18,7 @@
 - [ ] 生成 "Developer ID Application" 证书并导出 p12。
 - [ ] GitHub 仓库 Settings → Secrets 配置 5 个签名公证 secret：`APPLE_CERTIFICATE`（base64 p12）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`（app-specific）、`APPLE_TEAM_ID`。
 - [x] 生成 updater 密钥对（2026-08-18）：公钥已写入 `tauri.conf.json`；私钥离线保管于本机 `~/.tauri/oh-my-md-updater.key`（空口令），**绝不入库**。首次公开发布前评估是否换用带口令密钥。
-- [ ] 将 `TAURI_SIGNING_PRIVATE_KEY`（私钥文件内容）与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空口令可省）加入 GitHub secrets。
+- [x] 将 `TAURI_SIGNING_PRIVATE_KEY`（私钥文件内容）与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空口令可省）加入 GitHub secrets。
 - [ ] 执行 Task B2（签名 + 公证）与 Task B3（release job + `latest.json` 更新清单）。
 - [ ] 真实验证：`v*` tag → Release 出现 `.app`/`.dmg`/`latest.json`，`spctl -a -vv` 无 Gatekeeper 拦截。
 
