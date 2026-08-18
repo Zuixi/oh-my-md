@@ -13,10 +13,21 @@ export interface RecoveryHost {
   readonly reportError: (message: string) => void
 }
 
+// Spec 05a：崩溃恢复允许 ≤1s 丢失窗口（物化 250ms + 本防抖）；每键整文档 IPC/写盘必须消失。
+export const RECOVERY_DEBOUNCE_MS = 800
+
+interface PendingWrite {
+  readonly draft: RecoveryDraft
+  readonly host: RecoveryHost
+  timer: number
+}
+
 export interface RecoveryWriter {
-  /** Writes one draft; the returned promise settles once the outcome has been surfaced. */
+  /** Schedules one trailing write per tab; settled when the outcome has been surfaced. */
   readonly save: (draft: RecoveryDraft, host: RecoveryHost) => Promise<void>
-  /** Drops a closed tab, so a recycled id cannot inherit its reporting state. */
+  /** Forces every pending write for hosts sharing this `write` function to run now. */
+  readonly flush: (host: RecoveryHost) => Promise<void>
+  /** Drops a closed tab: cancels its pending write and reporting state (recycled ids stay clean). */
   readonly forget: (tabId: number) => void
 }
 
@@ -31,16 +42,45 @@ export interface RecoveryWriter {
  */
 export function createRecoveryWriter(): RecoveryWriter {
   const reported = new Set<number>()
+  const lastWritten = new Map<number, string>()
+  const pending = new Map<number, PendingWrite>()
+
+  const writeNow = async (entry: PendingWrite) => {
+    pending.delete(entry.draft.tabId)
+    try {
+      await entry.host.write?.(entry.draft.key, entry.draft.contents)
+      lastWritten.set(entry.draft.tabId, entry.draft.contents)
+      reported.delete(entry.draft.tabId)
+    } catch (error) {
+      surfaceFailure(reported, entry.draft, entry.host, error)
+    }
+  }
+
   return {
-    save: async (draft, host) => {
-      try {
-        await host.write?.(draft.key, draft.contents)
-        reported.delete(draft.tabId)
-      } catch (error) {
-        surfaceFailure(reported, draft, host, error)
+    save: (draft, host) => {
+      // 同内容去重：物化节奏重发的未变草稿不再触发 IPC/写盘。
+      if (lastWritten.get(draft.tabId) === draft.contents) return Promise.resolve()
+      const existing = pending.get(draft.tabId)
+      if (existing) window.clearTimeout(existing.timer)
+      const entry: PendingWrite = { draft, host, timer: 0 }
+      entry.timer = window.setTimeout(() => { void writeNow(entry) }, RECOVERY_DEBOUNCE_MS)
+      pending.set(draft.tabId, entry)
+      return Promise.resolve()
+    },
+    flush: async host => {
+      for (const entry of [...pending.values()]) {
+        if (entry.host.write !== host.write) continue
+        window.clearTimeout(entry.timer)
+        await writeNow(entry)
       }
     },
-    forget: tabId => { reported.delete(tabId) },
+    forget: tabId => {
+      const entry = pending.get(tabId)
+      if (entry) window.clearTimeout(entry.timer)
+      pending.delete(tabId)
+      lastWritten.delete(tabId)
+      reported.delete(tabId)
+    },
   }
 }
 

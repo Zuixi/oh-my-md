@@ -81,14 +81,15 @@ function edit(harness: ReturnType<typeof makeAppHarness>, tabId: number, doc: st
   harness.editorForTab(tabId).emit({ doc, docChanged: true, pendingNormalization: null })
 }
 
-/** Lets the recovery write settle, since its failure is handled off the update callback. */
+/** Lets the recovery write settle: it is an 800ms trailing debounce, and the next
+ * edit's draft would otherwise replace the pending one before it fires. */
 async function editAndSettle(
   harness: ReturnType<typeof makeAppHarness>,
   tabId: number,
   doc: string,
 ) {
   edit(harness, tabId, doc)
-  await act(async () => { await Promise.resolve() })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 850)) })
 }
 
 describe("App harness ordered-list fake", () => {
@@ -333,7 +334,7 @@ describe("App normalization autosave and accept/reject", () => {
         docChanged: true,
         pendingNormalization: { id: normalizationId(1), markerCount: 1 },
       })
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(1100)
       expect(harness.services.saveDocument).not.toHaveBeenCalled()
       expect(harness.services.writeRecovery).toHaveBeenCalledWith(
         expect.any(String),
@@ -853,7 +854,7 @@ describe("App product shell", () => {
     const harness = makeAppHarness()
     harness.renderApp({ autosaveMs: 20 })
     edit(harness, 1, "draft")
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 900)) })
     expect(harness.services.writeRecovery).toHaveBeenCalled()
     expect(harness.services.saveDocument).not.toHaveBeenCalled()
   })
@@ -1264,7 +1265,9 @@ describe("App conflict-safe save integration", () => {
         .toContain("changed on disk")
     })
 
-    expect(harness.services.writeRecovery).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(harness.services.writeRecovery).toHaveBeenCalled()
+    }, { timeout: 2000 })
     expect(harness.services.reportError).not.toHaveBeenCalled()
     expect(harness.disk("/notes/a.md").contents()).toBe("theirs")
     const attempts = harness.disk("/notes/a.md").saveCalls().length
