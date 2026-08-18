@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { currentPlatform, isLinux, isMacOS, isWindows } from "../src/platform"
+import { currentPlatform, formatBinding, isLinux, isMacOS, isWindows } from "../src/platform"
 
 function setUserAgent(userAgent: string): void {
   Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
@@ -26,5 +26,18 @@ describe("currentPlatform", () => {
     expect(isMacOS()).toBe(true)
     expect(isWindows()).toBe(false)
     expect(isLinux()).toBe(false)
+  })
+})
+
+describe("formatBinding", () => {
+  it("renders mac glyphs", () => {
+    expect(formatBinding("Mod+s", "macos")).toBe("⌘S")
+    expect(formatBinding("Mod+Shift+o", "macos")).toBe("⇧⌘O")
+    expect(formatBinding("Mod-Alt-7", "macos")).toBe("⌥⌘7")
+  })
+  it("renders ctrl words on windows and linux", () => {
+    expect(formatBinding("Mod+s", "windows")).toBe("Ctrl+S")
+    expect(formatBinding("Mod+Shift+o", "linux")).toBe("Ctrl+Shift+O")
+    expect(formatBinding("Mod-Alt-7", "windows")).toBe("Ctrl+Alt+7")
   })
 })

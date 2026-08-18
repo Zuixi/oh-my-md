@@ -26,8 +26,8 @@ export {
   type FootnoteTarget,
 } from "./footnotesNav"
 export { applyToggle, isLivePreview } from "./modes/livePreview"
-export { toggleShortcutLabels } from "./modes/livePreview"
-export { markdownKeymap, markdownShortcutLabels } from "./format/commands"
+export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from "./modes/livePreview"
+export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { documentStats, type DocumentStats } from "./stats"
 export {
