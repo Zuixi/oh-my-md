@@ -147,6 +147,15 @@ describe("block widget pipeline", () => {
     expect(resolveCodeLanguage("unknown-language")).toBe(null)
   })
 
+  it("renders code with dual-theme dark CSS variables", async () => {
+    const widget = new CodeWidget("const x = 1", 0, "js")
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    document.body.appendChild(dom)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(dom.querySelector(".omd-block-body")?.innerHTML).toContain("--shiki-dark")
+    dom.remove()
+  }, 2000)
+
   it("writes mermaid SVG into the widget body", async () => {
     const widget = new MermaidWidget("graph TD; A-->B", 0)
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)

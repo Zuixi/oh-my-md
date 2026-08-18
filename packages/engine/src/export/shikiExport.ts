@@ -11,9 +11,12 @@ export { resolveCodeLanguage }
 let exportHighlighterPromise: Promise<HighlighterCore> | null = null
 
 function getExportHighlighter(): Promise<HighlighterCore> {
-  return exportHighlighterPromise ??= import("shiki/themes/github-light.mjs").then(theme =>
+  return exportHighlighterPromise ??= Promise.all([
+    import("shiki/themes/github-light.mjs"),
+    import("shiki/themes/github-dark.mjs"),
+  ]).then(([light, dark]) =>
     createHighlighterCore({
-      themes: [theme.default],
+      themes: [light.default, dark.default],
       langs: [],
       engine: createJavaScriptRegexEngine(),
     }))
