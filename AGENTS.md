@@ -29,6 +29,7 @@ oh-my-md/
 ├── packages/engine/       # Markdown language support and live-preview behavior
 │   ├── src/               # Lezer parsing, decorations, modes, widgets
 │   └── test/              # Vitest tests and Markdown fixtures
+├── .github/workflows/    # CI：engine/desktop/rust/link 四 job（发布流水线阻塞于 Apple 账号）
 └── docs/                  # Product specs, implementation plans, QA, guides, agent memory
 ```
 
@@ -58,6 +59,8 @@ scripts/test.sh
 pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+pnpm release:version <x.y.z>
+pnpm release:changelog
 ```
 
 - `pnpm test` runs engine TypeScript checking (`tsc --noEmit`) before Vitest.
@@ -66,6 +69,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Run the checks matching the changed domains; cross-layer changes require both frontend/engine and Rust checks.
 - Before a release or interaction-sensitive editor change, review `docs/manual-qa.md`. Its recorded test counts are historical, not assertions about the current suite.
 - There is no repository-wide lint or format command, and `pnpm verify` does not lint or format. Do not claim lint/format checks passed.
+- `release:version` 同步四处版本号（tauri.conf.json 为单一来源），`release:changelog` 用 git-cliff 从 conventional commits 生成 CHANGELOG。两者只在发版时使用；`release:changelog` 依赖本机 `git-cliff`。
 
 
 
