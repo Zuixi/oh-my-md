@@ -76,6 +76,7 @@ All notable changes to this project are documented here, generated from conventi
 - Note i18n store ownership and engine host-option in AGENTS (41ba77b)
 - I18n fixes implementation plan (025d412)
 - Record apple-account blocker and refresh stale status (ce4f9cc)
+- Fill release instructions and changelog for release blockers round (9304937)
 ### Features
 
 - Keep ordered-list source in sync with preview numbers (18a94ef)
@@ -149,6 +150,14 @@ All notable changes to this project are documented here, generated from conventi
 - Localize predefined edit and app menu items (8868368)
 - Open markdown files launched from finder and open-with (c035602)
 - Wire the updater plugin with startup and manual update checks (408f140)
+- Render code blocks with a matching dark theme (973f5f4)
+- Add regex and whole-word matching to find and replace (99b76b9)
+- Add quick open file picker with cmd+p (0fc763a)
+- Open markdown files dragged onto the window (e9b5169)
+- Watch files natively and demote polling to a fallback (dce0c98)
+- Convert rich clipboard html to markdown on paste (3650afa)
+- Fold yaml front matter into an editable chip (bdabae4)
+- Keep local version snapshots on every save (f695aaa)
 ### Performance
 
 - Keep file tree and outline off the keystroke path (9dc2fe7)
