@@ -113,7 +113,7 @@ export const zh: Record<string, string> = {
   "menu.file": "文件",
   "menu.edit": "编辑",
   "menu.format": "格式",
-  "menu.view": "显示",
+  "menu.view": "视图",
   "menu.recents": "最近打开",
   "menu.aria.open": "打开菜单",
 
