@@ -38,7 +38,20 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml  # Rust
 
 ## 发布
 
-<!-- 由 13-B Release Engineering 补齐 -->
+**版本单一来源：** `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 字段。升版本用：
+
+```sh
+pnpm release:version 0.2.0   # 同步四处版本号（conf / Cargo.toml / 两个 package.json）
+pnpm release:changelog       # 从 conventional commits 生成 CHANGELOG
+```
+
+**本机构建打包产物：**
+
+```sh
+pnpm --filter @omd/desktop tauri build   # 产出 .app / .dmg（bundle 含 .md 文件关联与更新签名材料）
+```
+
+**正式发布流水线（签名公证 + GitHub Release + 自动更新清单）** 尚未启用，阻塞于 Apple Developer 账号审批——解锁清单与 updater 密钥保管说明见 [13-B 计划的 TODO 块](./docs/superpowers/plans/2026-08-16-13b-release-cicd.md)。当前 `tauri.conf.json` 已配置 updater 公钥与 `createUpdaterArtifacts`，`latest.json` 由 release CI 产出后应用内「检查更新…」即可端到端生效。
 
 ## License
 
