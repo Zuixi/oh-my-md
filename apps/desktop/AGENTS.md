@@ -41,10 +41,11 @@ apps/desktop/
 │   ├── main.tsx             # React mount
 │   └── styles.css           # App styles, theme variables, and omd-* presentation
 └── src-tauri/
-    ├── src/lib.rs           # File IO, image write, asset scope, workspace commands
+    ├── src/lib.rs           # File IO, image write, asset scope, workspace commands, open-file events
     ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
     ├── src/menu.rs          # Native File / Edit application menu
-    ├── src/workspace.rs     # workspace tree commands, search, crash-recovery files
+    ├── src/watcher.rs       # notify watcher: workspace-changed events (hint-only)
+    ├── src/workspace.rs     # workspace tree commands, search, quick-open list, snapshots, config/recovery state
     ├── capabilities/        # Tauri permissions
     └── tauri.conf.json      # Desktop application configuration
 ```
