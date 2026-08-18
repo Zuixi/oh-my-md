@@ -312,3 +312,7 @@ Since the menu gained Format/View items, macOS menu accelerators also bind engin
 ## Parser character codes are named, not magic
 
 The hand-written Lezer inline parsers compare `cx.char(i)` against ASCII codes. Bare numbers (`61`, `95`, `92`, …) are unreadable and easy to mistype; `packages/engine/src/parse/chars.ts` names them (`CHAR_EQ`, `CHAR_UNDERSCORE`, `CHAR_BACKSLASH`, …). New parse rules must import these constants instead of literal codes — the engine build has no lint gate, so follow the convention by review.
+
+## The notify watcher is a hint; FSEvents latency and dropped events are expected
+
+`watcher.rs` coalesces notify events for 300 ms before emitting `workspace-changed`, and macOS FSEvents may batch or reorder paths. The webview handler therefore probes **all** open tabs (fingerprint compare in Rust decides) instead of trusting event paths, and the old poll survives as a 30 s fallback (`watchMs` default in `App.tsx`). Never make an event path the basis for a reload decision — only `read_document_version`/guarded-save comparisons may change document state. Watch paths are canonicalized on both set and update; a non-canonical path in `state.watched` would make `diff_watches` leak watches that `unwatch` can never remove.
