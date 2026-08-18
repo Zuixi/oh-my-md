@@ -546,3 +546,60 @@ describe("imagePasteHandler contextmenu selection", () => {
     parent.remove()
   })
 })
+
+describe("imagePasteHandler contextmenu platform gating", () => {
+  const WINDOWS_WEBVIEW2_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+  const MACOS_WEBKIT_UA =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+  const DEFAULT_USER_AGENT = window.navigator.userAgent
+
+  function setUserAgent(userAgent: string): void {
+    Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+  }
+
+  afterEach(() => {
+    setUserAgent(DEFAULT_USER_AGENT)
+  })
+
+  function makeContextMenuView() {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello world\nsecond line",
+        selection: { anchor: 0 },
+        extensions: [imagePasteHandler(makeOptions())],
+      }),
+      parent,
+    })
+    vi.spyOn(view, "posAtCoords").mockReturnValue(6)
+    return { view, parent }
+  }
+
+  it("skips the WebKit selectionchange dispatch on Windows", () => {
+    setUserAgent(WINDOWS_WEBVIEW2_UA)
+    const { view, parent } = makeContextMenuView()
+    const dispatch = vi.spyOn(view, "dispatch")
+
+    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
+    view.contentDOM.dispatchEvent(event)
+
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(view.state.selection.main.anchor).toBe(0)
+    view.destroy()
+    parent.remove()
+  })
+
+  it("keeps the WebKit selectionchange dispatch on macOS", () => {
+    setUserAgent(MACOS_WEBKIT_UA)
+    const { view, parent } = makeContextMenuView()
+
+    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
+    view.contentDOM.dispatchEvent(event)
+
+    expect(view.state.selection.main.anchor).toBe(6)
+    view.destroy()
+    parent.remove()
+  })
+})

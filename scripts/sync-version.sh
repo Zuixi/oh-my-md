@@ -34,8 +34,9 @@ set_json_version "package.json"
 set_json_version "apps/desktop/package.json"
 set_json_version "apps/desktop/src-tauri/tauri.conf.json"
 
-sed -i '' -E 's/^version = ".*"/version = "'"$VERSION"'"/' \
+sed -i.bak -E 's/^version = ".*"/version = "'"$VERSION"'"/' \
   apps/desktop/src-tauri/Cargo.toml
+rm -f apps/desktop/src-tauri/Cargo.toml.bak
 
 echo "package.json"
 echo "apps/desktop/package.json"

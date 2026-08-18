@@ -187,8 +187,11 @@ fn replace_existing(
         return Ok(result);
     }
 
-    temp.persist(&resolved_target)
-        .map_err(|error| map_write_io_error(requested_path, error.error))?;
+    // The shared helper returns io::Error (including the Windows backup-rename
+    // fallback), so map_write_io_error can still classify PermissionDenied for
+    // the recovery UI; it also logs the requested path alongside the error.
+    crate::replace_existing(temp, &resolved_target)
+        .map_err(|error| map_write_io_error(requested_path, error))?;
 
     let resolved_path = path_to_string(&resolved_target)?;
     let durability = sync_parent(parent);

@@ -76,7 +76,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 
 ## M3 产品壳
 - [ ] 多标签各有独立撤销；脏点显示；关脏标签会确认；`+` 新建标签
-- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in Finder（文件删除会先确认，打开且脏时先走现有关标签确认）
+- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in File Manager（文件删除会先确认，打开且脏时先走现有关标签确认）
 - [ ] 文件树 Delete 确认后文件/目录移入系统废纸篓（Finder 废纸篓可见、可恢复）；非空目录同样可删；确认文案说明移入废纸篓（trash 语义，单测只覆盖缺失路径与越权拒绝，真实移入需人工验证）
 - [ ] 打包构建（`tauri build`）后：Finder 双击 .md/.markdown/.mdx 用 oh-my-md 打开（"打开方式"可选、可设默认）；应用未运行时双击启动并直接打开该文件（不恢复上次会话）；应用运行中双击或拖文件到 Dock 图标在已有窗口打开；重复启动聚焦已有窗口不开新实例（dev 模式无法验证关联，需打包产物）
 - [ ] 拖 .md 文件到编辑器窗口：打开该文件（复用脏标签确认/最近文件/文件树展开逻辑）；拖 .txt 无反应；拖图片仍走原通道插入 `assets/`（回归）；已打开同路径文件时聚焦已有标签
@@ -148,7 +148,44 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 中文路径、中文正文与 IME 编辑后保存正常 — **NOT RUN**（需 Tauri + IME）
 - [ ] PathChanged 仅重开旧 resolved file，dirty 取消后内容不变
 - [ ] Save As missing 目标竞态出现 symlink 时只允许换路径/取消
-- [ ] PermissionDenied 可 Retry、Save copy 和 Reveal in Finder
+- [ ] PermissionDenied 可 Retry、Save copy 和 Reveal in File Manager
+
+## P0 平台地基回归（macOS）
+
+跨平台 P0 地基（平台检测、按平台格式化的快捷键标签、mac-only 导出命令过滤、诊断包跨平台化）不应改变 macOS 既有行为。需 `pnpm dev` 目视；未跑则标 **NOT RUN**。
+
+- [ ] 命令面板（⇧⌘P）快捷键标签抽查：Save 为 ⌘S、Ordered list 为 ⌥⌘7，与改动前逐字一致（mac 仍显示 ⌘⇧⌥ 字形，不出现 Ctrl/Alt 字样）
+- [ ] reveal 文案：文件树右键菜单与保存冲突横幅显示「Reveal in File Manager」（zh 界面为「在文件管理器中显示」），中英文均不再出现 Finder 字样
+- [ ] 命令面板与 File▸Export 菜单在 mac 上仍显示 Export PDF / Export Image（`MACOS_ONLY_COMMANDS` 过滤仅作用于非 mac 平台），导出流程可用
+- [ ] 菜单「导出诊断信息…」生成的 zip 含 `os.txt`（os_info 输出，替代旧 `uname.txt`），且仍不含任何文档正文
+
+## Linux（P1）
+
+在 Linux VM（UTM/arm64 Ubuntu 亦可，交互 QA 不要求与发布同 arch）跑 dev 版（`pnpm install && pnpm dev`）逐项目视；本环境无 VM，执行待人工，未跑项标 **NOT RUN**。
+
+- [ ] 启动无 crash；窗口标题/图标正常。
+- [ ] ☰ 菜单：全部分区/条目可打开；Open Recent 子菜单列出最近文件并打开；Escape/外点关闭。
+- [ ] Ctrl 系快捷键：保存 Ctrl+S、查找 Ctrl+F、格式化 Ctrl+B/I/K、列表 Ctrl+Alt+7/8/9 与键位指南一致。
+- [ ] 打开/保存/另存为对话框；覆盖保存已有文件（内容正确落盘）。
+- [ ] 文件树：reveal（在文件管理器中显示）、删除进回收站（freedesktop Trash）、新建/重命名。
+- [ ] 右键粘贴图片（裁决 D11：WebKitGTK 下右键是否异常移动光标；异常则维持 workaround，正常则把门控收窄为 `isMacOS()`）。
+- [ ] 拖拽 .md 到窗口打开；CJK 中文字体渲染（PingFang 缺失时回落 Noto/YaHei 正常）。
+- [ ] 外部修改文件 → watcher 提示；HTML 导出；PDF/PNG 入口不可见。
+- [ ] Export Diagnostics 产出含 `os.txt` 与日志。
+
+## Windows（P2）
+
+在 Windows VM（或 CI 产出的 NSIS 包 + VM 安装；P3 前用 dev 版）逐项目视；本环境无 VM，执行待人工，未跑项标 **NOT RUN**。
+
+- [ ] 启动无 crash、无多余控制台窗口（`windows_subsystem` 属性）。
+- [ ] ☰ 菜单全量走查（同 Linux 清单）。
+- [ ] Ctrl 系快捷键全测（同 Linux 清单）。
+- [ ] 双击 .md 经文件关联打开（argv 路径裁决 D12：中文/空格路径正常；失败则修 `lib.rs` 的 argv 处理并补单测）。
+- [ ] 覆盖保存已有文件（裁决 A6：多次保存、保存同时被杀毒扫描不丢数据）。
+- [ ] Explorer reveal、删除进回收站、重命名、新建。
+- [ ] 右键粘贴截图/复制图片（WebView2 无 workaround 门控生效，光标不跳）。
+- [ ] 拖拽 .md 到窗口打开；CJK 字体（YaHei 回落）。
+- [ ] 外部修改 watcher 提示；HTML 导出；PDF/PNG 入口不可见；诊断包含 `os.txt`。
 
 ## 语种切换（i18n）
 

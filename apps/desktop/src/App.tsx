@@ -49,7 +49,8 @@ import {
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
-import { runMenuCommand, type AppCommand } from "./commands"
+import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
+import { isMacOS } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type SnapshotEntry } from "./desktopServices"
@@ -1420,7 +1421,7 @@ export default function App({
     }
   }
 
-  const commands: AppCommand[] = [
+  const allCommands: AppCommand[] = [
     { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
     { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openQuickOpen() },
     { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
@@ -1474,6 +1475,12 @@ export default function App({
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
   ]
+  // Native PDF/image export is macOS-only (spec D3); on macOS the set filters
+  // nothing. Filtering the single definition point covers the palette,
+  // commandsRef, runMenuCommand, and the future native AppMenu alike.
+  const commands: AppCommand[] = allCommands.filter(
+    command => isMacOS() || !MACOS_ONLY_COMMANDS.has(command.id),
+  )
   const commandsRef = useRef(commands)
   commandsRef.current = commands
 
@@ -1735,6 +1742,12 @@ export default function App({
         onCloseTab={requestCloseTab}
         onNewTab={newTab}
         onOpenSettings={() => setSettingsOpen(true)}
+        menu={{
+          getRecents: () => recentsRef.current,
+          onCommand: id => runMenuCommand(id, commandsRef.current, {
+            openRecent: path => { void openRecentRef.current(path) },
+          }),
+        }}
       />
       <div className="workspace-body">
         <aside
@@ -1808,7 +1821,9 @@ export default function App({
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
             aria-label={outlineOpen ? t("outline.aria.toggleHide") : t("outline.aria.toggleShow")}
-            title={outlineOpen ? t("outline.title.toggleHide") : t("outline.title.toggleShow")}
+            title={outlineOpen
+              ? t("outline.title.toggleHide", { shortcut: shortcutFor("outline") ?? "" })
+              : t("outline.title.toggleShow", { shortcut: shortcutFor("outline") ?? "" })}
           >
             {outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>

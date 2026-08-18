@@ -18,8 +18,8 @@ export const LINE_HEIGHT_PRESETS = [
 ] as const
 
 export const FONT_FAMILY_PRESETS = [
-  { labelKey: "settings.font.systemDefault", value: "system-ui, -apple-system, sans-serif" },
-  { labelKey: "settings.font.monospace", value: "ui-monospace, Menlo, Monaco, Consolas, monospace" },
+  { labelKey: "settings.font.systemDefault", value: "system-ui, -apple-system, 'Segoe UI', sans-serif" },
+  { labelKey: "settings.font.monospace", value: "ui-monospace, Menlo, Monaco, 'Cascadia Mono', Consolas, monospace" },
   { labelKey: "settings.font.serif", value: "Georgia, 'Times New Roman', serif" },
 ] as const
 
