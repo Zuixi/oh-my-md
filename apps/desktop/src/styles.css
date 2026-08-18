@@ -807,6 +807,11 @@ html[data-theme="dark"] .tab:hover {
   color: var(--omd-fg); padding: 8px 10px; cursor: pointer;
 }
 .palette kbd { float: right; color: var(--omd-muted); }
+.palette li button.omd-quick-open-active { background: var(--omd-code-bg); }
+.omd-quick-open-note {
+  margin: 0; padding: 6px 10px; font-size: 12px; color: var(--omd-muted);
+  border-top: 1px solid var(--omd-border);
+}
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */

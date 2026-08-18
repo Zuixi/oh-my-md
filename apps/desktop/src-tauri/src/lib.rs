@@ -154,6 +154,11 @@ async fn search_markdown(
 }
 
 #[tauri::command]
+async fn list_markdown_files(root: String) -> Result<workspace::QuickOpenResponse, String> {
+    workspace::list_markdown_files(root).await
+}
+
+#[tauri::command]
 async fn create_markdown(dir: String, name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || workspace::create_markdown(dir, name))
         .await
@@ -457,6 +462,7 @@ pub fn run() {
             allow_document_assets,
             list_dir,
             search_markdown,
+            list_markdown_files,
             create_markdown,
             create_dir,
             rename_path,

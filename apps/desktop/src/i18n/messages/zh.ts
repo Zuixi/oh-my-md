@@ -55,6 +55,13 @@ export const zh: Record<string, string> = {
   "cmd.label.export-image": "导出图片",
   "cmd.label.clear-recents": "清除最近",
   "cmd.label.check-updates": "检查更新…",
+  "cmd.label.quick-open": "快速打开",
+
+  "quickOpen.placeholder": "跳转到文件…",
+  "quickOpen.loading": "载入中…",
+  "quickOpen.empty": "没有匹配的文件",
+  "quickOpen.truncated": "文件过多，列表已截断",
+  "quickOpen.noFolder": "先打开文件夹再使用快速打开",
 
   "update.available": "新版本 {version} 可用。",
   "update.view": "查看发布页",
