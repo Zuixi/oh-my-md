@@ -23,6 +23,8 @@ pnpm install
 
 ## 开发
 
+> **开发前置**：本地开发目前仅支持 macOS（需 pnpm 与 Rust 工具链）。项目面向 macOS / Windows / Linux 三平台，Linux 本地开发与 CI 自 P1 起、Windows 自 P2 起（跨平台计划推进中）；期间导出 PDF / 图片仅 macOS 可用。
+
 ```sh
 pnpm dev        # 启动 Tauri 开发窗口
 pnpm verify     # 测试 + 构建（引擎 / 桌面 / Rust）
