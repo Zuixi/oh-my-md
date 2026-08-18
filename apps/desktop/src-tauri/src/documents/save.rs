@@ -187,13 +187,11 @@ fn replace_existing(
         return Ok(result);
     }
 
-    // The shared helper returns a formatted String (including the Windows
-    // backup-rename fallback), so log the requested path here; the io::Error
-    // kind behind the message is no longer recoverable at this call site.
-    crate::replace_existing(temp, &resolved_target).map_err(|error| {
-        eprintln!("[documents] write io error: path={requested_path:?} error={error}");
-        DocumentError::WriteFailed(error)
-    })?;
+    // The shared helper returns io::Error (including the Windows backup-rename
+    // fallback), so map_write_io_error can still classify PermissionDenied for
+    // the recovery UI; it also logs the requested path alongside the error.
+    crate::replace_existing(temp, &resolved_target)
+        .map_err(|error| map_write_io_error(requested_path, error))?;
 
     let resolved_path = path_to_string(&resolved_target)?;
     let durability = sync_parent(parent);
