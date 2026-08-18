@@ -269,7 +269,10 @@ export const markdownKeyBindings: readonly MarkdownKeyBinding[] = [
   { id: "bold", key: "Mod-b", display: "⌘B", run: toggleBold },
   { id: "italic", key: "Mod-i", display: "⌘I", run: toggleItalic },
   { id: "strikethrough", key: "Mod-Shift-x", display: "⇧⌘X", run: toggleStrikethrough },
-  { id: "inline-code", key: "Mod-`", display: "⇧⌘`", run: toggleInlineCode },
+  // The palette entry must carry the Shift its label shows, so "Mod-Shift-`" is
+  // the primary (displayed) binding; bare "Mod-`" stays bound as an alternate.
+  { id: "inline-code", key: "Mod-Shift-`", display: "⇧⌘`", run: toggleInlineCode },
+  { id: "inline-code", key: "Mod-`", run: toggleInlineCode },
   { id: "inline-code", key: "Mod-Shift-~", run: toggleInlineCode },
   { id: "code-block", key: "Mod-Shift-k", display: "⇧⌘K", run: toggleCodeBlock },
   { id: "heading-1", key: "Mod-1", display: "⌘1", run: toggleHeading(1) },
@@ -293,4 +296,11 @@ export const markdownShortcutLabels: Readonly<Record<string, string>> = Object.f
     .filter((binding): binding is MarkdownKeyBinding & { display: string } =>
       binding.display !== undefined)
     .map(binding => [binding.id, binding.display]),
+)
+
+/** id → normalized CodeMirror key ("Mod-Shift-x"); hosts format per platform (spec D7). */
+export const markdownShortcutBindings: Readonly<Record<string, string>> = Object.fromEntries(
+  markdownKeyBindings
+    .filter(binding => binding.display !== undefined)
+    .map(binding => [binding.id, binding.key]),
 )

@@ -72,8 +72,20 @@ function makeAppHarness() {
   return createAppHarness(editor)
 }
 
+// happy-dom's default agent advertises X11, which platform detection reads as
+// linux. Tests that exercise macOS-only behavior (native export commands) must
+// pin the macOS agent explicitly.
+const MACOS_WKWEBVIEW_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+const DEFAULT_USER_AGENT = window.navigator.userAgent
+
+function setUserAgent(userAgent: string): void {
+  Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+}
+
 afterEach(() => {
   vi.useRealTimers()
+  setUserAgent(DEFAULT_USER_AGENT)
   resetMountedApps()
 })
 
@@ -1084,6 +1096,7 @@ describe("App product shell", () => {
     }
     harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.png")
+    setUserAgent(MACOS_WKWEBVIEW_UA)
     harness.renderApp()
     act(() => send?.("export-image"))
     await waitFor(() => {
@@ -1105,6 +1118,7 @@ describe("App product shell", () => {
     }
     harness.services.exportPreview = vi.fn(async () => null)
     harness.services.pickExportPath = vi.fn(async () => "/tmp/out.pdf")
+    setUserAgent(MACOS_WKWEBVIEW_UA)
     harness.renderApp()
     act(() => send?.("export-pdf"))
     await waitFor(() => {

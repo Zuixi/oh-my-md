@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale } from "../src/i18n"
+import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale, t } from "../src/i18n"
+import { shortcutFor } from "../src/shortcuts"
 
 describe("i18n store", () => {
   beforeEach(() => { initLocale("auto") })
@@ -52,5 +53,27 @@ describe("i18n store", () => {
     act(() => setLocale("zh"))
     const after = result.current("image.broken", { src: "y" })
     expect(before).not.toEqual(after)
+  })
+
+  it("shortcut tooltip templates compose platform hints and keep mac glyphs byte-identical", () => {
+    const outline = () => ({ shortcut: shortcutFor("outline") ?? "" })
+    const pinUserAgent = (userAgent: string): void => {
+      Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+    }
+    const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
+
+    pinUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")
+    initLocale("en")
+    expect(t("outline.title.toggleShow", outline())).toBe("Show outline (⇧⌘O)")
+    expect(t("outline.title.toggleHide", outline())).toBe("Hide outline (⇧⌘O)")
+    initLocale("zh")
+    expect(t("outline.title.toggleShow", outline())).toBe("显示大纲（⇧⌘O）")
+    expect(t("outline.title.toggleHide", outline())).toBe("隐藏大纲（⇧⌘O）")
+
+    pinUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/4.0 Safari/605.1.15")
+    initLocale("en")
+    expect(t("outline.title.toggleShow", outline())).toBe("Show outline (Ctrl+Shift+O)")
+
+    if (original) Object.defineProperty(window.navigator, "userAgent", original)
   })
 })

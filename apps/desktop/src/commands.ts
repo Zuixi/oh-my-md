@@ -63,6 +63,13 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   search: "search",
 }
 
+/**
+ * Command ids whose export backends are native macOS WebView captures (spec D3).
+ * Off macOS these commands are filtered from the palette and hidden from the
+ * native menu (Task 10's AppMenu reuses this set).
+ */
+export const MACOS_ONLY_COMMANDS: ReadonlySet<string> = new Set(["export-pdf", "export-image"])
+
 export function runMenuCommand(
   id: string,
   commands: AppCommand[],

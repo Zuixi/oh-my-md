@@ -1,7 +1,8 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
+import { FileTree } from "../src/FileTree"
 import { createFileSession, recoveryKey } from "../src/session"
 import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
 
@@ -211,7 +212,7 @@ describe("FileTree sidebar menu", () => {
     expect(harness.services.deletePath).not.toHaveBeenCalled()
   })
 
-  it("reveals the selected path in Finder", async () => {
+  it("reveals the selected path in the file manager", async () => {
     const harness = makeAppHarness()
     harness.services.listDir = vi.fn(async () => [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
@@ -221,7 +222,7 @@ describe("FileTree sidebar menu", () => {
     await harness.openIntoActive("/notes/doc.md", "saved")
 
     await openTreeMenu("doc.md")
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }))
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in File Manager" }))
 
     await waitFor(() => expect(harness.services.revealInFinder).toHaveBeenCalledWith("/notes/doc.md"))
   })
@@ -274,6 +275,53 @@ describe("FileTree sidebar menu", () => {
         })),
       )
       expectPathShown("/notes/renamed.md", { dirty: true })
+    })
+  })
+})
+
+describe("FileTree shortcut hints", () => {
+  const MACOS_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+  const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0"
+
+  function withUserAgent(userAgent: string, run: () => void): void {
+    const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
+    Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+    try {
+      run()
+    } finally {
+      if (original) Object.defineProperty(window.navigator, "userAgent", original)
+    }
+  }
+
+  function renderFileTree(): void {
+    render(
+      <FileTree
+        folder="/notes"
+        rows={[]}
+        activePath={null}
+        onOpenFile={() => {}}
+        onToggleDir={() => {}}
+        onSearch={() => {}}
+        onCollapse={() => {}}
+      />,
+    )
+  }
+
+  it("shows macOS glyphs in the search kbd and collapse tooltip on mac", () => {
+    withUserAgent(MACOS_UA, () => {
+      renderFileTree()
+      expect(document.querySelector(".filetree-search-bar kbd")?.textContent).toBe("⇧⌘F")
+      expect(screen.getByRole("button", { name: /hide sidebar/i }).getAttribute("title"))
+        .toBe("Hide sidebar (⌘\\)")
+    })
+  })
+
+  it("shows Ctrl forms in the search kbd and collapse tooltip on windows", () => {
+    withUserAgent(WINDOWS_UA, () => {
+      renderFileTree()
+      expect(document.querySelector(".filetree-search-bar kbd")?.textContent).toBe("Ctrl+Shift+F")
+      expect(screen.getByRole("button", { name: /hide sidebar/i }).getAttribute("title"))
+        .toBe("Hide sidebar (Ctrl+\\)")
     })
   })
 })

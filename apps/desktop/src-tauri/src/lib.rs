@@ -307,10 +307,58 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .as_file()
         .sync_all()
         .map_err(|e| format!("failed to sync temporary file: {e}"))?;
-    temporary
-        .persist(path)
-        .map_err(|e| format!("failed to atomically replace destination: {}", e.error))?;
+    replace_existing(temporary, path)
+        .map_err(|e| format!("failed to atomically replace destination: {e}"))?;
     Ok(())
+}
+
+/// Returns io::Error (not a formatted String) so callers that classify errors
+/// by `ErrorKind` — e.g. save.rs mapping PermissionDenied to the recovery UI —
+/// keep the persist-stage kind. `atomic_write`, which only reports to the user,
+/// converts to String itself.
+pub(crate) fn replace_existing(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+) -> Result<(), std::io::Error> {
+    match temporary.persist(path) {
+        Ok(_) => Ok(()),
+        Err(first) => {
+            if !cfg!(windows) {
+                return Err(first.error);
+            }
+            // Windows can refuse to rename over a destination another handle
+            // holds (indexer, antivirus); retry via a backup rename so the
+            // write still lands, restoring the original if the retry fails.
+            // The backup is a unique sibling (pid + nanos, mirroring the
+            // `.omd-save-{pid}-{nanos}.tmp` save temps) so targets differing
+            // only by extension never share one backup name.
+            let backup = save_backup_path(path);
+            if let Err(rename_error) = std::fs::rename(path, &backup) {
+                return Err(std::io::Error::other(format!(
+                    "failed to atomically replace destination: {} (backup rename failed: {})",
+                    first.error, rename_error
+                )));
+            }
+            match first.file.persist(path) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(retry) => {
+                    let _ = std::fs::rename(&backup, path);
+                    Err(retry.error)
+                }
+            }
+        }
+    }
+}
+
+fn save_backup_path(path: &Path) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_file_name(format!(".{}-{}.omd-save-backup", std::process::id(), nanos))
 }
 
 fn validate_image_target(target: &Path, document_path: &Path) -> Result<(), String> {
@@ -623,6 +671,47 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert_ne!(fs::metadata(&path).unwrap().ino(), old_inode);
         fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.md");
+        std::fs::write(&path, "old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[test]
+    fn replace_existing_preserves_persist_stage_io_error_kind() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Renaming a file over a directory fails at the persist (rename) stage,
+        // not at temp creation, so the returned io::Error kind must survive.
+        let target = dir.path().join("target-is-a-directory");
+        std::fs::create_dir(&target).unwrap();
+        let mut temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        temp.write_all(b"new").unwrap();
+
+        let error = replace_existing(temp, &target).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory);
+    }
+
+    #[test]
+    fn save_backup_paths_are_unique_siblings() {
+        let a = save_backup_path(Path::new("/tmp/notes/note.md"));
+        let b = save_backup_path(Path::new("/tmp/notes/note.txt"));
+        let name =
+            |p: &std::path::PathBuf| p.file_name().and_then(|n| n.to_str()).unwrap().to_owned();
+        let (a_name, b_name) = (name(&a), name(&b));
+        // Unique hidden siblings (pid + nanos), never the extension-clobbering
+        // `with_extension` form where note.md and note.txt would collide.
+        assert!(a_name.starts_with(&format!(".{}-", std::process::id())));
+        assert!(a_name.ends_with(".omd-save-backup"));
+        assert_ne!(a_name, b_name);
+        assert_ne!(a_name, "note.omd-save-backup");
+        assert_eq!(a.parent(), Some(Path::new("/tmp/notes")));
     }
 
     #[test]

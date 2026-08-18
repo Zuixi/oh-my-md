@@ -1,47 +1,52 @@
-import { markdownShortcutLabels, toggleShortcutLabels } from "@omd/engine"
+import { markdownShortcutBindings, toggleShortcutBindings } from "@omd/engine"
+import { formatBinding } from "./platform"
 
 /**
  * Single source of truth for command shortcuts.
  *
  * - `WINDOW_SHORTCUTS` back both the palette display strings and the window
  *   keydown dispatch in `App.tsx`, so a new app-level shortcut is defined once.
- * - Format/mode shortcuts are owned by the engine keymap; the display labels
- *   are derived there (`markdownShortcutLabels` / `toggleShortcutLabels`) so the
+ *   Bindings are stored normalized ("Mod+s"); display strings come from
+ *   `formatBinding` per platform (spec D7).
+ * - Format/mode shortcuts are owned by the engine keymap; the bindings are
+ *   derived there (`markdownShortcutBindings` / `toggleShortcutBindings`) so the
  *   palette can never drift from the editor bindings.
  */
 
 export interface WindowShortcut {
   /** AppCommand id this shortcut triggers. */
   id: string
-  /** Palette display form, e.g. "⌘S". */
-  keys: string
+  /** Normalized binding, e.g. "Mod+s"; display via formatBinding. */
+  binding: string
   /** KeyboardEvent.key to match (case-insensitive). */
   key: string
   shift?: boolean
 }
 
 export const WINDOW_SHORTCUTS: readonly WindowShortcut[] = [
-  { id: "preferences", keys: "⌘,", key: "," },
-  { id: "sidebar", keys: "⌘\\", key: "\\" },
-  { id: "outline", keys: "⇧⌘O", key: "O", shift: true },
-  { id: "search", keys: "⇧⌘F", key: "f", shift: true },
-  { id: "find", keys: "⌘F", key: "f" },
-  { id: "quick-open", keys: "⌘P", key: "p" },
-  { id: "open", keys: "⌘O", key: "o" },
-  { id: "tab", keys: "⌘N", key: "n" },
-  { id: "close", keys: "⌘W", key: "w" },
-  { id: "save", keys: "⌘S", key: "s" },
-  { id: "save-as", keys: "⇧⌘S", key: "s", shift: true },
+  { id: "preferences", binding: "Mod+,", key: "," },
+  { id: "sidebar", binding: "Mod+\\", key: "\\" },
+  { id: "outline", binding: "Mod+Shift+o", key: "O", shift: true },
+  { id: "search", binding: "Mod+Shift+f", key: "f", shift: true },
+  { id: "find", binding: "Mod+f", key: "f" },
+  { id: "quick-open", binding: "Mod+p", key: "p" },
+  { id: "open", binding: "Mod+o", key: "o" },
+  { id: "tab", binding: "Mod+n", key: "n" },
+  { id: "close", binding: "Mod+w", key: "w" },
+  { id: "save", binding: "Mod+s", key: "s" },
+  { id: "save-as", binding: "Mod+Shift+s", key: "s", shift: true },
 ]
 
-export const FORMAT_SHORTCUTS: Readonly<Record<string, string>> = {
-  ...markdownShortcutLabels,
-  ...toggleShortcutLabels,
+export const FORMAT_SHORTCUT_BINDINGS: Readonly<Record<string, string>> = {
+  ...markdownShortcutBindings,
+  ...toggleShortcutBindings,
 }
 
 export function shortcutFor(commandId: string): string | undefined {
-  return WINDOW_SHORTCUTS.find(shortcut => shortcut.id === commandId)?.keys
-    ?? FORMAT_SHORTCUTS[commandId]
+  const windowBinding = WINDOW_SHORTCUTS.find(shortcut => shortcut.id === commandId)?.binding
+  if (windowBinding !== undefined) return formatBinding(windowBinding)
+  const formatBinding_ = FORMAT_SHORTCUT_BINDINGS[commandId]
+  return formatBinding_ !== undefined ? formatBinding(formatBinding_) : undefined
 }
 
 /** Matches a window shortcut, mirroring the app-level (not editor) key handling. */

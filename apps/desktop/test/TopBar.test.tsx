@@ -11,6 +11,19 @@ const sampleTabs: EditorSession[] = [
   createSession(3),
 ]
 
+const MACOS_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0"
+
+function withUserAgent(userAgent: string, run: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
+  Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+  try {
+    run()
+  } finally {
+    if (original) Object.defineProperty(window.navigator, "userAgent", original)
+  }
+}
+
 describe("TopBar", () => {
   it("renders tabs and highlights the active tab with topbar-file class", () => {
     render(
@@ -176,5 +189,57 @@ describe("TopBar", () => {
     expect(settingsBtn).toBeTruthy()
     fireEvent.click(settingsBtn)
     expect(onOpenSettings).toHaveBeenCalledOnce()
+  })
+
+  it("shows macOS glyphs in sidebar and preferences tooltips on mac", () => {
+    withUserAgent(MACOS_UA, () => {
+      render(
+        <TopBar
+          workspace="/notes"
+          filePath="/notes/alpha.md"
+          dirty={false}
+          tabs={sampleTabs}
+          activeId={1}
+          dirtyIds={[]}
+          conflictIds={[]}
+          sidebarOpen={false}
+          onToggleSidebar={vi.fn()}
+          onOpenSettings={vi.fn()}
+          onFocusTab={vi.fn()}
+          onCloseTab={vi.fn()}
+          onNewTab={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole("button", { name: /show sidebar/i }).getAttribute("title"))
+        .toBe("Show sidebar (⌘\\)")
+      expect(screen.getByRole("button", { name: /preferences/i }).getAttribute("title"))
+        .toBe("Preferences (⌘,)")
+    })
+  })
+
+  it("shows Ctrl forms in sidebar and preferences tooltips on windows", () => {
+    withUserAgent(WINDOWS_UA, () => {
+      render(
+        <TopBar
+          workspace="/notes"
+          filePath="/notes/alpha.md"
+          dirty={false}
+          tabs={sampleTabs}
+          activeId={1}
+          dirtyIds={[]}
+          conflictIds={[]}
+          sidebarOpen={false}
+          onToggleSidebar={vi.fn()}
+          onOpenSettings={vi.fn()}
+          onFocusTab={vi.fn()}
+          onCloseTab={vi.fn()}
+          onNewTab={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole("button", { name: /show sidebar/i }).getAttribute("title"))
+        .toBe("Show sidebar (Ctrl+\\)")
+      expect(screen.getByRole("button", { name: /preferences/i }).getAttribute("title"))
+        .toBe("Preferences (Ctrl+,)")
+    })
   })
 })
