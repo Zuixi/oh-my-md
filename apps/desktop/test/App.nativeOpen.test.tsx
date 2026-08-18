@@ -108,4 +108,26 @@ describe("native open-file delivery", () => {
       expectPathShown("/notes/evented.md")
     })
   })
+
+  it("opens the first markdown path from a native drag-drop and ignores others", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/notes/dragged.md", "# dragged")
+    let dropHandler: ((paths: string[]) => void) | undefined
+    harness.services.listenDragDrop = next => {
+      dropHandler = next
+      return () => { dropHandler = undefined }
+    }
+
+    harness.renderApp()
+    await waitFor(() => {
+      expect(dropHandler).toBeDefined()
+    })
+
+    await act(async () => {
+      dropHandler?.(["/notes/readme.txt", "/notes/dragged.md"])
+    })
+    await waitFor(() => {
+      expectPathShown("/notes/dragged.md")
+    })
+  })
 })
