@@ -383,6 +383,9 @@ pub fn run() {
         .manage(documents::DocumentCoordinator::default())
         .setup(|app| {
             menu::install(app)?;
+            if let Err(e) = workspace::migrate_legacy_config() {
+                log::warn!("legacy config migration failed: {e}");
+            }
             log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })

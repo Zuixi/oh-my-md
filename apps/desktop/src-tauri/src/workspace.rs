@@ -43,11 +43,15 @@ pub struct RecoveryRecord {
     pub label: String,
 }
 
+// Must match `identifier` in tauri.conf.json; the log plugin already resolves
+// its LogDir from the same identifier, so config and logs share one root.
+const APP_DATA_DIR_NAME: &str = "md.ohmy.desktop";
+
 pub fn recovery_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("OMD_RECOVERY_DIR") {
         return PathBuf::from(dir);
     }
-    std::env::temp_dir().join("oh-my-md-recovery")
+    config_dir().join("recovery")
 }
 
 pub fn write_recovery(key: String, contents: String) -> Result<(), String> {
@@ -96,7 +100,62 @@ pub fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("OMD_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
+    // The OS may purge temp dirs at any time; user state must live in app data.
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(APP_DATA_DIR_NAME)
+}
+
+fn legacy_config_dir() -> PathBuf {
     std::env::temp_dir().join("oh-my-md-config")
+}
+
+fn legacy_recovery_dir() -> PathBuf {
+    std::env::temp_dir().join("oh-my-md-recovery")
+}
+
+/// One-time move of pre-app-data state out of the temp dir. File-level and
+/// idempotent: an interrupted run leaves the remainder for the next launch,
+/// and a rerun never overwrites an already-migrated file.
+pub fn migrate_legacy_config() -> Result<(), String> {
+    // Env overrides pin directories for tests and dev; never touch them.
+    if std::env::var_os("OMD_CONFIG_DIR").is_some()
+        || std::env::var_os("OMD_RECOVERY_DIR").is_some()
+    {
+        return Ok(());
+    }
+    migrate_dir_files(&legacy_config_dir(), &config_dir())?;
+    migrate_dir_files(&legacy_recovery_dir(), &recovery_dir())
+}
+
+fn migrate_dir_files(legacy: &Path, target: &Path) -> Result<(), String> {
+    if !legacy.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(target).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(legacy).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            continue;
+        }
+        let dest = target.join(entry.file_name());
+        if dest.exists() {
+            continue;
+        }
+        move_file(&entry.path(), &dest)?;
+    }
+    // Only removes when empty; a leftover subdir keeps the dir for a rerun.
+    fs::remove_dir(legacy).ok();
+    Ok(())
+}
+
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    // Cross-volume fallback: copy first, delete only after the copy lands.
+    fs::copy(from, to).map_err(|e| e.to_string())?;
+    fs::remove_file(from).map_err(|e| e.to_string())
 }
 
 pub fn get_settings() -> Result<String, String> {
@@ -736,5 +795,75 @@ mod tests {
 
         std::env::remove_var("OMD_CONFIG_DIR");
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn recovery_dir_defaults_under_config_dir() {
+        let dir = tmp("config-recovery");
+        reset_dir(&dir);
+        std::env::set_var("OMD_CONFIG_DIR", &dir);
+        let had_recovery = std::env::var_os("OMD_RECOVERY_DIR");
+        std::env::remove_var("OMD_RECOVERY_DIR");
+
+        assert_eq!(recovery_dir(), dir.join("recovery"));
+
+        if let Some(v) = had_recovery {
+            std::env::set_var("OMD_RECOVERY_DIR", v);
+        }
+        std::env::remove_var("OMD_CONFIG_DIR");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn migrate_dir_files_moves_legacy_files_idempotently() {
+        let legacy = tmp("migrate-legacy");
+        let target = tmp("migrate-target");
+        reset_dir(&legacy);
+        reset_dir(&target);
+        fs::write(legacy.join("settings.json"), r#"{"fontSize":18}"#).unwrap();
+        fs::write(legacy.join("session.json"), r#"{"folder":"/notes"}"#).unwrap();
+
+        migrate_dir_files(&legacy, &target).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target.join("settings.json")).unwrap(),
+            r#"{"fontSize":18}"#
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("session.json")).unwrap(),
+            r#"{"folder":"/notes"}"#
+        );
+        assert!(!legacy.exists());
+
+        // A rerun with a stale leftover never overwrites the migrated file.
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("settings.json"), r#"{"stale":true}"#).unwrap();
+        migrate_dir_files(&legacy, &target).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.join("settings.json")).unwrap(),
+            r#"{"fontSize":18}"#
+        );
+
+        fs::remove_dir_all(&legacy).ok();
+        fs::remove_dir_all(&target).ok();
+    }
+
+    #[test]
+    fn migrate_dir_files_keeps_non_empty_legacy_dirs() {
+        let legacy = tmp("migrate-legacy-nested");
+        let target = tmp("migrate-target-nested");
+        reset_dir(&legacy);
+        reset_dir(&target);
+        fs::write(legacy.join("untitled_1"), "draft").unwrap();
+        fs::create_dir_all(legacy.join("sub")).unwrap();
+
+        migrate_dir_files(&legacy, &target).unwrap();
+
+        assert!(target.join("untitled_1").is_file());
+        // The leftover subdir keeps the legacy dir in place for a rerun.
+        assert!(legacy.is_dir());
+
+        fs::remove_dir_all(&legacy).ok();
+        fs::remove_dir_all(&target).ok();
     }
 }

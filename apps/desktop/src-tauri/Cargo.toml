@@ -27,6 +27,7 @@ tauri-plugin-log = "2"
 log = "0.4"
 base64 = "0.23.1"
 blake3 = "1"
+dirs = "6"
 tempfile = "3.27.0"
 thiserror = "2"
 # ignore 0.4.33+/globset 0.4.20+ require rustc 1.88; pinned for the 1.87 toolchain.
