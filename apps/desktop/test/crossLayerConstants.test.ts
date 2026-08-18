@@ -9,6 +9,7 @@ import {
   MAX_IMAGE_BYTES,
   MAX_RECENTS,
   MAX_SEARCH_HITS,
+  MAX_SNAPSHOTS_PER_FILE,
 } from "../src/constants"
 
 /**
@@ -55,6 +56,12 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("search hit cap matches workspace.rs MAX_SEARCH_HITS", () => {
     expect(MAX_SEARCH_HITS).toBe(rustConstNumber(WORKSPACE_RS, "MAX_SEARCH_HITS"))
+  })
+
+  it("snapshot retention cap matches workspace.rs MAX_SNAPSHOTS_PER_FILE", () => {
+    expect(MAX_SNAPSHOTS_PER_FILE).toBe(
+      rustConstNumber(WORKSPACE_RS, "MAX_SNAPSHOTS_PER_FILE"),
+    )
   })
 
   it("markdown extensions match workspace.rs MARKDOWN_EXT", () => {

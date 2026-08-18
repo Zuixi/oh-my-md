@@ -56,6 +56,14 @@ export const zh: Record<string, string> = {
   "cmd.label.clear-recents": "清除最近",
   "cmd.label.check-updates": "检查更新…",
   "cmd.label.quick-open": "快速打开",
+  "cmd.label.history": "版本历史",
+
+  "history.title": "版本历史",
+  "history.noFile": "打开已保存的文件后可查看其历史",
+  "history.loading": "载入中…",
+  "history.empty": "暂无快照。保存文件即可生成。",
+  "history.clear": "清除历史",
+  "history.failed": "无法加载版本历史",
 
   "quickOpen.placeholder": "跳转到文件…",
   "quickOpen.loading": "载入中…",

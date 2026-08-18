@@ -28,6 +28,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   close: "close",
   save: "save",
   "save-as": "save-as",
+  "version-history": "history",
   "export-html": "export-html",
   "export-pdf": "export-pdf",
   "export-image": "export-image",

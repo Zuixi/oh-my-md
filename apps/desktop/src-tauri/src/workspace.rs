@@ -164,6 +164,137 @@ fn move_file(from: &Path, to: &Path) -> Result<(), String> {
     fs::remove_file(from).map_err(|e| e.to_string())
 }
 
+// --- Version-history snapshots -------------------------------------------------
+
+const MAX_SNAPSHOTS_PER_FILE: usize = 20;
+const SNAPSHOT_NAME_MAX_DIGITS: usize = 19;
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotEntry {
+    pub file_name: String,
+    pub mtime_ms: u64,
+    pub size_bytes: u64,
+}
+
+fn snapshots_root(parent: &Path, name: &str) -> PathBuf {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(parent.to_string_lossy().as_bytes());
+    hasher.update(name.as_bytes());
+    let key: String = hasher.finalize().to_hex().chars().take(16).collect();
+    config_dir().join("snapshots").join(key)
+}
+
+fn valid_snapshot_name(file_name: &str) -> bool {
+    let Some(stem) = file_name.strip_suffix(".md") else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem.len() <= SNAPSHOT_NAME_MAX_DIGITS
+        && stem.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn rotate_snapshots(dir: &Path) -> Result<(), String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if valid_snapshot_name(&name) {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    names.sort();
+    // Timestamp names sort chronologically; drop the oldest beyond the cap.
+    while names.len() > MAX_SNAPSHOTS_PER_FILE {
+        let oldest = names.remove(0);
+        fs::remove_file(dir.join(oldest)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn write_snapshot(dir: &Path, millis: u128, source: &Path) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let target = dir.join(format!("{millis}.md"));
+    fs::copy(source, &target).map_err(|e| e.to_string())?;
+    rotate_snapshots(dir)
+}
+
+pub fn snapshot_document(path: String) -> Result<(), String> {
+    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    assert_inside_authorized(&parent)?;
+    let name = name.to_string_lossy().into_owned();
+    let source = parent.join(&name);
+    if !source.is_file() {
+        return Err("snapshot source is not a file".into());
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    write_snapshot(&snapshots_root(&parent, &name), millis, &source)
+}
+
+pub fn list_snapshots(path: String) -> Result<Vec<SnapshotEntry>, String> {
+    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    assert_inside_authorized(&parent)?;
+    let name = name.to_string_lossy().into_owned();
+    let dir = snapshots_root(&parent, &name);
+    if !dir.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut entries: Vec<SnapshotEntry> = fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if !valid_snapshot_name(&file_name) {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            let mtime_ms = metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+            Some(SnapshotEntry {
+                file_name,
+                mtime_ms,
+                size_bytes: metadata.len(),
+            })
+        })
+        .collect();
+    // Newest first for the history list.
+    entries.sort_by(|a, b| b.file_name.cmp(&a.file_name));
+    Ok(entries)
+}
+
+pub fn read_snapshot(path: String, file_name: String) -> Result<String, String> {
+    if !valid_snapshot_name(&file_name) {
+        return Err("snapshot name is invalid".into());
+    }
+    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    assert_inside_authorized(&parent)?;
+    let name = name.to_string_lossy().into_owned();
+    let snapshot = snapshots_root(&parent, &name).join(&file_name);
+    fs::read_to_string(snapshot).map_err(|e| e.to_string())
+}
+
+pub fn clear_snapshots(path: String) -> Result<(), String> {
+    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
+    assert_inside_authorized(&parent)?;
+    let name = name.to_string_lossy().into_owned();
+    let dir = snapshots_root(&parent, &name);
+    if dir.exists() {
+        fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn get_settings() -> Result<String, String> {
     let path = config_dir().join("settings.json");
     if !path.exists() {
@@ -328,6 +459,7 @@ pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
 pub fn delete_path(path: String) -> Result<(), String> {
     let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
     assert_inside_authorized(&parent)?;
+    let name = name.to_string_lossy().into_owned();
     let target = parent.join(name);
     // Fail fast on a missing target so callers keep their not-found semantics.
     fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
@@ -946,5 +1078,85 @@ mod tests {
             list_markdown_files_sync(&root.join("..").join("elsewhere").to_string_lossy()).is_err()
         );
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn snapshot_entry_serializes_camel_case() {
+        let entry = SnapshotEntry {
+            file_name: "123.md".into(),
+            mtime_ms: 45,
+            size_bytes: 67,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert_eq!(json, r#"{"fileName":"123.md","mtimeMs":45,"sizeBytes":67}"#);
+    }
+
+    #[test]
+    fn snapshot_rotation_keeps_the_newest_entries() {
+        let root = tmp("snapshot-rotate");
+        reset_dir(&root);
+        let src = root.join("doc.md");
+        fs::write(&src, "v1").unwrap();
+        let dir = root.join("snaps");
+
+        for millis in 0..(MAX_SNAPSHOTS_PER_FILE as u128 + 5) {
+            write_snapshot(&dir, millis, &src).unwrap();
+        }
+
+        let mut names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), MAX_SNAPSHOTS_PER_FILE);
+        assert!(!names.contains(&"0.md".to_string()));
+        assert!(names.contains(&format!("{}.md", MAX_SNAPSHOTS_PER_FILE + 4)));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn snapshot_names_reject_traversal_and_non_timestamps() {
+        assert!(valid_snapshot_name("1700000000000.md"));
+        assert!(!valid_snapshot_name("../evil.md"));
+        assert!(!valid_snapshot_name("sub/evil.md"));
+        assert!(!valid_snapshot_name("abc.md"));
+        assert!(!valid_snapshot_name("1.md.exe"));
+        assert!(!valid_snapshot_name(".md"));
+        assert!(!valid_snapshot_name("12345678901234567890.md"));
+    }
+
+    #[test]
+    fn snapshot_document_roundtrip_under_authorized_root() {
+        let root = tmp("snapshot-doc");
+        reset_dir(&root);
+        let doc = root.join("doc.md");
+        fs::write(&doc, "content v1").unwrap();
+
+        snapshot_document(path_string(&doc)).unwrap();
+
+        let listed = list_snapshots(path_string(&doc)).unwrap();
+        assert_eq!(listed.len(), 1);
+        let name = listed[0].file_name.clone();
+        assert_eq!(
+            read_snapshot(path_string(&doc), name).unwrap(),
+            "content v1"
+        );
+        assert!(read_snapshot(path_string(&doc), "../evil.md".into()).is_err());
+
+        clear_snapshots(path_string(&doc)).unwrap();
+        assert!(list_snapshots(path_string(&doc)).unwrap().is_empty());
+
+        // Outside the authorized roots the commands refuse to touch anything.
+        // (reset_dir would authorize the directory, so create it bare.)
+        let outside = tmp("snapshot-outside");
+        fs::remove_dir_all(&outside).ok();
+        fs::create_dir_all(&outside).unwrap();
+        let foreign = outside.join("foreign.md");
+        fs::write(&foreign, "x").unwrap();
+        assert!(snapshot_document(path_string(&foreign)).is_err());
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(outside).ok();
     }
 }

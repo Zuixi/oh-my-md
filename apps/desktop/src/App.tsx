@@ -49,7 +49,7 @@ import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, type AppCommand } from "./commands"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
-import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices } from "./desktopServices"
+import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type SnapshotEntry } from "./desktopServices"
 import {
   collectMatches,
   nextIndex,
@@ -76,6 +76,7 @@ import {
 import { OutlinePanel } from "./OutlinePanel"
 import { CommandPalette } from "./CommandPalette"
 import { QuickOpenModal } from "./QuickOpenModal"
+import { VersionHistoryModal } from "./VersionHistoryModal"
 import { SearchPanel, type SearchHit } from "./SearchPanel"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import {
@@ -261,6 +262,12 @@ export default function App({
     truncated: boolean
     loading: boolean
   }>({ open: false, files: [], truncated: false, loading: false })
+  const [historyState, setHistoryState] = useState<{
+    open: boolean
+    path: string | null
+    entries: SnapshotEntry[]
+    loading: boolean
+  }>({ open: false, path: null, entries: [], loading: false })
   const [searchOpen, setSearchOpen] = useState(false)
   const searchOpenRef = useRef(searchOpen)
   searchOpenRef.current = searchOpen
@@ -380,6 +387,7 @@ export default function App({
     setSaveStates: commitSaveState,
     revealFolder,
     rememberRecent,
+    onSaved: path => { void services.snapshotDocument?.(path).catch(() => undefined) },
     syncDoc,
     clearRecovery: key => { void services.clearRecovery?.(key) },
     onDurabilityWarning: () => showTransientStatus(t(DURABILITY_WARNING)),
@@ -979,6 +987,53 @@ export default function App({
     }
   }
 
+  async function openVersionHistory() {
+    const tab = tabById(workspaceRef.current.activeId)
+    const path = tab ? sessionPath(tab) : null
+    if (!path) {
+      showTransientStatus(t("history.noFile"))
+      return
+    }
+    if (!services.listSnapshots) return
+    setHistoryState({ open: true, path, entries: [], loading: true })
+    try {
+      const entries = await services.listSnapshots(path)
+      if (mountedRef.current) {
+        setHistoryState({ open: true, path, entries, loading: false })
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setHistoryState(current => ({ ...current, loading: false }))
+        services.reportError(errorMessage(t("history.failed"), error))
+      }
+    }
+  }
+
+  function restoreSnapshot(entry: SnapshotEntry) {
+    const path = historyState.path
+    if (!path || !services.readSnapshot) return
+    void services.readSnapshot(path, entry.fileName)
+      .then(contents => {
+        if (!mountedRef.current) return
+        newTab()
+        resetTabDocumentRef.current(advanceDocumentIdentity(sessionRef.current), contents)
+        setHistoryState(current => ({ ...current, open: false }))
+      })
+      .catch(() => undefined)
+  }
+
+  function clearSnapshotHistory() {
+    const path = historyState.path
+    if (!path) return
+    void services.clearSnapshots?.(path)
+      .then(() => {
+        if (mountedRef.current) {
+          setHistoryState(current => ({ ...current, entries: [] }))
+        }
+      })
+      .catch(() => undefined)
+  }
+
   function openFile() {
     return runOpen(() => services.pickOpenPath())
   }
@@ -1308,6 +1363,7 @@ export default function App({
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => void checkForUpdatesNow(true) },
+    { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
   ]
   const commandsRef = useRef(commands)
   commandsRef.current = commands
@@ -1765,6 +1821,16 @@ export default function App({
           loading={quickOpenState.loading}
           onChoose={path => { void openRecentRef.current(path) }}
           onClose={() => setQuickOpenState(current => ({ ...current, open: false }))}
+        />
+      ) : null}
+      {historyState.open ? (
+        <VersionHistoryModal
+          path={historyState.path}
+          entries={historyState.entries}
+          loading={historyState.loading}
+          onRestore={restoreSnapshot}
+          onClear={clearSnapshotHistory}
+          onClose={() => setHistoryState(current => ({ ...current, open: false }))}
         />
       ) : null}
       <SettingsModal
