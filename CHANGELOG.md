@@ -36,6 +36,17 @@ All notable changes to this project are documented here, generated from conventi
 - Richly render nested math and honor image resolver (ba22e9c)
 - Skip find matching while the bar is closed (f7d8847)
 - Link against _dispatch_main_q instead of the dispatch_get_main_queue macro (0d6c583)
+- Remove unused StoredLocale import workaround (a840bc3)
+- InitLocale emits so post-mount callers re-render (4767c47)
+- I18n command palette labels (297296a)
+- Remove incomplete updater plugin that blocked dev boot (bdca9df)
+- Remove duplicate top-level Find submenu (14a343b)
+- CrossLayerMenu regex for localized menu labels (f2ef4c3)
+- Persist settings and recovery state in app data instead of temp dir (74d7066)
+- Move tree deletions to the OS Trash instead of permanent removal (2de93b5)
+### CI
+
+- Add engine/desktop/rust/link workflow (ea2fd70)
 ### Chores
 
 - Drop unused Range import caught by desktop tsc (f01e3ca)
@@ -44,6 +55,9 @@ All notable changes to this project are documented here, generated from conventi
 - Add opencode permission gate for dangerous commands (f1e8dc0)
 - Remove unused wordCount helper (a435e53)
 - Merge daily-writing-gaps into m2-block-widgets (d5b384e)
+- Sync Cargo.lock for log and zip plugins (2bc2cee)
+- Sync Cargo.lock for updater plugin (4ad0387)
+- I18n minor polish (573c797)
 ### Documentation
 
 - Capture M2 incident lessons in known-gotchas; fix two outdated facts (27badda)
@@ -55,6 +69,13 @@ All notable changes to this project are documented here, generated from conventi
 - Complete settings and session restore implementation plan (3a4d2c6)
 - Record editor gap analysis and writing specs (0e47551)
 - Add Apache-2.0 license and README (c815809)
+- Domain guides, release spec and plans (a3e9899)
+- Add i18n dual-locale runtime-switch design spec (8841708)
+- Add i18n dual-locale implementation plan (928c3b0)
+- I18n manual QA and desktop AGENTS command entry (e79f5bb)
+- Note i18n store ownership and engine host-option in AGENTS (41ba77b)
+- I18n fixes implementation plan (025d412)
+- Record apple-account blocker and refresh stale status (ce4f9cc)
 ### Features
 
 - Keep ordered-list source in sync with preview numbers (18a94ef)
@@ -103,6 +124,31 @@ All notable changes to this project are documented here, generated from conventi
 - Export HTML with math code and diagrams (2848067)
 - Wait for export render before PDF capture (f7f786e)
 - Single-source version with sync script and drift test (cdd6226)
+- Generate CHANGELOG from conventional commits (f0fc8cb)
+- Structured logging via tauri-plugin-log (8704366)
+- Export redacted diagnostics bundle (fbcca89)
+- Update check wrapper via tauri-plugin-updater (8190298)
+- Native menu with format/view/window and checkbox state (99077c3)
+- Desktop shell polish (folder search offsets, workspace ops, settings) (1a4e4c1)
+- Inject imageBrokenLabel via Facet for i18n (90adb0b)
+- Add i18n external store with useSyncExternalStore (74162e0)
+- Add locale field to UserSettings (e4165cc)
+- Localize native menu and add set_menu_locale command (741205a)
+- Wire initLocale/setLocale and setMenuLocale service (a1dc07a)
+- I18n FindReplaceBar as migration pattern (c541d1c)
+- I18n sidebar topbar status outline components (c7c5689)
+- I18n conflict and normalization banners (1e4c53c)
+- I18n App outline prompts and save status (c2c6021)
+- I18n SettingsModal and add language picker (aaa2195)
+- Pass imageBrokenLabel into editorExtensions (9c070ab)
+- I18n confirm dialogs export error and session label (1cddba3)
+- Localize format view window find edit menu items (291a06a)
+- Key-based conflict banner and action labels (8333a70)
+- Key-based durability and normalization status (aaa8af5)
+- Localize user-facing error prefixes (b4b4860)
+- Localize predefined edit and app menu items (8868368)
+- Open markdown files launched from finder and open-with (c035602)
+- Wire the updater plugin with startup and manual update checks (408f140)
 ### Performance
 
 - Keep file tree and outline off the keystroke path (9dc2fe7)
@@ -118,6 +164,7 @@ All notable changes to this project are documented here, generated from conventi
 - Stamp editor updates with tab and document identity so a late callback cannot write into another document (eead3d9)
 - Bind session path, baseline, and version (5f142d4)
 - Share shiki language loaders between widget and export (021796b)
+- Name parser char codes and single-source engine shortcuts (075430a)
 ### Testing
 
 - Cover width-changing ordered-list markers so reject cannot half-revert (eb06d20)
@@ -164,6 +211,7 @@ All notable changes to this project are documented here, generated from conventi
 
 ### Chores
 
+- Merge GitHub initial LICENSE into main (7ac7d38)
 - Track pnpm-lock.yaml for reproducible installs (8ca1e64)
 - Sync pnpm-lock.yaml after adding @types/node (2fe3849)
 - Gitignore .pi/ agent artifacts (c3267ec)
