@@ -1680,7 +1680,9 @@ export default function App({
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
             aria-label={outlineOpen ? t("outline.aria.toggleHide") : t("outline.aria.toggleShow")}
-            title={outlineOpen ? t("outline.title.toggleHide") : t("outline.title.toggleShow")}
+            title={outlineOpen
+              ? t("outline.title.toggleHide", { shortcut: shortcutFor("outline") ?? "" })
+              : t("outline.title.toggleShow", { shortcut: shortcutFor("outline") ?? "" })}
           >
             {outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>

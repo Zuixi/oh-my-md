@@ -2,6 +2,7 @@ import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-rea
 import { AppMenu } from "./AppMenu"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
 import { isMacOS } from "./platform"
+import { shortcutFor } from "./shortcuts"
 import { useT } from "./i18n"
 
 export function TopBar(props: {
@@ -40,7 +41,7 @@ export function TopBar(props: {
             className="topbar-sidebar-toggle"
             onClick={props.onToggleSidebar}
             aria-label={t("topbar.aria.showSidebar")}
-            title={t("topbar.title.showSidebar")}
+            title={t("topbar.title.showSidebar", { shortcut: shortcutFor("sidebar") ?? "" })}
           >
             <PanelLeft size={16} aria-hidden="true" />
           </button>
@@ -121,7 +122,7 @@ export function TopBar(props: {
             className="topbar-action-btn"
             onClick={props.onOpenSettings}
             aria-label={t("topbar.aria.preferences")}
-            title={t("topbar.title.preferences")}
+            title={t("topbar.title.preferences", { shortcut: shortcutFor("preferences") ?? "" })}
           >
             <Settings size={15} aria-hidden="true" />
           </button>
