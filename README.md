@@ -51,7 +51,7 @@ pnpm release:changelog       # 从 conventional commits 生成 CHANGELOG
 pnpm --filter @omd/desktop tauri build   # 产出 .app / .dmg（bundle 含 .md 文件关联与更新签名材料）
 ```
 
-**正式发布流水线（签名公证 + GitHub Release + 自动更新清单）** 尚未启用，阻塞于 Apple Developer 账号审批——解锁清单与 updater 密钥保管说明见 [13-B 计划的 TODO 块](./docs/superpowers/plans/2026-08-16-13b-release-cicd.md)。当前 `tauri.conf.json` 已配置 updater 公钥与 `createUpdaterArtifacts`，`latest.json` 由 release CI 产出后应用内「检查更新…」即可端到端生效。
+**CI：** 每次 push / PR 跑四个 job（engine / desktop / rust / link，见 `.github/workflows/ci.yml`）。发布产物流水线（签名公证 + GitHub Release + `latest.json`）阻塞于 Apple Developer 账号审批，解锁清单见 [13-B 计划](./docs/superpowers/plans/2026-08-16-13b-release-cicd.md)。updater 签名私钥已配入 GitHub secrets（`TAURI_SIGNING_PRIVATE_KEY`）；`tauri.conf.json` 已含 updater 公钥与 `createUpdaterArtifacts`，release CI 产出 `latest.json` 后应用内「检查更新…」即可端到端生效。
 
 ## License
 

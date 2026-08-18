@@ -181,3 +181,14 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - 日期：2026-08-13
 - 自动化已通过：`pnpm test`、`pnpm --filter @omd/desktop test`、`pnpm --filter @omd/desktop build`、`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`、`git diff --check`。具体用例数以当次命令输出为准。
 - 交互式 M2 QA：本环境未执行 `pnpm dev` GUI 清单，上方交互项保持未勾选。
+
+## 发布与升级（13-A/13-B 烟测）
+
+> 需要 `tauri build` 产物或真实 Release 的项目标注了前提；Apple 公证链路（B2/B3）解锁后补充。
+
+- [ ] `pnpm release:version 0.2.0` 后四处版本号更新，`rg '"0\.1\.0"' package.json apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json` 无残留，`rg '^version = "0\.1\.0"' apps/desktop/src-tauri/Cargo.toml` 无残留（验证后还原改动）。
+- [ ] 菜单「导出诊断信息…」：保存 zip；zip 含版本与日志文件、不含任何文档正文。
+- [ ] 断网状态下启动 App：8s 后无任何更新提示，编辑不受影响；「检查更新…」显示已是最新或静默，无未处理错误弹窗。
+- [ ] （需打包产物）双击 `.md` / Finder 拖入 Dock 图标打开文件；再次启动聚焦既有窗口。
+- [ ] （需 B3 Release）旧版本内「检查更新…」提示新版本 → 升级成功；`latest.json` 可访问。
+- [ ] （需 B2 公证）干净 Mac 安装无 Gatekeeper 拦截，`spctl -a -vv` 通过。

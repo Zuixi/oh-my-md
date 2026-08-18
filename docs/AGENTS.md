@@ -51,6 +51,11 @@ Still not sure? Read the directory map below.
   conventions in its `README.md`: one directory per product, one file per topic.
 - **Do not duplicate.** If the content already exists elsewhere (domain
   `AGENTS.md`, root `AGENTS.md`, README), link to it instead of restating it.
+- **CHANGELOG and README update at release time.** Run `pnpm release:changelog`
+  (conventional commits are the input — the commit-msg hook enforces the type
+  prefix) when cutting a version, and touch README whenever user-visible
+  setup, shortcuts, or release flow change. Specs and plans record decisions;
+  README and CHANGELOG are the only user-facing docs.
 
 ## Out of Scope
 
