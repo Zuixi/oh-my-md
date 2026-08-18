@@ -50,3 +50,8 @@ export const toggleKeymap = keymap.of(toggleKeyBindings.map(({ key, run }) => ({
 export const toggleShortcutLabels: Readonly<Record<string, string>> = Object.fromEntries(
   toggleKeyBindings.map(binding => [binding.id, binding.display]),
 )
+
+/** id → normalized CodeMirror key ("Mod-e"); hosts format per platform (spec D7). */
+export const toggleShortcutBindings: Readonly<Record<string, string>> = Object.fromEntries(
+  toggleKeyBindings.map(binding => [binding.id, binding.key]),
+)
