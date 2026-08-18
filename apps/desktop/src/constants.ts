@@ -36,3 +36,8 @@ export const STORAGE_KEY_OUTLINE_OPEN = "omd-outline-open"
 export const STORAGE_KEY_RECENTS = "omd.recent-files"
 export const STORAGE_KEY_SETTINGS = "omd_user_settings"
 export const STORAGE_KEY_SESSION = "omd_saved_session"
+
+// Mirrors @omd/engine LARGE_DOC_LINES / SAFE_MODE_LINES (drift-guarded in
+// test/crossLayerConstants.test.ts).
+export const LARGE_DOC_LINES = 30000
+export const SAFE_MODE_LINES = 50000
