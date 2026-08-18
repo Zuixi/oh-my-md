@@ -9,9 +9,12 @@ const RENDER_DEBOUNCE_MS = 150
 let highlighterPromise: Promise<HighlighterCore> | null = null
 
 function getHighlighter(): Promise<HighlighterCore> {
-  return highlighterPromise ??= import("shiki/themes/github-light.mjs").then(theme =>
+  return highlighterPromise ??= Promise.all([
+    import("shiki/themes/github-light.mjs"),
+    import("shiki/themes/github-dark.mjs"),
+  ]).then(([light, dark]) =>
     createHighlighterCore({
-      themes: [theme.default],
+      themes: [light.default, dark.default],
       langs: [],
       engine: createJavaScriptRegexEngine(),
     }))
@@ -61,7 +64,13 @@ export class CodeWidget extends BlockWidget {
         await hl.loadLanguage(grammar.default as never)
         if (!this.isActive(el)) return
       }
-      const html = hl.codeToHtml(this.src, { lang, theme: "github-light" })
+      // Dual theme: light colors inline, dark via --shiki-dark* CSS variables
+      // (mapped by the host stylesheet / export template).
+      const html = hl.codeToHtml(this.src, {
+        lang,
+        themes: { light: "github-light", dark: "github-dark" },
+        defaultColor: "light",
+      })
       htmlCache.set(cacheKey, html)
       if (this.isActive(el)) el.innerHTML = html
     } catch {

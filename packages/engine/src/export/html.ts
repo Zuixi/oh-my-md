@@ -227,7 +227,11 @@ async function renderCodeHtml(src: string, lang: string): Promise<string> {
   if (!canonical) return `<pre><code>${escapeHtml(src)}</code></pre>`
   try {
     const hl = await getHighlighterForExport(canonical)
-    return hl.codeToHtml(src, { lang: canonical, theme: "github-light" })
+    return hl.codeToHtml(src, {
+      lang: canonical,
+      themes: { light: "github-light", dark: "github-dark" },
+      defaultColor: "light",
+    })
   } catch {
     return `<pre><code>${escapeHtml(src)}</code></pre>`
   }
@@ -357,10 +361,23 @@ function renderRich(
   }
 }
 
+// Dark-scheme mapping for dual-theme shiki output; mirrors the app stylesheet.
+const SHIKI_DARK_CSS = `<style>
+@media (prefers-color-scheme: dark) {
+  .shiki, .shiki span {
+    color: var(--shiki-dark) !important;
+    background-color: var(--shiki-dark-bg) !important;
+    font-style: var(--shiki-dark-font-style) !important;
+    font-weight: var(--shiki-dark-font-weight) !important;
+    text-decoration: var(--shiki-dark-text-decoration) !important;
+  }
+}
+</style>`
+
 export async function exportRichHtml(
   state: EditorState,
   options: ExportRichHtmlOptions = {},
 ): Promise<string> {
   const body = await renderRich(syntaxTree(state).topNode, state, options)
-  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title></head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title>${SHIKI_DARK_CSS}</head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
 }

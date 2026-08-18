@@ -33,6 +33,16 @@ html[data-theme="dark"] {
   --omd-panel-bg: #252526;
   --omd-content-width: 780px;
 }
+/* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
+   fall back to inherited/initial values, so unthemed tokens stay correct. */
+html[data-theme="dark"] .shiki,
+html[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
 .editor-host .cm-content {

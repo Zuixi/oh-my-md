@@ -42,6 +42,12 @@ describe("exportRichHtml", () => {
     expect(html).toContain("const")
   })
 
+  it("emits dual-theme code colors and a dark-scheme stylesheet", async () => {
+    const html = await exportRichHtml(makeState("```js\nconst x = 1\n```"))
+    expect(html).toContain("--shiki-dark")
+    expect(html).toContain("prefers-color-scheme: dark")
+  })
+
   it("renders valid mermaid as SVG", async () => {
     const html = await exportRichHtml(makeState("```mermaid\ngraph TD; A-->B\n```"))
     expect(html).toContain("<svg>")
