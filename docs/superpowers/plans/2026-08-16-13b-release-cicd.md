@@ -10,6 +10,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`
 
+> **状态（2026-08-18）：** Task B1 已完成（`.github/workflows/ci.yml` 四 job）。B2/B3 **阻塞于 Apple Developer 账号**（2026-08-17 提交申请，审批中），暂缓执行；B4 文档项随发布解锁一并收尾。
+
+## TODO：Apple 账号解锁清单（B2/B3 启动条件）
+
+- [ ] Apple Developer 账号审批通过（申请于 2026-08-17）。
+- [ ] 生成 "Developer ID Application" 证书并导出 p12。
+- [ ] GitHub 仓库 Settings → Secrets 配置 5 个签名公证 secret：`APPLE_CERTIFICATE`（base64 p12）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`（app-specific）、`APPLE_TEAM_ID`。
+- [ ] 配置 updater 签名 secret：生成密钥对 `pnpm tauri signer generate`（私钥**绝不入库**，离线保管），将 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 加入 secrets。
+- [ ] 执行 Task B2（签名 + 公证）与 Task B3（release job + `latest.json` 更新清单）。
+- [ ] 真实验证：`v*` tag → Release 出现 `.app`/`.dmg`/`latest.json`，`spctl -a -vv` 无 Gatekeeper 拦截。
+
 ## Global Constraints
 
 - 最低 macOS 12（CI runner 用 `macos-12`）。

@@ -5,6 +5,8 @@
 **路线图：** `docs/superpowers/specs/2026-08-13-00-product-roadmap-design.md`  
 **父设计：** `docs/superpowers/specs/2026-08-10-oh-my-md-design.md`
 
+> **状态更新（2026-08-18）：** 下文「必要缺口」表的 P0/P1 已全部由规格 [06](./2026-08-16-06-core-writing-experience-design.md)/[07](./2026-08-16-07-markdown-navigation-design.md)/[09](./2026-08-16-09-workspace-operations-design.md)/[11](./2026-08-16-11-export-pipeline-design.md)/[15](./2026-08-16-15-table-editing-design.md)/[16](./2026-08-16-16-image-insert-design.md) 落地。新一轮差距收敛（发布硬门槛与日常体验长尾）由 2026-08-18 系列规格 19–26 与 13-B 的 Apple 账号 TODO 跟踪；本文其余内容仅作历史快照保留。
+
 ## 对标范围
 
 对标对象是 **Typora / MarkText** 这一类「单文件为中心、Live Preview 写文档」的桌面编辑器，不是 Obsidian 的库/双链/插件生态。
