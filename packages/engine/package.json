@@ -15,12 +15,15 @@
     "@lezer/markdown": "^1.4.0",
     "katex": "^0.18.4",
     "mermaid": "^11.16.1",
-    "shiki": "^4.4.3"
+    "shiki": "^4.4.3",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.7.1",
     "@types/katex": "^0.16.8",
     "@types/node": "^26.2.0",
+    "@types/turndown": "^5.0.6",
     "happy-dom": "^16.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
