@@ -20,19 +20,27 @@ function baseState(doc: string): EditorState {
   return EditorState.create({ doc, extensions: editorExtensions() })
 }
 
-/** 在文档中部连续逐键输入，度量每笔事务耗时（含增量重解析+装饰更新）。 */
+/** 在文档中部连续逐键输入，度量每笔事务耗时（含增量重解析+装饰更新）。
+ *
+ * tree 口径（Spec 05a §10.4）：
+ * - "steady"（默认）= 生产稳态：只解析到 viewport.to + 100000（镜像 CM idle worker
+ *   的 Work.MaxParseAhead），大文档永远保持部分树 —— 实测 10MB/38 万行逐键 p95 1.5ms。
+ * - "complete" = worst-case 上限参考：全树解析后每键的 fragment 重启随文档规模增长
+ *   （1MB=23.5ms、10MB=70.6ms）。生产代码禁止制造该状态
+ *   （apps/desktop/test/crossLayerNoFullTree.test.ts 护栏）。 */
 export function measureTyping(
   doc: string,
-  opts: { keystrokes?: number; mode: "live" | "source" } = { mode: "live" },
+  opts: { keystrokes?: number; mode?: "live" | "source"; tree?: "steady" | "complete" } = {},
 ): TypingLatency {
   const count = opts.keystrokes ?? 200
+  const mode = opts.mode ?? "live"
+  const tree = opts.tree ?? "steady"
   let state = baseState(doc)
-  if (opts.mode === "source") state = state.update(setLivePreview(false)).state
-  // 与生产一致的完整树起点（有 view 才能强制完整解析，见 known-gotchas）
+  if (mode === "source") state = state.update(setLivePreview(false)).state
   const parent = document.createElement("div")
   document.body.appendChild(parent)
   const view = new EditorView({ state, parent })
-  forceParsing(view, doc.length, 10000)
+  forceParsing(view, tree === "complete" ? doc.length : view.viewport.to + 100000, 60000)
   let pos = Math.floor(doc.length / 2)
   const samples: number[] = []
   for (let i = 0; i < count; i++) {

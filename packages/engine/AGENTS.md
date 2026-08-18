@@ -82,6 +82,7 @@ pnpm --filter @omd/engine bench
 - `pnpm test` performs `tsc --noEmit` and then runs Vitest.
 - `pnpm --filter @omd/engine bench` 跑 advisory 大文档基准（typing p95/冷解析/装饰重建/字数统计）；预算超限只告警不阻断，CI 中 continue-on-error。
 - Use `test/helpers.ts::makeState` when tests require a fully available syntax tree; it forces synchronous parsing with `ensureSyntaxTree`.
+- Production code must never advance parsing to `doc.length` (`forceParsing`/`ensureSyntaxTree`) — the complete-tree trap in `docs/memory/known-gotchas.md` makes every subsequent keystroke O(fragment restart) at MB scale; `apps/desktop/test/crossLayerNoFullTree.test.ts` guards it.
 - Add focused tests for parser node shapes, decoration tags/ranges, widget editing state, and live/source round trips.
 - Add a fixture when a Markdown sample is useful across snapshot or regression tests. Keep fixtures deterministic and small unless testing large-document behavior.
 - Async widgets require explicit timing/error assertions; do not rely on incidental microtask completion.
