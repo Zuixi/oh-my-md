@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type MouseEvent } from "react"
 import { ChevronRight, FileText, Folder, FolderOpen, PanelLeftClose, Search } from "lucide-react"
 import { ROW_HEIGHT, visibleRowRange, type VisibleRow } from "./fileTreeState"
 import { parentDir } from "./workspace"
+import { shortcutFor } from "./shortcuts"
 import { useT } from "./i18n"
 
 export type { TreeEntry } from "./fileTreeState"
@@ -36,7 +37,7 @@ export function FileTree(props: {
               className="sidebar-collapse-btn"
               onClick={props.onCollapse}
               aria-label={t("filetree.aria.hideSidebar")}
-              title={t("filetree.title.hideSidebar")}
+              title={t("filetree.title.hideSidebar", { shortcut: shortcutFor("sidebar") ?? "" })}
             >
               <PanelLeftClose size={15} />
             </button>
@@ -53,7 +54,7 @@ export function FileTree(props: {
         >
           <Search size={13} className="filetree-search-icon" aria-hidden="true" />
           <span>{t("filetree.searchInFolder")}</span>
-          <kbd>{t("filetree.kbd.searchShortcut")}</kbd>
+          <kbd>{t("filetree.kbd.searchShortcut", { shortcut: shortcutFor("search") ?? "" })}</kbd>
         </button>
       </div>
       {!props.folder ? (
