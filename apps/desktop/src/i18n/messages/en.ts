@@ -110,6 +110,13 @@ export const en: Record<string, string> = {
   "topbar.title.preferences": "Preferences (⌘,)",
   "topbar.workspaceFallback": "Workspace",
 
+  "menu.file": "File",
+  "menu.edit": "Edit",
+  "menu.format": "Format",
+  "menu.view": "View",
+  "menu.recents": "Open Recent",
+  "menu.aria.open": "Open menu",
+
   "filetree.title.fallback": "Files",
   "filetree.aria.hideSidebar": "Hide sidebar",
   "filetree.title.hideSidebar": "Hide sidebar (⌘\\)",

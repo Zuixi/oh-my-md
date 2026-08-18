@@ -110,6 +110,13 @@ export const zh: Record<string, string> = {
   "topbar.title.preferences": "偏好设置（⌘,）",
   "topbar.workspaceFallback": "工作区",
 
+  "menu.file": "文件",
+  "menu.edit": "编辑",
+  "menu.format": "格式",
+  "menu.view": "显示",
+  "menu.recents": "最近打开",
+  "menu.aria.open": "打开菜单",
+
   "filetree.title.fallback": "文件",
   "filetree.aria.hideSidebar": "隐藏侧边栏",
   "filetree.title.hideSidebar": "隐藏侧边栏（⌘\\）",
