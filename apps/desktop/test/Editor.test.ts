@@ -16,6 +16,7 @@ import {
   type CreateEditorOptions,
   type EditorDocumentUpdate,
 } from "../src/Editor"
+import { pastePlainText } from "../src/pastePlainText"
 
 const TAB_ID = 7
 const DOCUMENT_ID = 11
@@ -327,6 +328,36 @@ describe("desktop editor lifecycle", () => {
     view.contentDOM.dispatchEvent(toggleBack)
     expect(onModeChange).toHaveBeenCalledWith(true)
     expect(editorStatus(view).mode).toBe("live")
+    view.destroy()
+  })
+
+  it("inserts the literal clipboard text, replacing the selection", async () => {
+    const readText = vi.fn(() => Promise.resolve("**bold**"))
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { readText }, configurable: true,
+    })
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "hello"),
+    )
+    view.dispatch({ selection: { anchor: 5 } })
+    await pastePlainText(view)
+    expect(view.state.doc.toString()).toBe("hello**bold**")
+    view.destroy()
+  })
+
+  it("does nothing when the clipboard is empty", async () => {
+    const readText = vi.fn(() => Promise.resolve(""))
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { readText }, configurable: true,
+    })
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "hello"),
+    )
+    await pastePlainText(view)
+    expect(view.state.doc.toString()).toBe("hello")
+    expect(readText).toHaveBeenCalled()
     view.destroy()
   })
 })

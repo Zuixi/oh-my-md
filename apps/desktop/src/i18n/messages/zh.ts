@@ -63,6 +63,7 @@ export const zh: Record<string, string> = {
   "cmd.label.cut": "剪切",
   "cmd.label.copy": "复制",
   "cmd.label.paste": "粘贴",
+  "cmd.label.pastePlainText": "粘贴为纯文本",
   "cmd.label.select-all": "全选",
   "cmd.label.quit": "退出",
   "cmd.label.about": "关于 oh-my-md",
