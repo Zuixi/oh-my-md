@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { makeState } from "./helpers"
+import { editorExtensions } from "../src/index"
 import {
   livePreviewCompartment, livePreviewExt, isLivePreview, applyToggle, setLivePreview,
 } from "../src/modes/livePreview"
@@ -32,6 +33,12 @@ describe("mode switching", () => {
     const s2 = s1.update(applyToggle(s1)).state
     expect(mode(s2)).toBe(true)
     expect(s2.doc.toString()).toBe("# x")
+  })
+
+  it("starts in source mode when defaultLivePreview is false", () => {
+    const s = makeState("# x", editorExtensions({ defaultLivePreview: false }))
+    expect(mode(s)).toBe(false)
+    expect(livePreviewCompartment.get(s)).toEqual([])
   })
 
   it("setLivePreview forces an explicit mode without flipping", () => {

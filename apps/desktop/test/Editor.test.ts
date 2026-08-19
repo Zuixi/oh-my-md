@@ -123,6 +123,15 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("creates a source-mode view when defaultLivePreview is false", () => {
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn(), "# Title"), defaultLivePreview: false },
+    )
+    expect(editorStatus(view).mode).toBe("source")
+    view.destroy()
+  })
+
   it("reads cursor position, mode, and outline from a view", () => {
     const view = createEditor(
       document.createElement("div"),

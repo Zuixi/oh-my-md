@@ -633,12 +633,15 @@ export default function App({
   function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
     // HUGE 只读档：readOnly 挡编辑，plainText 让引擎不挂语言/装饰扩展。
     const readOnly = readonlyTabsRef.current.has(tabId)
+    const bytes = docBytesRef.current.get(tabId)
+    const overScale = readOnly || (bytes !== undefined && bytes > SAFE_MODE_BYTES)
     return {
       doc: contents,
       tabId,
       documentId,
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
+      defaultLivePreview: overScale ? false : undefined,
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
@@ -1063,11 +1066,14 @@ export default function App({
     if (stat.sizeBytes >= OPEN_READONLY_THRESHOLD_BYTES) {
       return services.confirmReadonlyOpen?.(label, mb) ? "readonly" : "cancel"
     }
-    if (stat.sizeBytes >= OPEN_STREAM_THRESHOLD_BYTES && !largeOpenAcceptedRef.current) {
-      if (!services.confirmLargeOpen?.(label, mb)) return "cancel"
-      largeOpenAcceptedRef.current = true
+    if (stat.sizeBytes >= OPEN_STREAM_THRESHOLD_BYTES) {
+      if (!largeOpenAcceptedRef.current) {
+        if (!services.confirmLargeOpen?.(label, mb)) return "cancel"
+        largeOpenAcceptedRef.current = true
+      }
+      return "large"
     }
-    return "large"
+    return "normal"
   }
 
   /**
@@ -1078,22 +1084,27 @@ export default function App({
     if (tier !== "large" || !services.readDocumentStreaming) {
       return services.readDocument(path)
     }
-    const parts: string[] = []
-    const stream = await services.readDocumentStreaming(path, event => {
-      if (event.kind === "chunk") parts.push(event.text)
-      else setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
-    })
-    if (stream.kind === "missing") {
-      return { kind: "missing", requestedPath: stream.requestedPath }
-    }
-    const contents = parts.join("")
-    setOpeningProgress(null)
-    return {
-      kind: "existing",
-      requestedPath: stream.requestedPath,
-      contents,
-      version: stream.version,
-      stats: stream.stats,
+    try {
+      const parts: string[] = []
+      const stream = await services.readDocumentStreaming(path, event => {
+        if (event.kind === "chunk") parts.push(event.text)
+        else setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
+      })
+      if (stream.kind === "missing") {
+        return { kind: "missing", requestedPath: stream.requestedPath }
+      }
+      const contents = parts.join("")
+      setOpeningProgress(null)
+      return {
+        kind: "existing",
+        requestedPath: stream.requestedPath,
+        contents,
+        version: stream.version,
+        stats: stream.stats,
+      }
+    } catch {
+      setOpeningProgress(null)
+      return services.readDocument(path)
     }
   }
 
@@ -1109,7 +1120,8 @@ export default function App({
     const token = request ?? ++openRequestRef.current
     const tier = await resolveOpenTier(nextPath)
     if (tier === "cancel" || token !== openRequestRef.current) return
-    setOpeningLabel(baseName(nextPath))
+    const showOverlay = tier !== "normal"
+    if (showOverlay) setOpeningLabel(baseName(nextPath))
     try {
       let snapshot
       try {
@@ -1161,7 +1173,7 @@ export default function App({
       if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
       void services.clearRecovery?.(recoveryKey(sessionRef.current))
     } finally {
-      if (token === openRequestRef.current) {
+      if (token === openRequestRef.current && showOverlay) {
         setOpeningLabel(null)
         setOpeningProgress(null)
       }
@@ -1320,7 +1332,8 @@ export default function App({
     const token = ++openRequestRef.current
     const tier = await resolveOpenTier(path)
     if (tier === "cancel" || token !== openRequestRef.current) return
-    setOpeningLabel(baseName(path))
+    const showOverlay = tier !== "normal"
+    if (showOverlay) setOpeningLabel(baseName(path))
     try {
       const snapshot = await readSnapshotForOpen(path, tier)
       if (token !== openRequestRef.current) return
@@ -1348,7 +1361,7 @@ export default function App({
         services.reportError(errorMessage(t("error.openFailed"), error))
       }
     } finally {
-      if (token === openRequestRef.current) {
+      if (token === openRequestRef.current && showOverlay) {
         setOpeningLabel(null)
         setOpeningProgress(null)
       }
@@ -1959,8 +1972,13 @@ export default function App({
     return () => window.clearTimeout(timer)
   }, [doc])
   // 安全模式（Spec 05）：字数按需 —— 点击状态栏按钮前不跑全文档扫描。
-  const activeLines = useMemo(() => (deferredDoc ? deferredDoc.split("\n").length : 0), [deferredDoc])
+  // 行数走 CM rope / snapshot，禁止对全文 split（Spec 05b）。
+  let activeLines = 0
+  try { activeLines = viewRef.current?.state.doc.lines ?? 0 } catch { activeLines = 0 }
+  const activeBytes = docBytesRef.current.get(workspace.activeId)
   const safeModeActive = activeLines > SAFE_MODE_LINES
+    || (activeBytes !== undefined && activeBytes > SAFE_MODE_BYTES)
+    || readonlyTabsRef.current.has(workspace.activeId)
   const stats = useMemo(() => {
     if (safeModeActive && statsRequested === 0) return null
     return documentStats(deferredDoc)
