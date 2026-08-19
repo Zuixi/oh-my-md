@@ -143,11 +143,17 @@ fn map_metadata_error(path: &Path, error: io::Error) -> DocumentError {
 
 pub(crate) fn sync_parent(parent: &Path) -> SaveDurability {
     // On Windows, FlushFileBuffers (called by sync_all) requires write access
-    // to the handle, but directories cannot be opened with write access.
-    // NTFS already provides strong durability guarantees, so we skip the sync.
+    // to the handle, but directories cannot be opened with write access, so a
+    // real directory sync is not available. NTFS already provides strong
+    // durability guarantees, so a present directory is treated as durable.
+    // A missing directory still downgrades: durability cannot be guaranteed if
+    // the parent does not exist.
     #[cfg(windows)]
     {
-        let _ = parent; // suppress unused warning
+        if !parent.is_dir() {
+            eprintln!("[documents] parent sync failed for {}", parent.display());
+            return SaveDurability::DirectorySyncFailed;
+        }
         SaveDurability::Durable
     }
     #[cfg(not(windows))]

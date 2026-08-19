@@ -486,12 +486,6 @@ fn guarded_retargeted_symlink_writes_neither_target() {
 
 #[test]
 fn guarded_parent_sync_failure_downgrades_durability_only() {
-    // On Windows, sync_parent always returns Durable because directory sync
-    // is skipped (NTFS provides durability). The downgrade path is
-    // only exercised on POSIX.
-    if cfg!(windows) {
-        return;
-    }
     let directory = temp_dir("parent-sync");
     assert_eq!(
         sync_parent(&directory.join("absent-dir")),
