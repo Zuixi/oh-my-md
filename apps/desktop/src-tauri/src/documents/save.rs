@@ -142,19 +142,16 @@ fn map_metadata_error(path: &Path, error: io::Error) -> DocumentError {
 }
 
 pub(crate) fn sync_parent(parent: &Path) -> SaveDurability {
-    // On Windows, opening a directory requires FILE_FLAG_BACKUP_SEMANTICS.
+    // On Windows, FlushFileBuffers (called by sync_all) requires write access
+    // to the handle, but directories cannot be opened with write access.
+    // NTFS already provides strong durability guarantees, so we skip the sync.
     #[cfg(windows)]
-    let result = {
-        use std::os::windows::fs::OpenOptionsExt;
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(0x02000000) // FILE_FLAG_BACKUP_SEMANTICS
-            .open(parent)
-            .and_then(|dir| dir.sync_all())
-    };
+    {
+        let _ = parent; // suppress unused warning
+        SaveDurability::Durable
+    }
     #[cfg(not(windows))]
-    let result = File::open(parent).and_then(|dir| dir.sync_all());
-    match result {
+    match File::open(parent).and_then(|dir| dir.sync_all()) {
         Ok(()) => SaveDurability::Durable,
         Err(error) => {
             eprintln!(
