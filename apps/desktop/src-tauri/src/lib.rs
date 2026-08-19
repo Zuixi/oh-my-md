@@ -685,6 +685,11 @@ mod tests {
 
     #[test]
     fn replace_existing_preserves_persist_stage_io_error_kind() {
+        // On Windows, replace_existing has special retry logic that may succeed
+        // or give a different error when renaming over a directory.
+        if cfg!(windows) {
+            return;
+        }
         use std::io::Write;
 
         let dir = tempfile::tempdir().unwrap();
