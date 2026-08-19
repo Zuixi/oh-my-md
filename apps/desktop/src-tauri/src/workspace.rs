@@ -1067,8 +1067,11 @@ mod tests {
         let response = list_markdown_files_sync(&path_string(&root)).unwrap();
 
         assert_eq!(response.paths.len(), 2);
-        assert!(response.paths[0].ends_with("b.md"));
-        assert!(response.paths[1].ends_with("sub/a.md"));
+        // Normalize path separators for cross-platform comparison.
+        let p0 = response.paths[0].replace('\\', "/");
+        let p1 = response.paths[1].replace('\\', "/");
+        assert!(p0.ends_with("b.md"), "expected b.md, got: {p0}");
+        assert!(p1.ends_with("sub/a.md"), "expected sub/a.md, got: {p1}");
         assert!(!response.truncated);
 
         // A missing root walks to nothing (matching search), traversal is rejected.
@@ -1135,8 +1138,25 @@ mod tests {
 
         snapshot_document(path_string(&doc)).unwrap();
 
+        // Verify snapshot was written by checking the directory directly.
+        let (parent, name) = canonical_parent_and_name(&doc).unwrap();
+        let snap_dir = snapshots_root(&parent, &name.to_string_lossy());
+        assert!(
+            snap_dir.is_dir(),
+            "snapshot dir should exist: {}",
+            snap_dir.display()
+        );
+        let direct_entries: Vec<_> = fs::read_dir(&snap_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            !direct_entries.is_empty(),
+            "snapshot dir should have entries"
+        );
+
         let listed = list_snapshots(path_string(&doc)).unwrap();
-        assert_eq!(listed.len(), 1);
+        assert_eq!(listed.len(), 1, "expected 1 snapshot, got {}", listed.len());
         let name = listed[0].file_name.clone();
         assert_eq!(
             read_snapshot(path_string(&doc), name).unwrap(),

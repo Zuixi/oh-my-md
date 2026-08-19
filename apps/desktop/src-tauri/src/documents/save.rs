@@ -142,7 +142,19 @@ fn map_metadata_error(path: &Path, error: io::Error) -> DocumentError {
 }
 
 pub(crate) fn sync_parent(parent: &Path) -> SaveDurability {
-    match File::open(parent).and_then(|dir| dir.sync_all()) {
+    // On Windows, opening a directory requires FILE_FLAG_BACKUP_SEMANTICS.
+    #[cfg(windows)]
+    let result = {
+        use std::os::windows::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000) // FILE_FLAG_BACKUP_SEMANTICS
+            .open(parent)
+            .and_then(|dir| dir.sync_all())
+    };
+    #[cfg(not(windows))]
+    let result = File::open(parent).and_then(|dir| dir.sync_all());
+    match result {
         Ok(()) => SaveDurability::Durable,
         Err(error) => {
             eprintln!(
