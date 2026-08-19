@@ -5,7 +5,7 @@ import {
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
 import {
-  applyToggle, documentStats, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES,
+  applyToggle, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setLivePreview, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
@@ -642,6 +642,7 @@ export default function App({
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
       defaultLivePreview: overScale ? false : undefined,
+      onModeChange: isLive => setSourceMode(!isLive),
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
@@ -1713,10 +1714,8 @@ export default function App({
       const view = viewRef.current
       if (!view) return
       try {
-        const next = !view.state.field(isLivePreview)
         safeModeChoiceRef.current.add(workspaceRef.current.activeId)
         view.dispatch(applyToggle(view.state))
-        setSourceMode(next)
       } catch { /* mock views */ }
     } },
     { id: "bold", label: t("cmd.label.bold"), shortcut: shortcutFor("bold"), run: runEditorCommand(toggleBold) },

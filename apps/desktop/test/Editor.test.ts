@@ -3,6 +3,7 @@ import { undo } from "@codemirror/commands"
 import {
   acceptOrderedListNormalization,
   getPendingOrderedListNormalization,
+  isLivePreview,
   rejectOrderedListNormalization,
 } from "@omd/engine"
 import {
@@ -297,6 +298,35 @@ describe("desktop editor lifecycle", () => {
       editorOptions(vi.fn(), "sample text"),
     )
     expect(view.lineWrapping).toBe(true)
+    view.destroy()
+  })
+
+  it("notifies the host when the live/source mode flips via the keymap", () => {
+    const onModeChange = vi.fn()
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn()), onModeChange },
+    )
+    expect(view.state.field(isLivePreview)).toBe(true)
+    view.dispatch({ changes: { from: 4, insert: "!" } })
+    // Doc edits must not be reported as a mode flip.
+    expect(onModeChange).not.toHaveBeenCalled()
+
+    // happy-dom reports a non-mac platform, so "Mod-e" maps to Ctrl-E
+    // (on a real macOS webview the same binding fires on ⌘E).
+    const toggle = new KeyboardEvent("keydown", {
+      key: "e", ctrlKey: true, bubbles: true, cancelable: true,
+    })
+    view.contentDOM.dispatchEvent(toggle)
+    expect(onModeChange).toHaveBeenCalledWith(false)
+    expect(editorStatus(view).mode).toBe("source")
+
+    const toggleBack = new KeyboardEvent("keydown", {
+      key: "e", ctrlKey: true, bubbles: true, cancelable: true,
+    })
+    view.contentDOM.dispatchEvent(toggleBack)
+    expect(onModeChange).toHaveBeenCalledWith(true)
+    expect(editorStatus(view).mode).toBe("live")
     view.destroy()
   })
 })

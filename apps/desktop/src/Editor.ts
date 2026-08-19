@@ -50,6 +50,8 @@ export interface CreateEditorOptions {
   plainText?: boolean
   /** Construct already in Source so large docs skip the first live-preview pass. */
   defaultLivePreview?: boolean
+  /** Notified when the live/source field flips, so the host can mirror it. */
+  onModeChange?: (isLive: boolean) => void
 }
 
 export function makeImageResolver(
@@ -140,6 +142,13 @@ function reportEditorUpdate(options: CreateEditorOptions, update: ViewUpdate): v
   })
 }
 
+function reportModeChange(options: CreateEditorOptions, update: ViewUpdate): void {
+  if (!options.onModeChange) return
+  const before = update.startState.field(isLivePreview)
+  const after = update.state.field(isLivePreview)
+  if (before !== after) options.onModeChange(after)
+}
+
 const spellcheckCompartment = new Compartment()
 
 function spellcheckAttr(on: boolean) {
@@ -179,7 +188,10 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       EditorView.domEventHandlers({
         click: (event, view) => activateLink(view, event),
       }),
-      EditorView.updateListener.of((update) => reportEditorUpdate(options, update)),
+      EditorView.updateListener.of((update) => {
+        reportEditorUpdate(options, update)
+        reportModeChange(options, update)
+      }),
       EditorView.theme({
         "&": { height: "100%", fontSize: "15px" },
         ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
