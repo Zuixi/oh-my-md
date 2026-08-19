@@ -10,12 +10,14 @@ import {
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import {
-  advanceDocumentIdentity, createSession, openSession, recoveryKey,
-  retargetSessionPath, sessionDirty, sessionPath, type EditorSession,
+  advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
+  retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
+  type EditorSession,
 } from "./session"
 import {
-  activeSession, addTab, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, parentDir, replaceTabSession, resolveMarkdownHref, type Workspace,
+  activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder, findTabByPath,
+  focusTab, openFolder, parentDir, pathWithinDir, replaceTabSession, resolveMarkdownHref,
+  type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -56,7 +58,7 @@ import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcut
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
-import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type SnapshotEntry } from "./desktopServices"
+import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
 import {
   collectMatches,
   nextIndex,
@@ -70,6 +72,7 @@ import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
 import { LargeDocBanner } from "./LargeDocBanner"
+import { OpeningOverlay } from "./OpeningOverlay"
 import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
@@ -110,7 +113,11 @@ import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
   MARKDOWN_FILE_EXTENSION,
+  OPEN_READONLY_THRESHOLD_BYTES,
+  OPEN_SAVE_QUEUE_TIMEOUT_MS,
+  OPEN_STREAM_THRESHOLD_BYTES,
   RELEASES_URL,
+  SAFE_MODE_BYTES,
   SAFE_MODE_LINES,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
@@ -155,6 +162,27 @@ function sameEntries(
   }
   return true
 }
+
+/**
+ * Bounded wait: a large-document save (double probe + fsync) can run for
+ * minutes under Windows antivirus scanning, and its queue promise is the only
+ * unbounded await on the open path. Resolving on timeout lets the open proceed
+ * while the save chain keeps running on its own.
+ */
+function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = window.setTimeout(() => resolve(), ms)
+    promise
+      .catch(() => undefined)
+      .finally(() => {
+        window.clearTimeout(timer)
+        resolve()
+      })
+  })
+}
+
+/** Spec 05b 打开档位：normal 一次读；large 流式 + 默认源码；readonly 只读纯文本。 */
+type OpenTier = "normal" | "large" | "readonly" | "cancel"
 
 function replaceTreePrefix(path: string, from: string, to: string): string {
   if (path === from) return to
@@ -286,10 +314,20 @@ export default function App({
   // 处于安全模式渲染预算下的 tab。预算是 engine 全局状态而安全模式是 per-tab 的，
   // 激活切换时按此集重应用（useEffect on activeId 兜住 focusTab/会话恢复等全部路径）。
   const safeModeTabsRef = useRef(new Set<number>())
+  // Spec 05b：每个 tab 的精确 UTF-8 字节数（read_document stats）。行数阈值对
+  // 长行文件有盲区，字节数补上第二根轴；策略在 applyDocumentScalePolicy 读取。
+  const docBytesRef = useRef(new Map<number, number>())
+  // HUGE（只读纯文本）档的 tab；editorOptions 与档位策略按此装配。
+  const readonlyTabsRef = useRef(new Set<number>())
+  // LARGE 档流式打开的进度（overlay 百分比）。
+  const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
+  // LARGE 档确认本会话只需一次；HUGE（只读）每次都问。
+  const largeOpenAcceptedRef = useRef(false)
   const [largeDocNotice, setLargeDocNotice] = useState<
-    { sessionId: number; lines: number; safeMode: boolean } | null
+    { sessionId: number; lines: number; safeMode: boolean; readonly?: boolean } | null
   >(null)
   const [statsRequested, setStatsRequested] = useState(0)
+  const [openingLabel, setOpeningLabel] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [quickOpenState, setQuickOpenState] = useState<{
     open: boolean
@@ -593,6 +631,8 @@ export default function App({
   }
 
   function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+    // HUGE 只读档：readOnly 挡编辑，plainText 让引擎不挂语言/装饰扩展。
+    const readOnly = readonlyTabsRef.current.has(tabId)
     return {
       doc: contents,
       tabId,
@@ -609,7 +649,43 @@ export default function App({
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
+      readOnly,
+      plainText: readOnly,
     }
+  }
+
+  /**
+   * Spec 05 / 05b：超大文档进入安全模式 —— 默认源码模式 + 块渲染预算 + 一次性提示
+   * + 按需字数。用户本会话内显式切换过模式的 tab 不再强制。
+   * 所有新建 view 的路径（resetTabDocument、ensureViews 的新标签/会话恢复/初始挂载）
+   * 必须经由此入口，否则文件树、搜索面板等入口打开的大文档会绕过安全模式。
+   * 行数取 view.state.doc.lines（免费），绝不对全文 split。
+   */
+  function applyDocumentScalePolicy(view: EditorView, tabId: number) {
+    const lines = view.state.doc.lines
+    const bytes = docBytesRef.current.get(tabId)
+    const readonly = readonlyTabsRef.current.has(tabId)
+    // 行数与字节双轴：长行文件（多 MB 但 <50k 行）靠字节轴兜住（Spec 05b）。
+    const overScale = lines > SAFE_MODE_LINES
+      || (bytes !== undefined && bytes > SAFE_MODE_BYTES)
+    const safeMode = (overScale || readonly) && !safeModeChoiceRef.current.has(tabId)
+    if (safeMode) {
+      try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
+      safeModeTabsRef.current.add(tabId)
+    } else {
+      safeModeTabsRef.current.delete(tabId)
+    }
+    applyRenderBudgetFor(tabId)
+    setLargeDocNotice(
+      readonly
+        ? { sessionId: tabId, lines, safeMode: true, readonly: true }
+        : safeMode
+          ? { sessionId: tabId, lines, safeMode: true }
+          : lines > LARGE_DOC_LINES
+            ? { sessionId: tabId, lines, safeMode: false }
+            : null,
+    )
+    setStatsRequested(0)
   }
 
   function resetTabDocument(nextSession: EditorSession, contents: string): boolean {
@@ -628,26 +704,7 @@ export default function App({
       syncDoc(previousDoc, nextSession.id)
       throw error
     }
-    // Spec 05：超大文档进入安全模式 —— 默认源码模式 + 块渲染预算 + 一次性提示
-    // + 按需字数。用户本会话内显式切换过模式的 tab 不再强制。
-    const lines = contents ? contents.split("\n").length : 0
-    const safeMode = lines > SAFE_MODE_LINES
-      && !safeModeChoiceRef.current.has(nextSession.id)
-    if (safeMode) {
-      try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
-      safeModeTabsRef.current.add(nextSession.id)
-    } else {
-      safeModeTabsRef.current.delete(nextSession.id)
-    }
-    applyRenderBudgetFor(nextSession.id)
-    setLargeDocNotice(
-      safeMode
-        ? { sessionId: nextSession.id, lines, safeMode: true }
-        : lines > LARGE_DOC_LINES
-          ? { sessionId: nextSession.id, lines, safeMode: false }
-          : null,
-    )
-    setStatsRequested(0)
+    applyDocumentScalePolicy(view, nextSession.id)
     // 重载内容即最新：清掉 pending，防止物化用旧 view 内容覆盖（Spec 05a）。
     pendingDocTabsRef.current.delete(nextSession.id)
     syncDoc(contents, nextSession.id)
@@ -670,6 +727,7 @@ export default function App({
       )
       viewsRef.current.set(tab.id, view)
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
+      applyDocumentScalePolicy(view, tab.id)
     }
     jumpPending()
   }
@@ -813,7 +871,7 @@ export default function App({
 
   useEffect(() => {
     if (!watchMs) return
-    const timer = window.setInterval(() => { void pollFileTabsRef.current() }, watchMs)
+    const timer = window.setInterval(() => { void runFileTabsPoll() }, watchMs)
     return () => window.clearInterval(timer)
   }, [watchMs])
 
@@ -822,7 +880,7 @@ export default function App({
   useEffect(() => {
     if (!services.listenWorkspaceChange) return
     return services.listenWorkspaceChange(() => {
-      void pollFileTabsRef.current()
+      void runFileTabsPoll()
       const listDir = services.listDir
       if (listDir && workspaceRef.current.folder && !searchOpenRef.current) {
         void refreshTreeRef.current(listDir)
@@ -838,7 +896,7 @@ export default function App({
     if (folder) paths.add(folder)
     for (const tab of workspace.tabs) {
       const path = sessionPath(tab)
-      if (path && (!folder || !path.startsWith(`${folder}/`))) paths.add(path)
+      if (path && (!folder || !pathWithinDir(path, folder))) paths.add(path)
     }
     void services.watchPaths([...paths])
   }, [workspace.folder, workspace.tabs, services])
@@ -928,37 +986,46 @@ export default function App({
       }
 
       if (state.openPaths.length > 0) {
-        let currentWorkspace = workspaceRef.current
-        let activeTabId = currentWorkspace.activeId
+        // Spec 05b：只整读 active（或第一个）路径，其余 tab 惰性占位、
+        // 首次激活时再读（loadLazyTab）——避免启动时 N×大文件整读 + IPC 风暴。
+        // 主路径经 resetTabDocument 装载：view 拿到内容并应用档位策略
+        // （直接写 docsRef 的旧路径会把已挂载的空 view 留在屏幕上）。
+        const primary = state.activePath && state.openPaths.includes(state.activePath)
+          ? state.activePath
+          : state.openPaths[0]
+        const ordered = [primary, ...state.openPaths.filter(path => path !== primary)]
+        let activeTabId = workspaceRef.current.activeId
         let firstTabOpened = false
 
-        for (const path of state.openPaths) {
+        for (const path of ordered) {
+          if (firstTabOpened) {
+            commitWorkspace(
+              addTab(workspaceRef.current, lazyFileSession(workspaceRef.current.nextId, path)),
+            )
+            continue
+          }
+          // primary 不可读时按序补位一次，成功后其余全部惰性。
           try {
             const snapshot = await services.readDocument(path)
             if (snapshot.kind === "missing") continue
             await services.allowDocumentAssets(path)
-            const contents = snapshot.contents
-            if (!firstTabOpened) {
-              const updated = openSession(currentWorkspace.tabs[0], snapshot)
-              docsRef.current.set(updated.id, contents)
-              currentWorkspace = replaceTabSession(currentWorkspace, updated)
-              firstTabOpened = true
-              if (state.activePath === path) activeTabId = updated.id
-            } else {
-              const newSession = openSession(createSession(currentWorkspace.nextId), snapshot)
-              docsRef.current.set(newSession.id, contents)
-              currentWorkspace = addTab(currentWorkspace, newSession)
-              if (state.activePath === path) activeTabId = newSession.id
+            const updated = openSession(workspaceRef.current.tabs[0], snapshot)
+            docsRef.current.set(updated.id, snapshot.contents)
+            if (snapshot.stats) docBytesRef.current.set(updated.id, snapshot.stats.byteLength)
+            if (!resetTabDocument(updated, snapshot.contents)) {
+              commitWorkspace(replaceTabSession(workspaceRef.current, updated))
             }
+            firstTabOpened = true
+            activeTabId = updated.id
           } catch {
             /* skip unreadable files */
           }
         }
 
         if (firstTabOpened) {
-          currentWorkspace = focusTab(currentWorkspace, activeTabId)
-          commitWorkspace(currentWorkspace)
-          const active = activeSession(currentWorkspace)
+          const focused = focusTab(workspaceRef.current, activeTabId)
+          commitWorkspace(focused)
+          const active = activeSession(focused)
           syncDoc(docsRef.current.get(active.id) ?? "", active.id)
           sessionRestoredRef.current = true
           return true
@@ -983,6 +1050,53 @@ export default function App({
     resetTabDocument(advanceDocumentIdentity(sessionRef.current), contents)
   }
 
+  /**
+   * Spec 05b 分档预检：先 stat（metadata，不读内容）再决定档位与确认，
+   * 避免为一个大文件白付整读 + IPC。stat 失败按 normal 处理，
+   * 真实错误由后续读取报告。LARGE 档确认一次后本会话不再问。
+   */
+  async function resolveOpenTier(path: string): Promise<OpenTier> {
+    const stat = await services.statDocument?.(path).catch(() => undefined)
+    if (!stat || stat.kind !== "existing") return "normal"
+    const mb = Math.max(1, Math.round(stat.sizeBytes / (1024 * 1024)))
+    const label = baseName(path)
+    if (stat.sizeBytes >= OPEN_READONLY_THRESHOLD_BYTES) {
+      return services.confirmReadonlyOpen?.(label, mb) ? "readonly" : "cancel"
+    }
+    if (stat.sizeBytes >= OPEN_STREAM_THRESHOLD_BYTES && !largeOpenAcceptedRef.current) {
+      if (!services.confirmLargeOpen?.(label, mb)) return "cancel"
+      largeOpenAcceptedRef.current = true
+    }
+    return "large"
+  }
+
+  /**
+   * Spec 05b：LARGE 档走流式（Channel 分块 + 进度，分块间 UI 线程自然让出），
+   * 拼装后复用既有 ExistingDiskSnapshot 下游；其余档一次读。
+   */
+  async function readSnapshotForOpen(path: string, tier: OpenTier): Promise<DiskSnapshot> {
+    if (tier !== "large" || !services.readDocumentStreaming) {
+      return services.readDocument(path)
+    }
+    const parts: string[] = []
+    const stream = await services.readDocumentStreaming(path, event => {
+      if (event.kind === "chunk") parts.push(event.text)
+      else setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
+    })
+    if (stream.kind === "missing") {
+      return { kind: "missing", requestedPath: stream.requestedPath }
+    }
+    const contents = parts.join("")
+    setOpeningProgress(null)
+    return {
+      kind: "existing",
+      requestedPath: stream.requestedPath,
+      contents,
+      version: stream.version,
+      stats: stream.stats,
+    }
+  }
+
   async function openPath(nextPath: string, inNewTab = false, request?: number) {
     const existing = findTabByPath(workspaceRef.current, nextPath)
     if (existing) {
@@ -990,54 +1104,86 @@ export default function App({
       rememberRecent(nextPath)
       return
     }
-    let snapshot
+    // 树/搜索等直开入口没有 runOpen 令牌：自铸一个，使「取消打开」与并发
+    // 打开作废逻辑对所有入口统一（in-flight 的旧打开被更新者取代）。
+    const token = request ?? ++openRequestRef.current
+    const tier = await resolveOpenTier(nextPath)
+    if (tier === "cancel" || token !== openRequestRef.current) return
+    setOpeningLabel(baseName(nextPath))
     try {
-      snapshot = await services.readDocument(nextPath)
-    } catch (error) {
-      const cmd = toDocumentCommandError(error)
-      if (cmd.code === "invalidPath" && mountedRef.current) {
-        reportUserError(t("error.invalidPath"))
+      let snapshot
+      try {
+        snapshot = await readSnapshotForOpen(nextPath, tier)
+      } catch (error) {
+        const cmd = toDocumentCommandError(error)
+        if (cmd.code === "invalidPath" && mountedRef.current) {
+          reportUserError(t("error.invalidPath"))
+          return
+        }
+        if (cmd.code === "notUtf8" && mountedRef.current) {
+          reportUserError(t("error.notUtf8"))
+          return
+        }
+        if (token === openRequestRef.current && mountedRef.current) {
+          services.reportError(errorMessage(t("error.openFailed"), error))
+        }
         return
       }
-      if (cmd.code === "notUtf8" && mountedRef.current) {
-        reportUserError(t("error.notUtf8"))
+      if (token !== openRequestRef.current) return
+      if (snapshot.kind === "missing") {
+        if (mountedRef.current) {
+          services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
+        }
         return
       }
-      if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage(t("error.openFailed"), error))
+      const { contents } = snapshot
+      const byteLength = snapshot.stats?.byteLength
+      await services.allowDocumentAssets(nextPath)
+      revealFolder(nextPath)
+      void expandToPath(nextPath)
+      rememberRecent(nextPath)
+      if (inNewTab) {
+        const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
+        docsRef.current.set(tab.id, contents)
+        if (byteLength !== undefined) docBytesRef.current.set(tab.id, byteLength)
+        if (tier === "readonly") readonlyTabsRef.current.add(tab.id)
+        commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
+        commitWorkspace(addTab(workspaceRef.current, tab))
+        syncDoc(contents, tab.id)
+        void services.clearRecovery?.(recoveryKey(tab))
+        return
       }
-      return
-    }
-    if (request !== undefined && request !== openRequestRef.current) return
-    if (snapshot.kind === "missing") {
-      if (mountedRef.current) {
-        services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
+      // 替换当前 tab：档位与字节数随新文档重置，避免沿用旧档残留。
+      if (byteLength !== undefined) docBytesRef.current.set(sessionRef.current.id, byteLength)
+      else docBytesRef.current.delete(sessionRef.current.id)
+      if (tier === "readonly") readonlyTabsRef.current.add(sessionRef.current.id)
+      else readonlyTabsRef.current.delete(sessionRef.current.id)
+      if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
+      void services.clearRecovery?.(recoveryKey(sessionRef.current))
+    } finally {
+      if (token === openRequestRef.current) {
+        setOpeningLabel(null)
+        setOpeningProgress(null)
       }
-      return
     }
-    const { contents } = snapshot
-    await services.allowDocumentAssets(nextPath)
-    revealFolder(nextPath)
-    void expandToPath(nextPath)
-    rememberRecent(nextPath)
-    if (inNewTab) {
-      const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
-      docsRef.current.set(tab.id, contents)
-      commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
-      commitWorkspace(addTab(workspaceRef.current, tab))
-      syncDoc(contents, tab.id)
-      void services.clearRecovery?.(recoveryKey(tab))
-      return
-    }
-    if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
-    void services.clearRecovery?.(recoveryKey(sessionRef.current))
+  }
+
+  /** 作废进行中的打开：读取照旧完成，但结果不再落地。 */
+  function cancelOpening() {
+    openRequestRef.current += 1
+    openingRef.current = false
+    setOpeningLabel(null)
+    setOpeningProgress(null)
   }
 
   async function runOpen(pickPath: () => Promise<string | null>) {
     flushPendingDocs()
     const request = ++openRequestRef.current
     const activeId = workspaceRef.current.activeId
-    await (tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve()).catch(() => undefined)
+    await awaitWithTimeout(
+      tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve(),
+      OPEN_SAVE_QUEUE_TIMEOUT_MS,
+    )
     if (request !== openRequestRef.current || !mountedRef.current) return
     openingRef.current = true
     try {
@@ -1147,14 +1293,66 @@ export default function App({
 
   function activateTab(id: number) {
     const current = viewRef.current
-    if (current) docsRef.current.set(sessionRef.current.id, current.state.doc.toString())
+    // Spec 05a/05b：离开的 tab 只有 pending 时才需要物化（docChanged 置位、
+    // 250ms 内未拉取）；无条件 rope 展平是 50MB tab 的切换悬崖。
+    if (current && pendingDocTabsRef.current.has(sessionRef.current.id)) {
+      docsRef.current.set(sessionRef.current.id, current.state.doc.toString())
+      pendingDocTabsRef.current.delete(sessionRef.current.id)
+    }
     commitWorkspace(focusTab(workspaceRef.current, id))
     const nextView = viewsRef.current.get(id)
     if (!nextView) return
     viewRef.current = nextView
+    const tab = tabById(id)
+    if (tab && !sessionContentLoaded(tab)) {
+      void loadLazyTab(tab)
+      return
+    }
     syncDoc(docsRef.current.get(id) ?? nextView.state.doc.toString(), id)
     refreshChrome(nextView)
     jumpPending()
+  }
+
+  /** Spec 05b：会话恢复的惰性 tab 首次激活时才读盘装载（含分档确认）。 */
+  async function loadLazyTab(lazy: EditorSession) {
+    const path = sessionPath(lazy)
+    if (!path) return
+    const token = ++openRequestRef.current
+    const tier = await resolveOpenTier(path)
+    if (tier === "cancel" || token !== openRequestRef.current) return
+    setOpeningLabel(baseName(path))
+    try {
+      const snapshot = await readSnapshotForOpen(path, tier)
+      if (token !== openRequestRef.current) return
+      if (snapshot.kind !== "existing") {
+        if (mountedRef.current) {
+          services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
+        }
+        return
+      }
+      await services.allowDocumentAssets(path)
+      if (token !== openRequestRef.current) return
+      revealFolder(path)
+      rememberRecent(path)
+      const updated = openSession(lazy, snapshot)
+      if (snapshot.stats) docBytesRef.current.set(updated.id, snapshot.stats.byteLength)
+      if (tier === "readonly") readonlyTabsRef.current.add(updated.id)
+      if (!resetTabDocument(updated, snapshot.contents)) {
+        // view 尚未创建的窗口期：先落 session 与内容，策略由 ensureViews 兜底。
+        commitWorkspace(replaceTabSession(workspaceRef.current, updated))
+        docsRef.current.set(updated.id, snapshot.contents)
+        syncDoc(snapshot.contents, updated.id)
+      }
+    } catch (error) {
+      if (token === openRequestRef.current && mountedRef.current) {
+        services.reportError(errorMessage(t("error.openFailed"), error))
+      }
+    } finally {
+      if (token === openRequestRef.current) {
+        setOpeningLabel(null)
+        setOpeningProgress(null)
+      }
+    }
   }
 
   function newTab() {
@@ -1195,6 +1393,12 @@ export default function App({
       safeModeChoiceRef.current.delete(id)
       safeModeTabsRef.current.delete(id)
       docsRef.current.delete(id)
+      // In-flight saves keep running (the chain is independent of the map), but
+      // no later open should await a closed tab's queue promise.
+      tabSaveQueuesRef.current.delete(id)
+      pendingDocTabsRef.current.delete(id)
+      docBytesRef.current.delete(id)
+      readonlyTabsRef.current.delete(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
@@ -1318,6 +1522,14 @@ export default function App({
   })
 
   const pollFileTabsRef = useRef(pollFileTabs)
+  // Spec 05b：轮询 in-flight 去重。30s 定时 + 事件批（Windows 下文件夹递归
+  // watch 与单文件 watch 双源）会并发起多轮，每轮对大 tab 全量读盘探测。
+  const pollInFlightRef = useRef(false)
+  function runFileTabsPoll(): Promise<void> {
+    if (pollInFlightRef.current) return Promise.resolve()
+    pollInFlightRef.current = true
+    return pollFileTabsRef.current().finally(() => { pollInFlightRef.current = false })
+  }
   const openRecentRef = useRef(openRecent)
   const refreshTreeRef = useRef(refreshTree)
   pollFileTabsRef.current = pollFileTabs
@@ -1671,6 +1883,16 @@ export default function App({
   const closeFindRef = useRef(closeFind)
   goFindRef.current = goFind
   closeFindRef.current = closeFind
+  // Spec 05b：Escape 取消进行中的打开。overlay 非模态，但其上的模态/面板
+  // （palette、quick open、search、settings、about）优先消费 Escape，
+  // 只有这些 chrome 都关闭时 Escape 才落到「取消打开」。
+  const openingLabelRef = useRef<string | null>(null)
+  openingLabelRef.current = openingLabel
+  const cancelOpeningRef = useRef(cancelOpening)
+  cancelOpeningRef.current = cancelOpening
+  const modalChromeOpenRef = useRef(false)
+  modalChromeOpenRef.current =
+    paletteOpen || quickOpenState.open || searchOpen || settingsOpen || aboutOpen
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1678,6 +1900,11 @@ export default function App({
       if (e.key === "Escape" && findOpenRef.current) {
         e.preventDefault()
         closeFindRef.current()
+        return
+      }
+      if (e.key === "Escape" && openingLabelRef.current && !modalChromeOpenRef.current) {
+        e.preventDefault()
+        cancelOpeningRef.current()
         return
       }
       if (e.key === "p" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
@@ -1965,6 +2192,7 @@ export default function App({
             <LargeDocBanner
               lines={largeDocNotice.lines}
               safeMode={largeDocNotice.safeMode}
+              readonly={largeDocNotice.readonly}
               onDismiss={() => setLargeDocNotice(null)}
             />
           ) : null}
@@ -2025,6 +2253,13 @@ export default function App({
         saveStatus={saveStatusLabel(activeSaveState)}
         onRequestStats={safeModeActive ? () => setStatsRequested(n => n + 1) : undefined}
       />
+      {openingLabel !== null ? (
+        <OpeningOverlay
+          label={openingLabel}
+          progress={openingProgress}
+          onCancel={cancelOpening}
+        />
+      ) : null}
       {paletteOpen ? (
         <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />
       ) : null}

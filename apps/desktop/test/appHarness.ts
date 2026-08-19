@@ -145,7 +145,16 @@ function createHandleRecord(
   let contents = initial.doc
   let options = initial
   let pending: OrderedListNormalizationNotice | null = null
-  const state = { doc: { toString: () => contents } }
+  // `lines` mirrors CM's state.doc.lines: applyDocumentScalePolicy reads it to
+  // classify document scale without splitting the full text.
+  const state = {
+    doc: {
+      toString: () => contents,
+      get lines() {
+        return contents ? contents.split("\n").length : 1
+      },
+    },
+  }
   pendingByState.set(state, () => pending)
   const view = {
     state,

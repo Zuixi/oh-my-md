@@ -28,18 +28,25 @@ fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+// Sync commands run on the Rust main thread, so any of them doing IO can stall
+// every later command (and the window event loop) — see known-gotchas. IO-bound
+// commands must be async + spawn_blocking, like the document commands already are.
 #[tauri::command]
-fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+async fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     if paths.len() > watcher::MAX_WATCHED_PATHS {
         return Err("too many watch paths".into());
     }
-    // Missing paths are skipped: watching is best-effort hinting, and a file
-    // may legitimately not exist yet (fresh tab about to save its first copy).
-    let canonical: Vec<PathBuf> = paths
-        .iter()
-        .filter_map(|path| std::fs::canonicalize(path).ok())
-        .collect();
-    watcher::set_watched_paths(&app, &canonical)
+    tauri::async_runtime::spawn_blocking(move || {
+        // Missing paths are skipped: watching is best-effort hinting, and a file
+        // may legitimately not exist yet (fresh tab about to save its first copy).
+        let canonical: Vec<PathBuf> = paths
+            .iter()
+            .filter_map(|path| std::fs::canonicalize(path).ok())
+            .collect();
+        watcher::set_watched_paths(&app, &canonical)
+    })
+    .await
+    .map_err(|error| format!("watch task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -242,8 +249,10 @@ async fn delete_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn write_recovery(key: String, contents: String) -> Result<(), String> {
-    workspace::write_recovery(key, contents)
+async fn write_recovery(key: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::write_recovery(key, contents))
+        .await
+        .map_err(|error| format!("recovery write task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -252,8 +261,10 @@ fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
 }
 
 #[tauri::command]
-fn read_recovery(key: String) -> Result<String, String> {
-    workspace::read_recovery(key)
+async fn read_recovery(key: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::read_recovery(key))
+        .await
+        .map_err(|error| format!("recovery read task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -277,14 +288,18 @@ fn get_session_state() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_session_state(contents: String) -> Result<(), String> {
-    workspace::save_session_state(contents)
+async fn save_session_state(contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::save_session_state(contents))
+        .await
+        .map_err(|error| format!("session state task failed: {error}"))?
 }
 
 #[tauri::command]
-fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+async fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri::Manager;
 
+    // Scope grants are in-memory Mutex updates; async keeps them off the main
+    // thread so openPath never queues behind another sync command.
     let directory = workspace_directory(Path::new(&path))?;
     workspace::authorize_workspace_root(&directory)?;
     app.asset_protocol_scope()
@@ -293,7 +308,7 @@ fn allow_workspace_dir(app: tauri::AppHandle, path: String) -> Result<(), String
 }
 
 #[tauri::command]
-fn allow_document_assets(app: tauri::AppHandle, document_path: String) -> Result<(), String> {
+async fn allow_document_assets(app: tauri::AppHandle, document_path: String) -> Result<(), String> {
     use tauri::Manager;
 
     let directory = document_directory_for_assets(Path::new(&document_path))?;
@@ -558,6 +573,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             documents::read_document,
             documents::read_document_version,
+            documents::stat_document,
+            documents::read_document_streaming,
             documents::save_document,
             read_file,
             write_file,

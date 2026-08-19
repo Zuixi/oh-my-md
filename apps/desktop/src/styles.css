@@ -713,6 +713,37 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .update-banner-dismiss:focus-visible {
   outline: 2px solid var(--omd-link); outline-offset: 2px;
 }
+/* Opening overlay (Spec 05b): above editor chrome, below stacked modals. */
+.opening-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+}
+.opening-overlay-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; font-size: 13px; line-height: 1.4;
+  color: var(--omd-fg); background: var(--omd-chrome);
+  border: 1px solid var(--omd-border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.opening-overlay-message { margin: 0; }
+.opening-overlay-spinner {
+  width: 16px; height: 16px; flex: none;
+  border: 2px solid var(--omd-border);
+  border-top-color: var(--omd-link);
+  border-radius: 50%;
+  animation: omd-spinner-spin 0.8s linear infinite;
+}
+.opening-overlay-cancel {
+  min-height: 24px; min-width: 24px;
+  padding: 4px 10px; font: inherit; cursor: pointer;
+  color: var(--omd-fg); background: var(--omd-bg);
+  border: 1px solid var(--omd-muted); border-radius: 4px;
+}
+.opening-overlay-cancel:focus-visible {
+  outline: 2px solid var(--omd-link); outline-offset: 2px;
+}
+@keyframes omd-spinner-spin { to { transform: rotate(360deg); } }
 /* Tabs (inside topbar) */
 .tab {
   display: inline-flex;

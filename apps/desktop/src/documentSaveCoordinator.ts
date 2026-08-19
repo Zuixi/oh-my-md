@@ -110,7 +110,9 @@ export function isCurrentSaveTarget(
 }
 
 export function expectedVersionFor(session: EditorSession): ExpectedDocumentVersion {
-  if (session.persistence.kind === "untitled") {
+  // 惰性 tab 没有磁盘基线；saveFile 已在入口拦截，这里按「无基线」处理，
+  // 即便到达也不会盲目覆盖未知磁盘内容（CreatedConflict 兜底）。
+  if (session.persistence.kind === "untitled" || session.persistence.kind === "lazyFile") {
     return { kind: "missing" }
   }
   return { kind: "existing", version: session.persistence.version }

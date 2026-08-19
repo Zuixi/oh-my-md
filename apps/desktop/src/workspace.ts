@@ -61,6 +61,26 @@ export function parentDir(path: string): string | null {
   return normalized.slice(0, index)
 }
 
+/**
+ * True when `path` is `dir` itself or inside it. Separators are normalized
+ * because watch-set inputs mix native separators (`C:\a\b.md`) with
+ * forward-slash folder paths on Windows — a plain `startsWith(dir + "/")`
+ * containment check is always false there and every open file got watched
+ * twice (folder recursion + the file itself), doubling watcher events.
+ */
+export function pathWithinDir(path: string, dir: string): boolean {
+  const normalizedPath = path.replace(/\\/g, "/")
+  const normalizedDir = dir.replace(/\\/g, "/").replace(/\/+$/, "")
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(`${normalizedDir}/`)
+}
+
+/** Final path segment, separator-agnostic (used for open-status labels). */
+export function baseName(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  const name = normalized.slice(normalized.lastIndexOf("/") + 1)
+  return name || path
+}
+
 /** Join href to the document directory and collapse `.` / `..`. Strips `#anchor`. */
 export function resolveMarkdownHref(docPath: string, href: string): string {
   const file = (href.split("#")[0] ?? href).replace(/\\/g, "/")

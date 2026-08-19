@@ -38,7 +38,7 @@ import {
 } from "./normalizationCoordinator"
 import type { NormalizationByTab } from "./normalizationState"
 import { SAVE_COPY_SAME_PATH_MESSAGE } from "./conflictActions"
-import { markSaved, recoveryKey, sessionDirty, sessionPath, sessionVersion, type EditorSession } from "./session"
+import { markSaved, recoveryKey, sessionContentLoaded, sessionDirty, sessionPath, sessionVersion, type EditorSession } from "./session"
 import { replaceTabSession, type Workspace } from "./workspace"
 import { t } from "./i18n"
 
@@ -145,6 +145,10 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
       ? saveAsOrMode
       : { kind: "current" }
     if (host.isOpening()) return
+    // 惰性恢复的 tab 尚未读盘：显式保存此刻会把空内容写回磁盘文件，
+    // 必须等 activateTab 的装载完成（Spec 05b）。
+    const requestedTab = host.getTab(tabId)
+    if (requestedTab && !sessionContentLoaded(requestedTab)) return
     const effectiveMode = saveAs ? { kind: "saveAs" as const } : mode
     const saveState = tabSaveState(host.getSaveStates(), tabId)
     if (
@@ -386,6 +390,8 @@ export function createFileTabWatcher(host: FileTabWatcherHost): () => Promise<vo
     for (const tab of host.getWorkspace().tabs) {
       const path = sessionPath(tab)
       if (!path) continue
+      // 惰性 tab 没有基线指纹，外部变更探测在装载后自然生效。
+      if (!sessionContentLoaded(tab)) continue
       const prior = tabSaveState(host.getSaveStates(), tab.id)
       const generation = prior.ioGeneration
       let probe: ExpectedDocumentVersion

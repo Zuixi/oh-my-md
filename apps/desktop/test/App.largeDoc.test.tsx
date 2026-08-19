@@ -101,7 +101,8 @@ describe("large document safe mode", () => {
 
   it("remembers an explicit mode switch for the session", async () => {
     // 真 EditorState 使 palette 的 source 命令能读 isLivePreview 并记录用户选择；
-    // dispatch 仍是 mock，用于断言后续载入不再强制 source。
+    // dispatch 仍是 mock，用于断言后续载入不再强制 source。reset 忠实同步 doc，
+    // 因为 applyDocumentScalePolicy 从 view.state.doc.lines 读行数。
     const fakeView = {
       state: EditorState.create({ doc: "", extensions: [isLivePreview] }),
       dispatch: vi.fn(),
@@ -111,7 +112,12 @@ describe("large document safe mode", () => {
     }
     const harness = createAppHarness(editor)
     editor.create.mockImplementation(() => fakeView as unknown as EditorView)
-    editor.reset.mockImplementation(() => undefined)
+    editor.reset.mockImplementation((view: EditorView, options: CreateEditorOptions) => {
+      ;(view as unknown as { state: EditorState }).state = EditorState.create({
+        doc: options.doc,
+        extensions: [isLivePreview],
+      })
+    })
     harness.renderApp()
     await harness.openFileTab("/a.md", bigDoc(50010))
     expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(true)

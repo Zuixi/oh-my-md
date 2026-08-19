@@ -1,0 +1,220 @@
+import { fireEvent, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import type { EditorView } from "@codemirror/view"
+import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES } from "@omd/engine"
+import type { CreateEditorOptions } from "../src/Editor"
+import type { DocumentOpenStream } from "../src/desktopServices"
+import { createAppHarness, resetMountedApps } from "./appHarness"
+import {
+  OPEN_READONLY_THRESHOLD_BYTES,
+  SAFE_MODE_BYTES,
+} from "../src/constants"
+
+vi.mock("@omd/engine", async importOriginal => {
+  const actual = await importOriginal<typeof import("@omd/engine")>()
+  return {
+    ...actual,
+    exportHtml: () => "<!doctype html><html>exported</html>",
+    exportRichHtml: async () => "<!doctype html><html>exported</html>",
+    collectOutline: () => [],
+    getPendingOrderedListNormalization: vi.fn(() => null),
+  }
+})
+
+const { editor } = vi.hoisted(() => ({
+  editor: { create: vi.fn(), reset: vi.fn() },
+}))
+
+vi.mock("../src/Editor", async importOriginal => {
+  const actual = await importOriginal<typeof import("../src/Editor")>()
+  return {
+    ...actual,
+    createEditor: (parent: HTMLElement, options: CreateEditorOptions) =>
+      editor.create(parent, options),
+    resetEditorDocument: (view: EditorView, options: CreateEditorOptions) =>
+      editor.reset(view, options),
+  }
+})
+
+afterEach(() => resetMountedApps())
+
+const MB = 1024 * 1024
+
+/** Cmd+O 触发 runOpen → pickPath，等待 readDocument 完成（或不发生）。 */
+async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, path: string) {
+  vi.mocked(harness.services.pickOpenPath).mockResolvedValueOnce(path)
+  fireEvent.keyDown(window, { key: "o", metaKey: true })
+  await act(async () => { await Promise.resolve() })
+}
+
+import { act } from "@testing-library/react"
+
+describe("open tiers (Spec 05b)", () => {
+  it("asks before a LARGE open and honors cancel without reading", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/big.md", "big body")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/big.md",
+      sizeBytes: 20 * MB,
+    }))
+    const confirm = vi.fn(() => false)
+    harness.services.confirmLargeOpen = confirm
+    harness.renderApp()
+    await pressOpenAndSettle(harness, "/big.md")
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
+    expect(harness.services.readDocument).not.toHaveBeenCalled()
+  })
+
+  it("forces source mode by bytes for a long-line document under the line threshold", async () => {
+    // 10MB+ 的单行文件：行数轴失明，字节轴必须兜住（Spec 05b 盲区回归）。
+    const singleLine = "x".repeat(SAFE_MODE_BYTES + 1)
+    const harness = createAppHarness(editor)
+    harness.seedFile("/long.md", singleLine)
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/long.md",
+      sizeBytes: SAFE_MODE_BYTES + 1,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.renderApp()
+    await harness.openFileTab("/long.md", singleLine)
+    expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+  })
+
+  it("opens a HUGE file read-only as plain text after confirm", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/huge.md", "huge body\n")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/huge.md",
+      sizeBytes: OPEN_READONLY_THRESHOLD_BYTES + 1,
+    }))
+    harness.services.confirmReadonlyOpen = vi.fn(() => true)
+    harness.renderApp()
+    await harness.openFileTab("/huge.md", "huge body\n")
+    const options = harness.editorForTab(1).getOptions()
+    expect(options.readOnly).toBe(true)
+    expect(options.plainText).toBe(true)
+    await waitFor(() => {
+      expect(document.querySelector(".update-banner-message")?.textContent)
+        .toContain("read-only")
+    })
+  })
+
+  it("cancels a HUGE open without reading", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/huge.md", "huge body")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/huge.md",
+      sizeBytes: OPEN_READONLY_THRESHOLD_BYTES + 1,
+    }))
+    harness.services.confirmReadonlyOpen = vi.fn(() => false)
+    harness.renderApp()
+    await pressOpenAndSettle(harness, "/huge.md")
+    await waitFor(() =>
+      expect(harness.services.confirmReadonlyOpen).toHaveBeenCalledTimes(1))
+    expect(harness.services.readDocument).not.toHaveBeenCalled()
+  })
+
+  it("streams a LARGE open through chunks instead of one read", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/stream.md", "disk copy that must not be used")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/stream.md",
+      sizeBytes: 20 * MB,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha " })
+      onEvent({ kind: "progress", bytesRead: 6, byteLength: 12 })
+      onEvent({ kind: "chunk", index: 1, text: "beta" })
+      onEvent({ kind: "progress", bytesRead: 10, byteLength: 12 })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/stream.md",
+        version: { resolvedPath: "/stream.md", fingerprint: "v1:stream" },
+        stats: { byteLength: 10, lineCount: 1 },
+      }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/stream.md", "disk copy that must not be used")
+    expect(harness.services.readDocument).not.toHaveBeenCalled()
+    expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
+  })
+
+  /** LARGE 档流式打开中途取消：流稍后才完成，late 结果必须全部作废。 */
+  async function cancelDuringStreamTest(cancel: () => void) {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/stream.md", "disk copy")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/stream.md",
+      sizeBytes: 20 * MB,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    let resolveStream!: (value: DocumentOpenStream) => void
+    harness.services.readDocumentStreaming = vi.fn((_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha " })
+      onEvent({ kind: "progress", bytesRead: 6, byteLength: 12 })
+      return new Promise<DocumentOpenStream>(resolve => { resolveStream = resolve })
+    })
+    harness.renderApp()
+    await pressOpenAndSettle(harness, "/stream.md")
+    await waitFor(() => expect(document.querySelector(".opening-overlay")).toBeTruthy())
+    cancel()
+    expect(document.querySelector(".opening-overlay")).toBeNull()
+    // 流迟到完成：不落地任何内容——未授权 assets、未重置编辑器、无 tab。
+    await act(async () => {
+      resolveStream({
+        kind: "existing",
+        requestedPath: "/stream.md",
+        version: { resolvedPath: "/stream.md", fingerprint: "v1:stream" },
+        stats: { byteLength: 10, lineCount: 1 },
+      })
+      await Promise.resolve()
+    })
+    expect(harness.services.allowDocumentAssets).not.toHaveBeenCalledWith("/stream.md")
+    expect(harness.editorForTab(1).getOptions().doc).toBe("")
+    expect(harness.allEditors()).toHaveLength(1)
+  }
+
+  it("canceling a streaming open via the overlay button discards late chunks", async () => {
+    await cancelDuringStreamTest(() => {
+      fireEvent.click(document.querySelector(".opening-overlay-cancel")!)
+    })
+  })
+
+  it("Escape cancels an in-flight streaming open", async () => {
+    await cancelDuringStreamTest(() => {
+      fireEvent.keyDown(window, { key: "Escape" })
+    })
+  })
+})
+
+describe("lazy session restore (Spec 05b)", () => {
+  it("restores only the active path eagerly and loads the rest on activation", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/a.md", "alpha")
+    harness.seedFile("/b.md", "beta")
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/a.md", "/b.md"],
+      activePath: "/a.md",
+    }))
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe("alpha")
+    })
+    expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
+
+    harness.activateTab(2)
+    await waitFor(() => {
+      expect(harness.editorForTab(2).getOptions().doc).toBe("beta")
+    })
+    expect(harness.services.readDocument).toHaveBeenCalledTimes(2)
+  })
+})
