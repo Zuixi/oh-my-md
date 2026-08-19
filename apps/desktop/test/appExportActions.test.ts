@@ -23,8 +23,8 @@ function makeServices(overrides: Partial<DesktopServices> = {}): DesktopServices
   } as unknown as DesktopServices
 }
 
-function makeView(): EditorView {
-  return { state: {} } as unknown as EditorView
+function makeView(doc = ""): EditorView {
+  return { state: { doc: { toString: () => doc } } } as unknown as EditorView
 }
 
 describe("exportCurrent", () => {
@@ -71,5 +71,41 @@ describe("exportCurrent", () => {
     expect(vi.mocked(services.reportError as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.stringContaining(t("error.export.warning", { detail: "" }).split(":")[0].trim()),
     )
+  })
+
+  it("notices a remote-image warning when exporting PDF with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](https://example.com/x.png)"), "pdf", {}, onNotice)
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
+  })
+
+  it("does not notice for PDF when only local images are present", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](assets/x.png)"), "pdf", {}, onNotice)
+    expect(onNotice).not.toHaveBeenCalled()
+  })
+
+  it("notices a remote-image warning when exporting PNG with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("text ![](http://example.com/y.png) end"), "png", {}, onNotice)
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
+  })
+
+  it("does not notice for HTML export even with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.html"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](https://example.com/x.png)"), "html", {}, onNotice)
+    expect(onNotice).not.toHaveBeenCalled()
   })
 })
