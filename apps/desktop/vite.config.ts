@@ -19,7 +19,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 explicitly. On Windows, `false` (localhost) can resolve to the
+    // IPv6 loopback `::1`, which fails to bind with EACCES.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
