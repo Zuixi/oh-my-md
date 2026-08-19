@@ -17,7 +17,7 @@ export default defineConfig(async () => ({
   build: { chunkSizeWarningLimit: 1200 },
   // 3. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: 9420,
     strictPort: true,
     // Bind IPv4 explicitly. On Windows, `false` (localhost) can resolve to the
     // IPv6 loopback `::1`, which fails to bind with EACCES.
@@ -26,7 +26,7 @@ export default defineConfig(async () => ({
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: 9421,
         }
       : undefined,
     watch: {
