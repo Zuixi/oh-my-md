@@ -7,6 +7,9 @@ use std::sync::Mutex;
 use regex::RegexBuilder;
 
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+// Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
+// runs cannot observe each other's env vars (config_dir() reads them live).
+static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
 const MARKDOWN_FILE_EXTENSION: &str = "md";
@@ -714,6 +717,12 @@ mod tests {
         authorize_workspace_root(path).unwrap();
     }
 
+    /// Holds the CONFIG_ENV_LOCK so tests that set/remove OMD_CONFIG_DIR /
+    /// OMD_RECOVERY_DIR cannot race with each other in parallel runs.
+    fn config_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        CONFIG_ENV_LOCK.lock().unwrap()
+    }
+
     fn path_string(path: &Path) -> String {
         path.to_string_lossy().into_owned()
     }
@@ -957,6 +966,7 @@ mod tests {
 
     #[test]
     fn settings_and_session_roundtrip() {
+        let _guard = config_env_guard();
         let dir = tmp("config");
         reset_dir(&dir);
         std::env::set_var("OMD_CONFIG_DIR", &dir);
@@ -976,6 +986,7 @@ mod tests {
 
     #[test]
     fn recovery_dir_defaults_under_config_dir() {
+        let _guard = config_env_guard();
         let dir = tmp("config-recovery");
         reset_dir(&dir);
         std::env::set_var("OMD_CONFIG_DIR", &dir);
@@ -1131,6 +1142,13 @@ mod tests {
 
     #[test]
     fn snapshot_document_roundtrip_under_authorized_root() {
+        // Isolate from other tests that mutate OMD_CONFIG_DIR (they run in
+        // parallel, so config_dir() can change mid-test otherwise).
+        let _guard = config_env_guard();
+        let config = tmp("snapshot-config");
+        fs::create_dir_all(&config).unwrap();
+        std::env::set_var("OMD_CONFIG_DIR", &config);
+
         let root = tmp("snapshot-doc");
         reset_dir(&root);
         let doc = root.join("doc.md");
@@ -1176,6 +1194,8 @@ mod tests {
         fs::write(&foreign, "x").unwrap();
         assert!(snapshot_document(path_string(&foreign)).is_err());
 
+        std::env::remove_var("OMD_CONFIG_DIR");
+        fs::remove_dir_all(config).ok();
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(outside).ok();
     }
