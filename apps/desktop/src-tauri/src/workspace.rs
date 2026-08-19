@@ -9,6 +9,7 @@ use regex::RegexBuilder;
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 // Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
 // runs cannot observe each other's env vars (config_dir() reads them live).
+#[cfg(test)]
 static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
