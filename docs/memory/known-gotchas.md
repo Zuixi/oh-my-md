@@ -370,3 +370,65 @@ writes are an 800ms trailing debounce with same-content dedupe
 synchronous docsRef visibility after `emit`, render the harness with
 `docMaterializeMs: 0` (the `autosaveMs`/`watchMs` seam precedent) — timing tests
 pass the real 250.
+
+## Tauri 2 sync commands run on the Rust main thread (Spec 05b)
+
+Non-`async` `#[tauri::command]` fns execute on the main thread and serialize
+behind each other (and window event processing). During the 50MB open bug this
+meant `openPath` could hang forever with content already in hand: it
+`await allow_document_assets` after a successful read, and that sync command sat
+queued behind a synchronous 50MB `write_recovery` `fs::write`. IO-bound commands
+must be `async fn` + `tauri::async_runtime::spawn_blocking` (see the document
+commands; `write_recovery`/`read_recovery`/`save_session_state`/
+`watch_paths`/`allow_*` were converted). `set_recent_files` stayed sync on
+purpose: its menu rebuild is macOS-only (no-op on Windows/Linux, menu.rs gates
+on `target_os`), and menu mutation must stay on the main thread.
+
+## Open-path scale policy has one entry point; entry paths must not bypass it
+
+`applyDocumentScalePolicy` (safe mode by lines OR bytes, render budget,
+LargeDocBanner, on-demand stats) is applied by `resetTabDocument` **and**
+`ensureViews` — the two places a view first holds real content. Before Spec 05b,
+only the replace-tab path called it, so file-tree / search-panel new-tab opens
+and session restore ran 50MB documents in full live preview with an infinite
+render budget, and the restored active tab even kept its empty mount-time view
+(no `resetTabDocument` at all — content lived only in `docsRef`). Line counts
+come from `view.state.doc.lines`, never `contents.split("\n")` (a 1M-element
+allocation just to count). Restore also persists non-primary tabs as
+`lazyFile` sessions: `sessionDirty` is hardcoded false for them and
+`saveFile` refuses to run until activation loads them, otherwise an explicit
+save would write the empty placeholder over the on-disk file.
+
+## Path containment checks must normalize separators
+
+`sessionPath` inputs carry native separators on Windows (`C:\a\b.md`) while
+folder strings often use `/`. A plain `path.startsWith(folder + "/")` guard is
+always false there, so every open file was watched twice (recursive folder
+watch + the file itself), doubling watcher events into `pollFileTabs` — which
+has no cross-round coalescing of its own and re-probes every tab per round.
+Use `pathWithinDir` (workspace.ts); `runFileTabsPoll` adds the in-flight
+dedupe. Poll still re-reads changed files in full (correctness first): a
+banner-without-contents divergence for huge docs is a recorded follow-up.
+
+## Bounded waits on the save queue; a timed-out open races the save
+
+`runOpen` awaits the active tab's in-flight save queue through
+`awaitWithTimeout` (`OPEN_SAVE_QUEUE_TIMEOUT_MS` = 3s in constants.ts): a large
+save (double probe + fsync) can run for minutes under Windows antivirus
+scanning, and an unbounded await turned "reopen file" into a permanent silent
+hang. The timeout **proceeds with the open while the save chain keeps running**
+— the save promise is never cancelled. Two consequences to preserve: (1) the
+guarded save still owns correctness (its own double-compare rejects stale
+writes), so a timed-out open cannot corrupt anything; (2) reopening the *same*
+path within the window can briefly read pre-save disk content, which the next
+watcher poll then surfaces as an external-change banner. If you add another
+waiter on `tabSaveQueues`, bound it the same way instead of awaiting bare.
+
+## Rust line_count must match CM's DefaultSplit, including lone CR
+
+`DocumentFileStats.line_count` promises CM's `doc.lines` convention, and CM
+splits on `/\r\n?|\n/` — a lone `\r` (classic Mac file) is a separator too.
+Counting only `b'\n'` under-reports for such files; use
+`count_line_separators` (documents.rs), which also carries a chunk-trailing
+`\r` across streaming chunk boundaries so a CRLF split mid-stream is not
+misread as two separators.

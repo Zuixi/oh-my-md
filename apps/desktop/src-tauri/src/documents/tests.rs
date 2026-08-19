@@ -40,6 +40,10 @@ fn sample_snapshot(resolved: &str, contents: &str) -> ExistingDiskSnapshot {
             resolved_path: resolved.to_owned(),
             fingerprint: fingerprint(contents.as_bytes()),
         },
+        stats: DocumentFileStats {
+            byte_length: contents.len() as u64,
+            line_count: count_lines(contents.as_bytes()),
+        },
     }
 }
 
@@ -97,13 +101,22 @@ fn disk_snapshot_serializes_requested_path_as_camel_case() {
             resolved_path: "/tmp/a.md".into(),
             fingerprint: "v1:x".into(),
         },
+        stats: DocumentFileStats {
+            byte_length: 4,
+            line_count: 1,
+        },
     };
     let json = serde_json::to_string(&existing).unwrap();
     assert!(
         json.contains(r#""requestedPath":"/tmp/a.md""#),
         "payload: {json}"
     );
+    assert!(
+        json.contains(r#""stats":{"byteLength":4,"lineCount":1}"#),
+        "payload: {json}"
+    );
     assert!(!json.contains("requested_path"), "payload: {json}");
+    assert!(!json.contains("byte_length"), "payload: {json}");
 
     let missing = DiskSnapshot::Missing {
         requested_path: "/tmp/a.md".into(),
@@ -113,6 +126,156 @@ fn disk_snapshot_serializes_requested_path_as_camel_case() {
         missing_json.contains(r#""requestedPath":"/tmp/a.md""#),
         "payload: {missing_json}"
     );
+}
+
+#[test]
+fn stat_document_reports_size_and_missing_without_reading_contents() {
+    let file = write_temp("stat-document", "a\nb\nc");
+    match stat_document_blocking(&path_string_for(&file)).unwrap() {
+        DocumentStat::Existing {
+            requested_path,
+            size_bytes,
+        } => {
+            assert_eq!(requested_path, path_string_for(&file));
+            assert_eq!(size_bytes, 5);
+        }
+        other => panic!("unexpected stat: {other:?}"),
+    }
+
+    let missing = temp_dir("stat-document").join("absent.md");
+    match stat_document_blocking(&path_string_for(&missing)).unwrap() {
+        DocumentStat::Missing { requested_path } => {
+            assert_eq!(requested_path, path_string_for(&missing));
+        }
+        other => panic!("unexpected stat: {other:?}"),
+    }
+}
+
+#[test]
+fn document_stat_serializes_size_bytes_as_camel_case() {
+    let stat = DocumentStat::Existing {
+        requested_path: "/tmp/a.md".into(),
+        size_bytes: 11,
+    };
+    let json = serde_json::to_string(&stat).unwrap();
+    assert!(json.contains(r#""sizeBytes":11"#), "payload: {json}");
+    assert!(!json.contains("size_bytes"), "payload: {json}");
+}
+
+#[test]
+fn read_document_stats_match_contents() {
+    let contents = "one\ntwo\nthree\n";
+    let file = write_temp("read-stats", contents);
+    match read_document_blocking(&path_string_for(&file)).unwrap() {
+        DiskSnapshot::Existing { stats, .. } => {
+            assert_eq!(stats.byte_length, contents.len() as u64);
+            // Three trailing newlines delimit three lines plus an empty last
+            // line, matching CM's doc.lines convention.
+            assert_eq!(stats.line_count, 4);
+        }
+        other => panic!("unexpected snapshot: {other:?}"),
+    }
+    assert_eq!(count_lines(b""), 1);
+    assert_eq!(count_lines(b"no newline"), 1);
+    assert_eq!(count_lines(b"a\n"), 2);
+    // CM DefaultSplit /\r\n?|\n/: CRLF and lone CR are both single separators.
+    assert_eq!(count_lines(b"a\r\nb"), 2);
+    assert_eq!(count_lines(b"a\rb"), 2);
+    assert_eq!(count_lines(b"a\r\nb\r\n"), 3);
+    assert_eq!(count_lines(b"\r\r"), 3);
+    assert_eq!(count_lines(b"\n\r"), 3);
+}
+
+#[test]
+fn streaming_line_count_matches_cm_convention_across_chunk_boundaries() {
+    // `\r` at a chunk boundary must not be misread as a lone separator when
+    // the next chunk starts with `\n`.
+    let contents = "a\r\nb\rc\r\nd";
+    let file = write_temp("stream-crlf", contents);
+    let meta = read_document_streaming_blocking(&path_string_for(&file), 2, &|_| {}).unwrap();
+    match meta {
+        // "a\r\nb\rc\r\nd" = CRLF + lone CR + CRLF = 3 separators → 4 lines.
+        DocumentOpenStream::Existing { stats, .. } => {
+            assert_eq!(stats.line_count, 4, "CM would report 4 lines");
+            assert_eq!(stats.byte_length, contents.len() as u64);
+        }
+        other => panic!("unexpected stream meta: {other:?}"),
+    }
+}
+
+#[test]
+fn streaming_chunks_reassemble_to_the_original_text_across_char_boundaries() {
+    // 每块 4 字节会反复切在多字节序列中间：验证边界扣留逻辑。
+    let contents = "a文\nb档\nend";
+    let file = write_temp("stream-chunks", contents);
+    let chunks: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    let meta = read_document_streaming_blocking(&path_string_for(&file), 4, &|event| {
+        if let OpenStreamEvent::Chunk { text, .. } = event {
+            chunks.borrow_mut().push(text);
+        }
+    })
+    .unwrap();
+    assert_eq!(chunks.borrow().concat(), contents);
+    match meta {
+        DocumentOpenStream::Existing { stats, version, .. } => {
+            assert_eq!(stats.byte_length, contents.len() as u64);
+            assert_eq!(stats.line_count, 3);
+            assert_eq!(version.fingerprint, fingerprint(contents.as_bytes()));
+        }
+        other => panic!("unexpected stream meta: {other:?}"),
+    }
+}
+
+#[test]
+fn streaming_reports_progress_and_missing() {
+    let contents = "0123456789";
+    let file = write_temp("stream-progress", contents);
+    let progress: std::cell::RefCell<Vec<(u64, u64)>> = std::cell::RefCell::new(Vec::new());
+    read_document_streaming_blocking(&path_string_for(&file), 4, &|event| {
+        if let OpenStreamEvent::Progress {
+            bytes_read,
+            byte_length,
+        } = event
+        {
+            progress.borrow_mut().push((bytes_read, byte_length));
+        }
+    })
+    .unwrap();
+    let progress = progress.borrow();
+    assert_eq!(progress.first(), Some(&(4, 10)));
+    assert_eq!(progress.last(), Some(&(10, 10)));
+
+    let missing = temp_dir("stream-progress").join("absent.md");
+    assert!(matches!(
+        read_document_streaming_blocking(&path_string_for(&missing), 4, &|_| {}).unwrap(),
+        DocumentOpenStream::Missing { .. }
+    ));
+}
+
+#[test]
+fn streaming_rejects_non_utf8() {
+    let file = temp_dir("stream-utf8").join("binary.md");
+    fs::write(&file, [0x61, 0xff, 0xfe]).unwrap();
+    assert!(matches!(
+        read_document_streaming_blocking(&path_string_for(&file), 2, &|_| {}),
+        Err(DocumentError::NotUtf8(_))
+    ));
+}
+
+#[test]
+fn open_stream_event_serializes_as_camel_case() {
+    let json = serde_json::to_string(&OpenStreamEvent::Progress {
+        bytes_read: 5,
+        byte_length: 10,
+    })
+    .unwrap();
+    assert!(json.contains(r#""bytesRead":5"#), "payload: {json}");
+    let json = serde_json::to_string(&OpenStreamEvent::Chunk {
+        index: 1,
+        text: "a".into(),
+    })
+    .unwrap();
+    assert!(json.contains(r#""index":1"#), "payload: {json}");
 }
 
 #[test]

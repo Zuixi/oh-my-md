@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
 mod coordinator;
@@ -21,6 +21,13 @@ pub struct DocumentVersion {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentFileStats {
+    pub byte_length: u64,
+    pub line_count: u64,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DiskSnapshot {
     #[serde(rename_all = "camelCase")]
@@ -30,6 +37,7 @@ pub enum DiskSnapshot {
         requested_path: String,
         contents: String,
         version: DocumentVersion,
+        stats: DocumentFileStats,
     },
 }
 
@@ -39,6 +47,47 @@ pub struct ExistingDiskSnapshot {
     pub requested_path: String,
     pub contents: String,
     pub version: DocumentVersion,
+    pub stats: DocumentFileStats,
+}
+
+/// Metadata-only probe (Spec 05b): lets the frontend tier its open policy
+/// (confirm / safe mode / read-only) before paying the full read + IPC.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DocumentStat {
+    #[serde(rename_all = "camelCase")]
+    Missing { requested_path: String },
+    #[serde(rename_all = "camelCase")]
+    Existing {
+        requested_path: String,
+        size_bytes: u64,
+    },
+}
+
+/// Spec 05b LARGE 档流式打开：内容按块经 Channel 推送，invoke 只回元数据。
+/// 单块大小是 Rust→前端负载整形参数，不与 TS 侧共享契约。
+pub const OPEN_CHUNK_BYTES: usize = 512 * 1024;
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum OpenStreamEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress { bytes_read: u64, byte_length: u64 },
+    #[serde(rename_all = "camelCase")]
+    Chunk { index: u64, text: String },
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DocumentOpenStream {
+    #[serde(rename_all = "camelCase")]
+    Missing { requested_path: String },
+    #[serde(rename_all = "camelCase")]
+    Existing {
+        requested_path: String,
+        version: DocumentVersion,
+        stats: DocumentFileStats,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -132,6 +181,32 @@ pub(crate) fn fingerprint(bytes: &[u8]) -> String {
     format!("{FINGERPRINT_PREFIX}{}", blake3::hash(bytes).to_hex())
 }
 
+/// Line separator count matching CM's `DefaultSplit` (`/\r\n?|\n/`): every `\n`
+/// is a separator and so is a lone `\r` (not followed by `\n`). `pending_cr`
+/// carries a chunk-trailing `\r` across streaming chunk boundaries.
+fn count_line_separators(bytes: &[u8], pending_cr: bool) -> (u64, bool) {
+    let mut separators = 0u64;
+    let mut pending_cr = pending_cr;
+    for &byte in bytes {
+        match byte {
+            b'\r' => {
+                separators += 1;
+                pending_cr = true;
+            }
+            b'\n' if pending_cr => pending_cr = false,
+            b'\n' => separators += 1,
+            _ => pending_cr = false,
+        }
+    }
+    (separators, pending_cr)
+}
+
+/// Line count with the same convention as CM's `doc.lines` (empty text = 1).
+/// Same pass as the fingerprint read, so stats add no IO.
+pub(crate) fn count_lines(bytes: &[u8]) -> u64 {
+    count_line_separators(bytes, false).0 + 1
+}
+
 pub(crate) fn validate_requested(path: &str) -> Result<PathBuf, DocumentError> {
     let path_buf = PathBuf::from(path);
     if !path_buf.is_absolute() {
@@ -207,6 +282,10 @@ pub(crate) fn probe_disk(path: &Path) -> Result<DiskProbe, DocumentError> {
             node_is_symlink,
         } => {
             let fingerprint_value = fingerprint(&bytes);
+            let stats = DocumentFileStats {
+                byte_length: bytes.len() as u64,
+                line_count: count_lines(&bytes),
+            };
             let contents = String::from_utf8(bytes)
                 .map_err(|_| not_utf8("document bytes are not valid UTF-8"))?;
             Ok(DiskProbe::Existing {
@@ -217,6 +296,7 @@ pub(crate) fn probe_disk(path: &Path) -> Result<DiskProbe, DocumentError> {
                         resolved_path,
                         fingerprint: fingerprint_value,
                     },
+                    stats,
                 },
                 node_is_symlink,
             })
@@ -234,8 +314,40 @@ pub(crate) fn read_document_blocking(path: &str) -> Result<DiskSnapshot, Documen
             requested_path: snapshot.requested_path,
             contents: snapshot.contents,
             version: snapshot.version,
+            stats: snapshot.stats,
         }),
     }
+}
+
+fn stat_document_blocking(path: &str) -> Result<DocumentStat, DocumentError> {
+    let requested_path = path.to_owned();
+    let path_buf = validate_requested(path)?;
+    // Parity with probe_disk_raw: a missing node is a normal answer, not an
+    // error; dangling symlinks report Missing because opening them will fail
+    // the versioned read anyway.
+    let node_metadata = match std::fs::symlink_metadata(&path_buf) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(DocumentStat::Missing { requested_path })
+        }
+        Err(error) => return Err(map_read_io_error(&path_buf, error)),
+    };
+    let target = if node_metadata.file_type().is_symlink() {
+        match std::fs::canonicalize(&path_buf) {
+            Ok(resolved) => resolved,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(DocumentStat::Missing { requested_path })
+            }
+            Err(error) => return Err(map_read_io_error(&path_buf, error)),
+        }
+    } else {
+        path_buf
+    };
+    let metadata = std::fs::metadata(&target).map_err(|error| map_read_io_error(&target, error))?;
+    Ok(DocumentStat::Existing {
+        requested_path,
+        size_bytes: metadata.len(),
+    })
 }
 
 pub(crate) fn read_document_version_blocking(
@@ -277,6 +389,127 @@ where
 #[tauri::command]
 pub async fn read_document(path: String) -> Result<DiskSnapshot, DocumentError> {
     spawn_blocking_document(move || read_document_blocking(&path)).await
+}
+
+#[tauri::command]
+pub async fn stat_document(path: String) -> Result<DocumentStat, DocumentError> {
+    spawn_blocking_document(move || stat_document_blocking(&path)).await
+}
+
+/// Streaming read for the LARGE open tier: content is pushed in UTF-8-safe
+/// chunks with byte progress; the invoke resolves with version + stats so the
+/// frontend can reuse the existing snapshot pipeline once assembly finishes.
+#[tauri::command]
+pub async fn read_document_streaming(
+    path: String,
+    on_chunk: tauri::ipc::Channel<OpenStreamEvent>,
+) -> Result<DocumentOpenStream, DocumentError> {
+    spawn_blocking_document(move || {
+        read_document_streaming_blocking(&path, OPEN_CHUNK_BYTES, &|event| {
+            let _ = on_chunk.send(event);
+        })
+    })
+    .await
+}
+
+pub(crate) fn read_document_streaming_blocking(
+    path: &str,
+    chunk_size: usize,
+    on_event: &dyn Fn(OpenStreamEvent),
+) -> Result<DocumentOpenStream, DocumentError> {
+    let requested_path = path.to_owned();
+    let path_buf = validate_requested(path)?;
+    let metadata = match std::fs::symlink_metadata(&path_buf) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(DocumentOpenStream::Missing { requested_path })
+        }
+        Err(error) => return Err(map_read_io_error(&path_buf, error)),
+    };
+    let node_is_symlink = metadata.file_type().is_symlink();
+    let resolved = match std::fs::canonicalize(&path_buf) {
+        Ok(resolved) => resolved,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && node_is_symlink => {
+            return Err(read_failed("symbolic link target is missing"))
+        }
+        Err(error) => return Err(map_read_io_error(&path_buf, error)),
+    };
+    let resolved_path = path_to_string(&resolved)?;
+    let mut file =
+        std::fs::File::open(&resolved).map_err(|error| map_read_io_error(&path_buf, error))?;
+    let byte_length = file
+        .metadata()
+        .map_err(|error| map_read_io_error(&path_buf, error))?
+        .len();
+
+    let mut hasher = blake3::Hasher::new();
+    let mut newline_count: u64 = 0;
+    // Chunk-trailing `\r` whose separator decision (lone vs `\r\n`) belongs to
+    // the next chunk's first byte.
+    let mut cr_pending = false;
+    let mut bytes_read: u64 = 0;
+    let mut carry: Vec<u8> = Vec::new();
+    let mut index: u64 = 0;
+    let mut buf = vec![0u8; chunk_size.max(1)];
+    loop {
+        let read = file
+            .read(&mut buf)
+            .map_err(|error| map_read_io_error(&path_buf, error))?;
+        if read == 0 {
+            break;
+        }
+        let bytes = &buf[..read];
+        hasher.update(bytes);
+        let (separators, pending) = count_line_separators(bytes, cr_pending);
+        newline_count += separators;
+        cr_pending = pending;
+        bytes_read += read as u64;
+        carry.extend_from_slice(bytes);
+        // 回退到 UTF-8 字符边界：块尾落在多字节序列中间时把残缺序列留给
+        // 下一块。先跳过尾部 continuation 字节；若随后停在前导字节上，它的
+        // continuation 已被排除，前导也必须一并扣留（宁可多留一字节到下块）。
+        let mut send_len = carry.len();
+        while send_len > 0 && carry[send_len - 1] & 0b1100_0000 == 0b1000_0000 {
+            send_len -= 1;
+        }
+        if send_len > 0 && carry[send_len - 1] & 0b1100_0000 == 0b1100_0000 {
+            send_len -= 1;
+        }
+        if send_len == 0 {
+            continue;
+        }
+        let text = match std::str::from_utf8(&carry[..send_len]) {
+            Ok(text) => text.to_owned(),
+            Err(_) => return Err(not_utf8("document bytes are not valid UTF-8")),
+        };
+        carry.drain(..send_len);
+        on_event(OpenStreamEvent::Chunk { index, text });
+        index += 1;
+        on_event(OpenStreamEvent::Progress {
+            bytes_read,
+            byte_length,
+        });
+    }
+    if !carry.is_empty() {
+        let text = match std::str::from_utf8(&carry) {
+            Ok(text) => text.to_owned(),
+            Err(_) => return Err(not_utf8("document bytes are not valid UTF-8")),
+        };
+        on_event(OpenStreamEvent::Chunk { index, text });
+    }
+    let version = DocumentVersion {
+        resolved_path,
+        fingerprint: format!("{FINGERPRINT_PREFIX}{}", hasher.finalize().to_hex()),
+    };
+    let stats = DocumentFileStats {
+        byte_length: bytes_read,
+        line_count: newline_count + 1,
+    };
+    Ok(DocumentOpenStream::Existing {
+        requested_path,
+        version,
+        stats,
+    })
 }
 
 #[tauri::command]

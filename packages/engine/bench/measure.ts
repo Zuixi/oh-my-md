@@ -97,3 +97,21 @@ export function fullyParsedLiveState(doc: string): EditorState {
   parent.remove()
   return state
 }
+
+/** Spec 05b 冷打开口径：字符串 ingest（EditorState.create 切行）+ view 挂载
+ * + 首屏视口解析（steady 树，不推到 doc.length）。不含 IPC/读盘——那两段
+ * 由 Rust 命令与 Channel 承担，engine bench 度量主线程的最后一跳。 */
+export function measureOpenIngestMs(doc: string): number {
+  const t0 = performance.now()
+  const state = EditorState.create({ doc, extensions: editorExtensions() })
+  const source = state.update(setLivePreview(false)).state
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({ state: source, parent })
+  // Teardown is O(doc) DOM work and not part of the open budget — stop the
+  // clock before destroy so teardown cost cannot pollute the tier budgets.
+  const elapsed = performance.now() - t0
+  view.destroy()
+  parent.remove()
+  return elapsed
+}

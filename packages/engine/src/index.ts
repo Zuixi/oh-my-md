@@ -81,16 +81,17 @@ export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
   resolveImageSrc?: (src: string) => string
   imageBrokenLabel?: (src: string) => string
+  /** Spec 05b HUGE 档：不挂 markdown 语言/补全/列表键位（纯文本只读视图）。
+   *  livePreviewCompartment 保留 —— setLivePreview 切换依赖它存在。 */
+  plainText?: boolean
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
   return [
-    markdownLanguageSupport(),
-    emojiCompletion,
+    ...(options.plainText ? [] : [markdownLanguageSupport(), emojiCompletion, listKeymap]),
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,
-    listKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
     livePreviewCompartment.of(livePreviewExt()),

@@ -53,6 +53,11 @@ export function makeFakeDisk(): FakeDisk {
           requestedPath: path,
           contents,
           version: versionFor(path, contents),
+          // 与生产 stats 同约定（ASCII 测试内容下 length 即字节数）。
+          stats: {
+            byteLength: contents.length,
+            lineCount: contents ? contents.split("\n").length : 1,
+          },
         }
   }
 

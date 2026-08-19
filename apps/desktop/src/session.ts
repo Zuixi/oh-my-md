@@ -9,6 +9,11 @@ export type SessionPersistence =
       readonly savedContents: string
       readonly version: DocumentVersion
     }
+  | {
+      /** Spec 05b 会话恢复的惰性 tab：只有路径，内容在首次激活时读取。 */
+      readonly kind: "lazyFile"
+      readonly requestedPath: string
+    }
 
 export interface EditorSession {
   readonly id: number
@@ -18,6 +23,16 @@ export interface EditorSession {
 
 export function createSession(id: number): EditorSession {
   return { id, documentId: id, persistence: { kind: "untitled", savedContents: "" } }
+}
+
+/** A restored-but-unread tab; activation loads it via `openSession`. */
+export function lazyFileSession(id: number, requestedPath: string): EditorSession {
+  return { id, documentId: id, persistence: { kind: "lazyFile", requestedPath } }
+}
+
+/** False only for lazy restored tabs whose disk content has not been read yet. */
+export function sessionContentLoaded(session: EditorSession): boolean {
+  return session.persistence.kind !== "lazyFile"
 }
 
 export function createFileSession(
@@ -34,11 +49,13 @@ export function createFileSession(
 }
 
 export function sessionPath(session: EditorSession): string | null {
-  return session.persistence.kind === "file" ? session.persistence.requestedPath : null
+  return session.persistence.kind === "untitled"
+    ? null
+    : session.persistence.requestedPath
 }
 
 export function sessionSavedContents(session: EditorSession): string {
-  return session.persistence.savedContents
+  return session.persistence.kind === "lazyFile" ? "" : session.persistence.savedContents
 }
 
 export function sessionVersion(session: EditorSession): DocumentVersion | null {
@@ -46,6 +63,7 @@ export function sessionVersion(session: EditorSession): DocumentVersion | null {
 }
 
 export function sessionDirty(session: EditorSession, doc: string): boolean {
+  if (session.persistence.kind === "lazyFile") return false
   return doc !== sessionSavedContents(session)
 }
 

@@ -135,6 +135,8 @@ When adding or changing a command:
 
 **IPC casing trap (verified 2026-08-14).** `#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum camelCases only the *variant names*, never fields inside struct variants — those need their own variant-level `#[serde(rename_all = "camelCase")]` (see `SaveDocumentResult` for the correct pattern). `DiskSnapshot` once relied on the enum-level attribute, so `read_document` sent `requested_path` while the webview read `requestedPath`; every opened file silently became an "unnamed" tab. TypeScript gives no protection: `snapshot.requestedPath` compiles fine and is `undefined` at runtime, and desktop tests mock `services.readDocument` at the TS boundary so they can never catch wire-format drift. Only a Rust-side `serde_json::to_string` assertion (e.g. `disk_snapshot_serializes_requested_path_as_camel_case`) guards the contract.
 
+**Sync-command trap (verified 2026-08-19).** Non-`async` `#[tauri::command]` fns run on the Rust main thread and serialize behind each other; an IO-bound sync command (a 50MB `write_recovery` `fs::write`) stalls every queued command — `openPath` awaited `allow_document_assets` *after* the read succeeded, so the file was in hand and never displayed. IO-bound commands must be `async fn` + `tauri::async_runtime::spawn_blocking` (in-memory-only commands may stay sync; menu mutation must stay on the main thread, which is why `set_recent_files` is exempt — its rebuild is macOS-only).
+
 Do not silently overwrite in-memory content after a failed read/write. Preserve the current document and surface the error. Do not add unconditional force-write APIs for conflict paths.
 
 ## Image Paste Invariants

@@ -41,3 +41,24 @@ export const STORAGE_KEY_SESSION = "omd_saved_session"
 // test/crossLayerConstants.test.ts).
 export const LARGE_DOC_LINES = 30000
 export const SAFE_MODE_LINES = 50000
+
+/**
+ * Spec 05b open tiers, by exact UTF-8 byte length (Rust stat/read stats):
+ * - < OPEN_STREAM_THRESHOLD_BYTES: today's behavior, one-shot read.
+ * - ≥ threshold and < OPEN_READONLY_THRESHOLD_BYTES: confirm, then default
+ *   source mode (safe mode by bytes — closes the long-line blind spot where a
+ *   multi-MB file under 50k lines skipped every large-doc protection).
+ * - ≥ OPEN_READONLY_THRESHOLD_BYTES: confirm a read-only plain-text open.
+ */
+export const OPEN_STREAM_THRESHOLD_BYTES = 10 * 1024 * 1024
+export const OPEN_READONLY_THRESHOLD_BYTES = 50 * 1024 * 1024
+/** Byte axis of safe mode; kept equal to the confirm tier boundary. */
+export const SAFE_MODE_BYTES = OPEN_STREAM_THRESHOLD_BYTES
+
+/**
+ * Ceiling on how long `runOpen` waits for the active tab's in-flight save queue
+ * before opening anyway. A large save (double probe + fsync) can run for
+ * minutes under Windows antivirus scanning; an unbounded await turns "reopen
+ * file" into a permanent silent hang because the queue entry never settles.
+ */
+export const OPEN_SAVE_QUEUE_TIMEOUT_MS = 3000

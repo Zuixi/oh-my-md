@@ -3,6 +3,7 @@ import { createFileSession, createSession, markSaved, openSession, sessionPath, 
 import {
   activeSession,
   addTab,
+  baseName,
   closeTab,
   createWorkspace,
   findTabByPath,
@@ -10,10 +11,12 @@ import {
   ensureFolder,
   openFolder,
   parentDir,
+  pathWithinDir,
   resolveMarkdownHref,
   replaceActive,
   replaceTabSession,
 } from "../src/workspace"
+import { OPEN_STREAM_THRESHOLD_BYTES, SAFE_MODE_BYTES } from "../src/constants"
 
 const version = { resolvedPath: "/notes/a.md", fingerprint: "v1:aa" }
 
@@ -91,5 +94,37 @@ describe("workspace tabs", () => {
     expect(resolveMarkdownHref("notes/doc.md", "./a.md")).toBe("notes/a.md")
     expect(resolveMarkdownHref("notes/doc.md", "../a.md")).toBe("a.md")
     expect(resolveMarkdownHref("notes/doc.md", "a.md#guide")).toBe("notes/a.md")
+  })
+})
+
+describe("path helpers (Spec 05b)", () => {
+  it("pathWithinDir normalizes windows separators", () => {
+    expect(pathWithinDir("C:\\docs\\a.md", "C:\\docs")).toBe(true)
+    expect(pathWithinDir("C:\\docs\\sub\\a.md", "C:\\docs")).toBe(true)
+    expect(pathWithinDir("C:\\docs", "C:\\docs")).toBe(true)
+    expect(pathWithinDir("C:\\other\\a.md", "C:\\docs")).toBe(false)
+    expect(pathWithinDir("/docs/a.md", "/docs/")).toBe(true)
+  })
+
+  it("pathWithinDir does not match sibling prefixes", () => {
+    expect(pathWithinDir("/docs-other/a.md", "/docs")).toBe(false)
+    expect(pathWithinDir("/docs", "/docs/")).toBe(true)
+  })
+
+  it("baseName returns the final segment, separator-agnostic", () => {
+    expect(baseName("/docs/a.md")).toBe("a.md")
+    expect(baseName("C:\\docs\\a.md")).toBe("a.md")
+    expect(baseName("a.md")).toBe("a.md")
+    // Degenerate inputs fall back to the input rather than an empty label.
+    // A trailing slash (never a real file path) yields the full input.
+    expect(baseName("/docs/sub/")).toBe("/docs/sub/")
+    expect(baseName("/")).toBe("/")
+    expect(baseName("")).toBe("")
+  })
+
+  it("keeps the byte safe-mode axis aligned with the streaming tier boundary", () => {
+    // constants.ts promises SAFE_MODE_BYTES === OPEN_STREAM_THRESHOLD_BYTES;
+    // a LARGE-tier confirm must always imply the byte axis of safe mode.
+    expect(SAFE_MODE_BYTES).toBe(OPEN_STREAM_THRESHOLD_BYTES)
   })
 })

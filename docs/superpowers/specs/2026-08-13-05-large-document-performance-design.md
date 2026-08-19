@@ -160,3 +160,12 @@ interface EditorDocumentUpdate {
 | typing p95 @10MB/20MB steady | < 16ms（advisory） | `bench/typing.bench.ts` |
 | complete-tree 上限参考 | 数字记录，无预算断言 | 同上 |
 | 生产禁全树 | grep 式护栏：src 下无 `doc.length` 传给 forceParsing/ensureSyntaxTree | engine 单测（读源码断言，防回归） |
+
+---
+
+## 11. 05b 追问：冷打开路径（2026-08-19 增补）
+
+**状态：** 诊断与方案见独立规格 [`2026-08-19-05b-large-doc-open-design.md`](./2026-08-19-05b-large-doc-open-design.md)。05a 清除逐键 O(doc)；实测 50MB **打开**仍长时间无响应，根因在 JSON IPC 整文件传输 + React 多副本 + 主线程 split，非引擎冷解析。
+
+**关系：** 05 = 逐键预算 + 安全模式；05a = 10/20MB 逐键路径；**05b = 10/20/50MB 冷打开 TTIE + lazy 会话 + 打开 UX**。
+

@@ -45,6 +45,9 @@ export interface CreateEditorOptions {
   onOpenMarkdownHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
+  /** Spec 05b HUGE 档：只读纯文本视图（无语言/装饰扩展）。 */
+  readOnly?: boolean
+  plainText?: boolean
 }
 
 export function makeImageResolver(
@@ -152,6 +155,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       EditorView.lineWrapping,
       spellcheckCompartment.of(spellcheckAttr(options.spellcheck === true)),
       options.tabSize ? EditorState.tabSize.of(options.tabSize) : [],
+      options.readOnly ? EditorState.readOnly.of(true) : [],
       history(),
       drawSelection(),
       dropCursor(),
@@ -160,6 +164,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
+        plainText: options.plainText === true,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       typewriterExtension(),

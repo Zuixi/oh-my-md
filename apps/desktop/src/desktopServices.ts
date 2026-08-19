@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core"
+import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { exportSaveOptions } from "./exportPath"
@@ -36,15 +36,40 @@ export interface DocumentVersion {
   readonly fingerprint: string
 }
 
+export interface DocumentFileStats {
+  readonly byteLength: number
+  readonly lineCount: number
+}
+
 export interface ExistingDiskSnapshot {
   readonly requestedPath: string
   readonly contents: string
   readonly version: DocumentVersion
+  /** Optional for older fixtures; production snapshots always carry it. */
+  readonly stats?: DocumentFileStats
 }
 
 export type DiskSnapshot =
   | { readonly kind: "missing"; readonly requestedPath: string }
   | ({ readonly kind: "existing" } & ExistingDiskSnapshot)
+
+export type DocumentStat =
+  | { readonly kind: "missing"; readonly requestedPath: string }
+  | { readonly kind: "existing"; readonly requestedPath: string; readonly sizeBytes: number }
+
+/** Spec 05b LARGE 档流式打开：分块文本 + 字节进度经 Channel 推送。 */
+export type OpenStreamEvent =
+  | { readonly kind: "progress"; readonly bytesRead: number; readonly byteLength: number }
+  | { readonly kind: "chunk"; readonly index: number; readonly text: string }
+
+export type DocumentOpenStream =
+  | { readonly kind: "missing"; readonly requestedPath: string }
+  | {
+      readonly kind: "existing"
+      readonly requestedPath: string
+      readonly version: DocumentVersion
+      readonly stats: DocumentFileStats
+    }
 
 export type ExpectedDocumentVersion =
   | { readonly kind: "missing" }
@@ -115,6 +140,11 @@ export interface DesktopServices {
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
   readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
+  statDocument?: (path: string) => Promise<DocumentStat>
+  readDocumentStreaming?: (
+    path: string,
+    onEvent: (event: OpenStreamEvent) => void,
+  ) => Promise<DocumentOpenStream>
   saveDocument: (
     path: string,
     contents: string,
@@ -150,6 +180,8 @@ export interface DesktopServices {
   clearRecovery?: (key: string) => Promise<void>
   confirmDiscard: () => boolean
   confirmClose?: () => boolean
+  confirmLargeOpen?: (label: string, mb: number) => boolean
+  confirmReadonlyOpen?: (label: string, mb: number) => boolean
   confirmDelete?: (path: string) => boolean
   confirmRestore?: (label: string) => boolean
   confirmExternalChange?: () => boolean
@@ -223,6 +255,15 @@ export const defaultServices: DesktopServices = {
   readDocument: path => invokeDocument<DiskSnapshot>("read_document", { path }),
   readDocumentVersion: path =>
     invokeDocument<ExpectedDocumentVersion>("read_document_version", { path }),
+  statDocument: path => invokeDocument<DocumentStat>("stat_document", { path }),
+  readDocumentStreaming: (path, onEvent) => {
+    const channel = new Channel<OpenStreamEvent>()
+    channel.onmessage = onEvent
+    return invokeDocument<DocumentOpenStream>("read_document_streaming", {
+      path,
+      onChunk: channel,
+    })
+  },
   saveDocument: (path, contents, expected) =>
     invokeDocument<SaveDocumentResult>("save_document", { path, contents, expected }),
   readFile: (path) => invoke<string>("read_file", { path }),
@@ -289,6 +330,8 @@ export const defaultServices: DesktopServices = {
   clearRecovery: (key) => invoke("clear_recovery", { key }),
   confirmDiscard: () => window.confirm(t("confirm.discard")),
   confirmClose: () => window.confirm(t("confirm.close")),
+  confirmLargeOpen: (label, mb) => window.confirm(t("confirm.largeOpen", { label, mb })),
+  confirmReadonlyOpen: (label, mb) => window.confirm(t("confirm.readonlyOpen", { label, mb })),
   confirmDelete: (path) => {
     const normalized = path.replace(/\\/g, "/")
     const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
