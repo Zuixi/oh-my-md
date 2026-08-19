@@ -584,6 +584,7 @@ pub fn run() {
         .expect("error while building oh-my-md")
         .run(|app, event| {
             // macOS "open with"/double-click/Finder-dock drops arrive here.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {
                     let Ok(path) = url.to_file_path() else {
