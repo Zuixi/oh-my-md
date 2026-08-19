@@ -9,6 +9,7 @@ import {
   setBlockRenderBudget, setLivePreview, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
+import { pastePlainText } from "./pastePlainText"
 import {
   advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
   retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
@@ -1739,6 +1740,7 @@ export default function App({
     { id: "cut", label: t("cmd.label.cut"), shortcut: shortcutFor("cut"), run: runClipboardCopy(true) },
     { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
     { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
+    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), run: () => { const v = viewRef.current; if (v) void pastePlainText(v) } },
     { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
     { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)
