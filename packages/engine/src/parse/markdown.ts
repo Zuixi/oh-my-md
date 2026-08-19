@@ -6,6 +6,7 @@ import { Footnotes } from "./footnotes"
 import { FrontMatter } from "./frontMatter"
 import { Highlight } from "./highlight"
 import { Math } from "./math"
+import { Rise } from "./rise"
 import { BareAutolink } from "./autolink"
 
 export function markdownLanguageSupport() {
@@ -16,6 +17,7 @@ export function markdownLanguageSupport() {
       FrontMatter,
       Footnotes,
       Math,
+      Rise,
       Highlight,
       CjkUnderscore,
       Emoji,
