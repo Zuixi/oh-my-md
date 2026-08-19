@@ -385,30 +385,38 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted);
   font-weight: 700;
 }
-/* In-app menu (Windows/Linux): ☰ trigger in the topbar, dropdown panel below it */
-.app-menu {
-  position: relative;
+/* In-app menubar (Windows/Linux): horizontal top-level row above the topbar,
+   one dropdown panel per menu. The row doubles as a drag region; items opt out. */
+.app-menubar {
   display: flex;
+  flex-direction: row;
   align-items: center;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 6px;
+  gap: 2px;
+  background: var(--omd-chrome);
+  border-bottom: 1px solid var(--omd-border);
+  -webkit-app-region: drag;
   flex-shrink: 0;
-  -webkit-app-region: no-drag;
 }
-.app-menu-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
+.app-menubar-menu {
+  position: relative;
+}
+.app-menubar-item {
+  padding: 3px 10px;
   border: none;
   background: transparent;
-  color: var(--omd-muted);
+  color: var(--omd-fg);
+  font-size: 13px;
   border-radius: 4px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+  transition: background 0.12s;
 }
-.app-menu-trigger:hover {
+.app-menubar-item:hover,
+.app-menubar-item.is-open {
   background: var(--omd-border);
-  color: var(--omd-fg);
 }
 .app-menu-panel {
   position: absolute;
@@ -424,18 +432,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 4px 0;
   z-index: 60;
   animation: omd-fade-in 0.12s ease-out;
-}
-.app-menu-section + .app-menu-section {
-  border-top: 1px solid var(--omd-border);
-  margin-top: 4px;
-  padding-top: 4px;
-}
-.app-menu-section-title {
-  padding: 4px 12px 2px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--omd-muted);
-  user-select: none;
+  -webkit-app-region: no-drag;
 }
 .app-menu-item {
   display: flex;
@@ -450,10 +447,19 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   text-align: left;
   cursor: pointer;
 }
-.app-menu-item:hover {
+.app-menu-item:hover,
+.app-menu-item:focus-visible {
   background: var(--omd-border);
 }
-.app-menu-item > span:first-child {
+.app-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--omd-fg);
+}
+.app-menu-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -466,11 +472,51 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted);
 }
 .app-menu-recent {
-  padding-left: 24px;
+  padding-left: 36px;
 }
 .app-menu-separator {
   height: 1px;
   margin: 4px 12px;
+  background: var(--omd-border);
+}
+/* About dialog (in-app Help menu; macOS uses the native app menu) */
+.about-modal {
+  max-width: 320px;
+}
+.about-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 24px 20px;
+}
+.about-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.about-version,
+.about-platform {
+  margin: 0;
+  font-size: 13px;
+  color: var(--omd-muted);
+}
+.about-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--omd-border);
+}
+.about-close-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--omd-border);
+  border-radius: 4px;
+  background: var(--omd-bg);
+  color: var(--omd-fg);
+  font-size: 13px;
+  cursor: pointer;
+}
+.about-close-btn:hover {
   background: var(--omd-border);
 }
 /* Outline toggle strip — always-visible column between sidebar-secondary and editor */
