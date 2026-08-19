@@ -48,6 +48,8 @@ export interface CreateEditorOptions {
   /** Spec 05b HUGE 档：只读纯文本视图（无语言/装饰扩展）。 */
   readOnly?: boolean
   plainText?: boolean
+  /** Construct already in Source so large docs skip the first live-preview pass. */
+  defaultLivePreview?: boolean
 }
 
 export function makeImageResolver(
@@ -165,6 +167,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
         plainText: options.plainText === true,
+        defaultLivePreview: options.defaultLivePreview,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       typewriterExtension(),

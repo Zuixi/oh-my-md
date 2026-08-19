@@ -399,6 +399,14 @@ allocation just to count). Restore also persists non-primary tabs as
 `saveFile` refuses to run until activation loads them, otherwise an explicit
 save would write the empty placeholder over the on-disk file.
 
+`resolveOpenTier` must return `"normal"` below `OPEN_STREAM_THRESHOLD_BYTES`.
+A fall-through `return "large"` after the LARGE confirm block classified every
+file as LARGE: tree/tab switches flashed `OpeningOverlay` and paid for
+streaming + confirm. Overlay is only for LARGE/HUGE. Construct LARGE/HUGE
+views with `defaultLivePreview: false` so `EditorState.create` never builds
+live decorations first; `setLivePreview(false)` after create is already too
+late on a 50MB live pass. Streaming failures must fall back to `readDocument`.
+
 ## Path containment checks must normalize separators
 
 `sessionPath` inputs carry native separators on Windows (`C:\a\b.md`) while

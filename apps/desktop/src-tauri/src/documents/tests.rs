@@ -204,6 +204,41 @@ fn streaming_line_count_matches_cm_convention_across_chunk_boundaries() {
 }
 
 #[test]
+fn streaming_matches_one_shot_read_for_a_multi_chunk_file() {
+    let contents = "heading\n".repeat(2000);
+    let file = write_temp("stream-oneshot-parity", &contents);
+    let path = path_string_for(&file);
+    let chunks: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    let streamed = read_document_streaming_blocking(&path, 1024, &|event| {
+        if let OpenStreamEvent::Chunk { text, .. } = event {
+            chunks.borrow_mut().push(text);
+        }
+    })
+    .unwrap();
+    let oneshot = read_document_blocking(&path).unwrap();
+    match (streamed, oneshot) {
+        (
+            DocumentOpenStream::Existing {
+                version: stream_version,
+                stats: stream_stats,
+                ..
+            },
+            DiskSnapshot::Existing {
+                contents: oneshot_contents,
+                version: oneshot_version,
+                stats: oneshot_stats,
+                ..
+            },
+        ) => {
+            assert_eq!(chunks.borrow().concat(), oneshot_contents);
+            assert_eq!(stream_version.fingerprint, oneshot_version.fingerprint);
+            assert_eq!(stream_stats, oneshot_stats);
+        }
+        other => panic!("unexpected pair: {other:?}"),
+    }
+}
+
+#[test]
 fn streaming_chunks_reassemble_to_the_original_text_across_char_boundaries() {
     // 每块 4 字节会反复切在多字节序列中间：验证边界扣留逻辑。
     let contents = "a文\nb档\nend";

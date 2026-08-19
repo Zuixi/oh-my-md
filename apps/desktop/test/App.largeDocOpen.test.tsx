@@ -50,6 +50,60 @@ async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, 
 import { act } from "@testing-library/react"
 
 describe("open tiers (Spec 05b)", () => {
+  it("opens a NORMAL file with one-shot read and no overlay", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/note.md", "hello")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/note.md",
+      sizeBytes: 5,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn()
+    harness.renderApp()
+    await harness.openFileTab("/note.md", "hello")
+    expect(harness.services.confirmLargeOpen).not.toHaveBeenCalled()
+    expect(harness.services.readDocumentStreaming).not.toHaveBeenCalled()
+    expect(harness.services.readDocument).toHaveBeenCalledWith("/note.md")
+    expect(harness.editorForTab(1).getOptions().doc).toBe("hello")
+    expect(document.querySelector(".opening-overlay")).toBeNull()
+  })
+
+  it("does not flash the overlay while a NORMAL file is still reading", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/note.md", "hello")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/note.md",
+      sizeBytes: 5,
+    }))
+    let resolveRead!: (value: Awaited<ReturnType<typeof harness.services.readDocument>>) => void
+    harness.services.readDocument = vi.fn(
+      () => new Promise<Awaited<ReturnType<typeof harness.services.readDocument>>>(resolve => {
+        resolveRead = resolve
+      }),
+    )
+    harness.renderApp()
+    vi.mocked(harness.services.pickOpenPath).mockResolvedValueOnce("/note.md")
+    fireEvent.keyDown(window, { key: "o", metaKey: true })
+    await act(async () => { await Promise.resolve() })
+    expect(document.querySelector(".opening-overlay")).toBeNull()
+    await act(async () => {
+      resolveRead({
+        kind: "existing",
+        requestedPath: "/note.md",
+        contents: "hello",
+        version: { resolvedPath: "/note.md", fingerprint: "v1:note" },
+        stats: { byteLength: 5, lineCount: 1 },
+      })
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe("hello")
+    })
+    expect(document.querySelector(".opening-overlay")).toBeNull()
+  })
+
   it("asks before a LARGE open and honors cancel without reading", async () => {
     const harness = createAppHarness(editor)
     harness.seedFile("/big.md", "big body")
@@ -80,6 +134,7 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/long.md", singleLine)
     expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
+    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBe(false)
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
   })
 
@@ -144,6 +199,24 @@ describe("open tiers (Spec 05b)", () => {
     await harness.openFileTab("/stream.md", "disk copy that must not be used")
     expect(harness.services.readDocument).not.toHaveBeenCalled()
     expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
+  })
+
+  it("falls back to a one-shot read when streaming fails", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/stream.md", "fallback body")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/stream.md",
+      sizeBytes: 20 * MB,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async () => {
+      throw { code: "readFailed", message: "channel closed" }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/stream.md", "fallback body")
+    expect(harness.services.readDocument).toHaveBeenCalledWith("/stream.md")
+    expect(harness.editorForTab(1).getOptions().doc).toBe("fallback body")
   })
 
   /** LARGE 档流式打开中途取消：流稍后才完成，late 结果必须全部作废。 */

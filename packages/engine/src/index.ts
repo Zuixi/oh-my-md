@@ -84,9 +84,12 @@ export interface EngineOptions {
   /** Spec 05b HUGE 档：不挂 markdown 语言/补全/列表键位（纯文本只读视图）。
    *  livePreviewCompartment 保留 —— setLivePreview 切换依赖它存在。 */
   plainText?: boolean
+  /** When false, construct the editor already in Source (no live decorations). */
+  defaultLivePreview?: boolean
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
+  const live = options.defaultLivePreview !== false
   return [
     ...(options.plainText ? [] : [markdownLanguageSupport(), emojiCompletion, listKeymap]),
     htmlPaste(),
@@ -94,8 +97,10 @@ export function editorExtensions(options: EngineOptions = {}) {
     markdownKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
-    livePreviewCompartment.of(livePreviewExt()),
-    isLivePreview,
+    livePreviewCompartment.of(live ? livePreviewExt() : []),
+    // Replace the default field so create() starts false; keep the same
+    // exported `isLivePreview` field for readers (setLivePreview / editorStatus).
+    isLivePreview.init(() => live),
     toggleKeymap,
     imageResolver.of(options.resolveImageSrc ?? ((s: string) => s)),
     imageBrokenLabel.of(options.imageBrokenLabel ?? defaultBroken),
