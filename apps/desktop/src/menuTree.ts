@@ -1,8 +1,12 @@
+export type ViewCheckKey = "source" | "sidebar" | "outline" | "typewriter" | "focus"
+
 export interface MenuEntry {
   /** MENU_TO_COMMAND key, or "recents" for the Open Recent submenu. */
   id: string
   macOSOnly?: boolean
   separatorAfter?: boolean
+  /** Present on toggle entries: the AppMenuViewState key rendered as a ✓. */
+  checkKey?: ViewCheckKey
 }
 
 export interface MenuSection {
@@ -11,10 +15,13 @@ export interface MenuSection {
 }
 
 /**
- * In-app menu for non-macOS platforms; mirrors src-tauri/src/menu.rs
- * (drift-tested in test/crossLayerMenu.test.ts). Entry ids are the menu item
- * ids menu.rs forwards, so the File section uses the legacy `new` id rather
- * than its `new-tab` alias (both map to the same palette command).
+ * In-app menubar for non-macOS platforms (one dropdown per top-level menu);
+ * mirrors src-tauri/src/menu.rs (drift-tested in test/crossLayerMenu.test.ts).
+ * Entry ids are the menu item ids menu.rs forwards, so the File menu uses the
+ * legacy `new` id rather than its `new-tab` alias (both map to the same
+ * palette command). App-menu/Help items (preferences, check-updates,
+ * export-diagnostics) and the edit/quit entries have no macOS counterpart in
+ * the tree because the native app menu already covers them there.
  */
 export const APP_MENU_TREE: readonly MenuSection[] = [
   {
@@ -24,6 +31,8 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
       { id: "open-file" },
       { id: "quick-open" },
       { id: "open-folder", separatorAfter: true },
+      { id: "recents" },
+      { id: "clear-recents", separatorAfter: true },
       { id: "close" },
       { id: "save" },
       { id: "save-as", separatorAfter: true },
@@ -31,13 +40,22 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
       { id: "export-html" },
       { id: "export-pdf", macOSOnly: true },
       { id: "export-image", macOSOnly: true, separatorAfter: true },
-      { id: "recents" },
-      { id: "clear-recents" },
+      { id: "preferences" },
+      { id: "quit" },
     ],
   },
   {
     labelKey: "menu.edit",
-    entries: [{ id: "find" }, { id: "search" }],
+    entries: [
+      { id: "undo" },
+      { id: "redo", separatorAfter: true },
+      { id: "cut" },
+      { id: "copy" },
+      { id: "paste" },
+      { id: "select-all", separatorAfter: true },
+      { id: "find" },
+      { id: "search" },
+    ],
   },
   {
     labelKey: "menu.format",
@@ -63,16 +81,21 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
   {
     labelKey: "menu.view",
     entries: [
-      { id: "view-source" },
-      { id: "view-sidebar" },
-      { id: "view-outline" },
-      { id: "view-typewriter" },
-      { id: "view-focus" },
+      { id: "view-source", checkKey: "source" },
+      { id: "view-sidebar", checkKey: "sidebar" },
+      { id: "view-outline", checkKey: "outline" },
+      { id: "view-typewriter", checkKey: "typewriter" },
+      { id: "view-focus", checkKey: "focus" },
       { id: "toggle-theme" },
-      { id: "load-css", separatorAfter: true },
-      { id: "preferences" },
+      { id: "load-css" },
+    ],
+  },
+  {
+    labelKey: "menu.help",
+    entries: [
       { id: "check-updates" },
-      { id: "export-diagnostics" },
+      { id: "export-diagnostics", separatorAfter: true },
+      { id: "about" },
     ],
   },
 ]

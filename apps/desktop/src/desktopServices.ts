@@ -133,6 +133,8 @@ export interface DesktopServices {
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
   setMenuLocale?: (locale: string) => Promise<void>
+  quitApp?: () => Promise<void>
+  appVersion?: () => Promise<string>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
@@ -261,6 +263,10 @@ export const defaultServices: DesktopServices = {
   setMenuLocale: async locale => {
     await invoke("set_menu_locale", { locale })
   },
+  quitApp: async () => {
+    await invoke("quit_app")
+  },
+  appVersion: () => invoke<string>("app_version"),
   allowDocumentAssets: async (path) => {
     await invoke("allow_document_assets", { documentPath: path })
   },

@@ -75,6 +75,8 @@ export function isLinux(): boolean
 - 快捷键可用性:无原生菜单后，快捷键全部走现有 webview 路径(engine keymap `Mod-*` + `App.tsx` 的 `matchesWindowShortcut` 双修饰匹配)——已天然支持 Ctrl。
 - 否决的替代方案：Tauri window menu(Win/Linux 会插入窗口内原生菜单栏，改变布局且 GTK 行为不稳)；自绘标题栏(非目标)。
 
+> **2026-08-19 修订（用户实测反馈）**：原 ☰ 单面板把四个分区堆进一个下拉，Windows 上观感是"一个巨型文件菜单装了所有东西"，与主流桌面产品（VS Code/Typora/记事本的横向菜单栏）不符。应用内菜单升级为**横向菜单栏**：TopBar 上方一行顶级菜单（文件/编辑/格式/视图/帮助），每个顶级菜单弹出独立下拉，悬停切换、方向键导航、Escape/外点关闭。同时补齐内容对齐 macOS：编辑菜单增加 撤销/重做/剪切/复制/粘贴/全选；视图勾选项显示 ✓；新增帮助菜单（检查更新/导出诊断/关于，关于版本走新增 Rust `app_version` 命令）；文件菜单尾部增加 设置…/退出（退出走新增 Rust `quit_app` 命令；`undo/redo/select-all` 用 `@codemirror/commands`，剪贴板三项 best-effort 走 `navigator.clipboard`，编辑器内 Ctrl+C/X/V 仍为主路径）。`menuTree.ts` 仍是应用内菜单单一来源；Tauri window menu 依旧否决。
+
 ### D3 导出门控
 
 - `export_preview`(`export.rs`)的 macOS 分支与错误兜底不变(后端是唯一事实)。

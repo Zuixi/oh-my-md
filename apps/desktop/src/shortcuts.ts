@@ -42,9 +42,26 @@ export const FORMAT_SHORTCUT_BINDINGS: Readonly<Record<string, string>> = {
   ...toggleShortcutBindings,
 }
 
+/**
+ * Display-only bindings for the in-app Edit menu on non-macOS platforms and
+ * the palette. The shortcuts themselves are owned by the editor's default
+ * keymap (Mod-z/y/x/c/v/a), so these must never enter `WINDOW_SHORTCUTS` —
+ * that list also drives the window keydown dispatch and would double-fire.
+ */
+export const EDIT_SHORTCUT_BINDINGS: Readonly<Record<string, string>> = {
+  undo: "Mod+z",
+  redo: "Mod+y",
+  cut: "Mod+x",
+  copy: "Mod+c",
+  paste: "Mod+v",
+  "select-all": "Mod+a",
+}
+
 export function shortcutFor(commandId: string): string | undefined {
   const windowBinding = WINDOW_SHORTCUTS.find(shortcut => shortcut.id === commandId)?.binding
   if (windowBinding !== undefined) return formatBinding(windowBinding)
+  const editBinding = EDIT_SHORTCUT_BINDINGS[commandId]
+  if (editBinding !== undefined) return formatBinding(editBinding)
   const formatBinding_ = FORMAT_SHORTCUT_BINDINGS[commandId]
   return formatBinding_ !== undefined ? formatBinding(formatBinding_) : undefined
 }

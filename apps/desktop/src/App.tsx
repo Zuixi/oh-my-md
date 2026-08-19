@@ -48,11 +48,14 @@ import {
 } from "./documentSaveState"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
+import { redo, selectAll, undo } from "@codemirror/commands"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
 import { isMacOS } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
+import { AppMenu } from "./AppMenu"
+import { AboutDialog } from "./AboutDialog"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type SnapshotEntry } from "./desktopServices"
 import {
   collectMatches,
@@ -260,6 +263,7 @@ export default function App({
   const settingsRef = useRef<UserSettings>(settings)
   const localeInitRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
   const sessionRestoredRef = useRef(false)
   const [theme, setTheme] = useState<AppTheme>("light")
@@ -1320,9 +1324,53 @@ export default function App({
   openRecentRef.current = openRecent
   refreshTreeRef.current = refreshTree
 
-  const runFormat = (command: (view: EditorView) => boolean): (() => void) => () => {
+  const runEditorCommand = (command: (view: EditorView) => boolean): (() => void) => () => {
     const view = viewRef.current
     if (view) try { command(view) } catch { /* mock views */ }
+  }
+
+  /** Menu copy/cut read the editor selection into the system clipboard; cut
+   * deletes only after the write succeeds. Best-effort — clipboard access can
+   * fail in restricted webviews, and the native Ctrl+C/X path stays primary. */
+  const runClipboardCopy = (cut: boolean): (() => void) => () => {
+    const view = viewRef.current
+    if (!view) return
+    let text = ""
+    let from = 0
+    let to = 0
+    try {
+      const selection = view.state.selection.main
+      from = selection.from
+      to = selection.to
+      text = view.state.sliceDoc(from, to)
+    } catch {
+      return // mock views
+    }
+    const write = navigator.clipboard?.writeText(text)
+    if (!write) return
+    void write.then(
+      () => {
+        if (!cut || text === "") return
+        try { view.dispatch({ changes: { from, to, insert: "" } }) } catch { /* mock views */ }
+      },
+      () => undefined,
+    )
+  }
+
+  const runClipboardPaste = (): (() => void) => () => {
+    const view = viewRef.current
+    if (!view) return
+    const read = navigator.clipboard?.readText()
+    if (!read) return
+    void read.then(
+      insert => {
+        try {
+          const selection = view.state.selection.main
+          view.dispatch({ changes: { from: selection.from, to: selection.to, insert } })
+        } catch { /* mock views */ }
+      },
+      () => undefined,
+    )
   }
 
   const insertImage = () => {
@@ -1446,22 +1494,28 @@ export default function App({
         setSourceMode(next)
       } catch { /* mock views */ }
     } },
-    { id: "bold", label: t("cmd.label.bold"), shortcut: shortcutFor("bold"), run: runFormat(toggleBold) },
-    { id: "italic", label: t("cmd.label.italic"), shortcut: shortcutFor("italic"), run: runFormat(toggleItalic) },
-    { id: "strikethrough", label: t("cmd.label.strikethrough"), shortcut: shortcutFor("strikethrough"), run: runFormat(toggleStrikethrough) },
-    { id: "inline-code", label: t("cmd.label.inline-code"), shortcut: shortcutFor("inline-code"), run: runFormat(toggleInlineCode) },
-    { id: "code-block", label: t("cmd.label.code-block"), shortcut: shortcutFor("code-block"), run: runFormat(toggleCodeBlock) },
-    { id: "heading-1", label: t("cmd.label.heading-1"), shortcut: shortcutFor("heading-1"), run: runFormat(toggleHeading(1)) },
-    { id: "heading-2", label: t("cmd.label.heading-2"), shortcut: shortcutFor("heading-2"), run: runFormat(toggleHeading(2)) },
-    { id: "heading-3", label: t("cmd.label.heading-3"), shortcut: shortcutFor("heading-3"), run: runFormat(toggleHeading(3)) },
-    { id: "heading-4", label: t("cmd.label.heading-4"), shortcut: shortcutFor("heading-4"), run: runFormat(toggleHeading(4)) },
-    { id: "heading-5", label: t("cmd.label.heading-5"), shortcut: shortcutFor("heading-5"), run: runFormat(toggleHeading(5)) },
-    { id: "heading-6", label: t("cmd.label.heading-6"), shortcut: shortcutFor("heading-6"), run: runFormat(toggleHeading(6)) },
-    { id: "ordered-list", label: t("cmd.label.ordered-list"), shortcut: shortcutFor("ordered-list"), run: runFormat(toggleOrderedList) },
-    { id: "unordered-list", label: t("cmd.label.unordered-list"), shortcut: shortcutFor("unordered-list"), run: runFormat(toggleUnorderedList) },
-    { id: "blockquote", label: t("cmd.label.blockquote"), shortcut: shortcutFor("blockquote"), run: runFormat(toggleBlockquote) },
-    { id: "link", label: t("cmd.label.link"), shortcut: shortcutFor("link"), run: runFormat(insertLink) },
+    { id: "bold", label: t("cmd.label.bold"), shortcut: shortcutFor("bold"), run: runEditorCommand(toggleBold) },
+    { id: "italic", label: t("cmd.label.italic"), shortcut: shortcutFor("italic"), run: runEditorCommand(toggleItalic) },
+    { id: "strikethrough", label: t("cmd.label.strikethrough"), shortcut: shortcutFor("strikethrough"), run: runEditorCommand(toggleStrikethrough) },
+    { id: "inline-code", label: t("cmd.label.inline-code"), shortcut: shortcutFor("inline-code"), run: runEditorCommand(toggleInlineCode) },
+    { id: "code-block", label: t("cmd.label.code-block"), shortcut: shortcutFor("code-block"), run: runEditorCommand(toggleCodeBlock) },
+    { id: "heading-1", label: t("cmd.label.heading-1"), shortcut: shortcutFor("heading-1"), run: runEditorCommand(toggleHeading(1)) },
+    { id: "heading-2", label: t("cmd.label.heading-2"), shortcut: shortcutFor("heading-2"), run: runEditorCommand(toggleHeading(2)) },
+    { id: "heading-3", label: t("cmd.label.heading-3"), shortcut: shortcutFor("heading-3"), run: runEditorCommand(toggleHeading(3)) },
+    { id: "heading-4", label: t("cmd.label.heading-4"), shortcut: shortcutFor("heading-4"), run: runEditorCommand(toggleHeading(4)) },
+    { id: "heading-5", label: t("cmd.label.heading-5"), shortcut: shortcutFor("heading-5"), run: runEditorCommand(toggleHeading(5)) },
+    { id: "heading-6", label: t("cmd.label.heading-6"), shortcut: shortcutFor("heading-6"), run: runEditorCommand(toggleHeading(6)) },
+    { id: "ordered-list", label: t("cmd.label.ordered-list"), shortcut: shortcutFor("ordered-list"), run: runEditorCommand(toggleOrderedList) },
+    { id: "unordered-list", label: t("cmd.label.unordered-list"), shortcut: shortcutFor("unordered-list"), run: runEditorCommand(toggleUnorderedList) },
+    { id: "blockquote", label: t("cmd.label.blockquote"), shortcut: shortcutFor("blockquote"), run: runEditorCommand(toggleBlockquote) },
+    { id: "link", label: t("cmd.label.link"), shortcut: shortcutFor("link"), run: runEditorCommand(insertLink) },
     { id: "insert-image", label: t("cmd.label.insert-image"), run: insertImage },
+    { id: "undo", label: t("cmd.label.undo"), shortcut: shortcutFor("undo"), run: runEditorCommand(undo) },
+    { id: "redo", label: t("cmd.label.redo"), shortcut: shortcutFor("redo"), run: runEditorCommand(redo) },
+    { id: "cut", label: t("cmd.label.cut"), shortcut: shortcutFor("cut"), run: runClipboardCopy(true) },
+    { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
+    { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
+    { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
     { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)
       setReplaceOpen(false)
@@ -1474,6 +1528,8 @@ export default function App({
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => void checkForUpdatesNow(true) },
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
+    { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
+    { id: "about", label: t("cmd.label.about"), run: () => setAboutOpen(true) },
   ]
   // Native PDF/image export is macOS-only (spec D3); on macOS the set filters
   // nothing. Filtering the single definition point covers the palette,
@@ -1728,6 +1784,21 @@ export default function App({
 
   return (
     <div className={`app theme-${theme}${focusMode ? " is-focus" : ""}`}>
+      {!isMacOS() ? (
+        <AppMenu
+          getRecents={() => recentsRef.current}
+          onCommand={id => runMenuCommand(id, commandsRef.current, {
+            openRecent: path => { void openRecentRef.current(path) },
+          })}
+          viewState={{
+            source: sourceMode,
+            sidebar: sidebarOpen,
+            outline: outlineOpen,
+            typewriter,
+            focus: focusMode,
+          }}
+        />
+      ) : null}
       <TopBar
         workspace={workspace.folder}
         filePath={activeFilePath}
@@ -1742,12 +1813,6 @@ export default function App({
         onCloseTab={requestCloseTab}
         onNewTab={newTab}
         onOpenSettings={() => setSettingsOpen(true)}
-        menu={{
-          getRecents: () => recentsRef.current,
-          onCommand: id => runMenuCommand(id, commandsRef.current, {
-            openRecent: path => { void openRecentRef.current(path) },
-          }),
-        }}
       />
       <div className="workspace-body">
         <aside
@@ -1988,6 +2053,11 @@ export default function App({
         settings={settings}
         onSave={handleSaveSettings}
         onClose={() => setSettingsOpen(false)}
+      />
+      <AboutDialog
+        isOpen={aboutOpen}
+        services={services}
+        onClose={() => setAboutOpen(false)}
       />
     </div>
   )

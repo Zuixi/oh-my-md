@@ -118,6 +118,18 @@ fn set_view_menu_state(app: tauri::AppHandle, state: menu::ViewMenuState) {
     menu::set_view_state(&app, &state);
 }
 
+// In-app menubar (non-macOS) needs an explicit quit entry and a version for
+// the About dialog; macOS gets both from the native app menu instead.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 #[tauri::command]
 fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
     use base64::Engine;
@@ -575,6 +587,8 @@ pub fn run() {
             allow_workspace_dir,
             set_recent_files,
             set_view_menu_state,
+            quit_app,
+            app_version,
             take_pending_open_files,
             diagnostics::export_diagnostics,
             menu::set_menu_locale,
