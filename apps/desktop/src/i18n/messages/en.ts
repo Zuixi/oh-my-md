@@ -53,6 +53,7 @@ export const en: Record<string, string> = {
   "cmd.label.export-html": "Export HTML",
   "cmd.label.export-pdf": "Export PDF",
   "cmd.label.export-image": "Export Image",
+  "export.remoteImageWarning": "Exporting PDF/PNG may miss remote images (network images are not embedded)",
   "cmd.label.clear-recents": "Clear Recents",
   "cmd.label.check-updates": "Check for Updates…",
   "cmd.label.export-diagnostics": "Export Diagnostics…",
