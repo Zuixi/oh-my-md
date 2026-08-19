@@ -15,6 +15,7 @@ export const SAFE_MODE_LINES = 50000
 
 export { collectOutline, type OutlineItem } from "./outline"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
+export { EXPORT_BODY_CSS } from "./export/styles"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {
   classifyLink,

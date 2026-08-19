@@ -72,4 +72,20 @@ describe("exportCurrent", () => {
       expect.stringContaining(t("error.export.warning", { detail: "" }).split(":")[0].trim()),
     )
   })
+
+  it("threads customCss into exportRichHtml options", async () => {
+    const services = makeServices()
+    await exportCurrent(services, makeView(), "html", {}, ".foo{color:red}")
+    expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ customCss: ".foo{color:red}" }),
+    )
+  })
+
+  it("passes undefined customCss when not provided", async () => {
+    const services = makeServices()
+    await exportCurrent(services, makeView(), "html")
+    const options = vi.mocked(exportRichHtml).mock.calls[0]?.[1]
+    expect(options?.customCss).toBeUndefined()
+  })
 })

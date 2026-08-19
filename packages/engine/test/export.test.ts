@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { exportHtml } from "../src/export/html"
+import { exportHtml, exportRichHtml } from "../src/export/html"
+import { EXPORT_BODY_CSS } from "../src/export/styles"
 import { makeState } from "./helpers"
 
 describe("html export", () => {
@@ -44,5 +45,31 @@ describe("html export", () => {
     expect(html).toContain("<td><ul><li>one</li></ul></td>")
     expect(html).toContain("<td><code>code</code></td>")
     expect(html).toContain("<td><blockquote>q</blockquote></td>")
+  })
+
+  it("includes base typography CSS in sync export", () => {
+    const html = exportHtml(makeState("# Hi\n\nbody\n"))
+    expect(html).toContain(`<style>${EXPORT_BODY_CSS}</style>`)
+  })
+})
+
+describe("rich html export", () => {
+  it("includes base typography CSS and preserves Shiki dark CSS", async () => {
+    const html = await exportRichHtml(makeState("# Hi\n\nbody\n"))
+    expect(html).toContain(`<style>${EXPORT_BODY_CSS}</style>`)
+    expect(html).toContain("prefers-color-scheme: dark")
+  })
+
+  it("injects customCss after the base CSS so user rules win", async () => {
+    const custom = ".foo{color:red}"
+    const html = await exportRichHtml(makeState("# Hi\n"), { customCss: custom })
+    expect(html).toContain(`<style>${EXPORT_BODY_CSS}</style>`)
+    expect(html).toContain(`<style>${custom}</style>`)
+    expect(html.indexOf(custom)).toBeGreaterThan(html.indexOf(EXPORT_BODY_CSS))
+  })
+
+  it("omits customCss style block when not provided", async () => {
+    const html = await exportRichHtml(makeState("# Hi\n"))
+    expect(html).not.toContain("<style></style>")
   })
 })
