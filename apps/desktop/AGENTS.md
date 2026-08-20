@@ -59,6 +59,7 @@ apps/desktop/
 5. Native filesystem effects must use narrow Tauri commands. Browser-side code may select paths and orchestrate calls, but must not emulate native path/file operations.
 6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
 7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
+8. User-visible feedback goes through `services.reportError` / `services.notifySuccess` (toast-backed via react-toastify; container mounts only in `main.tsx`); never call `window.alert` directly in desktop code.
 
 ## CodeMirror Host Rules
 

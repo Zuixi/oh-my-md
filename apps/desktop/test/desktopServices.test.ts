@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest"
 import { toDocumentCommandError } from "../src/desktopServices"
 
-const { invoke, revealItemInDir } = vi.hoisted(() => ({
+const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
   invoke: vi.fn(),
   revealItemInDir: vi.fn(),
+  toast: { error: vi.fn(), success: vi.fn() },
 }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
+vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
 
@@ -38,5 +40,23 @@ describe("revealInFinder", () => {
     await defaultServices.revealInFinder?.("/tmp/notes.md")
     expect(revealItemInDir).toHaveBeenCalledWith("/tmp/notes.md")
     expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("toast notifications", () => {
+  it("reports errors through toast.error with the 8s autoClose", () => {
+    defaultServices.reportError("Save failed: disk full")
+    expect(toast.error).toHaveBeenCalledWith(
+      "Save failed: disk full",
+      { autoClose: 8000 },
+    )
+  })
+
+  it("notifies success through toast.success with the 3s autoClose", () => {
+    defaultServices.notifySuccess?.("Created notes.md")
+    expect(toast.success).toHaveBeenCalledWith(
+      "Created notes.md",
+      { autoClose: 3000 },
+    )
   })
 })

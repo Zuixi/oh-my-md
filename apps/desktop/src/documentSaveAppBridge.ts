@@ -39,6 +39,7 @@ export function createDocumentSaveAppBridge(deps: {
   readonly revealFolder: (path: string) => void
   readonly rememberRecent: (path: string) => void
   readonly onSaved?: (path: string) => void
+  readonly onSavedAs?: (path: string) => void
   readonly syncDoc: (doc: string, tabId: number) => void
   readonly clearRecovery: (key: string) => void
   readonly onDurabilityWarning: () => void
@@ -72,6 +73,7 @@ export function createDocumentSaveAppBridge(deps: {
     revealFolder: deps.revealFolder,
     rememberRecent: deps.rememberRecent,
     onSaved: deps.onSaved,
+    onSavedAs: deps.onSavedAs,
     syncDoc: deps.syncDoc,
     clearRecovery: deps.clearRecovery,
     operationSeq: deps.operationSeq,
