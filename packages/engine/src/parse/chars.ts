@@ -19,6 +19,7 @@ export const CHAR_UPPER_Z = 90
 export const CHAR_OPEN_BRACKET = 91
 export const CHAR_BACKSLASH = 92
 export const CHAR_CLOSE_BRACKET = 93
+export const CHAR_TILDE = 126
 export const CHAR_CARET = 94
 export const CHAR_UNDERSCORE = 95
 export const CHAR_BACKTICK = 96

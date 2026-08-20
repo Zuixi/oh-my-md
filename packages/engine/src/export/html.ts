@@ -7,7 +7,7 @@ import { linkHref } from "../links"
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
   "UnderlineMark", "CodeMark", "CodeInfo", "LinkMark", "QuoteMark",
-  "ListMark", "TaskMarker", "TableDelimiter",
+  "ListMark", "TaskMarker", "TableDelimiter", "RiseMark",
 ])
 
 function escapeHtml(text: string): string {
@@ -125,6 +125,8 @@ function render(node: SyntaxNode, state: EditorState): string {
     case "Strikethrough": return `<del>${inline(node, state)}</del>`
     case "Highlight": return `<mark>${inline(node, state)}</mark>`
     case "Underline": return `<u>${inline(node, state)}</u>`
+    case "Subscript": return `<sub>${inline(node, state)}</sub>`
+    case "Superscript": return `<sup>${inline(node, state)}</sup>`
     case "InlineCode": return `<code>${escapeHtml(state.doc.sliceString(node.from, node.to).replace(/^`+|`+$/g, ""))}</code>`
     case "Link": {
       const href = linkHref(state, node) ?? ""
@@ -349,6 +351,8 @@ function renderRich(
     case "Strikethrough": return richChildren(node, state, opts).then(s => `<del>${s}</del>`)
     case "Highlight": return richChildren(node, state, opts).then(s => `<mark>${s}</mark>`)
     case "Underline": return richChildren(node, state, opts).then(s => `<u>${s}</u>`)
+    case "Subscript": return richChildren(node, state, opts).then(s => `<sub>${s}</sub>`)
+    case "Superscript": return richChildren(node, state, opts).then(s => `<sup>${s}</sup>`)
     case "BulletList": return richChildren(node, state, opts).then(s => `<ul>${s}</ul>`)
     case "OrderedList": return richChildren(node, state, opts).then(s => `<ol>${s}</ol>`)
     case "ListItem": return richChildren(node, state, opts).then(s => `<li>${s}</li>`)

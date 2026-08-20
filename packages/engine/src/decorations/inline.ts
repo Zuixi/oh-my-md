@@ -108,6 +108,8 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Strikethrough":  return foldPair(node, state, out, "StrikethroughMark", "omd-del")
     case "Highlight":      return foldPair(node, state, out, "HighlightMark", "omd-highlight")
     case "Underline":      return foldPair(node, state, out, "UnderlineMark", "omd-u")
+    case "Subscript":      return foldPair(node, state, out, "RiseMark", "omd-sub")
+    case "Superscript":    return foldPair(node, state, out, "RiseMark", "omd-sup")
     case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
     case "Link":
     case "Autolink":       return foldLink(node, state, out)
