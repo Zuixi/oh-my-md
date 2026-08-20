@@ -2,6 +2,7 @@ import { exportRichHtml, type ExportRichHtmlOptions } from "@omd/engine"
 import type { EditorView } from "@codemirror/view"
 import { errorMessage, type DesktopServices } from "./desktopServices"
 import { t } from "./i18n"
+import { baseName } from "./workspace"
 
 const REMOTE_IMAGE_RE = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/
 
@@ -25,7 +26,10 @@ customCss?: string,
     const html = await exportRichHtml(view.state, { ...exportOptions, customCss })
     if (kind === "html") {
       const path = await services.pickExportPath?.("html")
-      if (path) await services.writeFile(path, html)
+      if (path) {
+        await services.writeFile(path, html)
+        services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
+      }
       return
     }
     if (!services.exportPreview) {
@@ -36,6 +40,7 @@ customCss?: string,
     if (path) {
       const warning = await services.exportPreview(html, path, format)
       if (warning) services.reportError(t("error.export.warning", { detail: warning }))
+      else services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
     }
   } catch (error) {
     services.reportError(errorMessage(t("error.export.failed"), error))

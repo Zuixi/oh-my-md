@@ -91,6 +91,7 @@ describe("FileTree sidebar menu", () => {
       expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled-2.md")
       expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy()
     })
+    expect(harness.services.notifySuccess).toHaveBeenCalledWith("Created untitled-2.md")
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
     await waitFor(() => expectPathShown("/notes/untitled-2.md"))
     const added = harness.allEditors().filter(handle => !editorsBefore.has(handle))

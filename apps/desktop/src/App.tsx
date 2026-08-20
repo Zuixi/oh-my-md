@@ -484,6 +484,9 @@ export default function App({
     revealFolder,
     rememberRecent,
     onSaved: path => { void services.snapshotDocument?.(path).catch(() => undefined) },
+    onSavedAs: path => {
+      services.notifySuccess?.(t("notify.saveAsCompleted", { name: baseName(path) }))
+    },
     syncDoc,
     clearRecovery: key => { void services.clearRecovery?.(key) },
     onDurabilityWarning: () => showTransientStatus(t(DURABILITY_WARNING)),
@@ -1693,6 +1696,7 @@ export default function App({
       await refreshTreePath(dir)
       pendingFocusRef.current = true
       void openPath(createdPath, true)
+      services.notifySuccess?.(t("notify.fileCreated", { name }))
     } catch (error) {
       services.reportError(errorMessage(t("error.createFileFailed"), error))
     }
@@ -1732,6 +1736,7 @@ export default function App({
       commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
       retargetOpenTabs(entry.path, nextPath, entry.is_dir)
       await refreshTreePath(dir)
+      services.notifySuccess?.(t("notify.entryRenamed", { name }))
     } catch (error) {
       services.reportError(errorMessage(t("error.renameFailed"), error))
     }
@@ -1763,6 +1768,7 @@ export default function App({
       if (tabToClose) closeTabInternal(tabToClose.id, { confirm: false, allowReplaceLast: true })
       const dir = parentDir(entry.path)
       if (dir) await refreshTreePath(dir)
+      services.notifySuccess?.(t("notify.entryDeleted", { name: entry.name }))
     } catch (error) {
       services.reportError(errorMessage(t("error.deleteFailed"), error))
     }

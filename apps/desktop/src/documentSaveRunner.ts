@@ -64,6 +64,9 @@ export interface DocumentSaveHost {
   readonly isOpening: () => boolean
   /** Fires after a successful save; used for fire-and-forget snapshots. */
   readonly onSaved?: (path: string) => void
+  /** Fires after a successful save that used a newly picked path (Save As,
+   *  conflict choose-another-path, first save of an untitled tab); plain saves stay silent. */
+  readonly onSavedAs?: (path: string) => void
   readonly getTab: (tabId: number) => EditorSession | undefined
   readonly getView: (tabId: number) => EditorView | undefined
   readonly getContents: (tabId: number) => string
@@ -261,6 +264,7 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
           host.revealFolder(targetPath)
           host.rememberRecent(targetPath)
           host.onSaved?.(targetPath)
+          if (pickedPath) host.onSavedAs?.(targetPath)
           host.syncDoc(view.state.doc.toString(), tabId)
           host.clearRecovery(recoveryKey(saved))
           host.setSaveStates(updateTabSaveState(
