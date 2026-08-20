@@ -457,6 +457,9 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
     // 组合期间累积的变更区间仍会被消费。
     if (this.isDestroyed || this.view.composing) return
     const state = this.view.state
+    // 只读文档（HUGE 档 Live 预览）禁止程序化改写：视口附近的乱序标记原样保留，
+    // 不派发规范化事务、不产出 pending 通知。非只读行为不变。
+    if (state.readOnly) return
     const scanRanges = this.consumeScanRanges()
     // 拒绝后的抑制无解除路径：排队中的扫描计划已随上面一行一并作废，变更区间不会
     // 在后续每笔编辑的坐标映射中无限累积。

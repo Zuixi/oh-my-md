@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale, t } from "../src/i18n"
 import { shortcutFor } from "../src/shortcuts"
+import { en } from "../src/i18n/messages/en"
+import { zh } from "../src/i18n/messages/zh"
 
 describe("i18n store", () => {
   beforeEach(() => { initLocale("auto") })
@@ -75,5 +77,13 @@ describe("i18n store", () => {
     expect(t("outline.title.toggleShow", outline())).toBe("Show outline (Ctrl+Shift+O)")
 
     if (original) Object.defineProperty(window.navigator, "userAgent", original)
+  })
+})
+
+// 双语文案是同一 UI 的两份投影：键集必须一致，否则一侧静默回退英文/键名。
+// flat Record（dotted key），排序后逐键对照即可。
+describe("i18n message parity", () => {
+  it("en and zh expose the same key set", () => {
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
   })
 })
