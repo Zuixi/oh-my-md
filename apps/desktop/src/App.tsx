@@ -2136,7 +2136,11 @@ export default function App({
               onNewFolder={dir => void createTreeFolder(dir)}
               onRename={entry => void renameTreeEntry(entry)}
               onDelete={entry => void deleteTreeEntry(entry)}
-              onReveal={path => { void services.revealInFinder?.(path) }}
+              onReveal={path => {
+                void services.revealInFinder?.(path)?.catch(error => {
+                  services.reportError(errorMessage(t("error.revealFailed"), error))
+                })
+              }}
               onCollapse={() => setSidebarOpen(false)}
             />
           )}
