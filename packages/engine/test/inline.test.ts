@@ -46,6 +46,33 @@ describe("inline marks", () => {
     expect(tagsAt(doc, urlInside)).not.toContain("replace:URL")
   })
 
+  it("folds the quoted link title with its separator space when the cursor is away", () => {
+    const doc = `[text](http://x.com "title")`
+    const full = doc + "\nx"
+    let state = makeState(full)
+    // Move cursor to last character (on the 'x' line).
+    state = state.update({ selection: { anchor: full.length } }).state
+    const specs = collectDecorationSpecs(state, 0, state.doc.length)
+    const tags = specs.map(s => s.tag)
+    expect(tags.filter(x => x === "replace:LinkMark")).toHaveLength(4)  // [ ] ( )
+    expect(tags).toContain("mark:omd-link")
+    const url = specs.filter(s => s.tag === "replace:URL")
+    expect(url).toHaveLength(1)
+    const urlFrom = doc.indexOf("http://x.com")
+    expect(url[0].from).toBe(urlFrom)
+    expect(url[0].to).toBe(urlFrom + "http://x.com".length)
+    const title = specs.filter(s => s.tag === "replace:LinkTitle")
+    expect(title).toHaveLength(1)
+    const openQuote = doc.indexOf('"')
+    expect(title[0].from).toBe(openQuote - 1)  // swallow the separator space before the quote
+    expect(title[0].to).toBe(doc.lastIndexOf('"') + 1)  // through the closing quote
+  })
+
+  it("does not fold the link title when cursor is on the same line", () => {
+    const doc = `[text](http://x.com "title")`
+    expect(tagsAt(doc, doc.indexOf("title"))).not.toContain("replace:LinkTitle")
+  })
+
   it("renders angle-bracket URL and email autolinks as links", () => {
     const tags = tagsOffLine("<https://www.runoob.com> <foo@bar.com> https://example.com foo@example.com")
     expect(tags.filter(x => x === "mark:omd-link")).toHaveLength(4)
