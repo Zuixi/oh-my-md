@@ -1,8 +1,14 @@
-import { fireEvent, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import { Text } from "@codemirror/state"
-import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES, safeModeRenderingEnabled } from "@omd/engine"
+import {
+  blockRenderBudget,
+  SAFE_MODE_RENDER_BUDGET_LINES,
+  safeModeRenderingEnabled,
+  setBlockRenderBudget,
+  setSafeModeRendering,
+} from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DocumentOpenStream } from "../src/desktopServices"
 import { createAppHarness, expectPathShown, resetMountedApps, versionFor, type FakeEditorHandle } from "./appHarness"
@@ -37,7 +43,13 @@ vi.mock("../src/Editor", async importOriginal => {
   }
 })
 
-afterEach(() => resetMountedApps())
+afterEach(() => {
+  resetMountedApps()
+  // 安全模式全局是进程级的（setSafeModeRendering/setBlockRenderBudget 直接改
+  // engine 模块状态）：本文件驱动/断言它，归位防止污染后续测试。
+  setSafeModeRendering(false)
+  setBlockRenderBudget(Infinity)
+})
 
 const MB = 1024 * 1024
 
@@ -47,8 +59,6 @@ async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, 
   fireEvent.keyDown(window, { key: "o", metaKey: true })
   await act(async () => { await Promise.resolve() })
 }
-
-import { act } from "@testing-library/react"
 
 /** Task 10：流式打开必须把 chunk 组装的 Text 交给编辑器（而非整串字符串）。 */
 function streamedDocText(handle: FakeEditorHandle): Text {
@@ -431,5 +441,75 @@ describe("lazy session restore (Spec 05b)", () => {
     expect(harness.editorForTab(2).view.state.doc).toBe(doc)
     // 惰性档只有主路径整读一次；LARGE 激活必须走流式（不二次整读）。
     expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the active over-scale tab's safe mode when restore creates lazy placeholder views", async () => {
+    // I-1 回归：restore 的主 tab 复用 tabs[0] 的 id，activeId 全程不变 ——
+    // ensureViews 为惰性占位 tab 建空 view 时若应用进程级全局（空文档 →
+    // safe-mode OFF / 预算 Infinity），激活的 over-scale tab 会静默丢窗口化，
+    // 且 [activeId] effect 因 id 未变不会纠正。全局只允许跟随激活 tab 档位。
+    const big = bigDoc(50010)
+    const harness = createAppHarness(editor)
+    harness.seedFile("/big.md", big)
+    harness.seedFile("/lazy.md", "lazy body")
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/big.md", "/lazy.md"],
+      activePath: "/big.md",
+    }))
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe(big)
+    })
+    // 惰性占位 tab 的空 view 已由 ensureViews 创建（策略在其上运行过）。
+    await waitFor(() => expect(harness.allEditors()).toHaveLength(2))
+    expect(harness.editorForTab(1).getOptions().doc).toBe(big)
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
+  })
+})
+
+function bigDoc(lines: number): string {
+  return Array.from({ length: lines }, (_, i) => `line ${i}`).join("\n")
+}
+
+function openPaletteAndRun(query: string) {
+  fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
+  fireEvent.change(screen.getByPlaceholderText("Run a command…"), { target: { value: query } })
+  fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
+}
+
+describe("read-only tabs never mutate or persist (I-2)", () => {
+  function seedHugeFile(harness: ReturnType<typeof createAppHarness>) {
+    harness.seedFile("/huge.md", "huge body\n")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/huge.md",
+      sizeBytes: OPEN_READONLY_THRESHOLD_BYTES + 1,
+    }))
+    harness.services.confirmReadonlyOpen = vi.fn(() => true)
+  }
+
+  it("opens the insert-image command as a no-op on a read-only tab", async () => {
+    const harness = createAppHarness(editor)
+    seedHugeFile(harness)
+    harness.renderApp()
+    await harness.openFileTab("/huge.md", "huge body\n")
+    expect(harness.editorForTab(1).getOptions().readOnly).toBe(true)
+    openPaletteAndRun("insert image")
+    // 未经只读早退时 pickAndInsertImage 会往 body 挂 input[type=file]。
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it("never schedules autosave for a read-only tab, even when its buffer diverges", async () => {
+    // 纵深防御：readOnly facet 挡正常编辑，但若未来出现新的变异路径把只读
+    // buffer 弄脏，autosave 也不得把变化写回用户的 ≥50MiB 文件。
+    const harness = createAppHarness(editor)
+    seedHugeFile(harness)
+    harness.renderApp({ autosaveMs: 20 })
+    await harness.openFileTab("/huge.md", "huge body\n")
+    harness.editorForTab(1).emit({ doc: "mutated", docChanged: true, pendingNormalization: null })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)) })
+    expect(harness.services.saveDocument).not.toHaveBeenCalled()
   })
 })

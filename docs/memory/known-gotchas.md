@@ -380,12 +380,22 @@ guard family as `crossLayerNoFullTree.test.ts`).
 `EditorState.readOnly.of(true)` only blocks typed input in the view layer.
 Keymap commands (engine format/lists `dispatchSpec`s, `markdownKeymap`),
 `orderedRenumber` normalization dispatches, widget interactions (checkbox
-click, table toolbar/cell edit), and `domEventHandlers` (`htmlPaste` — which
-runs **before** the builtin paste handler's readOnly branch; handlers are
-first-true-wins) all dispatch transactions directly and sail past the view's
-readOnly interception. Every doc-changing dispatch site must check
-`state.readOnly` itself. Guard suite: `packages/engine/test/readonly-guards.test.ts`
-— add a case there whenever a new mutation path lands.
+click, table toolbar/cell edit), and `domEventHandlers` all dispatch
+transactions directly and sail past the view's readOnly interception. The
+`domEventHandlers` family covers more than `htmlPaste` (which runs **before**
+the builtin paste handler's readOnly branch; handlers are first-true-wins):
+the image **drop** handler in `apps/desktop/src/imagePaste.ts` likewise runs
+before the builtin drop branch, and the drop/paste/pick paths all funnel
+through `insertImageFile` — which guards `state.readOnly` itself before any
+asset read/write. Belt and braces: `pickAndInsertImage` refuses to open the
+file picker, the App insert-image command checks `readonlyTabsRef`, and App
+autosave never schedules for a readonly tab, so no mutation path can persist
+changes to the user's ≥50MiB HUGE file. Every doc-changing dispatch site must
+still check `state.readOnly` itself. Guard suite:
+`packages/engine/test/readonly-guards.test.ts` plus the desktop cases in
+`apps/desktop/test/imagePaste.test.ts` and
+`apps/desktop/test/App.largeDocOpen.test.tsx` ("read-only tabs never mutate or
+persist") — add a case there whenever a new mutation path lands.
 
 ## Editing hot path owns zero O(doc) work (Spec 05a)
 
@@ -442,6 +452,21 @@ and drains the rest in idle slices, so the old "construct with
 on a 50MB live pass" freeze recipe is obsolete; do not reintroduce mode
 forcing in `applyDocumentScalePolicy` (safe-mode budget/windowing is orthogonal
 to mode). Streaming failures must fall back to `readDocument`.
+
+**The budget/windowing globals are process-global; only the ACTIVE tab's tier
+may drive them.** `setBlockRenderBudget`/`setSafeModeRendering` mutate engine
+module state shared by every view, while the desktop app mounts one
+`EditorView` per tab. `applyDocumentScalePolicy` therefore applies the globals
+only when `tabId === workspaceRef.current.activeId` (per-tab marking always
+runs), `ensureViews` re-applies for the current `activeId` after creating
+views, and the `[workspace.activeId]` effect is the mid-session corrector.
+This ordering is load-bearing: session restore reuses `tabs[0]`'s id for the
+primary tab, so `activeId` never changes during restore and the corrector
+effect never fires — letting a restored lazy placeholder's empty-view policy
+application flip the globals silently disabled windowing on the active 50MB
+tab (unbounded decoration memory, full-tree renumber scans, budget Infinity).
+Regression: `App.largeDocOpen.test.tsx` "keeps the active over-scale tab's
+safe mode when restore creates lazy placeholder views".
 
 ## Path containment checks must normalize separators
 
