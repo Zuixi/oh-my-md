@@ -6,7 +6,7 @@ import {
 import type { EditorView } from "@codemirror/view"
 import {
   applyToggle, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
-  setBlockRenderBudget, setLivePreview, type OutlineItem,
+  setBlockRenderBudget, setLivePreview, setSafeModeRendering, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { pastePlainText } from "./pastePlainText"
@@ -610,11 +610,12 @@ export default function App({
     materializePendingDocs()
   }
 
-  /** 预算跟随激活 tab 的安全模式档位（engine 全局状态 ↔ per-tab 判定）。 */
+  /** 预算与窗口化装饰跟随激活 tab 的安全模式档位（engine 全局状态 ↔ per-tab 判定）。 */
   function applyRenderBudgetFor(tabId: number) {
-    setBlockRenderBudget(
-      safeModeTabsRef.current.has(tabId) ? SAFE_MODE_RENDER_BUDGET_LINES : Infinity,
-    )
+    const safeMode = safeModeTabsRef.current.has(tabId)
+    setBlockRenderBudget(safeMode ? SAFE_MODE_RENDER_BUDGET_LINES : Infinity)
+    // 安全模式同时启用 over-scale 窗口化装饰：只构建/保留视口附近，滚动按需重建
+    setSafeModeRendering(safeMode)
   }
 
   function handleDocumentUpdate(update: EditorDocumentUpdate) {

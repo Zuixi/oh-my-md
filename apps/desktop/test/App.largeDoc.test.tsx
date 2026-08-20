@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest"
 import { EditorState } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
-import { blockRenderBudget, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES } from "@omd/engine"
+import { blockRenderBudget, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES, safeModeRenderingEnabled } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, resetMountedApps } from "./appHarness"
 
@@ -151,5 +151,19 @@ describe("large document safe mode", () => {
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
     harness.activateTab(2)
     expect(blockRenderBudget()).toBe(Infinity)
+  })
+
+  it("enables windowed rendering alongside the render budget for safe-mode tabs", async () => {
+    // Task 3：applyRenderBudgetFor 同参联动 setSafeModeRendering —— 安全模式 tab
+    // 启用 over-scale 窗口化装饰（只构建/保留视口附近），切回普通 tab 恢复
+    // 排空到全量的语义。
+    const harness = createAppHarness(editor)
+    harness.renderApp()
+    await harness.openFileTab("/big.md", bigDoc(50010))
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
+    await harness.openFileTab("/small.md", "small")
+    expect(blockRenderBudget()).toBe(Infinity)
+    expect(safeModeRenderingEnabled()).toBe(false)
   })
 })

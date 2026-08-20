@@ -111,7 +111,9 @@ export function seedLiveDecorations(state: EditorState): LiveDeco {
   }
 }
 
-function mergeRanges(ranges: RebuildRange[]): RebuildRange[] {
+// 有序不相交化（from 升序、相邻区间 from <= prev.to + 1 合并）：种子 pending
+// 归一化、docChanged 映射、窗口裁剪归还、驱动（buildDriver）窗口区域计算共用。
+export function mergeRanges(ranges: RebuildRange[]): RebuildRange[] {
   const sorted = ranges
     .filter(range => range.from <= range.to)
     .sort((a, b) => a.from - b.from || a.to - b.to)
@@ -234,18 +236,42 @@ function rebuildRanges(tr: Transaction) {
 // 区间并入该交易的重建范围（走既有 map+filter+add 路径），并从 pending 中扣除。
 export const liveBuildChunk = StateEffect.define<{ from: number; to: number }>()
 
+// 安全模式窗口裁剪信号（Task 3）：value 为裁剪窗口（闭区间数组，可多段，tr.state
+// 坐标）。字段移除「完全落在所有窗口区域之外」的 specs/deco/atomic，其行对齐
+// 区间归还 pending，待重新滚入构建窗口时经 liveBuildChunk 重建；与任一区域相交
+// （哪怕只是部分相交）的装饰保留 —— 不拆分装饰边界。由 liveBuildDriver 在
+// safeModeRenderingEnabled() 时 dispatch；效果处理本身不查全局开关 —— effect 即
+// 显式指令，开关只约束驱动策略（也便于字段级测试直接驱动）。
+export const livePruneOutside = StateEffect.define<{ from: number; to: number }[]>()
+
+// 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
+function outsideAllRegions(from: number, to: number, regions: RebuildRange[]): boolean {
+  for (const region of regions) {
+    if (from <= region.to && to >= region.from) return false
+  }
+  return true
+}
+
 function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   // 重配置（compartment 切换 / StateEffect.reconfigure）同样只做种子构建，不再全量
   if (tr.reconfigured) return seedLiveDecorations(tr.state)
 
-  // 本交易携带的分片区间（tr.state 坐标，无需映射）。与 docChanged 同交易组合时，
-  // pending 先随变更映射、再扣除分片，二者叠加语义正确。
+  // 本交易携带的分片区间与裁剪窗口（tr.state 坐标，无需映射）。与 docChanged 同
+  // 交易组合时，pending 先随变更映射、再归还裁剪区间、最后扣除分片，叠加语义正确。
   const chunkRanges: RebuildRange[] = []
+  const pruneWindows: RebuildRange[] = []
   for (const effect of tr.effects) {
-    if (!effect.is(liveBuildChunk)) continue
-    const from = Math.max(0, effect.value.from)
-    const to = Math.min(tr.state.doc.length, effect.value.to)
-    if (from <= to) chunkRanges.push({ from, to })
+    if (effect.is(liveBuildChunk)) {
+      const from = Math.max(0, effect.value.from)
+      const to = Math.min(tr.state.doc.length, effect.value.to)
+      if (from <= to) chunkRanges.push({ from, to })
+    } else if (effect.is(livePruneOutside)) {
+      for (const region of effect.value) {
+        const from = Math.max(0, region.from)
+        const to = Math.min(tr.state.doc.length, region.to)
+        if (from <= to) pruneWindows.push({ from, to })
+      }
+    }
   }
 
   const selectionChanged = !tr.startState.selection.eq(tr.newSelection)
@@ -277,11 +303,35 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     growth = undefined
   }
 
+  // 窗口裁剪（安全模式）：映射后的 specs 中「完全落在裁剪窗口外」者移除，其行
+  // 对齐区间（line.from..line.to）归还 pending。行对齐而非装饰自身区间的理由：
+  // 相邻行的行 span 首尾相接（line N.to + 1 === line N+1.from），mergeRanges 能把
+  // 成片裁剪压回一两个大 pending 区间 —— 按装饰区间归还会把 pending 打散成数千
+  // 小段，此后每笔 docChanged 的映射都付 O(n log n) 归一化代价；行边界也让后续
+  // 分片重建的区间与原构建可对拍（collectDecorationSpecs 按行边界切片产出稳定）。
+  // 被裁装饰的行可能与窗口相交（装饰整体在外、所在行跨过窗口边缘）：整行归还
+  // pending 没有错 —— 窗口内的部分随后续分片重建，窗口外的部分仍在 pending。
+  // 先归还再扣分片：分片来自构建窗口（含可见区）、裁剪只动裁剪窗口外（驱动侧
+  // 保证裁剪窗口 ⊇ 构建窗口），二者不相交，顺序不影响结果。
+  const mappedSpecs = tr.docChanged
+    ? value.specs
+      .map(spec => mapSpec(spec, tr.changes))
+      .filter((spec): spec is DecoSpec => spec !== null)
+    : value.specs
+  const prunedSpecs = pruneWindows.length > 0
+    ? mappedSpecs.filter(spec => outsideAllRegions(spec.from, spec.to, pruneWindows))
+    : []
+  if (prunedSpecs.length > 0) {
+    pending = mergeRanges([...pending, ...prunedSpecs.map(spec => ({
+      from: tr.state.doc.lineAt(spec.from).from,
+      to: tr.state.doc.lineAt(spec.to).to,
+    }))])
+  }
   if (chunkRanges.length) pending = subtractRanges(pending, chunkRanges)
 
   const ranges = [...chunkRanges, ...rebuildRanges(tr)]
   if (growth) ranges.push(growth)
-  if (!ranges.length) {
+  if (!ranges.length && prunedSpecs.length === 0) {
     return treeLength === value.treeLength && pending === value.pending
       ? value
       : { ...value, treeLength, pending }
@@ -290,9 +340,6 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   // 先让 CodeMirror 用 ChangeDesc 精确映射未受影响的装饰，再替换语法安全脏区。
   const mappedDeco = value.deco.map(tr.changes)
   const mappedAtomic = value.atomic.map(tr.changes)
-  const mappedSpecs = value.specs
-    .map(spec => mapSpec(spec, tr.changes))
-    .filter((spec): spec is DecoSpec => spec !== null)
   const rebuilt = ranges.flatMap(range =>
     collectDecorationSpecs(tr.state, range.from, range.to))
   // 新块 widget 可能从脏区内开始、却吞并后续旧块；移除范围必须覆盖它的完整 replace 区间。
@@ -302,8 +349,13 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
       .filter(spec => spec.tag.startsWith("widget:block:"))
       .map(spec => ({ from: spec.from, to: spec.to })),
   ])
-  const retained = mappedSpecs.filter(spec =>
-    !removalRanges.some(range => intersects(spec.from, spec.to, range)))
+  // 保留谓词 = 窗口内（或与窗口相交）∧ 不在脏区移除范围：specs/deco/atomic 三处
+  // 必须共用同一口径，否则 specs 数组与 RangeSet 漂移（deco.size !== specs.length
+  // 级别的不变量破坏）。窗口裁剪为空时与 Task 2 的谓词完全一致。
+  const keep = (from: number, to: number) =>
+    (pruneWindows.length === 0 || !outsideAllRegions(from, to, pruneWindows)) &&
+    !removalRanges.some(range => intersects(from, to, range))
+  const retained = mappedSpecs.filter(spec => keep(spec.from, spec.to))
   const seen = new Set(retained.map(spec => `${spec.tag}:${spec.from}:${spec.to}`))
   const additions = rebuilt.filter(spec => {
     const key = `${spec.tag}:${spec.from}:${spec.to}`
@@ -311,8 +363,6 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     seen.add(key)
     return true
   })
-  const keep = (from: number, to: number) =>
-    !removalRanges.some(range => intersects(from, to, range))
 
   return {
     deco: mappedDeco.update({

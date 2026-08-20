@@ -77,6 +77,12 @@ export {
   setBlockRenderBudget,
   withinRenderBudget,
 } from "./decorations/renderBudget"
+export {
+  LIVE_PRUNE_MARGIN_CHARS,
+  LIVE_WINDOW_CHARS,
+  safeModeRenderingEnabled,
+  setSafeModeRendering,
+} from "./safeModeRendering"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
