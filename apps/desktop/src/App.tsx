@@ -274,6 +274,13 @@ export default function App({
   const docRef = useRef("")
   const docsRef = useRef(new Map<number, string>([[session.id, ""]]))
   const openRequestRef = useRef(0)
+  // 已删除路径的作废登记：仅在「删除时该路径存在在途打开」才登记，openPath 在
+  // 让出事件循环的 await 之后自检并放弃（新建→立刻删除的竞态）。命中即移除，
+  // 无条件登记会让同名重建文件的首个打开被静默吞掉。
+  const invalidatedOpenPathsRef = useRef(new Set<string>())
+  // 在途打开的路径集合（openPath 进入 try 时登记、finally 移除），供删除侧判断
+  // 是否需要作废登记。
+  const openInFlightRef = useRef(new Set<string>())
   const tabSaveQueuesRef = useRef<TabSaveQueues>(new Map())
   const operationSeqRef = useRef(0)
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
@@ -1162,6 +1169,7 @@ export default function App({
     const showOverlay = tier !== "normal"
     if (showOverlay) setOpeningLabel(baseName(nextPath))
     try {
+      openInFlightRef.current.add(nextPath)
       let snapshot
       try {
         snapshot = await readSnapshotForOpen(nextPath, tier)
@@ -1182,6 +1190,8 @@ export default function App({
       }
       if (token !== openRequestRef.current) return
       if (snapshot.kind === "missing") {
+        // 竞态里文件是被用户刚删掉的：静默放弃，不弹「文件不存在」。
+        if (invalidatedOpenPathsRef.current.delete(nextPath)) return
         if (mountedRef.current) {
           services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
         }
@@ -1190,6 +1200,9 @@ export default function App({
       const { contents } = snapshot
       const byteLength = snapshot.stats?.byteLength
       await services.allowDocumentAssets(nextPath)
+      // allowDocumentAssets 是提交前最后一个真实 await：删除可能恰在其间完成并
+      // 登记，此处自检覆盖两条提交路径（新 tab 与替换当前 tab）。
+      if (invalidatedOpenPathsRef.current.delete(nextPath)) return
       revealFolder(nextPath)
       void expandToPath(nextPath)
       rememberRecent(nextPath)
@@ -1212,6 +1225,7 @@ export default function App({
       if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
       void services.clearRecovery?.(recoveryKey(sessionRef.current))
     } finally {
+      openInFlightRef.current.delete(nextPath)
       if (token === openRequestRef.current && showOverlay) {
         setOpeningLabel(null)
         setOpeningProgress(null)
@@ -1740,8 +1754,13 @@ export default function App({
     if (!confirmDelete(entry.path)) return
     try {
       await services.deletePath(entry.path)
+      // 删除的 await 期间在途 openPath 可能把该文件的 tab 加进来：仅在有在途打开
+      // 时登记作废（无条件登记会吞掉同名重建文件的首个打开），并在删除完成后重新
+      // 查找要关的 tab（confirm 前的快照 openTab 已过期，只保留给脏检查用）。
+      if (openInFlightRef.current.has(entry.path)) invalidatedOpenPathsRef.current.add(entry.path)
       commitTree(removeTreePath(treeModelRef.current, entry.path))
-      if (openTab) closeTabInternal(openTab.id, { confirm: false, allowReplaceLast: true })
+      const tabToClose = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
+      if (tabToClose) closeTabInternal(tabToClose.id, { confirm: false, allowReplaceLast: true })
       const dir = parentDir(entry.path)
       if (dir) await refreshTreePath(dir)
     } catch (error) {
