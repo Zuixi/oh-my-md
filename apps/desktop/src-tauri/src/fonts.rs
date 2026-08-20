@@ -103,10 +103,11 @@ fn preferred_family_name(names: &IDWriteLocalizedStrings) -> Option<String> {
 #[cfg(windows)]
 fn read_localized(names: &IDWriteLocalizedStrings, index: u32) -> Option<String> {
     let length = unsafe { names.GetStringLength(index) }.ok()? as usize;
-    let mut buffer = vec![0u16; length];
-    // SAFETY: `buffer` holds exactly the reported string length.
+    let mut buffer = vec![0u16; length + 1];
+    // SAFETY: `buffer` spans the reported string length plus one element
+    // for the NUL terminator `GetString` writes; `..length` is the name.
     unsafe { names.GetString(index, &mut buffer) }.ok()?;
-    Some(String::from_utf16_lossy(&buffer))
+    Some(String::from_utf16_lossy(&buffer[..length]))
 }
 
 // Best-effort: without fontconfig's fc-list installed there is nothing to

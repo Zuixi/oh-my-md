@@ -194,7 +194,9 @@ export function FontFamilyPicker(props: FontFamilyPickerProps) {
               </Fragment>
             ))}
           </div>
-          <p className="font-picker-note" role="status">{note}</p>
+          {note ? (
+            <p className="font-picker-note" role="status">{note}</p>
+          ) : null}
         </div>
       ) : null}
     </div>
