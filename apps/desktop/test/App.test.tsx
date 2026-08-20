@@ -1003,17 +1003,17 @@ describe("App product shell", () => {
   it("shows outline preview popover on hover when outline sidebar is collapsed", async () => {
     const harness = makeAppHarness()
     harness.renderApp()
-    const strip = document.querySelector(".outline-toggle-strip")
-    expect(strip).toBeTruthy()
+    const btn = document.querySelector(".outline-toggle-btn")
+    expect(btn).toBeTruthy()
 
     expect(screen.queryByRole("dialog", { name: "Outline preview" })).toBeNull()
 
-    fireEvent.mouseEnter(strip!)
+    fireEvent.mouseEnter(btn!)
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Outline preview" })).toBeTruthy()
     })
 
-    fireEvent.mouseLeave(strip!)
+    fireEvent.mouseLeave(btn!)
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Outline preview" })).toBeNull()
     })
