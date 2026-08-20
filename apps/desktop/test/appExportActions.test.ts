@@ -23,8 +23,8 @@ function makeServices(overrides: Partial<DesktopServices> = {}): DesktopServices
   } as unknown as DesktopServices
 }
 
-function makeView(): EditorView {
-  return { state: {} } as unknown as EditorView
+function makeView(doc = ""): EditorView {
+  return { state: { doc: { toString: () => doc } } } as unknown as EditorView
 }
 
 describe("exportCurrent", () => {
@@ -73,7 +73,7 @@ describe("exportCurrent", () => {
     )
   })
 
-  it("threads customCss into exportRichHtml options", async () => {
+it("threads customCss into exportRichHtml options", async () => {
     const services = makeServices()
     await exportCurrent(services, makeView(), "html", {}, ".foo{color:red}")
     expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
@@ -87,5 +87,41 @@ describe("exportCurrent", () => {
     await exportCurrent(services, makeView(), "html")
     const options = vi.mocked(exportRichHtml).mock.calls[0]?.[1]
     expect(options?.customCss).toBeUndefined()
+  })
+
+  it("notices a remote-image warning when exporting PDF with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](https://example.com/x.png)"), "pdf", {}, undefined, onNotice)
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
+  })
+
+  it("does not notice for PDF when only local images are present", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](assets/x.png)"), "pdf", {}, undefined, onNotice)
+    expect(onNotice).not.toHaveBeenCalled()
+  })
+
+  it("notices a remote-image warning when exporting PNG with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("text ![](http://example.com/y.png) end"), "png", {}, undefined, onNotice)
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
+  })
+
+  it("does not notice for HTML export even with a remote image", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.html"),
+    })
+    const onNotice = vi.fn()
+    await exportCurrent(services, makeView("![](https://example.com/x.png)"), "html", {}, undefined, onNotice)
+    expect(onNotice).not.toHaveBeenCalled()
   })
 })

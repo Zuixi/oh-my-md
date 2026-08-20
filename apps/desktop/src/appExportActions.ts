@@ -3,15 +3,25 @@ import type { EditorView } from "@codemirror/view"
 import { errorMessage, type DesktopServices } from "./desktopServices"
 import { t } from "./i18n"
 
+const REMOTE_IMAGE_RE = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/
+
+export function hasRemoteImages(doc: string): boolean {
+  return REMOTE_IMAGE_RE.test(doc)
+}
+
 export async function exportCurrent(
   services: DesktopServices,
   view: EditorView | null,
   kind: "html" | "pdf" | "png",
   exportOptions: ExportRichHtmlOptions = {},
-  customCss?: string,
+customCss?: string,
+  onNotice?: (message: string) => void,
 ): Promise<void> {
   if (!view) return
   try {
+    if ((kind === "pdf" || kind === "png") && hasRemoteImages(view.state.doc.toString())) {
+      onNotice?.(t("export.remoteImageWarning"))
+    }
     const html = await exportRichHtml(view.state, { ...exportOptions, customCss })
     if (kind === "html") {
       const path = await services.pickExportPath?.("html")
