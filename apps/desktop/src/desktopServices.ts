@@ -271,6 +271,7 @@ export const defaultServices: DesktopServices = {
     await invoke("write_file", { path, contents })
   },
   revealInFinder: async path => {
+    // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).
     const { revealItemInDir } = await import("@tauri-apps/plugin-opener")
     await revealItemInDir(path)
   },
