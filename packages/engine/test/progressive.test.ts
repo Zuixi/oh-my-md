@@ -203,10 +203,6 @@ describe("progressive live decoration build", () => {
     expect(pending).toHaveLength(1)
     expect(pending[0].from).toBe(head.from)
     expect(pending[0].to).toBeGreaterThan(head.to)
-    for (let i = 1; i < pending.length; i++) {
-      expect(pending[i - 1].from).toBeLessThanOrEqual(pending[i - 1].to)
-      expect(pending[i - 1].to).toBeLessThan(pending[i].from)
-    }
     cleanup()
   })
 
