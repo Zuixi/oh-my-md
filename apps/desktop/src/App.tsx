@@ -728,6 +728,10 @@ export default function App({
    * 所有新建 view 的路径（resetTabDocument、ensureViews 的新标签/会话恢复/初始挂载）
    * 必须经由此入口，否则文件树、搜索面板等入口打开的大文档会绕过安全模式。
    * 行数取 view.state.doc.lines（免费），绝不对全文 split。
+   *
+   * 预算/窗口化是 engine 进程级全局，而 App 每 tab 各挂一个 view：只有激活
+   * tab 的档位才允许改写全局（本函数只做 per-tab 标记 + 激活 tab 的全局应用），
+   * 否则会话恢复为惰性占位 tab 建空 view 时会把激活 50MB tab 的窗口化翻掉。
    */
   function applyDocumentScalePolicy(view: EditorView, tabId: number) {
     const lines = view.state.doc.lines
@@ -742,7 +746,10 @@ export default function App({
     } else {
       safeModeTabsRef.current.delete(tabId)
     }
-    applyRenderBudgetFor(tabId)
+    // 全局只跟随激活 tab：restore 主 tab 复用 tabs[0] 的 id，activeId 全程不变，
+    // 惰性空 view 在此应用全局后 [activeId] effect 不会纠正 —— 激活的 over-scale
+    // tab 会丢窗口化/预算（I-1）。非激活 tab 只标记，切换由 effect 重应用。
+    if (tabId === workspaceRef.current.activeId) applyRenderBudgetFor(tabId)
     setLargeDocNotice(
       readonly
         ? { sessionId: tabId, lines, safeMode: true, readonly: true }
@@ -847,6 +854,10 @@ export default function App({
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
       applyDocumentScalePolicy(view, tab.id)
     }
+    // 不变量（I-1）：ensureViews 结束时进程级预算/窗口化必须与激活 tab 的档位
+    // 一致。循环可能只为非激活 tab 建 view（如会话恢复的惰性占位），策略在非
+    // 激活 tab 上不碰全局 —— 此处按激活 tab 幂等重应用，钉死最终状态。
+    applyRenderBudgetFor(workspaceRef.current.activeId)
     jumpPending()
     focusPendingEditor()
   }
@@ -975,7 +986,10 @@ export default function App({
   const activePendingId = normalizationByTab[session.id]?.notice.id ?? null
 
   useEffect(() => {
-    if (!autosaveMs || !activeFilePath || !dirty) return
+    // 只读档永不写回（纵深防御）：即便未来出现新的变异路径把 buffer 弄脏，
+    // autosave 也不得把变化持久化到用户的 ≥50MiB HUGE 文件。
+    if (!autosaveMs || !activeFilePath || !dirty
+      || readonlyTabsRef.current.has(session.id)) return
     const saveState = tabSaveState(saveStateRef.current, session.id)
     if (!canAutosave({
       tabId: session.id,
@@ -1512,6 +1526,10 @@ export default function App({
       }
       await services.allowDocumentAssets(path)
       if (token !== openRequestRef.current) return
+      // await 期间 tab 可能已被关闭（关闭不打断 openRequest 令牌）：装载作废，
+      // 不给已死 id 落 docBytes/readonly 档位或在 refs 里暂存整份内容 ——
+      // 大档 docText 会常驻到进程结束（M-1 泄漏）。
+      if (!workspaceRef.current.tabs.some(item => item.id === lazy.id)) return
       revealFolder(path)
       rememberRecent(path)
       const updated = openSession(lazy, snapshot)
@@ -1789,6 +1807,8 @@ export default function App({
     const view = viewRef.current
     const active = sessionRef.current
     if (!view) return
+    // 只读档（HUGE）不可变：不弹文件选择器（imagePaste 侧 state.readOnly 兜底再拦）。
+    if (readonlyTabsRef.current.has(active.id)) return
     void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
   }
 

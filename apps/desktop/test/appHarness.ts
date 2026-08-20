@@ -164,7 +164,12 @@ function createHandleRecord(
       return value ? value.split("\n").length : 1
     },
   })
-  const state = { doc: toStateDoc(initial.doc) }
+  const state = {
+    doc: toStateDoc(initial.doc),
+    // CM state 恒有 selection；缺了它，走 selection 的路径（如 pickAndInsertImage）
+    // 只能以 TypeError 暴露，测试失败不可归因。
+    selection: { main: { from: 0, to: 0 } },
+  }
   const swapDoc = (value: string | Text) => { state.doc = toStateDoc(value) }
   pendingByState.set(state, () => pending)
   const view = {
