@@ -106,7 +106,26 @@ paste fires
 
 The `skipAtomsForSelection` call expands the WebKit selection outward to the nearest atomic-range boundary, which can push `selection.to` past one or more newlines on empty lines.
 
-**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through to CM's default handler unchanged.
+**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through to CM's default handler unchanged. An `updateListener` drops the saved target as soon as the selection moves off it — without that, right-click (without pasting) followed by moving the caret and pressing `Ctrl/Cmd-V` pastes at the stale right-click position.
+
+## Dispatching changes without a selection leaves the caret before the insert
+
+CodeMirror maps the old selection through a transaction's changes when the spec carries no `selection`: `Transaction.newSelection` falls back to `startState.selection.map(changes)`, which uses `assoc = -1` for empty ranges. A caret sitting exactly at an insertion boundary therefore stays **before** the inserted text instead of moving to its end.
+
+Every custom insert path that bypasses CM's default commands must set the caret explicitly:
+
+```ts
+view.dispatch({
+  changes: { from, to, insert },
+  selection: { anchor: from + insert.length },  // matches CM doPaste / replaceSelection
+  userEvent: "input.paste",
+  scrollIntoView: true,
+})
+```
+
+Do not "simplify" this to `view.state.replaceSelection(insert)` on async paths (rich-paste conversion, clipboard reads, image writes): `replaceSelection` re-reads the selection at dispatch time, racing the user moving the caret during the `await`. The captured `from`/`to` plus an explicit anchor is the correct shape. Verified 2026-08-20 across `htmlPaste.ts`, `pastePlainText.ts`, `imagePaste.ts` (text and image inserts), and the App menu-paste command; view-level caret assertions live in `packages/engine/test/htmlPaste.test.ts` and `apps/desktop/test/imagePaste.test.ts`.
+
+Related trap: `ViewUpdate` exposes `selectionSet`, not `selectionChanged` — the latter is `undefined` at runtime and vitest does not type-check, so the mistake only surfaces as a silently inert listener.
 
 ## Tests may need to force the syntax tree
 

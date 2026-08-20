@@ -93,6 +93,8 @@ describe("image paste pipeline", () => {
         to: 4,
         insert: "![](assets/pasted-uuid.png)",
       },
+      selection: { anchor: 29 },
+      scrollIntoView: true,
     })
     expect(order).toEqual(["write", "dispatch"])
   })
@@ -159,6 +161,8 @@ describe("image paste pipeline", () => {
           to: 9,
           insert: "![](assets/pasted-uuid.png)",
         },
+        selection: { anchor: 36 },
+        scrollIntoView: true,
       })
     })
   })
@@ -262,6 +266,8 @@ describe("image paste pipeline", () => {
         to: 4,
         insert: "![](assets/pasted-uuid.png)",
       },
+      selection: { anchor: 29 },
+      scrollIntoView: true,
     })
   })
 
@@ -399,6 +405,8 @@ describe("image paste pipeline", () => {
         to: 4,
         insert: "![](assets/pasted-uuid.png)",
       },
+      selection: { anchor: 29 },
+      scrollIntoView: true,
     })
   })
 
@@ -599,6 +607,81 @@ describe("imagePasteHandler contextmenu selection", () => {
 
     expect(view.state.selection.main.from).toBe(2)
     expect(view.state.selection.main.to).toBe(8)
+    view.destroy()
+    parent.remove()
+  })
+})
+
+describe("imagePasteHandler context-menu text paste", () => {
+  function makePasteView(doc: string, selection: { anchor: number; head?: number }) {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        selection,
+        extensions: [imagePasteHandler(makeOptions())],
+      }),
+      parent,
+    })
+    return { view, parent }
+  }
+
+  function rightClick(view: EditorView, at: number) {
+    vi.spyOn(view, "posAtCoords").mockReturnValue(at)
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
+    )
+  }
+
+  function fireTextPaste(view: EditorView, text: string) {
+    const event = new Event("paste", { cancelable: true, bubbles: true })
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+        items: [],
+      },
+    })
+    view.contentDOM.dispatchEvent(event)
+  }
+
+  it("moves the caret to the end of text pasted at the context-menu target", () => {
+    const { view, parent } = makePasteView("hello world", { anchor: 0 })
+
+    rightClick(view, 6)
+    fireTextPaste(view, "XY")
+
+    expect(view.state.doc.toString()).toBe("hello XYworld")
+    expect(view.state.selection.main.head).toBe(8)
+    expect(view.state.selection.main.empty).toBe(true)
+    view.destroy()
+    parent.remove()
+  })
+
+  it("moves the caret to the end when replacing the context-menu selection", () => {
+    const { view, parent } = makePasteView("hello world", { anchor: 2, head: 8 })
+
+    rightClick(view, 5)
+    fireTextPaste(view, "XY")
+
+    expect(view.state.doc.toString()).toBe("heXYrld")
+    expect(view.state.selection.main.head).toBe(4)
+    view.destroy()
+    parent.remove()
+  })
+
+  it("drops the saved target once the selection moves elsewhere", () => {
+    const { view, parent } = makePasteView("hello world", { anchor: 0 })
+
+    rightClick(view, 6)
+    // User moves the caret (click/keyboard) after the right click, then
+    // pastes with the keyboard: the insert must land at the current caret,
+    // not at the stale right-click position.
+    view.dispatch({ selection: { anchor: 3 } })
+    fireTextPaste(view, "XY")
+
+    expect(view.state.doc.toString()).toBe("helXYlo world")
+    expect(view.state.selection.main.head).toBe(5)
     view.destroy()
     parent.remove()
   })

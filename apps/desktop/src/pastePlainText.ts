@@ -13,6 +13,9 @@ export async function pastePlainText(view: EditorView): Promise<void> {
   const selection = view.state.selection.main
   view.dispatch({
     changes: { from: selection.from, to: selection.to, insert: text },
+    // Set the caret explicitly: without a selection CM maps the old cursor
+    // with assoc -1 and it stays before the pasted text instead of after it.
+    selection: { anchor: selection.from + text.length },
     userEvent: "input.paste",
     scrollIntoView: true,
   })

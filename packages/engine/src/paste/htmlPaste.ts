@@ -94,6 +94,11 @@ export function htmlPaste(): Extension {
         if (!insert) return
         view.dispatch({
           changes: { from: selection.from, to: selection.to, insert },
+          // An explicit selection is required: without one, CM maps the old
+          // cursor through the change with assoc -1 and it stays before the
+          // inserted text instead of at its end (the default doPaste puts the
+          // caret after the pasted content).
+          selection: { anchor: selection.from + insert.length },
           userEvent: "input.paste",
           scrollIntoView: true,
         })
