@@ -79,6 +79,7 @@ pub struct MenuLabels {
     pub cut: &'static str,
     pub copy: &'static str,
     pub paste: &'static str,
+    pub paste_plain_text: &'static str,
     pub select_all: &'static str,
     pub about: &'static str,
     pub check_updates: &'static str,
@@ -150,6 +151,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             cut: "剪切",
             copy: "拷贝",
             paste: "粘贴",
+            paste_plain_text: "粘贴为纯文本",
             select_all: "全选",
             about: "关于 oh-my-md",
             check_updates: "检查更新…",
@@ -218,6 +220,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             cut: "Cut",
             copy: "Copy",
             paste: "Paste",
+            paste_plain_text: "Paste as Plain Text",
             select_all: "Select All",
             about: "About oh-my-md",
             check_updates: "Check for Updates…",
@@ -503,6 +506,7 @@ fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Re
         .cut_with_text(l.cut)
         .copy_with_text(l.copy)
         .paste_with_text(l.paste)
+        .item(&item(app, "paste-plain-text", l.paste_plain_text, None)?)
         .select_all_with_text(l.select_all)
         .separator()
         .item(&find_submenu(app, l)?)

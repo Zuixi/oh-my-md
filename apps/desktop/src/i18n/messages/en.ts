@@ -63,6 +63,7 @@ export const en: Record<string, string> = {
   "cmd.label.cut": "Cut",
   "cmd.label.copy": "Copy",
   "cmd.label.paste": "Paste",
+  "cmd.label.pastePlainText": "Paste as Plain Text",
   "cmd.label.select-all": "Select All",
   "cmd.label.quit": "Quit",
   "cmd.label.about": "About oh-my-md",
