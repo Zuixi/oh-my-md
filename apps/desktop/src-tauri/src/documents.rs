@@ -382,7 +382,8 @@ fn stat_cache_key(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
         .ok()?
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
-        // 早于 UNIX_EPOCH 的怪异时间戳按 0 处理，宁可多读不错配。
+        // 早于 UNIX_EPOCH 的怪异时间戳按 0 处理：两个不同的 pre-epoch mtime
+        // 会塌缩成同一键，size 再相等时将误命中缓存（拿到旧版本）而非多读。
         .unwrap_or(0);
     Some((mtime_ns, metadata.len()))
 }

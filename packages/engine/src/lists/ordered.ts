@@ -346,8 +346,9 @@ export function rejectOrderedListNormalization(
 
 // 扫描区间归并（与 decorations/build.ts 的 mergeRanges 同语义：升序、重叠或相邻段
 // 合一）。list 模块不便反向依赖 decorations —— blocks.ts 已依赖本模块的
-// orderedLabel，会构成环 —— 故内联同款实现；外扩后相邻段合一，也保证同一列表
-// 不会被两段区间重复扫描而产出重复变更。
+// orderedLabel，会构成环 —— 故内联同款实现。归并消除相邻/重叠段的重复扫描；
+// 横跨两个归并后仍不相邻区间间隙的同一列表仍可能被各进入一次，产出的
+// 重复变更由 dedupeMarkChanges 按 marker 起点去重兜底。
 function mergeRenumberRanges(ranges: OrderedRenumberRange[]): OrderedRenumberRange[] {
   const sorted = ranges
     .filter(range => range.from <= range.to)
@@ -361,8 +362,9 @@ function mergeRenumberRanges(ranges: OrderedRenumberRange[]): OrderedRenumberRan
   return merged
 }
 
-// 可见段锚点（CM 半开 [from, to) 的端点原样作为位置参与相交判定；空列表退化为
-// 光标点，与 buildDriver.visibleRegions 的兜底同款 —— 类型契约不承诺非空）。
+// 可见段锚点：CM 半开 [from, to) 的端点原样作为位置参与相交判定（保持半开口径，
+// 与 buildDriver.visibleRegions 转闭区间 [from, to-1] 的口径不同；空列表同样退化
+// 为光标点兜底 —— 类型契约不承诺非空）。
 function visibleScanAnchors(view: EditorView): OrderedRenumberRange[] {
   const ranges = view.visibleRanges
   if (ranges.length > 0) return ranges.map(range => ({ from: range.from, to: range.to }))

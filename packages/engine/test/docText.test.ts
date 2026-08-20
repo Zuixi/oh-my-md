@@ -135,11 +135,16 @@ describe("buildTextFromChunks parity with Text.of(string.split)", () => {
 
   it("keeps parity against EditorState.create's own doc materialization", async () => {
     // 直接引用 @codemirror/state（而非本地复刻正则）做端到端对照：
-    // Text 构造的 state 与字符串构造的 state 必须产出同一个 doc。
+    // Text 构造的 state 与字符串构造的 state 必须产出同一个 doc。逐
+    // PATHOLOGICAL 样例对照 —— 本地切行正则一旦偏离 CM 的 DefaultSplit，
+    // 这里最先炸（单个样例串覆盖不了所有行尾组合）。
     const { EditorState } = await import("@codemirror/state")
-    const s = "a\r\nb\rc\nd\r\n"
-    const fromText = EditorState.create({ doc: buildTextFromChunks(["a\r", "\nb\rc\nd\r", "\n"]) })
-    const fromString = EditorState.create({ doc: s })
-    expect(fromText.doc.eq(fromString.doc)).toBe(true)
+    for (const s of PATHOLOGICAL) {
+      const fromString = EditorState.create({ doc: s })
+      for (const chunks of [[s], chunkedBy(s, 1), chunkedBy(s, 3)]) {
+        const fromText = EditorState.create({ doc: buildTextFromChunks(chunks) })
+        expect(fromText.doc.eq(fromString.doc)).toBe(true)
+      }
+    }
   })
 })
