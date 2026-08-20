@@ -1,5 +1,18 @@
+import { type StateEffect } from "@codemirror/state"
 import { type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view"
-import { LIVE_BUILD_CHUNK_CHARS, liveBuildChunk, livePreviewField } from "./build"
+import {
+  LIVE_BUILD_CHUNK_CHARS,
+  type LiveDeco,
+  liveBuildChunk,
+  livePreviewField,
+  livePruneOutside,
+  mergeRanges,
+} from "./build"
+import {
+  LIVE_PRUNE_MARGIN_CHARS,
+  LIVE_WINDOW_CHARS,
+  safeModeRenderingEnabled,
+} from "../safeModeRendering"
 
 // 分片驱动（Task 2）：livePreviewField 只同步构建光标附近的种子区间，其余记入
 // LiveDeco.pending。本插件在微任务/idle 回调里逐片 dispatch liveBuildChunk 消耗
@@ -9,6 +22,12 @@ import { LIVE_BUILD_CHUNK_CHARS, liveBuildChunk, livePreviewField } from "./buil
 //   2. 空闲分片循环：requestIdleCallback（无则 setTimeout，happy-dom 兼容）每回调
 //      挑「距视口最近的 pending 区间」、从靠视口一端切 ≤LIVE_BUILD_CHUNK_CHARS 一片，
 //      按墙钟预算 LIVE_BUILD_SLICE_MS 连续构建若干片后重新调度让出主线程。
+//   3. 安全模式窗口化（Task 3，safeModeRenderingEnabled() 开启）：不再排空到全量
+//      —— idle 循环只构建「构建窗口」（视口 ± LIVE_WINDOW_CHARS）内的 pending，
+//      窗口外的留在 pending 待滚动进入；每次视口/文档/选区变化后的首帧通道同时
+//      dispatch livePruneOutside：完全落在「裁剪窗口」（构建窗口再叠
+//      LIVE_PRUNE_MARGIN_CHARS 迟滞裕量）外的已建装饰归还 pending，滚回时重建。
+//      装饰内存与每笔编辑的映射成本都以窗口为界。开关关闭时行为与 Task 2 完全一致。
 // 禁止在 ViewPlugin.update 内直接 dispatch（CodeMirror 限制）——所有 dispatch 都经
 // 微任务/idle 回调。视口变化无需取消在途回调：每片都用最新 view.visibleRanges 重选。
 
@@ -53,6 +72,42 @@ function visibleRegions(view: EditorView): ClosedRange[] {
   }
   const head = view.state.selection.main.head
   return [{ from: head, to: head }]
+}
+
+// 窗口区域：各可见段两侧各扩 margin 字符（闭区间，钳制到 [0, doc.length]），
+// 经 mergeRanges 归并相邻/重叠段（两个可见段间距 < 2×margin 时会重叠）。安全
+// 模式的构建窗口（LIVE_WINDOW_CHARS）与裁剪窗口（再叠 LIVE_PRUNE_MARGIN_CHARS
+// 迟滞裕量）共用此形状。
+function expandedRegions(view: EditorView, margin: number): ClosedRange[] {
+  const length = view.state.doc.length
+  return mergeRanges(visibleRegions(view).map(region => ({
+    from: Math.max(0, region.from - margin),
+    to: Math.min(length, region.to + margin),
+  })))
+}
+
+// pending 与窗口区域的交集（闭区间裁剪）：安全模式下驱动只构建窗口内的 pending
+// 部分，窗口外的留在 pending 待滚动进入（稳态，不构成调度理由）。
+function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): ClosedRange[] {
+  const clipped: ClosedRange[] = []
+  for (const range of pending) {
+    for (const region of window) {
+      const from = Math.max(range.from, region.from)
+      const to = Math.min(range.to, region.to)
+      if (from <= to) clipped.push({ from, to })
+    }
+  }
+  return clipped
+}
+
+// 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
+// 裁剪门槛用：specs 按 from 有序，但多段窗口存在间隙，O(1) 首尾包络检查会漏掉
+// 间隙内的装饰，这里按装饰逐个精确判定（安全模式下 specs 以窗口为界，代价有界）。
+function outsideAllRegions(from: number, to: number, regions: ClosedRange[]): boolean {
+  for (const region of regions) {
+    if (from <= region.to && to >= region.from) return false
+  }
+  return true
 }
 
 // 点到闭区间集的最小距离（点在区间内为 0，否则为到最近端点的间隔）。
@@ -119,14 +174,26 @@ class LiveBuildDriver {
   private microtaskScheduled = false
   private idleScheduled = false
   private cancelIdle: (() => void) | null = null
+  // 安全模式：需要重查窗口（构建窗口内 pending + 裁剪窗口外装饰）。视口/文档/
+  // 选区变化置位；初始 true —— 挂载后首个微任务先做一次窗口检查。生产中滚动由
+  // viewportChanged 驱动；无布局测试宿主用「stub visibleRanges + 触发一笔交易」
+  // 模拟（selectionSet 同样置位：光标也是窗口锚点，代价是一次自门槛的微任务）。
+  private windowDirty = true
 
   constructor(private readonly view: EditorView) {
     this.arm()
   }
 
-  // 对任意 update 重新检查（docChanged/viewportChanged/reconfigure 都可能改变
-  // pending 或视口）；arm 自带「已在调度中/已停止/pending 为空」短路，代价 O(1)。
-  update(_update: ViewUpdate) {
+  // 对任意 update 重新检查（docChanged/viewportChanged/selectionSet/reconfigure 都
+  // 可能改变 pending、视口或窗口）；arm 自带「已在调度中/已停止/无活」短路，代价
+  // O(pending×窗口段数)，安全模式下 pending 区间数有界（mergeRanges 归并）。
+  update(update: ViewUpdate) {
+    if (
+      safeModeRenderingEnabled() &&
+      (update.viewportChanged || update.docChanged || update.selectionSet)
+    ) {
+      this.windowDirty = true
+    }
     this.arm()
   }
 
@@ -137,22 +204,42 @@ class LiveBuildDriver {
     this.cancelIdle = null
   }
 
-  // pending 非空且无在途调度时入队微任务。idle 循环在排空期间保持
-  // idleScheduled = true，期间的 update 不会重复触发首帧通道——空闲循环本身
-  // 每片都按最新视口挑最近区间，无需额外微任务。
+  // 入队微任务的条件：非窗口化 —— pending 非空（Task 2 语义不变）；窗口化 ——
+  // 窗口脏（需裁剪/重查）或构建窗口内还有待建 pending。窗口外 pending 是安全
+  // 模式稳态（等滚动进入），不构成调度理由 —— 否则每次 update 都空转一个微任务。
   private arm() {
     if (this.stopped || this.microtaskScheduled || this.idleScheduled) return
-    const pending = this.view.state.field(livePreviewField, false)?.pending
-    if (!pending || pending.length === 0) return
+    const live = this.view.state.field(livePreviewField, false)
+    if (safeModeRenderingEnabled()) {
+      if (!this.windowDirty) {
+        if (!live || live.pending.length === 0) return
+        if (pendingInWindow(live.pending, this.buildWindow()).length === 0) return
+      }
+    } else if (!live || live.pending.length === 0) {
+      return
+    }
     this.microtaskScheduled = true
     queueMicrotask(() => this.firstPass())
+  }
+
+  // 构建窗口：可见段 ± LIVE_WINDOW_CHARS。窗口化下 idle 循环与首帧通道的构建
+  // 范围都以此为界（首帧通道取 pending∩可见区，天然在窗口内）。
+  private buildWindow(): ClosedRange[] {
+    return expandedRegions(this.view, LIVE_WINDOW_CHARS)
   }
 
   private firstPass() {
     this.microtaskScheduled = false
     if (this.stopped) return
+    // 开关运行中切换（desktop 切 tab）：旧窗口维护请求作废，等下一笔交易重查
+    if (safeModeRenderingEnabled()) this.windowDirty = false
     const live = this.view.state.field(livePreviewField, false)
-    if (!live || live.pending.length === 0) return
+    if (!live) return
+    if (safeModeRenderingEnabled()) {
+      this.windowedFirstPass(live)
+      return
+    }
+    if (live.pending.length === 0) return
     // 先挂 idle 调度再 dispatch：dispatch 触发的 update().arm() 看到 idle 在途，
     // 不会再次入队微任务。
     this.scheduleIdleSlice()
@@ -162,10 +249,37 @@ class LiveBuildDriver {
     }
   }
 
+  // 窗口化首帧通道（安全模式）：单笔交易携带「可见区分片（⊆ 构建窗口）+ 裁剪
+  // 窗口外装饰的归还信号」。pending 为空也照走 —— 排空后滚到远处时，已建装饰
+  // 全在窗口外，裁剪是唯一的窗口维护动作。裁剪窗口比构建窗口多
+  // LIVE_PRUNE_MARGIN_CHARS（迟滞）：恰好建在窗口边缘的装饰不会因视口小幅往返
+  // 在「构建 ↔ 裁剪」间抖动。裁剪门槛逐装饰精确判定（见 outsideAllRegions），
+  // 无活时不 dispatch（避免每帧空交易）。
+  private windowedFirstPass(live: LiveDeco) {
+    // 先挂 idle 调度再 dispatch（与非窗口化路径同构）：scheduleIdleSlice 自门槛，
+    // 构建窗口内无待建 pending 时不挂。
+    this.scheduleIdleSlice()
+    const effects: StateEffect<unknown>[] = []
+    const chunks = visibleChunks(live.pending, visibleRegions(this.view))
+    for (const chunk of chunks) effects.push(liveBuildChunk.of(chunk))
+    const pruneWindow = expandedRegions(
+      this.view, LIVE_WINDOW_CHARS + LIVE_PRUNE_MARGIN_CHARS)
+    if (live.specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))) {
+      effects.push(livePruneOutside.of(pruneWindow))
+    }
+    if (effects.length > 0) {
+      this.view.dispatch({ effects })
+    }
+  }
+
   private scheduleIdleSlice() {
     if (this.stopped || this.idleScheduled) return
     const live = this.view.state.field(livePreviewField, false)
     if (!live || live.pending.length === 0) return
+    // 安全模式：构建窗口内无待建 pending 时不再排 idle —— 窗口外 pending 是稳态，
+    // 持续重排会形成永不停的定时器链（也让测试的 runAllTimers 无法收敛）。
+    if (safeModeRenderingEnabled() &&
+      pendingInWindow(live.pending, this.buildWindow()).length === 0) return
     this.idleScheduled = true
     this.cancelIdle = scheduleIdle(() => {
       this.cancelIdle = null
@@ -175,7 +289,8 @@ class LiveBuildDriver {
 
   // 单次 idle 回调：预算内连续构建若干片，然后清标志重排（pending 空了/字段没了
   // 则自动停）。dispatch 发生在 idleScheduled 仍为 true 期间，update().arm() 不
-  // 会插入微任务。
+  // 会插入微任务。窗口化下目标列表是 pending∩构建窗口（裁剪后的剩余部分），
+  // 窗口内排空即停 —— 窗口外 pending 留待滚动。
   private idleSlice() {
     if (!this.stopped) {
       const started = hasPerformanceNow ? performance.now() : 0
@@ -183,7 +298,15 @@ class LiveBuildDriver {
         const live = this.view.state.field(livePreviewField, false)
         if (!live || live.pending.length === 0) break
         const regions = visibleRegions(this.view)
-        this.view.dispatch({ effects: [liveBuildChunk.of(nearestChunk(live.pending, regions))] })
+        let chunk: ClosedRange
+        if (safeModeRenderingEnabled()) {
+          const targets = pendingInWindow(live.pending, this.buildWindow())
+          if (targets.length === 0) break
+          chunk = nearestChunk(targets, regions)
+        } else {
+          chunk = nearestChunk(live.pending, regions)
+        }
+        this.view.dispatch({ effects: [liveBuildChunk.of(chunk)] })
         // 无 performance.now 的环境（极端测试宿主）：退化为每回调 1 片
         if (!hasPerformanceNow || performance.now() - started >= LIVE_BUILD_SLICE_MS) break
       }
