@@ -56,10 +56,10 @@ export const SAFE_MODE_LINES = 50000
 /**
  * Spec 05b open tiers, by exact UTF-8 byte length (Rust stat/read stats):
  * - < OPEN_STREAM_THRESHOLD_BYTES: today's behavior, one-shot read.
- * - ≥ threshold and < OPEN_READONLY_THRESHOLD_BYTES: confirm, then default
- *   source mode (safe mode by bytes — closes the long-line blind spot where a
- *   multi-MB file under 50k lines skipped every large-doc protection).
- * - ≥ OPEN_READONLY_THRESHOLD_BYTES: confirm a read-only plain-text open.
+ * - ≥ threshold and < OPEN_READONLY_THRESHOLD_BYTES: confirm, then safe mode
+ *   by bytes — live preview renders progressively (closes the long-line blind
+ *   spot where a multi-MB file under 50k lines skipped every large-doc protection).
+ * - ≥ OPEN_READONLY_THRESHOLD_BYTES: confirm a read-only live-preview open.
  */
 export const OPEN_STREAM_THRESHOLD_BYTES = 10 * 1024 * 1024
 export const OPEN_READONLY_THRESHOLD_BYTES = 50 * 1024 * 1024

@@ -7,7 +7,8 @@ export interface LargeDocBannerProps {
   readonly onDismiss: () => void
 }
 
-/** Spec 05：大文档一次性非模态提示。安全模式版本必须说明关闭了什么。 */
+/** Spec 05：大文档一次性非模态提示。安全模式版本必须说明改变了什么
+ *  （渐进渲染 + 按需字数；readonly 变体另说明只读 Live 与内存权衡）。 */
 export function LargeDocBanner({ lines, safeMode, readonly, onDismiss }: LargeDocBannerProps) {
   const t = useT()
   const messageKey = readonly

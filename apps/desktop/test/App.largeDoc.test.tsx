@@ -44,9 +44,8 @@ function bigDoc(lines: number): string {
   return Array.from({ length: lines }, (_, i) => `line ${i}`).join("\n")
 }
 
-// setLivePreview(false) 的 effects[0] 是 toggleLivePreview.of(false)：value 为布尔 false
-// （compartment reconfigure 的 effect.value 是扩展数组，不会是布尔）。
-// 不 import toggleLivePreview —— engine index 未导出它，按 value 形状断言。
+// 渐进渲染落地（2026-08-20）后，策略不再 dispatch setLivePreview；
+// 本组断言保留 value 形状检查以防模式强制悄悄回归。
 const dispatchCalls = (view: { dispatch: unknown }): unknown[][] =>
   (view.dispatch as unknown as Mock).mock.calls as unknown[][]
 
@@ -57,7 +56,7 @@ const forcedSourceOff = (calls: unknown[][]) =>
   })
 
 describe("large document safe mode", () => {
-  it("forces source mode and shows a one-time banner for >50k-line docs", async () => {
+  it("opens >50k-line docs in live mode with safe-mode budget and a one-time banner", async () => {
     const harness = createAppHarness(editor)
     harness.renderApp()
     await harness.openFileTab("/big.md", bigDoc(50010))
@@ -65,10 +64,16 @@ describe("large document safe mode", () => {
     expect(editor.reset).toHaveBeenCalledWith(view, expect.objectContaining({
       doc: expect.stringContaining("line 50009"),
     }))
-    expect(forcedSourceOff(dispatchCalls(view))).toBe(true)
+    // 默认 Live：options 不携带 defaultLivePreview（引擎默认 live），策略不切模式。
+    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
+    expect(forcedSourceOff(dispatchCalls(view))).toBe(false)
+    expect(document.querySelector(".statusbar")?.textContent).toContain("live")
+    // 安全模式预算 + 窗口化装饰仍然生效（与模式正交）。
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
     const banner = document.querySelector(".update-banner-message")
     expect(banner?.textContent).toContain("50010")
-    expect(banner?.textContent).toContain("source mode")
+    expect(banner?.textContent).toContain("progressively")
   })
 
   it("keeps the banner informational between 30k and 50k lines without forcing source", async () => {
@@ -99,10 +104,10 @@ describe("large document safe mode", () => {
     }
   })
 
-  it("remembers an explicit mode switch for the session", async () => {
-    // 真 EditorState 使 palette 的 source 命令能读 isLivePreview 并记录用户选择；
-    // dispatch 仍是 mock，用于断言后续载入不再强制 source。reset 忠实同步 doc，
-    // 因为 applyDocumentScalePolicy 从 view.state.doc.lines 读行数。
+  it("never touches mode when re-applying the policy, even after an explicit switch", async () => {
+    // 真 EditorState 使 palette 的 source 命令能读 isLivePreview 并记录用户选择
+    // （safeModeChoiceRef）；dispatch 仍是 mock，用于断言策略完全不切模式。
+    // reset 忠实同步 doc，因为 applyDocumentScalePolicy 从 view.state.doc.lines 读行数。
     const fakeView = {
       state: EditorState.create({ doc: "", extensions: [isLivePreview] }),
       dispatch: vi.fn(),
@@ -120,13 +125,16 @@ describe("large document safe mode", () => {
     })
     harness.renderApp()
     await harness.openFileTab("/a.md", bigDoc(50010))
-    expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(true)
-    // 用户显式切换模式：source 命令记录本会话选择
+    expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(false)
+    // 用户显式切换模式：source 命令记录本会话选择（策略此后永不干预模式）
     openPaletteAndRun("source")
     fakeView.dispatch.mockClear()
-    // 同 tab 再次载入超大文档：尊重选择，不再强制
+    // 同 tab 再次载入超大文档：策略不 dispatch 任何模式变更，
+    // 且安全模式预算不因用户的模式选择而失效（预算与模式正交）。
     await harness.openFileTab("/b.md", bigDoc(50010))
-    expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(false)
+    expect(fakeView.dispatch).not.toHaveBeenCalled()
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
   })
 
   it("sets a finite block render budget only for safe-mode documents", async () => {
