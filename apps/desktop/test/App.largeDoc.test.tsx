@@ -64,8 +64,8 @@ describe("large document safe mode", () => {
     expect(editor.reset).toHaveBeenCalledWith(view, expect.objectContaining({
       doc: expect.stringContaining("line 50009"),
     }))
-    // 默认 Live：options 不携带 defaultLivePreview（引擎默认 live），策略不切模式。
-    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
+    // 默认 Live：options 不携带 defaultLivePreview 键（引擎默认 live），策略不切模式。
+    expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
     expect(forcedSourceOff(dispatchCalls(view))).toBe(false)
     expect(document.querySelector(".statusbar")?.textContent).toContain("live")
     // 安全模式预算 + 窗口化装饰仍然生效（与模式正交）。

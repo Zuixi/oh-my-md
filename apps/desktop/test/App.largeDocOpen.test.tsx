@@ -135,7 +135,8 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/long.md", singleLine)
     expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
-    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
+    // 默认 Live：键完全缺席（undefined 赋值也算缺席的更严口径），防回归。
+    expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
     expect(safeModeRenderingEnabled()).toBe(true)
   })
@@ -155,7 +156,7 @@ describe("open tiers (Spec 05b)", () => {
     // 只读挡编辑，但语言/装饰照常装配（plainText 路径已从引擎移除）。
     expect(options.readOnly).toBe(true)
     expect("plainText" in options).toBe(false)
-    expect(options.defaultLivePreview).toBeUndefined()
+    expect("defaultLivePreview" in options).toBe(false)
     expect(safeModeRenderingEnabled()).toBe(true)
     await waitFor(() => {
       expect(document.querySelector(".update-banner-message")?.textContent)
@@ -205,7 +206,7 @@ describe("open tiers (Spec 05b)", () => {
     expect(harness.services.readDocument).not.toHaveBeenCalled()
     expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
     // LARGE 档开箱即 Live（渐进渲染），不再以源码模式打开。
-    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
+    expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
   })
 
   it("falls back to a one-shot read when streaming fails", async () => {

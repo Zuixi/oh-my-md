@@ -325,9 +325,10 @@ export default function App({
   // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
   const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
-  // Set 记录「用户本会话显式切换过模式」的 tab —— 用户偏好记录，供未来策略使用。
-  // 渐进渲染落地后策略不再强制模式（safeModeTabsRef 的预算/窗口化与模式正交），
-  // 此集合暂不驱动任何行为，保留以免丢失「本会话用户切过模式」这一信号。
+  // Set 只记录经菜单/命令面板 source 命令切过模式的 tab —— 编辑器内 ⌘E keymap
+  // 由引擎直接 toggle，不经过此写入点。渐进渲染落地后策略不再强制模式
+  // （safeModeTabsRef 的预算/窗口化与模式正交），此集合暂不驱动任何行为，
+  // 保留以免丢失「本会话用户切过模式」这一信号。
   const safeModeChoiceRef = useRef(new Set<number>())
   // 处于安全模式渲染预算下的 tab。预算是 engine 全局状态而安全模式是 per-tab 的，
   // 激活切换时按此集重应用（useEffect on activeId 兜住 focusTab/会话恢复等全部路径）。
