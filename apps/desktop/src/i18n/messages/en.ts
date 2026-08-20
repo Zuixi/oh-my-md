@@ -16,6 +16,7 @@ export const en: Record<string, string> = {
   "find.aria.close": "Close find",
   "find.status.zero": "0 matches",
   "find.status.count": "{active} of {total}",
+  "find.status.unavailable": "—",
 
   "cmd.placeholder.run": "Run a command…",
   "cmd.label.open": "Open…",

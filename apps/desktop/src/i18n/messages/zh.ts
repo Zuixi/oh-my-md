@@ -16,6 +16,7 @@ export const zh: Record<string, string> = {
   "find.aria.close": "关闭查找",
   "find.status.zero": "0 个匹配",
   "find.status.count": "{active} / {total}",
+  "find.status.unavailable": "—",
 
   "cmd.placeholder.run": "运行命令…",
   "cmd.label.open": "打开…",

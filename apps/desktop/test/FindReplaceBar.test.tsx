@@ -79,6 +79,14 @@ describe("FindReplaceBar", () => {
     expect(screen.getByText("0 matches")).toBeTruthy()
   })
 
+  it("renders the em-dash placeholder when the count is unavailable", () => {
+    // over-scale 安全模式 tab 不跑全文扫描：matchCount 为 null 时显示占位而非 0。
+    setLocale("en")
+    renderBar({ matchCount: null, activeIndex: -1 })
+    expect(screen.getByText("—")).toBeTruthy()
+    expect(screen.queryByText("0 matches")).toBeNull()
+  })
+
   it("toggles regex and whole-word and disables whole-word in regex mode", () => {
     setLocale("en")
     const { onRegex, onWholeWord } = renderBar()

@@ -974,6 +974,40 @@ describe("App product shell", () => {
     spy.mockRestore()
   })
 
+  it("skips the match-count scan for over-scale tabs and shows the placeholder", async () => {
+    const spy = vi.spyOn(findReplaceModule, "collectMatches")
+    const harness = makeAppHarness()
+    harness.renderApp()
+    const bigDoc = Array.from({ length: 50010 }, (_, i) => `line ${i}`).join("\n")
+    await harness.openFileTab("/big.md", bigDoc)
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true })
+    fireEvent.change(screen.getByLabelText("Find"), { target: { value: "line" } })
+
+    // 安全模式门控：find 打开也不跑全文正则扫描，计数显示占位。
+    expect(spy).not.toHaveBeenCalled()
+    expect(document.querySelector(".find-replace-status")?.textContent).toBe("—")
+    spy.mockRestore()
+  })
+
+  it("still counts matches for normal documents while find is open", async () => {
+    const spy = vi.spyOn(findReplaceModule, "collectMatches")
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openFileTab("/notes/a.md", "foo bar foo")
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true })
+    fireEvent.change(screen.getByLabelText("Find"), { target: { value: "foo" } })
+
+    // 查询刚输入时 activeIndex 复位为 -1（尚未跳转），计数显示 "0 of 2"：
+    // total=2 证明全文扫描照常运行。
+    await waitFor(() => {
+      expect(document.querySelector(".find-replace-status")?.textContent).toBe("0 of 2")
+    })
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
   it("shows files and outline sidebars without a chrome export panel", () => {
     const harness = makeAppHarness()
     harness.renderApp()
