@@ -46,6 +46,42 @@ describe("workspace tabs", () => {
     expect(closed.activeId).toBe(1)
   })
 
+  it("closing the active tab activates the neighbor that takes its slot", () => {
+    // [1, 2, 3] close 2 → 3 slides into slot 2 → 3 becomes active.
+    const workspace = [2, 3].reduce(
+      (ws, id) => addTab(ws, createFileSession(id, `/${id}.md`, "", version)),
+      createWorkspace(),
+    )
+    const closed = closeTab(workspace, 2)
+    expect(closed.tabs.map(tab => tab.id)).toEqual([1, 3])
+    expect(closed.activeId).toBe(3)
+  })
+
+  it("closing the last tab activates the previous one", () => {
+    const workspace = [2, 3].reduce(
+      (ws, id) => addTab(ws, createFileSession(id, `/${id}.md`, "", version)),
+      createWorkspace(),
+    )
+    const closed = closeTab(workspace, 3)
+    expect(closed.tabs.map(tab => tab.id)).toEqual([1, 2])
+    expect(closed.activeId).toBe(2)
+  })
+
+  it("closing a background tab keeps the active tab", () => {
+    const workspace = [2, 3].reduce(
+      (ws, id) => addTab(ws, createFileSession(id, `/${id}.md`, "", version)),
+      createWorkspace(),
+    )
+    const closed = closeTab(focusTab(workspace, 1), 2)
+    expect(closed.tabs.map(tab => tab.id)).toEqual([1, 3])
+    expect(closed.activeId).toBe(1)
+  })
+
+  it("closing an unknown tab leaves the workspace unchanged", () => {
+    const workspace = addTab(createWorkspace(), createFileSession(2, "/b.md", "b", version))
+    expect(closeTab(workspace, 99)).toBe(workspace)
+  })
+
   it("replaces the active tab in place when a file is opened", () => {
     const workspace = createWorkspace()
     const opened = openSession(activeSession(workspace), {

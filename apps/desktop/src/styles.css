@@ -316,6 +316,17 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   height: 16px;
   background: var(--omd-border);
 }
+/* Holds the scrollable tab strip plus the always-visible `+` button; the wrap
+   carries the outer layout role (flex:1, drag region) for the top bar. */
+.topbar-tabs-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  -webkit-app-region: drag;
+}
 .topbar-tabs {
   display: flex;
   align-items: center;
@@ -758,8 +769,14 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
-  flex-shrink: 0;
+  /* Equal-width slots (VS Code-style): tabs share the strip equally, capped at
+     180px and floored at 96px; past the floor the strip scrolls horizontally.
+     Fixed slot width keeps every tab's close button at the same x so tabs can
+     be closed repeatedly without moving the pointer. */
+  flex: 1 1 0;
   max-width: 180px;
+  min-width: 96px;
+  box-sizing: border-box;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   -webkit-app-region: no-drag;
 }
@@ -785,6 +802,10 @@ html[data-theme="dark"] .tab:hover {
   opacity: 0.9;
 }
 .tab-title {
+  /* Takes the remaining slot width so the dirty dot and close button pin to
+     the tab's right edge instead of following the label length. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

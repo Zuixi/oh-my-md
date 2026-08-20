@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react"
 import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
 import { shortcutFor } from "./shortcuts"
@@ -19,6 +20,15 @@ export function TopBar(props: {
   onOpenSettings?: () => void
 }) {
   const t = useT()
+  const activeTabRef = useRef<HTMLButtonElement | null>(null)
+  // Tabs overflow into a horizontal scroller; keep the active tab revealed when
+  // activation moves (tab switch, close-and-slide-into-slot, palette open).
+  useEffect(() => {
+    const el = activeTabRef.current
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" })
+    }
+  }, [props.activeId])
   const workspaceName = props.workspace
     ? props.workspace.replace(/\\/g, "/").split("/").pop() || t("topbar.workspaceFallback")
     : null
@@ -41,52 +51,57 @@ export function TopBar(props: {
           <span className="topbar-sidebar-divider" aria-hidden="true" />
         </div>
       ) : null}
-      <div className="topbar-tabs" data-tauri-drag-region="">
-        {props.tabs.map(tab => {
-          const isActive = tab.id === props.activeId
-          const isDirty = props.dirtyIds.includes(tab.id)
-          const hasConflict = props.conflictIds.includes(tab.id)
-          const path = sessionPath(tab)
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              className={isActive ? "tab is-active" : "tab"}
-              onClick={() => props.onFocusTab(tab.id)}
-              title={path ?? t("topbar.title.untitled")}
-            >
-              <FileText size={13} className="tab-icon" aria-hidden="true" />
-              <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
-                {sessionLabel(tab)}
-              </span>
-              {isDirty ? (
-                <span
-                  className="tab-dirty"
-                  aria-label={isActive ? t("topbar.aria.unsaved") : undefined}
-                >
-                  •
-                </span>
-              ) : null}
-              {hasConflict ? (
-                <span className="tab-conflict" aria-label={t("topbar.aria.conflict")}>
-                  !
-                </span>
-              ) : null}
-              <span
-                role="button"
-                tabIndex={-1}
-                className="tab-close"
-                aria-label={t("topbar.aria.closeTab")}
-                onClick={event => {
-                  event.stopPropagation()
-                  props.onCloseTab(tab.id)
-                }}
+      <div className="topbar-tabs-wrap" data-tauri-drag-region="">
+        <div className="topbar-tabs" data-tauri-drag-region="">
+          {props.tabs.map(tab => {
+            const isActive = tab.id === props.activeId
+            const isDirty = props.dirtyIds.includes(tab.id)
+            const hasConflict = props.conflictIds.includes(tab.id)
+            const path = sessionPath(tab)
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                ref={isActive ? activeTabRef : undefined}
+                className={isActive ? "tab is-active" : "tab"}
+                onClick={() => props.onFocusTab(tab.id)}
+                title={path ?? t("topbar.title.untitled")}
               >
-                <X size={12} aria-hidden="true" />
-              </span>
-            </button>
-          )
-        })}
+                <FileText size={13} className="tab-icon" aria-hidden="true" />
+                <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
+                  {sessionLabel(tab)}
+                </span>
+                {isDirty ? (
+                  <span
+                    className="tab-dirty"
+                    aria-label={isActive ? t("topbar.aria.unsaved") : undefined}
+                  >
+                    •
+                  </span>
+                ) : null}
+                {hasConflict ? (
+                  <span className="tab-conflict" aria-label={t("topbar.aria.conflict")}>
+                    !
+                  </span>
+                ) : null}
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  className="tab-close"
+                  aria-label={t("topbar.aria.closeTab")}
+                  onClick={event => {
+                    event.stopPropagation()
+                    props.onCloseTab(tab.id)
+                  }}
+                >
+                  <X size={12} aria-hidden="true" />
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        {/* Kept outside the scrollable strip so it stays reachable when the
+            tabs overflow and the strip is scrolled. */}
         <button
           type="button"
           className="tab-new"
