@@ -3,6 +3,7 @@ import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
 import { parseCell, type CellNode } from "../parse/cell"
 import { linkHref } from "../links"
+import { EXPORT_BODY_CSS } from "./styles"
 
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
@@ -177,7 +178,7 @@ function render(node: SyntaxNode, state: EditorState): string {
 
 export function exportHtml(state: EditorState): string {
   const body = render(syntaxTree(state).topNode, state)
-  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title></head><body>${body}</body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title><style>${EXPORT_BODY_CSS}</style></head><body>${body}</body></html>`
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +187,8 @@ export function exportHtml(state: EditorState): string {
 
 export interface ExportRichHtmlOptions {
   resolveImageSrc?: (src: string) => string
+  /** User custom CSS, appended after the base typography so it wins. */
+  customCss?: string
 }
 
 const mathHtmlCache = new Map<string, string>()
@@ -383,5 +386,7 @@ export async function exportRichHtml(
   options: ExportRichHtmlOptions = {},
 ): Promise<string> {
   const body = await renderRich(syntaxTree(state).topNode, state, options)
-  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title>${SHIKI_DARK_CSS}</head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
+  const baseStyle = `<style>${EXPORT_BODY_CSS}</style>`
+  const customStyle = options.customCss ? `<style>${options.customCss}</style>` : ""
+  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title>${baseStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
 }

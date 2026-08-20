@@ -8,10 +8,11 @@ export async function exportCurrent(
   view: EditorView | null,
   kind: "html" | "pdf" | "png",
   exportOptions: ExportRichHtmlOptions = {},
+  customCss?: string,
 ): Promise<void> {
   if (!view) return
   try {
-    const html = await exportRichHtml(view.state, exportOptions)
+    const html = await exportRichHtml(view.state, { ...exportOptions, customCss })
     if (kind === "html") {
       const path = await services.pickExportPath?.("html")
       if (path) await services.writeFile(path, html)
