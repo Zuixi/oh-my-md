@@ -145,6 +145,8 @@ interface AppProps {
 }
 
 const OUTLINE_DEBOUNCE_MS = 150
+// over-scale 大纲 idle 补算的兜底超时：主线程持续繁忙时也保证最终触发。
+const OUTLINE_IDLE_TIMEOUT_MS = 200
 // documentStats 是全文档逐字符扫描；防抖后离开每键同步路径（Spec 05）。
 const STATS_DEBOUNCE_MS = 250
 // Spec 05a：每键不物化整文档字符串；250ms trailing 从 view 拉取（消费前 flush）。
@@ -253,6 +255,22 @@ function writeOutlineOpen(open: boolean): void {
   try {
     localStorage.setItem(STORAGE_KEY_OUTLINE_OPEN, open ? "1" : "0")
   } catch { /* storage unavailable (tests, private mode) */ }
+}
+
+// 与 engine buildDriver 的 scheduleIdle 同款兜底：浏览器走 requestIdleCallback
+// （timeout 保证最终触发），happy-dom 等宿主无此 API 时退化为 setTimeout(0)。
+interface OutlineIdleGlobal {
+  requestIdleCallback?: (callback: () => void, options: { timeout: number }) => number
+  cancelIdleCallback?: (handle: number) => void
+}
+
+function scheduleOutlineIdle(callback: () => void): void {
+  const idle = globalThis as OutlineIdleGlobal
+  if (typeof idle.requestIdleCallback === "function" && typeof idle.cancelIdleCallback === "function") {
+    idle.requestIdleCallback(callback, { timeout: OUTLINE_IDLE_TIMEOUT_MS })
+    return
+  }
+  window.setTimeout(callback, 0)
 }
 
 export default function App({
@@ -398,6 +416,14 @@ export default function App({
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const [outlineHover, setOutlineHover] = useState(false)
   const outlineHoverTimerRef = useRef<number | null>(null)
+  // 大纲缓存（tab 切换时延）：docVersionsRef 是 per-tab 文档版本号 —— 全局
+  // docVersion 状态跨 tab 递增，不能当失效轴；此处 handleDocumentUpdate 仅在
+  // docChanged 时为对应 tab 自增（纯选区更新不影响大纲）。outlineCacheRef 存
+  // 「该版本号下的大纲」，切回已算过的 tab 命中内存即免同步全树遍历。
+  const docVersionsRef = useRef(new Map<number, number>())
+  const outlineCacheRef = useRef(new Map<number, { version: number; outline: OutlineItem[] }>())
+  // over-scale 大纲异步补算的代际令牌：每次新调度/卸载自增，旧 idle 回调据此作废。
+  const outlineFillTokenRef = useRef(0)
   const pendingJumpRef = useRef<number | null>(null)
   const pendingFocusRef = useRef(false)
   const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
@@ -626,6 +652,11 @@ export default function App({
     if (!tab || tab.documentId !== update.documentId) return
     if (update.docChanged) {
       pendingDocTabsRef.current.add(update.tabId)
+      // 大纲缓存失效轴：内容变化才 bump 对应 tab 的版本号（选区更新不动大纲）。
+      docVersionsRef.current.set(
+        update.tabId,
+        (docVersionsRef.current.get(update.tabId) ?? 0) + 1,
+      )
       if (docMaterializeMs === 0) {
         materializePendingDocs()
       } else if (docMaterializeTimerRef.current === null) {
@@ -721,6 +752,9 @@ export default function App({
     const previousDoc = docsRef.current.get(nextSession.id) ?? ""
     commitWorkspace(replaceTabSession(previousWorkspace, nextSession))
     commitNormalization(clearTabNormalization(previousNormalization, nextSession.id))
+    // 整文档重载：大纲缓存作废、版本号归零（与新建 tab 同口径），旧大纲不再命中。
+    docVersionsRef.current.set(nextSession.id, 0)
+    outlineCacheRef.current.delete(nextSession.id)
     try {
       resetEditorDocument(view, editorOptions(contents, nextSession.id, nextSession.documentId))
     } catch (error) {
@@ -737,8 +771,44 @@ export default function App({
   }
   resetTabDocumentRef.current = resetTabDocument
 
+  // 大纲刷新（tab 感知，唯一调用方是 activateTab，view 恒属激活 tab）：
+  //   1. 缓存命中（tabId + 文档版本一致）—— setOutline 复用，零重算，这是
+  //      大文件 tab 反复切换的主要成本来源（collectOutline 同步全树遍历）。
+  //   2. 未命中且非 over-scale —— 同步首算并写缓存（普通文档便宜，维持原行为）。
+  //   3. 未命中且 over-scale（safeModeTabsRef）—— 先给旧缓存/空大纲让激活立即
+  //      返回，idle 回调（requestIdleCallback，宿主缺失退化为 setTimeout(0)）
+  //      补算落缓存；回调执行前自检代际令牌/激活 tab/版本号，任一漂移即丢弃，
+  //      杜绝把过期或他 tab 的大纲写进当前 tab 的缓存（串数据）。
   function refreshChrome(view: EditorView | null) {
-    setOutline(documentOutline(view))
+    const tabId = workspaceRef.current.activeId
+    const version = docVersionsRef.current.get(tabId) ?? 0
+    const cached = outlineCacheRef.current.get(tabId)
+    if (cached && cached.version === version) {
+      setOutline(cached.outline)
+      return
+    }
+    // view 必须确属激活 tab 才可计算/入缓存：惰性 tab 首激活的窗口期 viewRef
+    // 可能仍指向上一个 tab 的 view，拿它计算会把别的文档写进本 tab 的缓存。
+    if (!view || viewsRef.current.get(tabId) !== view) {
+      setOutline([])
+      return
+    }
+    if (!safeModeTabsRef.current.has(tabId)) {
+      const outline = documentOutline(view)
+      outlineCacheRef.current.set(tabId, { version, outline })
+      setOutline(outline)
+      return
+    }
+    setOutline(cached ? cached.outline : [])
+    const token = ++outlineFillTokenRef.current
+    scheduleOutlineIdle(() => {
+      if (token !== outlineFillTokenRef.current) return
+      if (workspaceRef.current.activeId !== tabId) return
+      if ((docVersionsRef.current.get(tabId) ?? 0) !== version) return
+      const outline = documentOutline(view)
+      outlineCacheRef.current.set(tabId, { version, outline })
+      setOutline(outline)
+    })
   }
 
   function ensureViews() {
@@ -957,10 +1027,12 @@ export default function App({
   // Outline follows the document, but only while the panel is open and only
   // after typing pauses: collectOutline walks the whole syntax tree, so it must
   // stay off the per-keystroke path. activateTab refreshes immediately instead.
+  // 编辑后版本号已 bump，此处经 refreshChrome 走同一缓存：未变内容零重算，
+  // over-scale 编辑后的补算同样异步化。
   useEffect(() => {
     if (!outlineOpen) return
     const timer = window.setTimeout(() => {
-      setOutline(documentOutline(viewRef.current))
+      refreshChrome(viewRef.current)
     }, OUTLINE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [doc, outlineOpen, session.id])
@@ -968,6 +1040,8 @@ export default function App({
   useEffect(() => {
     return () => {
       if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
+      // 卸载即作废在途的大纲 idle 补算（代际令牌自增，旧回调全部丢弃）。
+      outlineFillTokenRef.current += 1
     }
   }, [])
 
@@ -975,7 +1049,8 @@ export default function App({
     if (outlineOpen) return
     if (outlineHoverTimerRef.current) window.clearTimeout(outlineHoverTimerRef.current)
     outlineHoverTimerRef.current = window.setTimeout(() => {
-      setOutline(documentOutline(viewRef.current))
+      // 悬停弹出同享缓存：命中即免同步全树遍历，over-scale 异步补齐。
+      refreshChrome(viewRef.current)
       setOutlineHover(true)
     }, OUTLINE_HOVER_OPEN_MS)
   }
@@ -1429,6 +1504,7 @@ export default function App({
   function newTab() {
     const tab = createSession(workspaceRef.current.nextId)
     docsRef.current.set(tab.id, "")
+    docVersionsRef.current.set(tab.id, 0)
     commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
     commitWorkspace(addTab(workspaceRef.current, tab))
     syncDoc("", tab.id)
@@ -1452,6 +1528,7 @@ export default function App({
     if (options.allowReplaceLast && currentWorkspace.tabs.length === 1) {
       const replacement = createSession(currentWorkspace.nextId)
       docsRef.current.set(replacement.id, "")
+      docVersionsRef.current.set(replacement.id, 0)
       commitSaveState({ ...saveStateRef.current, [replacement.id]: initialSaveState() })
       currentWorkspace = addTab(currentWorkspace, replacement)
     }
@@ -1464,6 +1541,9 @@ export default function App({
       safeModeChoiceRef.current.delete(id)
       safeModeTabsRef.current.delete(id)
       docsRef.current.delete(id)
+      // 大纲缓存随 tab 一起销毁（版本号 + 缓存条目），防 id 复用时串数据/泄漏。
+      docVersionsRef.current.delete(id)
+      outlineCacheRef.current.delete(id)
       // In-flight saves keep running (the chain is independent of the map), but
       // no later open should await a closed tab's queue promise.
       tabSaveQueuesRef.current.delete(id)
