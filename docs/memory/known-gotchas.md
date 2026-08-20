@@ -322,6 +322,8 @@ The hand-written Lezer inline parsers compare `cx.char(i)` against ASCII codes. 
 
 `watcher.rs` coalesces notify events for 300 ms before emitting `workspace-changed`, and macOS FSEvents may batch or reorder paths. The webview handler therefore probes **all** open tabs (fingerprint compare in Rust decides) instead of trusting event paths, and the old poll survives as a 30 s fallback (`watchMs` default in `App.tsx`). Never make an event path the basis for a reload decision — only `read_document_version`/guarded-save comparisons may change document state. Watch paths are canonicalized on both set and update; a non-canonical path in `state.watched` would make `diff_watches` leak watches that `unwatch` can never remove.
 
+`read_document_version` is stat-first (2026-08-20, Spec 05b §14.9 follow-up): Rust keeps a `(mtime_ns, size) → version` cache (`DocumentVersionCache`, keyed by requested path). A matching stat returns the cached fingerprint **without reading the file**; a mismatch pays the full read + blake3 and refreshes the cache (re-stat after read — a torn mid-read write is not cached); a missing/deleted file returns `Missing` and evicts its entry. Guarded-save still always reads fresh. Residual risk (accepted): on coarse-mtime filesystems (HFS+ 1s ticks) a same-size external write inside one mtime tick is invisible until the next stat change — the poll under-reports external changes for that window; likewise a symlink retargeted to a file with an identical (mtime_ns, size) pair.
+
 ## Doc-start `---` is front matter, not a thematic rule
 
 Since the FrontMatter parser landed, the first line `---` of a document always opens a front matter block (unclosed blocks swallow to EOF, matching the math-block tolerance). A document that merely starts with a horizontal rule is therefore rendered as front-matter source until a second `---` appears — this flipped `blocks.test.ts`'s hr-at-doc-start case, which now uses a mid-doc rule. The same ambiguity drives the stats stripper in `stats.ts` (leading `---`…`---` pair stripped from counts) and exists in every front-matter-aware renderer.
@@ -419,8 +421,10 @@ always false there, so every open file was watched twice (recursive folder
 watch + the file itself), doubling watcher events into `pollFileTabs` — which
 has no cross-round coalescing of its own and re-probes every tab per round.
 Use `pathWithinDir` (workspace.ts); `runFileTabsPoll` adds the in-flight
-dedupe. Poll still re-reads changed files in full (correctness first): a
-banner-without-contents divergence for huge docs is a recorded follow-up.
+dedupe. The version probe itself is stat-first (see the watcher entry: unchanged
+files cost a stat, not a 50MB read), but poll still re-reads **changed** files
+in full (correctness first): a banner-without-contents divergence for huge docs
+is a recorded follow-up.
 
 ## Bounded waits on the save queue; a timed-out open races the save
 

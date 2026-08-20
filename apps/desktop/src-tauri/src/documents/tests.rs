@@ -353,7 +353,9 @@ fn unicode_paths_and_contents_read_back_exactly() {
 #[test]
 fn version_probe_returns_the_fingerprint_without_contents() {
     let file = write_temp("version-probe", "body");
-    let probe = read_document_version_blocking(&path_string_for(&file)).unwrap();
+    let probe =
+        read_document_version_cached(&DocumentVersionCache::default(), &path_string_for(&file))
+            .unwrap();
     match probe {
         ExpectedDocumentVersion::Existing { version } => {
             assert_eq!(version.fingerprint, fingerprint(b"body"));
@@ -361,6 +363,154 @@ fn version_probe_returns_the_fingerprint_without_contents() {
         }
         other => panic!("unexpected probe: {other:?}"),
     }
+}
+
+// IPC 契约（工作区规则 7/8）：read_document_version 的响应形状保持不变，
+// 多字字段 `resolved_path` 的 camelCase 线格式由本测试钉住。
+#[test]
+fn expected_document_version_serializes_as_camel_case() {
+    let existing = ExpectedDocumentVersion::Existing {
+        version: DocumentVersion {
+            resolved_path: "/tmp/a.md".into(),
+            fingerprint: "v1:x".into(),
+        },
+    };
+    let json = serde_json::to_string(&existing).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"existing","version":{"resolvedPath":"/tmp/a.md","fingerprint":"v1:x"}}"#
+    );
+    let missing = serde_json::to_string(&ExpectedDocumentVersion::Missing).unwrap();
+    assert_eq!(missing, r#"{"kind":"missing"}"#);
+}
+
+#[test]
+fn version_stat_matches_requires_both_mtime_and_size_equality() {
+    let entry = CachedVersionStat {
+        mtime_ns: 100,
+        size: 5,
+        version: DocumentVersion {
+            resolved_path: "/tmp/a.md".into(),
+            fingerprint: "v1:x".into(),
+        },
+    };
+    assert!(version_stat_matches(&entry, 100, 5));
+    assert!(!version_stat_matches(&entry, 101, 5));
+    assert!(!version_stat_matches(&entry, 100, 6));
+}
+
+#[test]
+fn version_probe_cache_hit_returns_cached_version_without_reading() {
+    let cache = DocumentVersionCache::default();
+    let file = write_temp("version-cache-hit", "body");
+    let path = path_string_for(&file);
+    let first = read_document_version_cached(&cache, &path).unwrap();
+    let ExpectedDocumentVersion::Existing { version } = first else {
+        panic!("expected an existing version")
+    };
+    assert_eq!(version.fingerprint, fingerprint(b"body"));
+    assert!(
+        cache.entries.lock().unwrap().contains_key(&file),
+        "first probe should seed the cache"
+    );
+
+    // 把缓存条目换成哨兵版本：stat 未变时命中路径必须原样返回它——若发生
+    // 了整读，指纹会被重新算成真实值，测试即失败。
+    let (mtime_ns, size) = stat_cache_key(&fs::metadata(&file).unwrap()).unwrap();
+    cache.entries.lock().unwrap().insert(
+        file.clone(),
+        CachedVersionStat {
+            mtime_ns,
+            size,
+            version: DocumentVersion {
+                resolved_path: canonical_string(&file),
+                fingerprint: "v1:sentinel".into(),
+            },
+        },
+    );
+    match read_document_version_cached(&cache, &path).unwrap() {
+        ExpectedDocumentVersion::Existing { version } => {
+            assert_eq!(version.fingerprint, "v1:sentinel");
+        }
+        other => panic!("unexpected probe: {other:?}"),
+    }
+}
+
+#[test]
+fn version_probe_re_reads_when_the_stat_changes_and_evicts_on_missing() {
+    let cache = DocumentVersionCache::default();
+    let file = write_temp("version-cache-change", "one");
+    let path = path_string_for(&file);
+    let first = read_document_version_cached(&cache, &path).unwrap();
+    // 尺寸变化必然导致 stat 不匹配（不依赖 mtime 粒度）。
+    fs::write(&file, "three").unwrap();
+    match read_document_version_cached(&cache, &path).unwrap() {
+        ExpectedDocumentVersion::Existing { version } => {
+            assert_eq!(version.fingerprint, fingerprint(b"three"));
+            assert_eq!(version.resolved_path, canonical_string(&file));
+        }
+        other => panic!("unexpected probe: {other:?}"),
+    }
+    let ExpectedDocumentVersion::Existing { version } = first else {
+        panic!("expected an existing version")
+    };
+    assert_ne!(version.fingerprint, fingerprint(b"three"));
+
+    // 文件删除：返回 Missing 且缓存条目被清除。
+    fs::remove_file(&file).unwrap();
+    assert!(matches!(
+        read_document_version_cached(&cache, &path).unwrap(),
+        ExpectedDocumentVersion::Missing
+    ));
+    assert!(
+        !cache.entries.lock().unwrap().contains_key(&file),
+        "missing file must evict its cache entry"
+    );
+}
+
+#[test]
+fn version_probe_same_size_change_with_advanced_mtime_re_reads() {
+    let cache = DocumentVersionCache::default();
+    let file = write_temp("version-cache-mtime", "aaa");
+    let path = path_string_for(&file);
+    read_document_version_cached(&cache, &path).unwrap();
+    // 真实推进 mtime 在测试里不可移植（HFS+ 1s 粒度），直接改缓存条目模拟
+    // mtime 前进（取必然不等的哨兵值保证确定性）；内容做同尺寸变化。
+    cache
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(&file)
+        .unwrap()
+        .mtime_ns = 0;
+    fs::write(&file, "bbb").unwrap();
+    match read_document_version_cached(&cache, &path).unwrap() {
+        ExpectedDocumentVersion::Existing { version } => {
+            assert_eq!(version.fingerprint, fingerprint(b"bbb"));
+        }
+        other => panic!("unexpected probe: {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn version_probe_dangling_symlink_still_errors_and_evicts() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temp_dir("version-dangling");
+    let target = directory.join("real.md");
+    let link = directory.join("link.md");
+    fs::write(&target, "body").unwrap();
+    symlink(&target, &link).unwrap();
+    let cache = DocumentVersionCache::default();
+    let path = path_string_for(&link);
+    read_document_version_cached(&cache, &path).unwrap();
+    fs::remove_file(&target).unwrap();
+    assert!(matches!(
+        read_document_version_cached(&cache, &path),
+        Err(DocumentError::ReadFailed(_))
+    ));
+    assert!(!cache.entries.lock().unwrap().contains_key(&link));
 }
 
 #[cfg(unix)]
