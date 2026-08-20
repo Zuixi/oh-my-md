@@ -1,12 +1,14 @@
 import { Compartment, StateEffect, StateField, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap, type Command } from "@codemirror/view"
 import { livePreviewField } from "../decorations/build"
+import { liveBuildDriver } from "../decorations/buildDriver"
 import { orderedRenumber } from "../lists/ordered"
 
 export function livePreviewExt() {
   // decorations via StateField；block widgets 只能走 field。
-  // 有序列表编号写回源码走 ViewPlugin，不产出 block decoration。
-  return [livePreviewField, orderedRenumber]
+  // liveBuildDriver 以 idle 分片消耗 LiveDeco.pending（不产出 decoration），
+  // orderedRenumber 编号写回源码走 ViewPlugin，不产出 block decoration。
+  return [livePreviewField, liveBuildDriver, orderedRenumber]
 }
 
 export const livePreviewCompartment = new Compartment()

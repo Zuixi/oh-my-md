@@ -188,6 +188,28 @@ describe("progressive live decoration build", () => {
     cleanup()
   })
 
+  it("keeps pending sorted and disjoint when a deletion collapses two ranges together", () => {
+    // docChanged 映射的回归守卫：删除「head 尾字符 + 种子区」会把左右两段 pending
+    // 压到同一点（重叠），必须归一化合并回有序不相交 —— 分片驱动据此假设挑区间。
+    const doc = boldDoc(1000)
+    const mid = Math.floor(doc.length / 2)
+    const { view, cleanup } = seededView(doc, mid)     // 种子居中 → 头尾两段 pending
+    const [head, tail] = view.state.field(livePreviewField).pending
+    expect(head.to).toBeLessThan(mid)
+    expect(tail.from).toBeGreaterThan(mid)
+
+    view.dispatch({ changes: { from: head.to, to: tail.from - 1 } })
+    const pending = view.state.field(livePreviewField).pending
+    expect(pending).toHaveLength(1)
+    expect(pending[0].from).toBe(head.from)
+    expect(pending[0].to).toBeGreaterThan(head.to)
+    for (let i = 1; i < pending.length; i++) {
+      expect(pending[i - 1].from).toBeLessThanOrEqual(pending[i - 1].to)
+      expect(pending[i - 1].to).toBeLessThan(pending[i].from)
+    }
+    cleanup()
+  })
+
   it("keeps tree advances (when they occur) inside pending instead of building synchronously", () => {
     // 树增长分支的守护：forceParsing 推进树（若 create 时未解析完）后，
     // pending 非空 → 增长区间并入 pending，绝不同步产出远端装饰。

@@ -7,6 +7,7 @@ import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
 import { editorExtensions } from "../src/index"
 import { buildLiveDecorations, drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
+import { liveBuildDriver } from "../src/decorations/buildDriver"
 import { ImageWidget } from "../src/decorations/widgets/image"
 import { livePreviewExt } from "../src/modes/livePreview"
 import { orderedRenumber } from "../src/lists/ordered"
@@ -262,7 +263,7 @@ describe("incremental live decorations", () => {
     parent.remove()
   })
 
-  it("keeps block decorations on a StateField and ordered renumbering on a ViewPlugin", () => {
-    expect(livePreviewExt()).toEqual([livePreviewField, orderedRenumber])
+  it("keeps block decorations on a StateField and non-block plugins on ViewPlugins", () => {
+    expect(livePreviewExt()).toEqual([livePreviewField, liveBuildDriver, orderedRenumber])
   })
 })
