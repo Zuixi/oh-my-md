@@ -6,7 +6,7 @@ import { type ChangeDesc, EditorState, StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
 import { editorExtensions } from "../src/index"
-import { buildLiveDecorations, livePreviewField } from "../src/decorations/build"
+import { buildLiveDecorations, drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
 import { ImageWidget } from "../src/decorations/widgets/image"
 import { livePreviewExt } from "../src/modes/livePreview"
 import { orderedRenumber } from "../src/lists/ordered"
@@ -70,6 +70,7 @@ function makeDocument(lines = 2000) {
 // diverge from a full rebuild under CPU load. By mounting a temporary view and
 // calling forceParsing we get a complete tree; the tree survives view.destroy()
 // so the detached state stays fully parsed.
+// 渐进模型下 create 只构建种子：这里同步排空 pending，使 specs 与全量构建对拍。
 function liveState(
   doc: string,
   selection?: { anchor: number },
@@ -86,6 +87,7 @@ function liveState(
     parent,
   })
   forceParsing(view, doc.length, 10000)
+  drainPendingLiveBuild(view)
   const state = view.state
   view.destroy()
   parent.remove()
