@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
@@ -216,6 +216,100 @@ describe("FileTree sidebar menu", () => {
 
     expect(harness.services.confirmClose).toHaveBeenCalledOnce()
     expect(harness.services.deletePath).not.toHaveBeenCalled()
+  })
+
+  it("abandons an in-flight open when the file is deleted before the open lands", async () => {
+    // 新建→立刻删除的竞态：openPath 停在 allowDocumentAssets 时删除完成，
+    // 放行后 openPath 必须自检作废登记并放弃 —— 不加 tab、不报错。
+    const harness = makeAppHarness()
+    let entries = [
+      { name: "doc.md", path: "/notes/doc.md", is_dir: false },
+      { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
+    ]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
+    vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
+      entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
+      harness.seedFile(`${dir}/${name}`, "")
+      return `${dir}/${name}`
+    })
+    vi.mocked(harness.services.deletePath).mockImplementation(async path => {
+      entries = entries.filter(entry => entry.path !== path)
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    let releaseAssets!: () => void
+    const assetsHeld = new Promise<void>(resolve => { releaseAssets = resolve })
+    vi.mocked(harness.services.allowDocumentAssets).mockImplementation(async () => {
+      await assetsHeld
+    })
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    await waitFor(() => expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy())
+
+    await openTreeMenu("untitled-2.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }))
+    await waitFor(() => expect(harness.services.deletePath).toHaveBeenCalledWith("/notes/untitled-2.md"))
+    await waitFor(() => expect(screen.queryByText("untitled-2.md")).toBeNull())
+
+    await act(async () => {
+      releaseAssets()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expectPathShown("/notes/doc.md")
+    expect(screen.queryByText("untitled-2.md")).toBeNull()
+    expect(vi.mocked(harness.services.reportError)).not.toHaveBeenCalled()
+  })
+
+  it("closes a tab that lands inside the delete await window", async () => {
+    // 竞态的另一侧：tab 在 await deletePath 让出的窗口内才落地，删除完成后的
+    // 重查必须把它关掉（旧实现在 confirm 前快照 openTab，会漏掉）。
+    const harness = makeAppHarness()
+    let entries = [
+      { name: "doc.md", path: "/notes/doc.md", is_dir: false },
+      { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
+    ]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
+    vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
+      entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
+      harness.seedFile(`${dir}/${name}`, "")
+      return `${dir}/${name}`
+    })
+    let releaseAssets!: () => void
+    const assetsHeld = new Promise<void>(resolve => { releaseAssets = resolve })
+    let releaseDelete!: () => void
+    const deleteHeld = new Promise<void>(resolve => { releaseDelete = resolve })
+    vi.mocked(harness.services.deletePath).mockImplementation(async path => {
+      await deleteHeld
+      entries = entries.filter(entry => entry.path !== path)
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    vi.mocked(harness.services.allowDocumentAssets).mockImplementation(async () => {
+      await assetsHeld
+    })
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    await waitFor(() => expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy())
+
+    // 删除先行（deletePath 停住），随后在途打开落地 —— tab 出现在竞态窗口内。
+    await openTreeMenu("untitled-2.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }))
+    await waitFor(() => expect(harness.services.deletePath).toHaveBeenCalledWith("/notes/untitled-2.md"))
+    releaseAssets()
+    await waitFor(() => expectPathShown("/notes/untitled-2.md"))
+
+    releaseDelete()
+    await waitFor(() => expect(screen.queryByText("untitled-2.md", { selector: ".filetree-name" })).toBeNull())
+    expectPathShown("/notes/doc.md")
+    expect(vi.mocked(harness.services.reportError)).not.toHaveBeenCalled()
   })
 
   it("reveals the selected path in the file manager", async () => {
