@@ -477,8 +477,8 @@ spanning line breaks are safe in CM 6.43.8).
 `list_system_fonts` (`apps/desktop/src-tauri/src/fonts.rs`) is an `async`
 command whose enumeration body runs under
 `tauri::async_runtime::spawn_blocking` (the blocking-work rule from
-"Tauri 2 sync commands run on the Rust main thread"). That pool thread is not
-the main thread, and AppKit's `NSFontManager` / `NSFont` are
+"Tauri 2 sync commands run on the Rust main thread (Spec 05b)"). That pool
+thread is not the main thread, and AppKit's `NSFontManager` / `NSFont` are
 **main-thread-confined**: enumeration written against them compiles and then
 misbehaves at runtime. macOS font enumeration under `spawn_blocking` must use
 CoreText, which is thread-safe for read-only enumeration:
@@ -511,5 +511,4 @@ value back to a family through the same quoting, so an unquoted value also
 breaks the round-trip and the trigger label falls back to "Custom".
 `FONT_FAMILY_PRESETS` are the exception: they are hand-written multi-family
 stacks that already carry their own quoting and must pass through unchanged.
-
 
