@@ -41,6 +41,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   cut: "cut",
   copy: "copy",
   paste: "paste",
+  "paste-plain-text": "pastePlainText",
   "select-all": "select-all",
   quit: "quit",
   about: "about",

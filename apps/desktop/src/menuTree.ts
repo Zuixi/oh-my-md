@@ -52,6 +52,7 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
       { id: "cut" },
       { id: "copy" },
       { id: "paste" },
+      { id: "paste-plain-text" },
       { id: "select-all", separatorAfter: true },
       { id: "find" },
       { id: "search" },
