@@ -12,6 +12,7 @@ import {
   MAX_SEARCH_HITS,
   MAX_SNAPSHOTS_PER_FILE,
   SAFE_MODE_LINES,
+  SIDEBAR_DEFAULT_WIDTH,
 } from "../src/constants"
 import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
 
@@ -83,6 +84,10 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("content max width matches styles.css --omd-content-width", () => {
     expect(STYLES_CSS).toContain(`--omd-content-width: ${CONTENT_MAX_WIDTH}px`)
+  })
+
+  it("sidebar default width matches styles.css --omd-sidebar-width fallback", () => {
+    expect(STYLES_CSS).toContain(`var(--omd-sidebar-width, ${SIDEBAR_DEFAULT_WIDTH}px)`)
   })
 
   it("large-doc thresholds match engine constants", () => {

@@ -835,7 +835,9 @@ html[data-theme="dark"] .tab:hover {
 /* Three-column workspace layout */
 .workspace-body { display: flex; flex: 1; min-height: 0; }
 .sidebar-primary {
-  width: 230px; min-width: 0; overflow: auto;
+  /* Inline --omd-sidebar-width comes from App (drag resizer); the fallback
+     literal must stay equal to SIDEBAR_DEFAULT_WIDTH (drift-guarded). */
+  width: var(--omd-sidebar-width, 230px); min-width: 0; overflow: auto;
   border-right: 1px solid var(--omd-border);
   background: var(--omd-chrome); font-size: 13px;
   flex-shrink: 0;
@@ -846,6 +848,24 @@ html[data-theme="dark"] .tab:hover {
   border-right-color: transparent;
   overflow: hidden;
 }
+/* Drag sash on the file sidebar's edge; flex sibling so it stays full-height
+   and never scrolls with the tree. */
+.sidebar-resizer {
+  flex: none; width: 4px; cursor: col-resize; position: relative; z-index: 5;
+}
+.sidebar-resizer::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 2px; transform: translateX(-50%); border-radius: 1px;
+  background: transparent;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--omd-link);
+}
+/* While dragging: no width transition (it lags the pointer), no accidental
+   text selection; the col-resize cursor follows even outside the handle. */
+body.omd-resizing-sidebar { cursor: col-resize; user-select: none; }
+body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 .sidebar-primary .filetree,
 .sidebar-primary .search-panel {
   transition: opacity 0.1s ease 0.1s;
@@ -960,6 +980,15 @@ html[data-theme="dark"] .tab:hover {
 }
 .filetree-item.is-active { background: var(--omd-border); }
 .filetree-item svg { flex: none; color: var(--omd-muted); }
+/* Single-line names: min-width 0 lets the flex child shrink so the ellipsis
+   tracks the sidebar's live width (resize / window changes) with no JS. */
+.filetree-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.outline-item {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .filetree-chevron {
   width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none;
 }

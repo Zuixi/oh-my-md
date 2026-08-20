@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
@@ -86,6 +86,12 @@ import {
   type TreeEntry,
 } from "./fileTreeState"
 import { OutlinePanel } from "./OutlinePanel"
+import { SidebarResizer } from "./SidebarResizer"
+import {
+  clampSidebarWidth,
+  readSidebarWidth,
+  writeSidebarWidth,
+} from "./sidebarResize"
 import { CommandPalette } from "./CommandPalette"
 import { QuickOpenModal } from "./QuickOpenModal"
 import { VersionHistoryModal } from "./VersionHistoryModal"
@@ -120,6 +126,7 @@ import {
   RELEASES_URL,
   SAFE_MODE_BYTES,
   SAFE_MODE_LINES,
+  SIDEBAR_DEFAULT_WIDTH,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
 } from "./constants"
@@ -299,6 +306,7 @@ export default function App({
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [outlineOpen, setOutlineOpen] = useState(readOutlineOpen)
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
@@ -830,6 +838,26 @@ export default function App({
   useEffect(() => {
     writeOutlineOpen(outlineOpen)
   }, [outlineOpen])
+
+  // A stored width can outlive a smaller window (relaunch, external resize);
+  // re-clamp so the sidebar never eats the editor. Functional setState keeps
+  // the listener registered once with no stale closure.
+  useEffect(() => {
+    const onWindowResize = () => {
+      setSidebarWidth(prev => clampSidebarWidth(prev, window.innerWidth))
+    }
+    window.addEventListener("resize", onWindowResize)
+    return () => window.removeEventListener("resize", onWindowResize)
+  }, [])
+
+  function commitSidebarWidth(px: number) {
+    setSidebarWidth(px)
+    writeSidebarWidth(px)
+  }
+
+  function resetSidebarWidth() {
+    commitSidebarWidth(clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH, window.innerWidth))
+  }
 
   const activePendingId = normalizationByTab[session.id]?.notice.id ?? null
 
@@ -1426,7 +1454,20 @@ export default function App({
 
   function requestCloseTab(id: number) {
     flushPendingDocs()
-    closeTabInternal(id, { confirm: true, allowReplaceLast: false })
+    // Closing the last file swaps in a fresh untitled scratch (the same swap
+    // the delete path uses). A clean untitled lone tab would only be swapped
+    // for an identical one — and each swap churns the CodeMirror view — so
+    // treat that as a no-op instead of cycling tab ids under held Cmd+W.
+    const lone = workspaceRef.current.tabs.length === 1 ? workspaceRef.current.tabs[0] : undefined
+    if (
+      lone
+      && lone.id === id
+      && lone.persistence.kind === "untitled"
+      && !sessionDirty(lone, docsRef.current.get(id) ?? "")
+    ) {
+      return
+    }
+    closeTabInternal(id, { confirm: true, allowReplaceLast: true })
   }
   requestCloseTabRef.current = requestCloseTab
 
@@ -2064,6 +2105,7 @@ export default function App({
         <aside
           id="primary-sidebar"
           className={`sidebar-primary${sidebarOpen ? "" : " is-hidden"}`}
+          style={{ "--omd-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
           aria-hidden={!sidebarOpen}
           inert={!sidebarOpen}
         >
@@ -2098,6 +2140,14 @@ export default function App({
             />
           )}
         </aside>
+        {sidebarOpen ? (
+          <SidebarResizer
+            width={sidebarWidth}
+            onResize={setSidebarWidth}
+            onCommit={commitSidebarWidth}
+            onReset={resetSidebarWidth}
+          />
+        ) : null}
         <aside
           id="outline-panel"
           className={`sidebar-secondary${outlineOpen ? "" : " is-hidden"}`}
@@ -2116,11 +2166,7 @@ export default function App({
             }}
           />
         </aside>
-        <div
-          className="outline-toggle-strip"
-          onMouseEnter={handleOutlineMouseEnter}
-          onMouseLeave={handleOutlineMouseLeave}
-        >
+        <div className="outline-toggle-strip">
           <button
             type="button"
             className={`outline-toggle-btn${outlineOpen ? " is-active" : ""}`}
@@ -2129,6 +2175,8 @@ export default function App({
               setOutlineHover(false)
               setOutlineOpen(open => !open)
             }}
+            onMouseEnter={handleOutlineMouseEnter}
+            onMouseLeave={handleOutlineMouseLeave}
             aria-expanded={outlineOpen}
             aria-controls="outline-panel"
             aria-label={outlineOpen ? t("outline.aria.toggleHide") : t("outline.aria.toggleShow")}

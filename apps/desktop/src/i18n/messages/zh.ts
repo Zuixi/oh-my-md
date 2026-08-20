@@ -151,6 +151,7 @@ export const zh: Record<string, string> = {
   "filetree.searchInFolder": "在文件夹中搜索…",
   "filetree.kbd.searchShortcut": "{shortcut}",
   "filetree.empty": "从文件菜单打开文件夹。",
+  "sidebar.aria.resize": "调整侧边栏宽度",
   "filetree.aria.entryActions": "{name} 的操作",
   "filetree.aria.folderActions": "文件夹操作",
   "filetree.menu.newFile": "新建文件",
