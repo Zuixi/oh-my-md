@@ -1,5 +1,5 @@
 import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
-import { Compartment, EditorState, Facet } from "@codemirror/state"
+import { Compartment, EditorState, Facet, type Text } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
   classifyLink,
@@ -35,7 +35,12 @@ export interface EditorDocumentUpdate {
 }
 
 export interface CreateEditorOptions {
-  doc: string
+  /**
+   * Task 10：doc 直接收 Text（LARGE 档流式打开的 chunk 组装产物）时，
+   * EditorState.create 跳过对整串的 regex 切行；字符串路径（常规读盘、会话恢复
+   * 等无 docText 的调用方）行为不变。
+   */
+  doc: string | Text
   tabId: number
   documentId: number
   getDocPath: () => string | null

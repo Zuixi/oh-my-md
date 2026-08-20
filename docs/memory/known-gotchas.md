@@ -480,4 +480,16 @@ the title fold's backward scan correctly stops at `line.from`; this is
 cosmetic and rare with no crash (verified: StateField-provided replaces
 spanning line breaks are safe in CM 6.43.8).
 
+## Text.append continues the last line; batched Text assembly needs a junction line
 
+`Text.append(other)` is `replace(length, length, other)` semantics: the first
+line of `other` is string-concatenated onto the accumulator's last line — no
+line break is inserted at the junction. `Text.of(["a"]).append(Text.of(["b"]))`
+is the single line `"ab"`, not `"a\nb"`. Any incremental assembly that appends
+line batches must prepend an empty "junction" line to each appended batch
+(`Text.of(["", ...batch])`: `last + ""` stays `last`, the following break is the
+real one) — that is what `packages/engine/src/docText.ts` does, and its parity
+suite (`test/docText.test.ts`, every-chunk-boundary scans against
+`Text.of(s.split(/\r\n?|\n/))`) is the guard. Related trap in the same file:
+an empty streaming chunk must not adjudicate a pending chunk-trailing `\r`
+(`"\r" + "" + "\n"` is one `\r\n` separator, not two).

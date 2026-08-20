@@ -21,6 +21,7 @@ packages/engine/
 │   │   └── chars.ts             # Named ASCII char-code constants (no magic numbers)
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
 │   ├── outline.ts               # Read-only heading outline from the Lezer tree
+│   ├── docText.ts               # Streamed-chunk → Text assembly (LARGE-tier open ingest; parity-guarded)
 │   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
 │   └── decorations/
 │       ├── build.ts             # StateField live decorations (seed + pending model) and incremental updates

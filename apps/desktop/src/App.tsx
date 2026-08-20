@@ -4,8 +4,9 @@ import {
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorView } from "@codemirror/view"
+import type { Text } from "@codemirror/state"
 import {
-  applyToggle, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
+  applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
@@ -309,7 +310,7 @@ export default function App({
   >(async () => {})
   const saveCopyRef = useRef<(tabId: number) => Promise<void>>(async () => {})
   const requestCloseTabRef = useRef<(id: number) => void>(() => {})
-  const resetTabDocumentRef = useRef<(session: EditorSession, contents: string) => boolean>(() => false)
+  const resetTabDocumentRef = useRef<(session: EditorSession, contents: string, docText?: Text) => boolean>(() => false)
   const [transientStatus, setTransientStatus] = useState<string | null>(null)
   const transientStatusTimerRef = useRef<number | null>(null)
   const showTransientStatus = createTransientStatusNotifier(
@@ -354,6 +355,10 @@ export default function App({
   // Spec 05b：每个 tab 的精确 UTF-8 字节数（read_document stats）。行数阈值对
   // 长行文件有盲区，字节数补上第二根轴；策略在 applyDocumentScalePolicy 读取。
   const docBytesRef = useRef(new Map<number, number>())
+  // Task 10：LARGE 档流式打开组装出的 Text，view 尚未创建的窗口期（新 tab /
+  // 惰性 tab 首激活）暂存于此，ensureViews 建 view 时消费即删 —— 只在「打开完成
+  // → effect 建 view」的一拍内存活，不留常驻大对象副本。
+  const docTextsRef = useRef(new Map<number, Text>())
   // HUGE（只读实时预览）档的 tab；editorOptions 与档位策略按此装配。
   const readonlyTabsRef = useRef(new Set<number>())
   // LARGE 档流式打开的进度（overlay 百分比）。
@@ -685,12 +690,18 @@ export default function App({
     }
   }
 
-  function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
+  function editorOptions(
+    contents: string,
+    tabId: number,
+    documentId: number,
+    docText?: Text,
+  ): CreateEditorOptions {
     // HUGE 只读档：readOnly 挡编辑；渐进渲染（视口优先装饰 + idle 排空）落地后，
     // 大文档开箱即 Live 不再冻结，无需强制源码模式或裁剪语言扩展。
     const readOnly = readonlyTabsRef.current.has(tabId)
     return {
-      doc: contents,
+      // Task 10：流式打开带 Text 时直传（免整串切行）；否则回退字符串路径。
+      doc: docText ?? contents,
       tabId,
       documentId,
       ...imageInsertOptions(tabId, documentId),
@@ -744,7 +755,7 @@ export default function App({
     setStatsRequested(0)
   }
 
-  function resetTabDocument(nextSession: EditorSession, contents: string): boolean {
+  function resetTabDocument(nextSession: EditorSession, contents: string, docText?: Text): boolean {
     const view = viewsRef.current.get(nextSession.id)
     if (!view) return false
     const previousWorkspace = workspaceRef.current
@@ -756,13 +767,15 @@ export default function App({
     docVersionsRef.current.set(nextSession.id, 0)
     outlineCacheRef.current.delete(nextSession.id)
     try {
-      resetEditorDocument(view, editorOptions(contents, nextSession.id, nextSession.documentId))
+      resetEditorDocument(view, editorOptions(contents, nextSession.id, nextSession.documentId, docText))
     } catch (error) {
       commitWorkspace(previousWorkspace)
       commitNormalization(previousNormalization)
       syncDoc(previousDoc, nextSession.id)
       throw error
     }
+    // view 已存在并直接消费了入参 Text：清掉可能残留的 ensureViews 暂存（作废）。
+    docTextsRef.current.delete(nextSession.id)
     applyDocumentScalePolicy(view, nextSession.id)
     // 重载内容即最新：清掉 pending，防止物化用旧 view 内容覆盖（Spec 05a）。
     pendingDocTabsRef.current.delete(nextSession.id)
@@ -821,8 +834,15 @@ export default function App({
       if (!el) continue
       const view = createEditor(
         el,
-        editorOptions(docsRef.current.get(tab.id) ?? "", tab.id, tab.documentId),
+        // Task 10：流式打开暂存的 Text（若有）在此消费 —— 大档新 tab 免整串切行。
+        editorOptions(
+          docsRef.current.get(tab.id) ?? "",
+          tab.id,
+          tab.documentId,
+          docTextsRef.current.get(tab.id),
+        ),
       )
+      docTextsRef.current.delete(tab.id)
       viewsRef.current.set(tab.id, view)
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
       applyDocumentScalePolicy(view, tab.id)
@@ -1214,9 +1234,18 @@ export default function App({
     }
     try {
       const parts: string[] = []
+      // Task 10：与 parts 同步维护分块 Text 组装 —— chunk 到达途中即做 chunk
+      // 局部切行（跨 chunk 的 \r\n 由 assembler 携带裁决），EditorState.create
+      // 收到 Text 后跳过对整串的 regex 切行。镜像字符串 join 仍只做一次
+      // （05b 偏差 #1 决策：脏检查/保存/恢复继续用字符串口径）。
+      const assembler = createTextAssembler()
       const stream = await services.readDocumentStreaming(path, event => {
-        if (event.kind === "chunk") parts.push(event.text)
-        else setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
+        if (event.kind === "chunk") {
+          parts.push(event.text)
+          assembler.push(event.text)
+        } else {
+          setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
+        }
       })
       if (stream.kind === "missing") {
         return { kind: "missing", requestedPath: stream.requestedPath }
@@ -1227,6 +1256,7 @@ export default function App({
         kind: "existing",
         requestedPath: stream.requestedPath,
         contents,
+        docText: assembler.finish(),
         version: stream.version,
         stats: stream.stats,
       }
@@ -1279,7 +1309,7 @@ export default function App({
         }
         return
       }
-      const { contents } = snapshot
+      const { contents, docText } = snapshot
       const byteLength = snapshot.stats?.byteLength
       await services.allowDocumentAssets(nextPath)
       // allowDocumentAssets 是提交前最后一个真实 await：删除可能恰在其间完成并
@@ -1291,6 +1321,7 @@ export default function App({
       if (inNewTab) {
         const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
         docsRef.current.set(tab.id, contents)
+        if (docText) docTextsRef.current.set(tab.id, docText)
         if (byteLength !== undefined) docBytesRef.current.set(tab.id, byteLength)
         if (tier === "readonly") readonlyTabsRef.current.add(tab.id)
         commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
@@ -1304,7 +1335,7 @@ export default function App({
       else docBytesRef.current.delete(sessionRef.current.id)
       if (tier === "readonly") readonlyTabsRef.current.add(sessionRef.current.id)
       else readonlyTabsRef.current.delete(sessionRef.current.id)
-      if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents)) return
+      if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents, docText)) return
       void services.clearRecovery?.(recoveryKey(sessionRef.current))
     } finally {
       openInFlightRef.current.delete(nextPath)
@@ -1486,10 +1517,11 @@ export default function App({
       const updated = openSession(lazy, snapshot)
       if (snapshot.stats) docBytesRef.current.set(updated.id, snapshot.stats.byteLength)
       if (tier === "readonly") readonlyTabsRef.current.add(updated.id)
-      if (!resetTabDocument(updated, snapshot.contents)) {
+      if (!resetTabDocument(updated, snapshot.contents, snapshot.docText)) {
         // view 尚未创建的窗口期：先落 session 与内容，策略由 ensureViews 兜底。
         commitWorkspace(replaceTabSession(workspaceRef.current, updated))
         docsRef.current.set(updated.id, snapshot.contents)
+        if (snapshot.docText) docTextsRef.current.set(updated.id, snapshot.docText)
         syncDoc(snapshot.contents, updated.id)
       }
     } catch (error) {
@@ -1552,6 +1584,7 @@ export default function App({
       tabSaveQueuesRef.current.delete(id)
       pendingDocTabsRef.current.delete(id)
       docBytesRef.current.delete(id)
+      docTextsRef.current.delete(id)
       readonlyTabsRef.current.delete(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
