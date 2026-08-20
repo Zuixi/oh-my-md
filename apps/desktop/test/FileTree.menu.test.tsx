@@ -62,7 +62,7 @@ async function openTreeMenu(label: string): Promise<void> {
 }
 
 describe("FileTree sidebar menu", () => {
-  it("creates a new markdown file in the clicked file's parent and refreshes the listing", async () => {
+  it("creates a new markdown file in the clicked file's parent, opens it, and refreshes the listing", async () => {
     const harness = makeAppHarness()
     let entries = [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
@@ -72,6 +72,7 @@ describe("FileTree sidebar menu", () => {
     vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
+      harness.seedFile(`${dir}/${name}`, "")
       return `${dir}/${name}`
     })
 
@@ -87,9 +88,10 @@ describe("FileTree sidebar menu", () => {
     })
     await waitFor(() => {
       expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled-2.md")
-      expect(screen.getByText("untitled-2.md")).toBeTruthy()
+      expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy()
     })
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
+    await waitFor(() => expectPathShown("/notes/untitled-2.md"))
   })
 
   it("creates a new folder in the clicked directory and refreshes the listing", async () => {
@@ -234,6 +236,7 @@ describe("FileTree sidebar menu", () => {
     vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [{ name, path: `${dir}/${name}`, is_dir: false }]
+      harness.seedFile(`${dir}/${name}`, "")
       return `${dir}/${name}`
     })
 
@@ -246,8 +249,9 @@ describe("FileTree sidebar menu", () => {
 
     await waitFor(() => {
       expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled.md")
-      expect(screen.getByText("untitled.md")).toBeTruthy()
+      expect(screen.getByText("untitled.md", { selector: ".filetree-name" })).toBeTruthy()
     })
+    await waitFor(() => expectPathShown("/notes/untitled.md"))
   })
 
   it("clears the old recovery draft after renaming a dirty open file", async () => {
