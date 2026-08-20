@@ -357,6 +357,36 @@ benchmarks may force full parses (they own their docs). Also mind the
 giant-paragraph cliff: one Lezer `advance()` parses an entire leaf block, so a
 multi-MB single paragraph (no blank lines) costs seconds per keystroke.
 
+## Decorations are seeded and windowed — never assume a full build
+
+Live decorations are **not** built synchronously for the whole document. Field
+create/reconfigure builds only the cursor seed (`LIVE_SEED_RADIUS_LINES` /
+`LIVE_SEED_RADIUS_CHARS` around the selection, `packages/engine/src/decorations/build.ts`);
+everything else lands in `LiveDeco.pending` and is drained progressively by
+`decorations/buildDriver.ts` (viewport-first microtask pass, then idle slices
+dispatching `liveBuildChunk`). Over-scale documents add **windowing**
+(`src/safeModeRendering.ts`): only pending inside the build window
+(`visibleRanges ± LIVE_WINDOW_CHARS`) is ever built, and after viewport/doc/
+selection changes `livePruneOutside` returns decorations outside the prune
+window back to pending. Consequence: at any moment decorations far from the
+viewport may legitimately be absent. Production code must never assume a
+decoration exists outside the viewport window (or that `pending` is empty).
+Tests that need a complete build must use the exported `drainPendingLiveBuild`
+helper — the synchronous test-only drain (production must never call it; same
+guard family as `crossLayerNoFullTree.test.ts`).
+
+## CodeMirror `readOnly` is advisory — every dispatch site must guard itself
+
+`EditorState.readOnly.of(true)` only blocks typed input in the view layer.
+Keymap commands (engine format/lists `dispatchSpec`s, `markdownKeymap`),
+`orderedRenumber` normalization dispatches, widget interactions (checkbox
+click, table toolbar/cell edit), and `domEventHandlers` (`htmlPaste` — which
+runs **before** the builtin paste handler's readOnly branch; handlers are
+first-true-wins) all dispatch transactions directly and sail past the view's
+readOnly interception. Every doc-changing dispatch site must check
+`state.readOnly` itself. Guard suite: `packages/engine/test/readonly-guards.test.ts`
+— add a case there whenever a new mutation path lands.
+
 ## Editing hot path owns zero O(doc) work (Spec 05a)
 
 The per-keystroke path must never materialize the document: `EditorDocumentUpdate`
