@@ -43,8 +43,9 @@ function scheduleIdle(callback: () => void): () => void {
 }
 
 // 视口锚点：CM 的 visibleRanges 是半开 [from, to)，统一转闭区间参与距离/交计算。
-// 首次 measure 之前 visibleRanges 为空（无布局信息），退化为光标点——
-// 驱动仍有确定的优先级锚点，且光标附近正是种子已构建区，实际空手而归无害。
+// 空列表兜底（防御）：当前实现挂载即算出非空 spans，但类型契约并不承诺非空
+// （极端布局/隐藏等边缘状态可能一段都不产）；空时退化为光标点，驱动仍有确定的
+// 优先级锚点 —— 光标附近正是种子已构建区，首帧通道通常无活，不构成额外开销。
 function visibleRegions(view: EditorView): ClosedRange[] {
   const ranges = view.visibleRanges
   if (ranges.length > 0) {
@@ -94,6 +95,8 @@ function nearestChunk(pending: ClosedRange[], regions: ClosedRange[]): ClosedRan
 
 // 首帧通道的目标：各视口区间与 pending 的交集，按 ≤LIVE_BUILD_CHUNK_CHARS 切片。
 // visibleRanges 与 pending 各自有序不相交 → 切片间互不相交，可并入同一交易。
+// 取舍：单个可见段超过 LIVE_BUILD_CHUNK_CHARS 的 pending 时也一次性切成多片并入
+// 同一交易（不逐片让出）——首帧语义优先于分片节奏，可见区必须立即有装饰。
 function visibleChunks(pending: ClosedRange[], regions: ClosedRange[]): ClosedRange[] {
   const chunks: ClosedRange[] = []
   for (const region of regions) {

@@ -25,6 +25,13 @@ function setVisible(view: EditorView, from: number, to: number) {
   })
 }
 
+// 强制空视口：光标 fallback 分支的唯一触发口径。不能用“真实构造后不 stub”——
+// CM 的 ViewState 构造时就计算 visibleRanges（实测挂载即非空，如 [{0, 961}]），
+// 那样测试走的是正常分支，删掉 fallback 依旧全绿。
+function clearVisible(view: EditorView) {
+  Object.defineProperty(view, "visibleRanges", { configurable: true, value: Object.freeze([]) })
+}
+
 function mountView(doc: string, anchor?: number) {
   const parent = document.createElement("div")
   document.body.appendChild(parent)
@@ -214,18 +221,23 @@ describe("live build driver", () => {
     cleanup()
   })
 
-  it("falls back to the cursor when visibleRanges is empty (pre-layout)", async () => {
+  it("falls back to the cursor when visibleRanges is empty", async () => {
     vi.useFakeTimers()
     stepClock()
-    const doc = boldDoc(1000)
-    const { view, cleanup } = mountView(doc)           // 未 stub：首次 measure 前为 []
-    const { chunks } = recordChunks(view)
+    const doc = plainDoc(4000, 200)                    // ≈ 800k 字符
+    const { view, cleanup } = mountView(doc, doc.length) // 光标文末 → pending 单段 ~740k
     const [pending] = pendingOf(view)                  // 消耗前快照区间（之后即排空）
-    await Promise.resolve()                            // 光标点 [0,0] 在种子内 → 首帧无活
+    expect(pending.to - pending.from + 1).toBeGreaterThan(LIVE_BUILD_CHUNK_CHARS)
+    clearVisible(view)                                 // 空视口 → 锚点退化为光标点
+    const { chunks } = recordChunks(view)
+    await Promise.resolve()                            // 光标点在种子内 → 首帧无活
     expect(chunks).toEqual([])
     tickUntilChunks({ chunks }, 1)
-    expect(chunks).toEqual([{ from: pending.from, to: pending.to }])
-    expect(pendingOf(view)).toEqual([])
+    // 光标贴近 pending.to → 从 to 端切一片：区分 fallback 与“恒取首区间首端”
+    expect(chunks).toEqual([{ from: pending.to - LIVE_BUILD_CHUNK_CHARS + 1, to: pending.to }])
+    expect(pendingOf(view)).toEqual([
+      { from: pending.from, to: pending.to - LIVE_BUILD_CHUNK_CHARS },
+    ])
     cleanup()
   })
 
