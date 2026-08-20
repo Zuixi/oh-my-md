@@ -109,3 +109,96 @@ describe("orderedRenumber skips readonly docs", () => {
     cleanup()
   })
 })
+
+// Round 2：widget/paste 改写路径不经过 DOM 输入层（view 层的 readOnly 拦截只覆盖
+// typed input / drop / paste 内建处理器），checkbox 点击、表格编辑、富文本粘贴都
+// 直 dispatch 事务 —— 只读档必须逐一拒绝。
+describe("widget and paste mutation paths refuse readonly docs", () => {
+  // makeState 挂临时视图排空渐进装饰，拿到的 state 已含全部 widget 装饰，
+  // 再用真实 EditorView 挂载让 widget DOM 真正渲染（htmlPaste 也随 editorExtensions 装配）。
+  function mountDecorated(doc: string, readonly: boolean) {
+    const state = makeState(doc, [
+      ...(readonly ? [EditorState.readOnly.of(true)] : []),
+      editorExtensions(),
+    ])
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({ state, parent })
+    return { view, cleanup: () => { view.destroy(); parent.remove() } }
+  }
+
+  const settle = () => new Promise(r => setTimeout(r, 20))
+
+  it("checkbox widget renders disabled and its click never toggles the marker", () => {
+    const doc = "intro\n\n- [x] done"
+    const { view, cleanup } = mountDecorated(doc, true)
+    const box = view.contentDOM.querySelector("input.omd-checkbox") as HTMLInputElement | null
+    expect(box).toBeTruthy()
+    expect(box!.disabled).toBe(true)
+    // 程序化 click 绕过 disabled 的用户交互语义，直接验证 dispatch 守卫
+    box!.dispatchEvent(new MouseEvent("click", { cancelable: true, bubbles: true }))
+    expect(view.state.doc.toString()).toBe(doc)
+    cleanup()
+  })
+
+  it("checkbox widget still toggles the marker when editable", () => {
+    const { view, cleanup } = mountDecorated("intro\n\n- [x] done", false)
+    const box = view.contentDOM.querySelector("input.omd-checkbox") as HTMLInputElement
+    expect(box.disabled).toBe(false)
+    box.dispatchEvent(new MouseEvent("click", { cancelable: true, bubbles: true }))
+    expect(view.state.doc.toString()).toBe("intro\n\n- [ ] done")
+    cleanup()
+  })
+
+  it("table widget disables edit affordances and toolbar clicks never dispatch", async () => {
+    const doc = "intro\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+    const { view, cleanup } = mountDecorated(doc, true)
+    await settle()  // renderInto 走微任务
+    const wrap = view.contentDOM.querySelector(".omd-table")
+    expect(wrap).toBeTruthy()
+    expect(Array.from(wrap!.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button"))
+      .every(btn => btn.disabled)).toBe(true)
+    // 单元格 mousedown 不开行内编辑器
+    wrap!.querySelector("td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    expect(wrap!.querySelector("input.omd-table-edit")).toBeNull()
+    // 程序化触发工具栏（disabled 只挡用户交互），源码不被改写
+    const insertRow = wrap!.querySelector<HTMLButtonElement>("[data-act='insert-row']")!
+    insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    insertRow.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+    expect(view.state.doc.toString()).toBe(doc)
+    cleanup()
+  })
+
+  // htmlPaste 的 domEventHandlers 先于 @codemirror/view 内建 paste 处理器运行，
+  // 内建的 readOnly 分支到不了 —— 扩展自身必须消费事件并拒绝插入。
+  function pasteEvent(html: string) {
+    const data = new Map([
+      ["text/html", html],
+      ["text/plain", "plain"],
+    ])
+    const event = new Event("paste", { cancelable: true, bubbles: true })
+    Object.defineProperty(event, "clipboardData", {
+      value: { getData: (type: string) => data.get(type) ?? "" },
+    })
+    return event
+  }
+
+  it("rich paste is consumed but inserts nothing when readonly", async () => {
+    const { view, cleanup } = mountDecorated("intro", true)
+    const event = pasteEvent("<p><strong>bold</strong></p>")
+    view.contentDOM.dispatchEvent(event)
+    await settle()
+    expect(event.defaultPrevented).toBe(true)
+    expect(view.state.doc.toString()).toBe("intro")
+    cleanup()
+  })
+
+  it("rich paste still inserts markdown when editable", async () => {
+    const { view, cleanup } = mountDecorated("intro", false)
+    view.contentDOM.dispatchEvent(pasteEvent("<p><strong>bold</strong></p>"))
+    await settle()
+    expect(view.state.doc.toString()).toContain("**bold**")
+    cleanup()
+  })
+})

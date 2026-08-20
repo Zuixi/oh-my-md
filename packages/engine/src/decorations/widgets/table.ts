@@ -142,6 +142,9 @@ export class TableWidget extends BlockWidget {
   protected get cssClass() { return "omd-table" }
 
   protected renderInto(el: HTMLElement) {
+    // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
+    // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
+    const readonly = this.view?.state.readOnly ?? false
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
     for (const [act, label, title] of [
@@ -156,6 +159,7 @@ export class TableWidget extends BlockWidget {
       btn.textContent = label
       btn.title = title
       btn.tabIndex = -1
+      btn.disabled = readonly
       btn.addEventListener("mousedown", e => {
         e.preventDefault()
         e.stopPropagation()
@@ -227,6 +231,8 @@ export class TableWidget extends BlockWidget {
   }
 
   private startEdit(el: HTMLElement, row: number, col: number) {
+    // 只读档不开行内编辑器（开了也无法提交 —— replace() 会拒绝 dispatch）。
+    if (this.view?.state.readOnly) return
     if (this.editing?.el === el) return
     this.cancelEdit()
     this.row = row
@@ -308,7 +314,11 @@ export class TableWidget extends BlockWidget {
   }
 
   private replace(next: string | null, dest: { row: number; col: number } | null = null) {
-    if (!next || !this.view) return
+    // 权威只读守卫：commitEdit/tool 的所有源码改写都汇入此处。readOnly 是建议性
+    // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 resumeEdit，
+    // 微任务渲染恢复路径不会误开编辑器）。disabled 按钮只挡用户交互，程序化
+    // click 仍可到达 tool()，故此处必须显式拒绝。
+    if (!next || !this.view || this.view.state.readOnly) return
     const from = this.livePos()
     if (dest) resumeEdit = { pos: from, row: dest.row, col: dest.col }
     this.view.dispatch({
