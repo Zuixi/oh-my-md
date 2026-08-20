@@ -270,7 +270,11 @@ export const defaultServices: DesktopServices = {
   writeFile: async (path, contents) => {
     await invoke("write_file", { path, contents })
   },
-  revealInFinder: path => invoke("plugin:opener|reveal_item_in_dir", { path }),
+  revealInFinder: async path => {
+    // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).
+    const { revealItemInDir } = await import("@tauri-apps/plugin-opener")
+    await revealItemInDir(path)
+  },
   createMarkdown: (dir, name) => invoke<string>("create_markdown", { dir, name }),
   createDir: (dir, name) => invoke<string>("create_dir", { dir, name }),
   renamePath: (from, toName) => invoke<string>("rename_path", { from, toName }),

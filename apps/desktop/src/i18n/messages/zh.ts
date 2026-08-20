@@ -252,6 +252,7 @@ export const zh: Record<string, string> = {
   "error.createFolderFailed": "创建文件夹失败",
   "error.renameFailed": "重命名失败",
   "error.deleteFailed": "删除失败",
+  "error.revealFailed": "无法在文件管理器中显示该文件",
   "error.invalidPath": "路径无效。",
   "error.notUtf8": "仅支持 UTF-8 Markdown 文件。",
   "error.emptyName": "名称不能为空或包含 '/' 或 '..'。",

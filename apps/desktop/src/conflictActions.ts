@@ -1,7 +1,9 @@
-import type {
-  DocumentErrorCode,
-  ExistingDiskSnapshot,
+import {
+  errorMessage,
+  type DocumentErrorCode,
+  type ExistingDiskSnapshot,
 } from "./desktopServices"
+import { t } from "./i18n"
 import type { ConflictActionId } from "./documentSaveCoordinator"
 import type { DiskDivergence, DocumentSaveState } from "./documentSaveState"
 import type { DesktopServices } from "./desktopServices"
@@ -186,7 +188,9 @@ export function makeConflictActions(
       const session = deps.getSession(tabId)
       const path = session ? sessionPath(session) : null
       if (!path) return
-      void deps.services.revealInFinder?.(path)
+      void deps.services.revealInFinder?.(path)?.catch(error => {
+        deps.services.reportError(errorMessage(t("error.revealFailed"), error))
+      })
     },
 
     cancel(tabId) {
