@@ -65,6 +65,7 @@ export type HarnessServices = DesktopServices & Required<
     | "createDir"
     | "renamePath"
     | "deletePath"
+    | "notifySuccess"
   >
 >
 
@@ -313,6 +314,7 @@ function harnessServices(context: HarnessContext): HarnessServices {
     getSessionState: vi.fn(async () => null),
     saveSessionState: vi.fn(async () => undefined),
     reportError: vi.fn(),
+    notifySuccess: vi.fn(),
     revealInFinder: vi.fn(async () => undefined),
     clearRecovery: vi.fn(async () => undefined),
   }

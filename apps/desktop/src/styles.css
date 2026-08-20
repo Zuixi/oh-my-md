@@ -1224,3 +1224,28 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   font-size: 12px;
   color: var(--omd-error-fg);
 }
+
+/* react-toastify (spec 2026-08-20). The container keeps the library's "light"
+   theme class; both data-themes remap its --toastify-* vars onto omd tokens,
+   so the app's manual theme toggle drives toast colors and cascade order
+   against ReactToastify.css never matters for these. */
+html[data-theme="light"],
+html[data-theme="dark"] {
+  --toastify-color-light: var(--omd-panel-bg);
+  --toastify-text-color-light: var(--omd-fg);
+  --toastify-font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --toastify-icon-color-error: var(--omd-error-fg);
+  --toastify-color-progress-error: var(--omd-error-fg);
+}
+.Toastify__toast {
+  font-size: 13px;
+  line-height: 1.4;
+  border: 1px solid var(--omd-border);
+}
+/* Banner-style left accent per toast type. */
+.Toastify__toast--success { border-left: 3px solid var(--toastify-color-success); }
+.Toastify__toast--error { border-left: 3px solid var(--omd-error-fg); }
+.Toastify__close-button--light {
+  color: var(--omd-fg);
+  opacity: 0.6;
+}

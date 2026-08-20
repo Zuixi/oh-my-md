@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
+import { toast } from "react-toastify"
 import { exportSaveOptions } from "./exportPath"
 import { parseRecents } from "./recents"
 import {
@@ -190,6 +191,8 @@ export interface DesktopServices {
   getSessionState?: () => Promise<SavedSessionState | null>
   saveSessionState?: (state: SavedSessionState) => Promise<void>
   reportError: (message: string) => void
+  /** Fire-and-forget success feedback (toast-backed in production; optional so tests/browser builds may omit it). */
+  notifySuccess?: (message: string) => void
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   listenDragDrop?: (handler: (paths: string[]) => void) => () => void
@@ -242,6 +245,10 @@ async function pickPath(kind: "file" | "folder" | "save", extensions: string[]):
   const path = await open({ filters: [{ name: t("dialog.filter.files"), extensions }] })
   return typeof path === "string" ? path : null
 }
+
+/** Spec 2026-08-20 toast notifications: error toasts linger so failure detail is readable; success toasts are transient. */
+const ERROR_TOAST_AUTO_CLOSE_MS = 8000
+const SUCCESS_TOAST_AUTO_CLOSE_MS = 3000
 
 export const defaultServices: DesktopServices = {
   pickOpenPath: () => pickPath("file", [...MARKDOWN_EXTENSIONS]),
@@ -403,7 +410,8 @@ export const defaultServices: DesktopServices = {
       return null
     }
   },
-  reportError: (message) => window.alert(message),
+  reportError: message => { toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
+  notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
   listenMenu: handler => {
     const pending = listen<string>("menu-command", event => handler(event.payload))
     return () => { void pending.then(unlisten => unlisten()) }

@@ -262,5 +262,10 @@ export const zh: Record<string, string> = {
   "error.save.noVersion": "保存成功但文档版本不可用",
   "error.save.failed": "保存失败",
   "error.recoveryWriteFailed": "恢复写入失败",
+  "notify.fileCreated": "已创建 {name}",
+  "notify.entryDeleted": "已删除 {name}",
+  "notify.entryRenamed": "已重命名为 {name}",
+  "notify.saveAsCompleted": "已保存为 {name}",
+  "notify.exportCompleted": "已导出 {name}",
   "session.unnamed": "未命名",
 }
