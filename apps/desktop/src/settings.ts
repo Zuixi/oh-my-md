@@ -94,3 +94,16 @@ export function parseSettings(json: string): UserSettings {
     return DEFAULT_SETTINGS
   }
 }
+
+/** Wraps a font family name as a single quoted CSS font-family token. */
+export function cssFamily(name: string): string {
+  return `'${name.replace(/'/g, "\\'")}'`
+}
+
+/** Returns the family whose cssFamily(name) equals value, else null. */
+export function familyFromCssValue(
+  value: string,
+  families: readonly string[],
+): string | null {
+  return families.find(family => cssFamily(family) === value) ?? null
+}

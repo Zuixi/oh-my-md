@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import {
+  cssFamily,
   DEFAULT_SETTINGS,
+  familyFromCssValue,
   parseSettings,
   sanitizeSettings,
   type UserSettings,
@@ -82,5 +84,29 @@ describe("settings model", () => {
   it("parseSettings tolerates missing locale", () => {
     const s = parseSettings(JSON.stringify({ theme: "dark" }))
     expect(s.locale).toBe("auto")
+  })
+})
+
+describe("cssFamily", () => {
+  it("wraps a plain family name in single quotes", () => {
+    expect(cssFamily("Microsoft YaHei")).toBe("'Microsoft YaHei'")
+  })
+
+  it("escapes internal single quotes", () => {
+    expect(cssFamily("Baekmuk's Batang")).toBe("'Baekmuk\\'s Batang'")
+    expect(cssFamily("a'b'c")).toBe("'a\\'b\\'c'")
+  })
+})
+
+describe("familyFromCssValue", () => {
+  it("returns the family whose cssFamily token equals the value", () => {
+    expect(familyFromCssValue("'Menlo'", ["Arial", "Menlo", "Microsoft YaHei"])).toBe("Menlo")
+    expect(familyFromCssValue("'Microsoft YaHei'", ["Arial", "Microsoft YaHei"])).toBe("Microsoft YaHei")
+  })
+
+  it("returns null on a miss", () => {
+    expect(familyFromCssValue("'Helvetica'", ["Arial", "Menlo"])).toBeNull()
+    expect(familyFromCssValue("Menlo", ["Menlo"])).toBeNull()
+    expect(familyFromCssValue("system-ui, sans-serif", ["system-ui"])).toBeNull()
   })
 })
