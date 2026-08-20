@@ -389,6 +389,7 @@ export default function App({
   const [outlineHover, setOutlineHover] = useState(false)
   const outlineHoverTimerRef = useRef<number | null>(null)
   const pendingJumpRef = useRef<number | null>(null)
+  const pendingFocusRef = useRef(false)
   const [normalizationByTab, setNormalizationByTab] = useState<NormalizationByTab>({})
   const normalizationRef = useRef(normalizationByTab)
   const recoveryWriterRef = useRef(createRecoveryWriter())
@@ -743,6 +744,7 @@ export default function App({
       applyDocumentScalePolicy(view, tab.id)
     }
     jumpPending()
+    focusPendingEditor()
   }
 
   function jumpPending() {
@@ -756,6 +758,13 @@ export default function App({
     } catch {
       /* mock views */
     }
+  }
+
+  /** 视图要到 ensureViews/activateTab 时才存在，故焦点用 pending 标记延迟移交（同 jumpPending 模式）。 */
+  function focusPendingEditor() {
+    if (!pendingFocusRef.current) return
+    pendingFocusRef.current = false
+    try { viewRef.current?.focus() } catch { /* mock views */ }
   }
 
   function bindHost(id: number, el: HTMLDivElement | null) {
@@ -1353,6 +1362,7 @@ export default function App({
     syncDoc(docsRef.current.get(id) ?? nextView.state.doc.toString(), id)
     refreshChrome(nextView)
     jumpPending()
+    focusPendingEditor()
   }
 
   /** Spec 05b：会话恢复的惰性 tab 首次激活时才读盘装载（含分档确认）。 */
@@ -1667,6 +1677,7 @@ export default function App({
     try {
       const createdPath = await services.createMarkdown(dir, name)
       await refreshTreePath(dir)
+      pendingFocusRef.current = true
       void openPath(createdPath, true)
     } catch (error) {
       services.reportError(errorMessage(t("error.createFileFailed"), error))
