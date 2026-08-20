@@ -254,15 +254,16 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     : syntaxTree(tr.state).length
 
   // pending 随文档变更映射（端点外扩关联 from:-1 / to:+1：pending 边界处的新增文本
-  // 也算未构建；区间塌缩为 from > to 时丢弃）
+  // 也算未构建；区间塌缩为 from > to 时丢弃）。映射可能让两侧区间重叠或紧贴
+  // （如整段删除把左右 pending 压到同一点/相邻），mergeRanges 归一化回
+  // 「有序、互不相交」——LiveDeco.pending 的文档化不变量，分片驱动据此挑区间。
   let pending = value.pending
   if (tr.docChanged) {
-    pending = pending
+    pending = mergeRanges(pending
       .map(range => ({
         from: tr.changes.mapPos(range.from, -1),
         to: tr.changes.mapPos(range.to, 1),
-      }))
-      .filter(range => range.from <= range.to)
+      })))
   }
 
   // 树增长：pending 非空时增长区间并入 pending（由分片驱动消化，避免同步跟进与
