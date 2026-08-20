@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, type RenderResult } from "@tes
 import { createElement } from "react"
 import { expect, vi, type Mock } from "vitest"
 import type { EditorView } from "@codemirror/view"
+import type { Text } from "@codemirror/state"
 import {
   getPendingOrderedListNormalization,
   type NormalizationId,
@@ -143,7 +144,13 @@ function createHandleRecord(
   initial: CreateEditorOptions,
   onDestroy: (tabId: number) => void,
 ): HandleRecord {
-  let contents = initial.doc
+  // Task 10：流式大档打开会把 CodeMirror Text 直接作为 doc 传入 —— 镜像字符串
+  // 走 toString 物化一次（等同生产的 docsRef 口径），假 state.doc 则原样保留
+  // Text（其自身就有 toString/lines，与 fakeDoc 同形）。
+  const docToString = (doc: string | Text): string => (typeof doc === "string" ? doc : doc.toString())
+  const toStateDoc = (doc: string | Text): { toString(): string; readonly lines: number } =>
+    typeof doc === "string" ? fakeDoc(doc) : doc
+  let contents = docToString(initial.doc)
   let options = initial
   let pending: OrderedListNormalizationNotice | null = null
   // `state.doc` mirrors CM's Text semantics: an immutable object frozen at the
@@ -157,8 +164,8 @@ function createHandleRecord(
       return value ? value.split("\n").length : 1
     },
   })
-  const state = { doc: fakeDoc(initial.doc) }
-  const swapDoc = (value: string) => { state.doc = fakeDoc(value) }
+  const state = { doc: toStateDoc(initial.doc) }
+  const swapDoc = (value: string | Text) => { state.doc = toStateDoc(value) }
   pendingByState.set(state, () => pending)
   const view = {
     state,
@@ -191,7 +198,7 @@ function createHandleRecord(
     contents: () => contents,
     rebind: next => {
       options = next
-      contents = next.doc
+      contents = docToString(next.doc)
       swapDoc(next.doc)
       pending = null
     },

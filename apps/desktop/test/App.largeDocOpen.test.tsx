@@ -1,10 +1,11 @@
 import { fireEvent, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
+import { Text } from "@codemirror/state"
 import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES, safeModeRenderingEnabled } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DocumentOpenStream } from "../src/desktopServices"
-import { createAppHarness, resetMountedApps } from "./appHarness"
+import { createAppHarness, expectPathShown, resetMountedApps, versionFor, type FakeEditorHandle } from "./appHarness"
 import {
   OPEN_READONLY_THRESHOLD_BYTES,
   SAFE_MODE_BYTES,
@@ -48,6 +49,15 @@ async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, 
 }
 
 import { act } from "@testing-library/react"
+
+/** Task 10：流式打开必须把 chunk 组装的 Text 交给编辑器（而非整串字符串）。 */
+function streamedDocText(handle: FakeEditorHandle): Text {
+  const doc = handle.getOptions().doc
+  if (typeof doc !== "object" || doc === null) {
+    throw new Error(`expected a Text doc from the streaming path, got: ${typeof doc}`)
+  }
+  return doc
+}
 
 describe("open tiers (Spec 05b)", () => {
   it("opens a NORMAL file with one-shot read and no overlay", async () => {
@@ -204,9 +214,48 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/stream.md", "disk copy that must not be used")
     expect(harness.services.readDocument).not.toHaveBeenCalled()
-    expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
+    // Task 10：编辑器收到的是 chunk 组装的 Text（而非 join 后的整串），
+    // 且与整串 split 的参照 Text 同构 —— EditorState.create 由此跳过整串切行。
+    const doc = streamedDocText(harness.editorForTab(1))
+    expect(doc.eq(Text.of("alpha beta".split(/\r\n?|\n/)))).toBe(true)
+    expect(harness.editorForTab(1).view.state.doc).toBe(doc)
     // LARGE 档开箱即 Live（渐进渲染），不再以源码模式打开。
     expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
+  })
+
+  it("carries a \\r\\n split across chunk boundaries into the Text doc", async () => {
+    // Rust 分块只对齐 UTF-8 字符边界：\r 与 \n 可能分属两个 chunk，切行助手
+    // 必须携带 pending 裁决（含空 chunk 不裁决）；编辑用 Text 归一为 \n 行。
+    const harness = createAppHarness(editor)
+    const joined = "alpha\r\nbeta\r\ngamma"
+    harness.seedFile("/crlf.md", joined)
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/crlf.md",
+      sizeBytes: 20 * MB,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha\r" })
+      onEvent({ kind: "chunk", index: 1, text: "" })
+      onEvent({ kind: "chunk", index: 2, text: "\nbeta\r" })
+      onEvent({ kind: "chunk", index: 3, text: "\ngamma" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/crlf.md",
+        version: versionFor("/crlf.md", joined),
+        stats: { byteLength: joined.length, lineCount: 3 },
+      }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/crlf.md", joined)
+    const doc = streamedDocText(harness.editorForTab(1))
+    expect(doc.eq(Text.of(joined.split(/\r\n?|\n/)))).toBe(true)
+    expect(doc.lines).toBe(3)
+    expect(harness.editorForTab(1).view.state.doc).toBe(doc)
+    // 字符串镜像仍是原始 joined（与 openSession 的 savedContents 同源）：
+    // 脏检查口径不变 —— 打开即是干净状态，无未保存标记。
+    expectPathShown("/crlf.md")
   })
 
   it("falls back to a one-shot read when streaming fails", async () => {

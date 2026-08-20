@@ -1,7 +1,7 @@
 import { EditorState, type StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { forceParsing } from "@codemirror/language"
-import { editorExtensions } from "../src/index"
+import { editorExtensions, buildTextFromChunks } from "../src/index"
 import {
   buildLiveDecorations,
   LIVE_BUILD_CHUNK_CHARS,
@@ -207,6 +207,29 @@ export function fullyParsedLiveState(doc: string): EditorState {
 export function measureOpenIngestMs(doc: string, mode: "source" | "live" = "source"): number {
   const t0 = performance.now()
   const state = EditorState.create({ doc, extensions: editorExtensions() })
+  return mountedIngestMs(t0, state, mode)
+}
+
+/** Task 10 对照口径：IPC 分块（字符串形态）→ 分块切行组 Text → Text 构造
+ * state + 挂载。与 measureOpenIngestMs 的字符串路径唯一差异是 doc 来源 ——
+ * EditorState.create 收到 Text 即跳过对整串的 regex 切行。 */
+export function measureOpenIngestChunksMs(
+  chunks: readonly string[],
+  mode: "source" | "live" = "source",
+): number {
+  const t0 = performance.now()
+  const state = EditorState.create({ doc: buildTextFromChunks(chunks), extensions: editorExtensions() })
+  return mountedIngestMs(t0, state, mode)
+}
+
+/** 切行/组 rope 助手单独计时（不含 state 构造与挂载），量度摄入路径的可剥离收益。 */
+export function measureChunkedTextBuildMs(chunks: readonly string[]): number {
+  const t0 = performance.now()
+  buildTextFromChunks(chunks)
+  return performance.now() - t0
+}
+
+function mountedIngestMs(t0: number, state: EditorState, mode: "source" | "live"): number {
   const mounted = mode === "live" ? state : state.update(setLivePreview(false)).state
   const parent = document.createElement("div")
   document.body.appendChild(parent)

@@ -37,6 +37,7 @@ export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from 
 export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { documentStats, type DocumentStats } from "./stats"
+export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
   insertLink,
   toggleBlockquote,
