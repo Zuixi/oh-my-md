@@ -83,74 +83,90 @@ export function imagePasteHandler(options: ImagePasteOptions) {
   // and we fall through to CM's default handler unchanged.
   let contextMenuTarget: { from: number; to: number } | null = null
 
-  return EditorView.domEventHandlers({
-    contextmenu(event, view) {
-      const clickPos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-      if (clickPos !== null) {
-        // If the user right-clicked inside an existing non-empty selection,
-        // preserve that selection so paste can replace it as expected.
-        const sel = view.state.selection.main
-        if (!sel.empty && clickPos >= sel.from && clickPos <= sel.to) {
-          contextMenuTarget = { from: sel.from, to: sel.to }
-        } else {
-          // Otherwise use the click point as a collapsed cursor.
-          contextMenuTarget = { from: clickPos, to: clickPos }
-          // The selectionchange dispatch works around a WKWebView bug (WebKit-family
-          // engines only); WebView2 is Chromium and must keep native caret behavior.
-          if (!isWindows()) {
-            view.dispatch({ selection: { anchor: clickPos } })
+  return [
+    // The saved target is only valid while the selection still sits on it.
+    // Without this, right-click (without pasting) followed by moving the
+    // caret and pressing Ctrl/Cmd-V pastes at the stale right-click position
+    // instead of the current caret.
+    EditorView.updateListener.of(update => {
+      if (!contextMenuTarget || !update.selectionSet) return
+      const sel = update.state.selection.main
+      if (sel.from !== contextMenuTarget.from || sel.to !== contextMenuTarget.to) {
+        contextMenuTarget = null
+      }
+    }),
+    EditorView.domEventHandlers({
+      contextmenu(event, view) {
+        const clickPos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+        if (clickPos !== null) {
+          // If the user right-clicked inside an existing non-empty selection,
+          // preserve that selection so paste can replace it as expected.
+          const sel = view.state.selection.main
+          if (!sel.empty && clickPos >= sel.from && clickPos <= sel.to) {
+            contextMenuTarget = { from: sel.from, to: sel.to }
+          } else {
+            // Otherwise use the click point as a collapsed cursor.
+            contextMenuTarget = { from: clickPos, to: clickPos }
+            // The selectionchange dispatch works around a WKWebView bug (WebKit-family
+            // engines only); WebView2 is Chromium and must keep native caret behavior.
+            if (!isWindows()) {
+              view.dispatch({ selection: { anchor: clickPos } })
+            }
           }
+        } else {
+          contextMenuTarget = null
         }
-      } else {
-        contextMenuTarget = null
-      }
-      return false
-    },
+        return false
+      },
 
-    paste(event, view) {
-      const items = Array.from(event.clipboardData?.items ?? [])
-      const imageItem = items.find(i => i.type.startsWith("image/"))
+      paste(event, view) {
+        const items = Array.from(event.clipboardData?.items ?? [])
+        const imageItem = items.find(i => i.type.startsWith("image/"))
 
-      if (imageItem) {
-        // Image paste: same as before; clear contextMenuTarget and delegate to
-        // pasteImage which captures the selection itself.
-        event.preventDefault()
-        contextMenuTarget = null
-        const file = imageItem.getAsFile()
-        if (!file) return true
-        void pasteImage(file, view, options, imageItem.type)
-        return true
-      }
-
-      // Text paste via context menu: bypass CM's doPaste entirely so it never
-      // uses the WebKit-corrupted selection.
-      const savedTarget = contextMenuTarget
-      contextMenuTarget = null
-
-      if (savedTarget !== null) {
-        const text =
-          event.clipboardData?.getData("text/plain") ||
-          event.clipboardData?.getData("text/uri-list") ||
-          ""
-        if (text) {
+        if (imageItem) {
+          // Image paste: same as before; clear contextMenuTarget and delegate to
+          // pasteImage which captures the selection itself.
           event.preventDefault()
-          view.dispatch({
-            changes: { from: savedTarget.from, to: savedTarget.to, insert: text },
-            userEvent: "input.paste",
-            scrollIntoView: true,
-          })
+          contextMenuTarget = null
+          const file = imageItem.getAsFile()
+          if (!file) return true
+          void pasteImage(file, view, options, imageItem.type)
           return true
         }
-      }
 
-      // Keyboard paste (no contextmenu): fall through to CM's default handler.
-      return false
-    },
+        // Text paste via context menu: bypass CM's doPaste entirely so it never
+        // uses the WebKit-corrupted selection.
+        const savedTarget = contextMenuTarget
+        contextMenuTarget = null
 
-    drop(event, view) {
-      return handleImageDrop(event, view, options)
-    },
-  })
+        if (savedTarget !== null) {
+          const text =
+            event.clipboardData?.getData("text/plain") ||
+            event.clipboardData?.getData("text/uri-list") ||
+            ""
+          if (text) {
+            event.preventDefault()
+            view.dispatch({
+              changes: { from: savedTarget.from, to: savedTarget.to, insert: text },
+              // Explicit selection: without one CM maps the old cursor with
+              // assoc -1 and it stays before the pasted text instead of after.
+              selection: { anchor: savedTarget.from + text.length },
+              userEvent: "input.paste",
+              scrollIntoView: true,
+            })
+            return true
+          }
+        }
+
+        // Keyboard paste (no contextmenu): fall through to CM's default handler.
+        return false
+      },
+
+      drop(event, view) {
+        return handleImageDrop(event, view, options)
+      },
+    }),
+  ]
 }
 
 export function handleImageDrop(
@@ -230,12 +246,18 @@ export async function insertImageFile(
         return
       }
 
+      const markdown = `![](${relativePath})`
       view.dispatch({
         changes: {
           from: selection.from,
           to: selection.to,
-          insert: `![](${relativePath})`,
+          insert: markdown,
         },
+        // Explicit selection: without one the cursor stays before the
+        // inserted image markdown instead of after it (CM maps the old
+        // cursor through the change with assoc -1).
+        selection: { anchor: selection.from + markdown.length },
+        scrollIntoView: true,
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)

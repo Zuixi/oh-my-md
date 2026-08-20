@@ -1818,20 +1818,13 @@ export default function App({
     )
   }
 
+  /** Menu paste delegates to pastePlainText so the caret lands after the
+   * pasted text and an empty clipboard no-ops instead of deleting the
+   * selection. Best-effort — the native Ctrl/Cmd-V path stays primary. */
   const runClipboardPaste = (): (() => void) => () => {
     const view = viewRef.current
     if (!view) return
-    const read = navigator.clipboard?.readText()
-    if (!read) return
-    void read.then(
-      insert => {
-        try {
-          const selection = view.state.selection.main
-          view.dispatch({ changes: { from: selection.from, to: selection.to, insert } })
-        } catch { /* mock views */ }
-      },
-      () => undefined,
-    )
+    void pastePlainText(view).catch(() => undefined)
   }
 
   const insertImage = () => {
