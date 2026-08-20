@@ -312,6 +312,39 @@ describe("FileTree sidebar menu", () => {
     expect(vi.mocked(harness.services.reportError)).not.toHaveBeenCalled()
   })
 
+  it("opens a re-created file of the same name after a delete with no open in flight", async () => {
+    // 回归护栏：作废登记必须只针对在途打开 —— 无条件登记会把同名重建文件
+    // （自动命名会复用 untitled.md）的首个打开静默吞掉。
+    const harness = makeAppHarness()
+    let entries = [
+      { name: "doc.md", path: "/notes/doc.md", is_dir: false },
+      { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
+    ]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
+    vi.mocked(harness.services.deletePath).mockImplementation(async path => {
+      entries = entries.filter(entry => entry.path !== path)
+    })
+    vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
+      entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
+      harness.seedFile(`${dir}/${name}`, "")
+      return `${dir}/${name}`
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    await waitFor(() => expect(screen.getByText("untitled.md")).toBeTruthy())
+
+    await openTreeMenu("untitled.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }))
+    await waitFor(() => expect(screen.queryByText("untitled.md")).toBeNull())
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    await waitFor(() => expectPathShown("/notes/untitled.md"))
+    expect(vi.mocked(harness.services.reportError)).not.toHaveBeenCalled()
+  })
+
   it("reveals the selected path in the file manager", async () => {
     const harness = makeAppHarness()
     harness.services.listDir = vi.fn(async () => [
