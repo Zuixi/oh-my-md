@@ -262,5 +262,10 @@ export const en: Record<string, string> = {
   "error.save.noVersion": "Save succeeded but document version is unavailable",
   "error.save.failed": "Save failed",
   "error.recoveryWriteFailed": "Recovery write failed",
+  "notify.fileCreated": "Created {name}",
+  "notify.entryDeleted": "Deleted {name}",
+  "notify.entryRenamed": "Renamed to {name}",
+  "notify.saveAsCompleted": "Saved as {name}",
+  "notify.exportCompleted": "Exported {name}",
   "session.unnamed": "unnamed",
 }
