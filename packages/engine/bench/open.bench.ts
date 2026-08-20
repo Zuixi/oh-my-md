@@ -27,4 +27,17 @@ describe("cold open benchmarks (advisory, Spec 05b)", () => {
     const ms = measureOpenIngestMs(DOC_50MB)
     console.info(budgetLine("open ingest 50MB", ms, OPEN_INGEST_BUDGET_50MB_MS))
   })
+
+  // Task 5：live 摄入（live 构造 + 挂载首帧，首帧含光标种子构建 —— Task 1 后
+  // 不再全量，剩余区间由 idle 分片消化、不在本同步边界内）。与 source 档同
+  // 预算：种子成本有界，live 打开不应显著劣于 source 打开。
+  bench("open ingest 10MB (live, steady)", () => {
+    const ms = measureOpenIngestMs(DOC_10MB, "live")
+    console.info(budgetLine("open ingest 10MB live", ms, OPEN_INGEST_BUDGET_10MB_MS))
+  })
+
+  bench("open ingest 20MB (live, steady)", () => {
+    const ms = measureOpenIngestMs(DOC_20MB, "live")
+    console.info(budgetLine("open ingest 20MB live", ms, OPEN_INGEST_BUDGET_20MB_MS))
+  })
 })
