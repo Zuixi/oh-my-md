@@ -105,6 +105,9 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] ⌘P 或 File 菜单「Quick Open…」打开文件名快开（需已打开文件夹）：子串过滤大小写不敏感、↑↓ 移动高亮、Enter 打开所选、Esc 关闭、点击背景关闭；未打开文件夹时按 ⌘P 出现 transient 提示不弹层；超大文件夹（>5000 个 .md）显示截断提示
 - [ ] 列表项 Enter 续写同类型 marker，空项退出列表；Tab / Shift-Tab 仅在列表项缩进/反缩进
 - [ ] Settings → Spellcheck 打开后编辑区可对英文词显示原生拼写红线；关闭后 `.cm-content` 为 `spellcheck="false"`；改设置立即作用于当前文档
+- [ ] Settings → Font Family 选择器（Typora 式触发按钮 + 可搜索 popover）：点开弹出列表，三项预设（System Default / Monospace / Serif）置顶，「System fonts」分隔下列出系统字体且每行用该字体渲染预览；搜索大小写不敏感实时过滤、命中超 200 条显示截断提示（Showing N of M fonts）；↑↓ 移动高亮并滚入可视区、Enter 选中关闭、Esc 只关弹层不关设置窗、点外部关闭；macOS 任选一族（如 Helvetica）编辑器字体立即切换（`--omd-font-family`），再选 System Default 恢复默认栈
+- [ ] 字体 popover 绝对定位于可滚动的 settings body 内：把窗口压矮、字体行落在主体下部时打开 popover，搜索框仍可聚焦、列表仍可滚动选中（必要时设置主体随之后滚），不被视口裁剪到不可用
+- [ ] 系统字体枚举失败/缺失降级：`list_system_fonts` 报错（服务返回 null）时 popover 显示「Failed to load system fonts」提示且无系统字体区；Linux 无 fc-list 时返回空列表，同样只剩预设（无失败提示）。两种形态下三项预设均仍可选、选中仍生效，设置面板其余项不受影响
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
 - [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框（默认 `export.pdf` / `export.png`），确认后目标路径必须出现真实文件；由离屏 WKWebView 的 `createPDF` 生成（Image 再栅格化为 PNG），不是系统打印对话框，也不是把编辑器 DOM 截屏
 - [ ] 含数学公式（KaTeX）、代码块、表格的文档导出 PDF/PNG：`window.__omdExportReady` 就绪前 WKWebView 最多等待 5 秒再截图；若超时界面出现警告提示（"Export warning:"）；正常导出文件完整呈现公式/代码/表格内容
@@ -190,6 +193,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] Explorer reveal、删除进回收站、重命名、新建。
 - [ ] 右键粘贴截图/复制图片（WebView2 无 workaround 门控生效，光标不跳）。
 - [ ] 拖拽 .md 到窗口打开；CJK 字体（YaHei 回落）。
+- [ ] Settings → Font Family 选择 Microsoft YaHei，编辑器字体立即切换为微软雅黑（中文正文生效）。
 - [ ] 外部修改 watcher 提示；HTML 导出；PDF/PNG 入口不可见；诊断包含 `os.txt`。
 
 ## 语种切换（i18n）
