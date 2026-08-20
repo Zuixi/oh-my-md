@@ -464,3 +464,12 @@ the `search_markdown` casing drift). Rules:
   (`revealInFinder` → `revealItemInDir(path)`); add the same pin when wiring
   another plugin binding.
 
+## Multi-line link constructs leave a dangling empty preview row
+
+Multi-line link constructs (`[text](url\n"title")` — a newline in the
+URL/title separator) leave a dangling empty visual row in live preview because
+the title fold's backward scan correctly stops at `line.from`; this is
+cosmetic and rare with no crash (verified: StateField-provided replaces
+spanning line breaks are safe in CM 6.43.8).
+
+
