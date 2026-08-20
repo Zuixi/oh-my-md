@@ -51,8 +51,16 @@ function foldLink(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
       out.push({ from: m.from, to: m.to, tag: "replace:LinkMark", deco: Decoration.replace({}) })
   const c = node.node.cursor()
   if (c.firstChild()) do {
-    if (node.name === "Link" && c.name === "URL" && !markActive(state, c.from, c.to, inQuote))
+    if (node.name !== "Link") continue
+    if (c.name === "URL" && !markActive(state, c.from, c.to, inQuote))
       out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: Decoration.replace({}) })
+    // 标题（含引号）与其前的 URL 之间的分隔空白是裸文本，需一并吞掉，否则漏出到预览。
+    if (c.name === "LinkTitle" && !markActive(state, c.from, c.to, inQuote)) {
+      const line = state.doc.lineAt(c.from)
+      let from = c.from
+      while (from > line.from && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--
+      out.push({ from, to: c.to, tag: "replace:LinkTitle", deco: Decoration.replace({}) })
+    }
   } while (c.nextSibling())
   out.push({ from: node.from, to: node.to, tag: "mark:omd-link", deco: Decoration.mark({ class: "omd-link" }) })
 }
