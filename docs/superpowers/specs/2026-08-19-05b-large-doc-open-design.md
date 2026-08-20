@@ -508,3 +508,11 @@ interface EditorSession {
 8. **runOpen 保存队列等待加 3s 超时**（`OPEN_SAVE_QUEUE_TIMEOUT_MS`）+ 关闭清理 tabSaveQueues/pendingDocTabs/docBytes 残留 + pollFileTabs in-flight 去重——均为 Windows 重开卡死的确定性机制，本文未覆盖。
 9. **Windows watcher 路径包含 bug**（`startsWith(folder + "/")` 对 `\` 恒 false → 双重 watch）已修（`pathWithinDir`）；「大文档外部变更不自动整读」记为后续项（`externalChanged` divergence 类型需扩展才能不带磁盘全文）。
 10. **会话 lazy 恢复**（§P0-E）落地为 `lazyFile` session 变体：不算 dirty、saveFile 在装载前拒绝执行（防空内容覆盖磁盘）、pollFileTabs 跳过。
+
+## 实现变更附录（2026-08-20）
+
+渐进渲染落地（见 [2026-08-20 计划](../plans/2026-08-20-large-file-live-render-and-fast-switch.md)）后，本规格的两处模式决策被用户决策推翻，其余（分档、流式、确认、只读、按需字数、预算）不变：
+
+1. **LARGE 档（10–50MiB）开箱即 Live。** 原设计「确认后默认源码模式」的原因是整文档装饰构建会冻结 UI；该原因已消除——live 装饰现按光标周边播种（toggle p95 0.32ms@10MB，bench 实测）、idle 分片排空、over-scale 文档窗口化（只构建/保留视口附近，滚动按需重建）。`applyDocumentScalePolicy` 不再 dispatch `setLivePreview(false)`，安全模式语义变为「渐进渲染（视口优先）+ 块渲染预算 + 按需字数」，与用户模式选择正交（`safeModeChoiceRef` 保留为用户偏好记录，暂不驱动行为）。
+2. **HUGE 档（≥50MiB）只读 Live（用户决策，含内存权衡）。** `EditorState.readOnly` 保留挡编辑，但引擎挂回 Markdown 语言与实时预览——engine `plainText` 选项已删除（`EngineOptions` 与 desktop `CreateEditorOptions` 同步移除），第 14 节第 6 条的「只读纯文本」不再成立。代价：滚动浏览时解析树增长约为文件的 2–4 倍内存，用户已接受，横幅文案明示。
+3. 依据：产品负责人 2026-08-20 决策——(a) HUGE 档允许实时预览（解析器挂载 + readOnly，接受内存权衡，横幅须提及）；(b) LARGE 档直接以 Live 打开（不再强制源码）。

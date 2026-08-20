@@ -6,7 +6,7 @@ import {
 import type { EditorView } from "@codemirror/view"
 import {
   applyToggle, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
-  setBlockRenderBudget, setLivePreview, setSafeModeRendering, type OutlineItem,
+  setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { pastePlainText } from "./pastePlainText"
@@ -325,7 +325,9 @@ export default function App({
   // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
   const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
-  // Set 记录「用户显式切换过模式」的 tab —— 只需存在性，无需记住切到了哪边（任一显式选择都解除强制）。
+  // Set 记录「用户本会话显式切换过模式」的 tab —— 用户偏好记录，供未来策略使用。
+  // 渐进渲染落地后策略不再强制模式（safeModeTabsRef 的预算/窗口化与模式正交），
+  // 此集合暂不驱动任何行为，保留以免丢失「本会话用户切过模式」这一信号。
   const safeModeChoiceRef = useRef(new Set<number>())
   // 处于安全模式渲染预算下的 tab。预算是 engine 全局状态而安全模式是 per-tab 的，
   // 激活切换时按此集重应用（useEffect on activeId 兜住 focusTab/会话恢复等全部路径）。
@@ -333,7 +335,7 @@ export default function App({
   // Spec 05b：每个 tab 的精确 UTF-8 字节数（read_document stats）。行数阈值对
   // 长行文件有盲区，字节数补上第二根轴；策略在 applyDocumentScalePolicy 读取。
   const docBytesRef = useRef(new Map<number, number>())
-  // HUGE（只读纯文本）档的 tab；editorOptions 与档位策略按此装配。
+  // HUGE（只读实时预览）档的 tab；editorOptions 与档位策略按此装配。
   const readonlyTabsRef = useRef(new Set<number>())
   // LARGE 档流式打开的进度（overlay 百分比）。
   const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
@@ -652,17 +654,15 @@ export default function App({
   }
 
   function editorOptions(contents: string, tabId: number, documentId: number): CreateEditorOptions {
-    // HUGE 只读档：readOnly 挡编辑，plainText 让引擎不挂语言/装饰扩展。
+    // HUGE 只读档：readOnly 挡编辑；渐进渲染（视口优先装饰 + idle 排空）落地后，
+    // 大文档开箱即 Live 不再冻结，无需强制源码模式或裁剪语言扩展。
     const readOnly = readonlyTabsRef.current.has(tabId)
-    const bytes = docBytesRef.current.get(tabId)
-    const overScale = readOnly || (bytes !== undefined && bytes > SAFE_MODE_BYTES)
     return {
       doc: contents,
       tabId,
       documentId,
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
-      defaultLivePreview: overScale ? false : undefined,
       onModeChange: isLive => setSourceMode(!isLive),
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
@@ -675,13 +675,13 @@ export default function App({
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
       readOnly,
-      plainText: readOnly,
     }
   }
 
   /**
-   * Spec 05 / 05b：超大文档进入安全模式 —— 默认源码模式 + 块渲染预算 + 一次性提示
-   * + 按需字数。用户本会话内显式切换过模式的 tab 不再强制。
+   * Spec 05 / 05b（2026-08-20 渐进渲染落地后）：超大文档进入安全模式 ——
+   * 不再强制源码模式（默认 Live，装饰以视口优先构建 + idle 排空），策略只负责
+   * 块渲染预算 + 窗口化装饰 + 一次性提示 + 按需字数，任何模式下都生效。
    * 所有新建 view 的路径（resetTabDocument、ensureViews 的新标签/会话恢复/初始挂载）
    * 必须经由此入口，否则文件树、搜索面板等入口打开的大文档会绕过安全模式。
    * 行数取 view.state.doc.lines（免费），绝不对全文 split。
@@ -691,11 +691,10 @@ export default function App({
     const bytes = docBytesRef.current.get(tabId)
     const readonly = readonlyTabsRef.current.has(tabId)
     // 行数与字节双轴：长行文件（多 MB 但 <50k 行）靠字节轴兜住（Spec 05b）。
-    const overScale = lines > SAFE_MODE_LINES
+    const safeMode = lines > SAFE_MODE_LINES
       || (bytes !== undefined && bytes > SAFE_MODE_BYTES)
-    const safeMode = (overScale || readonly) && !safeModeChoiceRef.current.has(tabId)
+      || readonly
     if (safeMode) {
-      try { view.dispatch(setLivePreview(false)) } catch { /* mock views */ }
       safeModeTabsRef.current.add(tabId)
     } else {
       safeModeTabsRef.current.delete(tabId)

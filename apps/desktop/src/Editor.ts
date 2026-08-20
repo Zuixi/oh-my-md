@@ -45,10 +45,9 @@ export interface CreateEditorOptions {
   onOpenMarkdownHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
-  /** Spec 05b HUGE 档：只读纯文本视图（无语言/装饰扩展）。 */
+  /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
   readOnly?: boolean
-  plainText?: boolean
-  /** Construct already in Source so large docs skip the first live-preview pass. */
+  /** Construct already in Source (no live decorations at create time). */
   defaultLivePreview?: boolean
   /** Notified when the live/source field flips, so the host can mirror it. */
   onModeChange?: (isLive: boolean) => void
@@ -175,7 +174,6 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
-        plainText: options.plainText === true,
         defaultLivePreview: options.defaultLivePreview,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],

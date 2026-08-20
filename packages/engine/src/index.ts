@@ -88,9 +88,6 @@ export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
   resolveImageSrc?: (src: string) => string
   imageBrokenLabel?: (src: string) => string
-  /** Spec 05b HUGE 档：不挂 markdown 语言/补全/列表键位（纯文本只读视图）。
-   *  livePreviewCompartment 保留 —— setLivePreview 切换依赖它存在。 */
-  plainText?: boolean
   /** When false, construct the editor already in Source (no live decorations). */
   defaultLivePreview?: boolean
 }
@@ -98,7 +95,9 @@ export interface EngineOptions {
 export function editorExtensions(options: EngineOptions = {}) {
   const live = options.defaultLivePreview !== false
   return [
-    ...(options.plainText ? [] : [markdownLanguageSupport(), emojiCompletion, listKeymap]),
+    markdownLanguageSupport(),
+    emojiCompletion,
+    listKeymap,
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,

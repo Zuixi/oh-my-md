@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES } from "@omd/engine"
+import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES, safeModeRenderingEnabled } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DocumentOpenStream } from "../src/desktopServices"
 import { createAppHarness, resetMountedApps } from "./appHarness"
@@ -120,8 +120,9 @@ describe("open tiers (Spec 05b)", () => {
     expect(harness.services.readDocument).not.toHaveBeenCalled()
   })
 
-  it("forces source mode by bytes for a long-line document under the line threshold", async () => {
+  it("enters safe mode by bytes for a long-line document under the line threshold", async () => {
     // 10MB+ 的单行文件：行数轴失明，字节轴必须兜住（Spec 05b 盲区回归）。
+    // 渐进渲染落地后仍默认 Live —— 安全模式只影响预算/窗口化，不切模式。
     const singleLine = "x".repeat(SAFE_MODE_BYTES + 1)
     const harness = createAppHarness(editor)
     harness.seedFile("/long.md", singleLine)
@@ -134,11 +135,12 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/long.md", singleLine)
     expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
-    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBe(false)
+    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
   })
 
-  it("opens a HUGE file read-only as plain text after confirm", async () => {
+  it("opens a HUGE file read-only in live preview after confirm", async () => {
     const harness = createAppHarness(editor)
     harness.seedFile("/huge.md", "huge body\n")
     harness.services.statDocument = vi.fn(async () => ({
@@ -150,8 +152,11 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/huge.md", "huge body\n")
     const options = harness.editorForTab(1).getOptions()
+    // 只读挡编辑，但语言/装饰照常装配（plainText 路径已从引擎移除）。
     expect(options.readOnly).toBe(true)
-    expect(options.plainText).toBe(true)
+    expect("plainText" in options).toBe(false)
+    expect(options.defaultLivePreview).toBeUndefined()
+    expect(safeModeRenderingEnabled()).toBe(true)
     await waitFor(() => {
       expect(document.querySelector(".update-banner-message")?.textContent)
         .toContain("read-only")
@@ -199,6 +204,8 @@ describe("open tiers (Spec 05b)", () => {
     await harness.openFileTab("/stream.md", "disk copy that must not be used")
     expect(harness.services.readDocument).not.toHaveBeenCalled()
     expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
+    // LARGE 档开箱即 Live（渐进渲染），不再以源码模式打开。
+    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBeUndefined()
   })
 
   it("falls back to a one-shot read when streaming fails", async () => {

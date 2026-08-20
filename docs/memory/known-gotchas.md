@@ -402,10 +402,14 @@ save would write the empty placeholder over the on-disk file.
 `resolveOpenTier` must return `"normal"` below `OPEN_STREAM_THRESHOLD_BYTES`.
 A fall-through `return "large"` after the LARGE confirm block classified every
 file as LARGE: tree/tab switches flashed `OpeningOverlay` and paid for
-streaming + confirm. Overlay is only for LARGE/HUGE. Construct LARGE/HUGE
-views with `defaultLivePreview: false` so `EditorState.create` never builds
-live decorations first; `setLivePreview(false)` after create is already too
-late on a 50MB live pass. Streaming failures must fall back to `readDocument`.
+streaming + confirm. Overlay is only for LARGE/HUGE. Since the progressive
+decoration build landed (2026-08-20), LARGE/HUGE views construct in Live mode
+on purpose — the engine seeds decorations around the cursor (~0.3ms at 20MB)
+and drains the rest in idle slices, so the old "construct with
+`defaultLivePreview: false`, `setLivePreview(false)` after create is too late
+on a 50MB live pass" freeze recipe is obsolete; do not reintroduce mode
+forcing in `applyDocumentScalePolicy` (safe-mode budget/windowing is orthogonal
+to mode). Streaming failures must fall back to `readDocument`.
 
 ## Path containment checks must normalize separators
 
