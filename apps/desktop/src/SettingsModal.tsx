@@ -1,8 +1,7 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { X } from "lucide-react"
 import {
   DEFAULT_SETTINGS,
-  FONT_FAMILY_PRESETS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   LINE_HEIGHT_PRESETS,
@@ -13,18 +12,26 @@ import {
   type UserSettings,
 } from "./settings"
 import { localeOptions, useT, type StoredLocale } from "./i18n"
+import { FontFamilyPicker } from "./FontFamilyPicker"
 
 export interface SettingsModalProps {
   isOpen: boolean
   settings: UserSettings
   onSave: (settings: UserSettings) => void
   onClose: () => void
+  listSystemFonts?: () => Promise<string[] | null>
 }
 
 export function SettingsModal(props: SettingsModalProps) {
-  const { isOpen, settings, onSave, onClose } = props
+  const { isOpen, settings, onSave, onClose, listSystemFonts } = props
   const modalRef = useRef<HTMLDivElement>(null)
   const t = useT()
+  // System font families: fetched once on the first picker open, then cached
+  // (undefined = never requested, null = enumeration failed, array = loaded).
+  // The picker stays mounted while the modal is open, so open/close reuses it.
+  const fontFamiliesCacheRef = useRef<string[] | null | undefined>(undefined)
+  const [fontFamilies, setFontFamilies] = useState<string[] | null>([])
+  const [fontFamiliesLoading, setFontFamiliesLoading] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
@@ -37,6 +44,23 @@ export function SettingsModal(props: SettingsModalProps) {
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [isOpen, onClose])
+
+  const handleFontPickerOpen = () => {
+    if (fontFamiliesCacheRef.current !== undefined) return
+    if (!listSystemFonts) {
+      fontFamiliesCacheRef.current = []
+      return
+    }
+    setFontFamiliesLoading(true)
+    void listSystemFonts()
+      .catch(() => null)
+      .then(families => {
+        const result = families ?? null
+        fontFamiliesCacheRef.current = result
+        setFontFamilies(result)
+        setFontFamiliesLoading(false)
+      })
+  }
 
   if (!isOpen) return null
 
@@ -112,29 +136,13 @@ export function SettingsModal(props: SettingsModalProps) {
               <label htmlFor="setting-font-family" className="settings-label">
                 {t("settings.label.fontFamily")}
               </label>
-              <select
-                id="setting-font-family"
-                className="settings-select"
-                value={
-                  FONT_FAMILY_PRESETS.some(p => p.value === settings.fontFamily)
-                    ? settings.fontFamily
-                    : "custom"
-                }
-                onChange={e => {
-                  if (e.target.value !== "custom") {
-                    update({ fontFamily: e.target.value })
-                  }
-                }}
-              >
-                {FONT_FAMILY_PRESETS.map(preset => (
-                  <option key={preset.value} value={preset.value}>
-                    {t(preset.labelKey)}
-                  </option>
-                ))}
-                {!FONT_FAMILY_PRESETS.some(p => p.value === settings.fontFamily) ? (
-                  <option value="custom">{t("settings.font.custom")}</option>
-                ) : null}
-              </select>
+              <FontFamilyPicker
+                value={settings.fontFamily}
+                families={fontFamilies}
+                loading={fontFamiliesLoading}
+                onOpen={handleFontPickerOpen}
+                onSelect={cssValue => update({ fontFamily: cssValue })}
+              />
             </div>
 
             <div className="settings-row">
