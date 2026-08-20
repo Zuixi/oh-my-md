@@ -1665,8 +1665,9 @@ export default function App({
       return
     }
     try {
-      await services.createMarkdown(dir, name)
+      const createdPath = await services.createMarkdown(dir, name)
       await refreshTreePath(dir)
+      void openPath(createdPath, true)
     } catch (error) {
       services.reportError(errorMessage(t("error.createFileFailed"), error))
     }
