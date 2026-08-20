@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { undo } from "@codemirror/commands"
+import { RectangleMarker } from "@codemirror/view"
 import {
   acceptOrderedListNormalization,
   getPendingOrderedListNormalization,
@@ -16,6 +17,7 @@ import {
   type CreateEditorOptions,
   type EditorDocumentUpdate,
 } from "../src/Editor"
+import { NUB_PX, tightSelectionMarkers } from "../src/tightSelection"
 import { pastePlainText } from "../src/pastePlainText"
 
 const TAB_ID = 7
@@ -299,6 +301,80 @@ describe("desktop editor lifecycle", () => {
       editorOptions(vi.fn(), "sample text"),
     )
     expect(view.lineWrapping).toBe(true)
+    view.destroy()
+  })
+
+  it("draws selection through the vendored tight-selection extension, not stock drawSelection", async () => {
+    // Stock drawSelection's marker entry point: it fires for every cursor
+    // and selection draw, while the vendored layer never calls it.
+    const forRange = vi.spyOn(RectangleMarker, "forRange")
+    const view = createEditor(
+      document.createElement("div"),
+      editorOptions(vi.fn(), "alpha\nbeta"),
+    )
+    // The vendored extension mounts exactly one selection and one cursor
+    // layer; re-adding stock drawSelection alongside would mount a second pair.
+    expect(view.dom.querySelectorAll(".cm-layer.cm-selectionLayer")).toHaveLength(1)
+    expect(view.dom.querySelectorAll(".cm-layer.cm-cursorLayer")).toHaveLength(1)
+
+    // happy-dom has no layout engine, so the geometry path reads a stubbed
+    // character grid (8px cells) instead of real coordinates.
+    const CHAR_W = 8
+    const LINE_H = 20
+    const CONTENT_LEFT = 100
+    const doc = view.state.doc
+    vi.spyOn(view, "coordsAtPos").mockImplementation((pos, side = 1) => {
+      const line = doc.lineAt(pos)
+      const col = Math.min(pos - line.from, line.length)
+      const top = (line.number - 1) * LINE_H
+      const row = { top, bottom: top + LINE_H }
+      if (side < 0 && col > 0) {
+        const left = CONTENT_LEFT + (col - 1) * CHAR_W
+        return { left, right: left + CHAR_W, ...row }
+      }
+      const left = CONTENT_LEFT + col * CHAR_W
+      return { left, right: col < line.length ? left + CHAR_W : left, ...row }
+    })
+    // Wrapped-line resolution is not under test; null keeps whole-line blocks.
+    vi.spyOn(view, "posAtCoords").mockReturnValue(null)
+    const contentRect = () => new DOMRect(CONTENT_LEFT, 0, 600, 300)
+    view.contentDOM.getBoundingClientRect = contentRect
+    view.scrollDOM.getBoundingClientRect = contentRect
+    // happy-dom reports "" for padding/text-indent styles, which parseInt
+    // turns into NaN inside the geometry path; feed it parseable zeros.
+    const realComputedStyle = window.getComputedStyle.bind(window)
+    const computedStyle = vi.spyOn(window, "getComputedStyle").mockImplementation((elt, pseudo) => {
+      const style = realComputedStyle(elt, pseudo)
+      if (elt instanceof Element && elt.classList.contains("cm-line")) {
+        return new Proxy(style, {
+          get(target, prop) {
+            return prop === "paddingLeft" || prop === "paddingRight" || prop === "textIndent"
+              ? "0px"
+              : Reflect.get(target, prop)
+          },
+        })
+      }
+      return style
+    })
+
+    view.dispatch({ selection: { anchor: 1, head: 10 } })
+
+    const markers = tightSelectionMarkers(view)
+    expect(markers).toHaveLength(2)
+    // First line "lpha": the highlight stops at the line's text end plus
+    // the nub, not at the content right edge (stock drawSelection would
+    // run an open line end to the ~600px-wide content box edge).
+    expect(markers[0].width).toBe(4 * CHAR_W + NUB_PX)
+    // Last line "beta": from the content left edge to the selection end.
+    expect(markers[1].width).toBe(4 * CHAR_W)
+
+    // After the layers' measure pass runs, stock drawSelection's marker
+    // entry point has still never fired — the assembled editor contains
+    // only the vendored selection drawing.
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(forRange).not.toHaveBeenCalled()
+    forRange.mockRestore()
+    computedStyle.mockRestore()
     view.destroy()
   })
 

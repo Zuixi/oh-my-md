@@ -1,4 +1,4 @@
-import { EditorView, keymap, drawSelection, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
+import { EditorView, keymap, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
 import { Compartment, EditorState, Facet } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
@@ -16,6 +16,7 @@ import {
 } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
+import { tightSelection } from "./tightSelection"
 import { CONTENT_MAX_WIDTH } from "./constants"
 import { t } from "./i18n"
 import { convertFileSrc } from "@tauri-apps/api/core"
@@ -168,7 +169,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       options.tabSize ? EditorState.tabSize.of(options.tabSize) : [],
       options.readOnly ? EditorState.readOnly.of(true) : [],
       history(),
-      drawSelection(),
+      tightSelection(),
       dropCursor(),
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
