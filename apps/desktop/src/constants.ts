@@ -33,9 +33,20 @@ export const CONTENT_MAX_WIDTH = 780
 /** localStorage keys used by the desktop host. */
 export const STORAGE_KEY_SIDEBAR_OPEN = "omd-sidebar-open"
 export const STORAGE_KEY_OUTLINE_OPEN = "omd-outline-open"
+export const STORAGE_KEY_SIDEBAR_WIDTH = "omd-sidebar-width"
 export const STORAGE_KEY_RECENTS = "omd.recent-files"
 export const STORAGE_KEY_SETTINGS = "omd_user_settings"
 export const STORAGE_KEY_SESSION = "omd_saved_session"
+
+/** File-sidebar drag-resize bounds; the default must match the
+ *  `--omd-sidebar-width` fallback in styles.css (drift-guarded in
+ *  test/crossLayerConstants.test.ts). */
+export const SIDEBAR_MIN_WIDTH = 170
+export const SIDEBAR_DEFAULT_WIDTH = 230
+/** The sidebar never grows past this fraction of the window width. */
+export const SIDEBAR_MAX_WINDOW_FRACTION = 0.6
+/** Width step for keyboard resize on the sash (ArrowLeft/ArrowRight). */
+export const SIDEBAR_KEYBOARD_STEP = 10
 
 // Mirrors @omd/engine LARGE_DOC_LINES / SAFE_MODE_LINES (drift-guarded in
 // test/crossLayerConstants.test.ts).

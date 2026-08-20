@@ -151,6 +151,7 @@ export const en: Record<string, string> = {
   "filetree.searchInFolder": "Search in folder…",
   "filetree.kbd.searchShortcut": "{shortcut}",
   "filetree.empty": "Open a folder from the File menu.",
+  "sidebar.aria.resize": "Resize sidebar",
   "filetree.aria.entryActions": "{name} actions",
   "filetree.aria.folderActions": "Folder actions",
   "filetree.menu.newFile": "New File",

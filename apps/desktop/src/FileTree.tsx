@@ -322,7 +322,7 @@ const TreeRow = memo(function TreeRow(props: {
       {entry.is_dir
         ? (expanded ? <FolderOpen size={ICON_SIZE} /> : <Folder size={ICON_SIZE} />)
         : <FileText size={ICON_SIZE} />}
-      <span>{entry.name}</span>
+      <span className="filetree-name" title={entry.name}>{entry.name}</span>
     </button>
   )
 }, (prev, next) =>
