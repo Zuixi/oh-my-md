@@ -86,7 +86,7 @@ describe("tables", () => {
         aligns: ["left", "left"],
       },
     )
-    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     const td = dom.querySelectorAll("td")[1]
     expect(td.querySelector("br")).toBeTruthy()
@@ -101,7 +101,7 @@ describe("tables", () => {
       undefined,
       src => `/res/${src}`,
     )
-    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/res/x.png")
   })
@@ -113,7 +113,7 @@ describe("tables", () => {
     const spec = collectDecorationSpecs(s, 0, s.doc.length).find(d => d.tag === "widget:block:table")
     expect(spec).toBeTruthy()
     const widget = (spec!.deco.spec as unknown as { widget: TableWidget }).widget
-    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/facet/x.png")
   })
@@ -123,6 +123,7 @@ describe("tables", () => {
     let doc = src
     const dispatches: unknown[] = []
     const view = {
+      state: { readOnly: false },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
@@ -157,6 +158,7 @@ describe("tables", () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
     let doc = src
     const view = {
+      state: { readOnly: false },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
@@ -187,6 +189,7 @@ describe("tables", () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
     let doc = src
     const view = {
+      state: { readOnly: false },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
@@ -219,6 +222,7 @@ describe("tables", () => {
     let doc = `xx\n\n${src}`
     const dispatches: Array<{ from: number; to: number; insert: string }> = []
     const view = {
+      state: { readOnly: false },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
@@ -250,6 +254,7 @@ describe("tables", () => {
     const src = "| a |\n|---|\n| 1 |"
     let doc = src
     const view = {
+      state: { readOnly: false },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
@@ -286,7 +291,7 @@ describe("tables", () => {
       rows: [["1"]],
       aligns: [""],
     })
-    const wrap = widget.toDOM({ requestMeasure: () => {} } as never)
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
     const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
