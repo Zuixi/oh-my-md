@@ -78,7 +78,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 多标签各有独立撤销；脏点显示；关脏标签会确认；`+` 新建标签
 - [ ] 只剩最后一个打开的文件时，⌘W / 标签 X / 命令面板 Close 仍可关闭：脏文件先确认；关闭后落到全新空白「未命名」草稿（旧标签的编辑器视图与保存状态被清理）；干净未命名草稿上按 ⌘W 无变化（不循环换新草稿）
 - [ ] 标签等宽（VS Code 式）：所有标签同宽（上限 180px、下限 96px，再多横向滚动），长名省略号截断、悬停显示完整路径；X 恒在标签右缘同一位置，连续点 X 连关标签无需移动鼠标（关闭活动标签后右邻滑入原位并被激活，删末尾则激活左邻）；标签溢出滚动时 `+` 按钮不消失，键盘/命令面板切换标签后活动标签自动滚入视口
-- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in File Manager（文件删除会先确认，打开且脏时先走现有关标签确认）
+- [ ] 左侧始终有 Files 栏（Search；无 Open folder 按钮）；File 菜单含 New / Open / Open Folder / Open Recent / Close / Save / Save As / Export（HTML、PDF、Image）；打开单个 .md 会带出父目录文件树；点子目录原地展开且兄弟文件仍在；点文件开标签；外部改干净文件会重载，改脏文件会询问；右键文件/目录行可 New File、New Folder、Rename、Delete、Reveal in File Manager（New File 建档后直接在标签中打开并成为当前文档；文件删除会先确认，打开且脏时先走现有关标签确认）
 - [ ] 文件树 Delete 确认后文件/目录移入系统废纸篓（Finder 废纸篓可见、可恢复）；非空目录同样可删；确认文案说明移入废纸篓（trash 语义，单测只覆盖缺失路径与越权拒绝，真实移入需人工验证）
 - [ ] 打包构建（`tauri build`）后：Finder 双击 .md/.markdown/.mdx 用 oh-my-md 打开（"打开方式"可选、可设默认）；应用未运行时双击启动并直接打开该文件（不恢复上次会话）；应用运行中双击或拖文件到 Dock 图标在已有窗口打开；重复启动聚焦已有窗口不开新实例（dev 模式无法验证关联，需打包产物）
 - [ ] 拖 .md 文件到编辑器窗口：打开该文件（复用脏标签确认/最近文件/文件树展开逻辑）；拖 .txt 无反应；拖图片仍走原通道插入 `assets/`（回归）；已打开同路径文件时聚焦已有标签

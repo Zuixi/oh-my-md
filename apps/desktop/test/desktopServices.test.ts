@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
 import { toDocumentCommandError } from "../src/desktopServices"
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+const { invoke, revealItemInDir } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  revealItemInDir: vi.fn(),
+}))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
+vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
 
 import { defaultServices } from "../src/desktopServices"
 
@@ -24,5 +28,15 @@ describe("setMenuLocale", () => {
     invoke.mockResolvedValueOnce(undefined)
     await defaultServices.setMenuLocale?.("zh")
     expect(invoke).toHaveBeenCalledWith("set_menu_locale", { locale: "zh" })
+  })
+})
+
+describe("revealInFinder", () => {
+  it("delegates to the official plugin-opener binding with the path", async () => {
+    revealItemInDir.mockResolvedValueOnce(undefined)
+    invoke.mockClear()
+    await defaultServices.revealInFinder?.("/tmp/notes.md")
+    expect(revealItemInDir).toHaveBeenCalledWith("/tmp/notes.md")
+    expect(invoke).not.toHaveBeenCalled()
   })
 })
