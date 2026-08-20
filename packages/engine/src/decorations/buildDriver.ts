@@ -176,8 +176,9 @@ class LiveBuildDriver {
   private cancelIdle: (() => void) | null = null
   // 安全模式：需要重查窗口（构建窗口内 pending + 裁剪窗口外装饰）。视口/文档/
   // 选区变化置位；初始 true —— 挂载后首个微任务先做一次窗口检查。生产中滚动由
-  // viewportChanged 驱动；无布局测试宿主用「stub visibleRanges + 触发一笔交易」
-  // 模拟（selectionSet 同样置位：光标也是窗口锚点，代价是一次自门槛的微任务）。
+  // viewportChanged 驱动，窗口锚点是 visibleRegions（光标只在可见区为空时作兜底
+  // 锚点，见 visibleRegions）；selectionSet 属保守置位，代价是一次自门槛的微任务。
+  // 无布局测试宿主用「stub visibleRanges + 触发一笔交易」模拟。
   private windowDirty = true
 
   constructor(private readonly view: EditorView) {

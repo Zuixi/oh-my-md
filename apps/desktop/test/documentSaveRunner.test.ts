@@ -35,7 +35,7 @@ interface FakeEditor {
 /** CM Text 语义的保真替身：doc 对象在创建时冻结其内容，文档变更换引用
  * （Text.replace 恒新建节点），选区类更新不动 —— documentSaveRunner 依此
  * 判定保存期间是否落过编辑。flatten 计数用于断言没有发生多余的 rope 展平。 */
-function fakeEditor(initial: string): FakeEditor {
+function fakeEditor(initial: string, onEdit?: (next: string) => void): FakeEditor {
   const state: { doc: { toString(): string } } = {
     doc: { toString: () => initial },
   }
@@ -54,7 +54,7 @@ function fakeEditor(initial: string): FakeEditor {
   } as unknown as EditorView
   return {
     view,
-    edit: next => { state.doc = track(next) },
+    edit: next => { state.doc = track(next); onEdit?.(next) },
     flattenCalls: () => flattenCalls,
   }
 }
@@ -70,7 +70,10 @@ interface RunnerFixture {
 }
 
 function makeRunner(currentDoc: string): RunnerFixture {
-  const editor = fakeEditor(currentDoc)
+  // getContents 的可变来源：直接闭包初始参数会在 editor.edit 后变 stale，
+  // 未来复用此 fixture 的链路（如 autosave）会拿到旧快照 —— 持有者随 edit 同步。
+  const doc = { current: currentDoc }
+  const editor = fakeEditor(currentDoc, next => { doc.current = next })
   const baselineVersion = versionFor(PATH, BASELINE)
   const tab = createFileSession(TAB_ID, PATH, BASELINE, baselineVersion)
   let workspace: Workspace = replaceTabSession(createWorkspace(), tab)
@@ -84,7 +87,7 @@ function makeRunner(currentDoc: string): RunnerFixture {
     isOpening: () => false,
     getTab: () => workspace.tabs.find(item => item.id === TAB_ID),
     getView: () => editor.view,
-    getContents: () => currentDoc,
+    getContents: () => doc.current,
     getNormalization: () => normalization,
     setNormalization: next => { normalization = next },
     getWorkspace: () => workspace,
@@ -101,7 +104,8 @@ function makeRunner(currentDoc: string): RunnerFixture {
         durability: "durable",
       }
       return result
-    },    readDocument: async () => ({ kind: "missing", requestedPath: PATH }),
+    },
+    readDocument: async () => ({ kind: "missing", requestedPath: PATH }),
     readDocumentVersion: async () => ({
       kind: "existing" as const,
       version: baselineVersion,

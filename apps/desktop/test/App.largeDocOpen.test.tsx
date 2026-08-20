@@ -258,6 +258,46 @@ describe("open tiers (Spec 05b)", () => {
     expectPathShown("/crlf.md")
   })
 
+  it("hands the streamed Text to a NEW tab's view via the docTexts stash", async () => {
+    // 新 tab 分支不经 resetTabDocument：组装 Text 走 docTextsRef 暂存（App.openPath
+    // inNewTab），由 ensureViews 建 view 时消费 —— 钉死 create 收到的就是 Text。
+    const harness = createAppHarness(editor)
+    harness.seedFile("/root.md", "root body")
+    harness.seedFile("/stream.md", "disk copy that must not be used")
+    harness.services.statDocument = vi.fn(async (path: string) => ({
+      kind: "existing" as const,
+      requestedPath: path,
+      sizeBytes: path === "/stream.md" ? 20 * MB : 9,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha " })
+      onEvent({ kind: "chunk", index: 1, text: "beta" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/stream.md",
+        version: { resolvedPath: "/stream.md", fingerprint: "v1:stream" },
+        stats: { byteLength: 10, lineCount: 1 },
+      }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/root.md", "root body")
+    expect(editor.create).toHaveBeenCalledTimes(1)
+    // markdown 链接是新 tab 打开的真实入口（openPath(…, inNewTab=true)）。
+    await act(async () => {
+      harness.editorForTab(1).getOptions().onOpenMarkdownHref?.("/stream.md")
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(harness.allEditors()).toHaveLength(2))
+    expect(harness.services.readDocument).not.toHaveBeenCalledWith("/stream.md")
+    expect(editor.create).toHaveBeenCalledTimes(2)
+    const doc = streamedDocText(harness.editorForTab(2))
+    expect(doc.eq(Text.of("alpha beta".split(/\r\n?|\n/)))).toBe(true)
+    expect(harness.editorForTab(2).view.state.doc).toBe(doc)
+    // ensureViews 消费暂存的直接证据：第二次 create 的入参 options.doc 即该 Text。
+    expect(editor.create.mock.calls[1][1].doc).toBe(doc)
+  })
+
   it("falls back to a one-shot read when streaming fails", async () => {
     const harness = createAppHarness(editor)
     harness.seedFile("/stream.md", "fallback body")
@@ -346,5 +386,50 @@ describe("lazy session restore (Spec 05b)", () => {
       expect(harness.editorForTab(2).getOptions().doc).toBe("beta")
     })
     expect(harness.services.readDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it("streams a lazily activated LARGE tab into a Text doc for the existing view", async () => {
+    // 惰性 tab 首激活走 loadLazyTab：流式快照的 docText 直达已挂载的空 view
+    // （resetTabDocument 主路径）；view 缺位的兜底与新 tab 分支共用 docTextsRef
+    // 暂存链路（ensureViews 消费），此处钉住 Text 端到端落到 view.state.doc。
+    const harness = createAppHarness(editor)
+    const joined = "alpha\r\nbeta\r\ngamma"
+    harness.seedFile("/small.md", "small")
+    harness.seedFile("/lazy.md", joined)
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/small.md", "/lazy.md"],
+      activePath: "/small.md",
+    }))
+    harness.services.statDocument = vi.fn(async (path: string) => ({
+      kind: "existing" as const,
+      requestedPath: path,
+      sizeBytes: path === "/lazy.md" ? 20 * MB : 5,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha\r" })
+      onEvent({ kind: "chunk", index: 1, text: "\nbeta\r" })
+      onEvent({ kind: "chunk", index: 2, text: "\ngamma" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/lazy.md",
+        version: versionFor("/lazy.md", joined),
+        stats: { byteLength: joined.length, lineCount: 3 },
+      }
+    })
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe("small")
+    })
+    harness.activateTab(2)
+    await waitFor(() => {
+      expect(streamedDocText(harness.editorForTab(2)).eq(Text.of(joined.split(/\r\n?|\n/)))).toBe(true)
+    })
+    const doc = streamedDocText(harness.editorForTab(2))
+    expect(doc.lines).toBe(3)
+    expect(harness.editorForTab(2).view.state.doc).toBe(doc)
+    // 惰性档只有主路径整读一次；LARGE 激活必须走流式（不二次整读）。
+    expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
   })
 })

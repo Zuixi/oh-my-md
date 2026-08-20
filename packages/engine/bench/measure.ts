@@ -112,7 +112,8 @@ export function measureStatsMs(doc: string): number {
  * 引擎成本。Task 1 前 reconfigure 即全量构建整篇装饰（50MB 级秒级冻结）；现在
  * = compartment reconfigure + 光标附近种子构建，成本以 LIVE_SEED_RADIUS_* 为
  * 界、与文档规模解耦 —— 各档数字应基本持平即验证成功。
- * 注意 @codemirror/state 6.7 起字段惰性求值：state.update 本身不触发种子构建，
+ * 注意 StateField 值为惰性求值（槽位缓存在首次读取时才填充，非近期版本行为）：
+ * state.update 本身不触发种子构建，
  * 真实 ⌘E 中种子发生在 view 更新读取装饰 facet 时 —— 故计时区间为 update +
  * field 读取（强制求值），与生产 dispatch 的实际工作量一致。同一 source state
  * 上重复采样（update 产生独立新 state，不回写 view），另单独度量
@@ -145,9 +146,11 @@ export function measureLiveToggleMs(doc: string): LiveToggleLatency {
 }
 
 /** 安全模式窗口化稳态的确定性就绪（bench 专用）：同步复刻 liveBuildDriver 的
- * windowedFirstPass —— 把 pending∩构建窗口（可见段 ± LIVE_WINDOW_CHARS）按
+ * 收敛稳态 —— windowedFirstPass（可见区分片）叠加 idle 分片循环把构建窗口内
+ * pending 排空后的净效果：pending∩构建窗口（可见段 ± LIVE_WINDOW_CHARS）按
  * LIVE_BUILD_CHUNK_CHARS 切片并入同一笔 liveBuildChunk 交易，并随交易 dispatch
- * livePruneOutside（裁剪窗口 = 构建窗口再叠 LIVE_PRUNE_MARGIN_CHARS 迟滞）。
+ * livePruneOutside（裁剪窗口 = 构建窗口再叠 LIVE_PRUNE_MARGIN_CHARS 迟滞；驱动
+ * 仅在确有窗口外装饰时附带该 effect，此处直接携带，无窗口外装饰时为无活 no-op）。
  * bench 的同步度量循环期间微任务/idle 回调不会运行（驱动无法推进），故由本函数
  * 直接落位稳态；窗口算式与 buildDriver 同构（可见段先 mergeRanges 归并再外扩，
  * 避免多段可见区产出重叠分片；无布局宿主可见段退化为文档头小段，确定性）。
