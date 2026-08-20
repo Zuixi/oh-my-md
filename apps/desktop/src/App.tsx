@@ -274,6 +274,10 @@ export default function App({
   const docRef = useRef("")
   const docsRef = useRef(new Map<number, string>([[session.id, ""]]))
   const openRequestRef = useRef(0)
+  // 已删除路径的登记：openPath 提交 tab 前自检并放弃（新建→立刻删除的竞态里，
+  // 删除 IPC 让出事件循环时在途 openPath 恰好落地）。命中即移除，条目只在
+  // 「删除时存在在途打开」这一窗口产生，不会累积。
+  const invalidatedOpenPathsRef = useRef(new Set<string>())
   const tabSaveQueuesRef = useRef<TabSaveQueues>(new Map())
   const operationSeqRef = useRef(0)
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
@@ -1194,6 +1198,7 @@ export default function App({
       void expandToPath(nextPath)
       rememberRecent(nextPath)
       if (inNewTab) {
+        if (invalidatedOpenPathsRef.current.delete(nextPath)) return
         const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
         docsRef.current.set(tab.id, contents)
         if (byteLength !== undefined) docBytesRef.current.set(tab.id, byteLength)
@@ -1205,6 +1210,7 @@ export default function App({
         return
       }
       // 替换当前 tab：档位与字节数随新文档重置，避免沿用旧档残留。
+      if (invalidatedOpenPathsRef.current.delete(nextPath)) return
       if (byteLength !== undefined) docBytesRef.current.set(sessionRef.current.id, byteLength)
       else docBytesRef.current.delete(sessionRef.current.id)
       if (tier === "readonly") readonlyTabsRef.current.add(sessionRef.current.id)
@@ -1740,8 +1746,12 @@ export default function App({
     if (!confirmDelete(entry.path)) return
     try {
       await services.deletePath(entry.path)
+      // 删除的 await 期间在途 openPath 可能把该文件的 tab 加进来：登记作废 + 重新
+      // 查找（confirm 前的快照 openTab 已过期，只保留给脏检查用）。
+      invalidatedOpenPathsRef.current.add(entry.path)
       commitTree(removeTreePath(treeModelRef.current, entry.path))
-      if (openTab) closeTabInternal(openTab.id, { confirm: false, allowReplaceLast: true })
+      const tabToClose = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
+      if (tabToClose) closeTabInternal(tabToClose.id, { confirm: false, allowReplaceLast: true })
       const dir = parentDir(entry.path)
       if (dir) await refreshTreePath(dir)
     } catch (error) {
