@@ -146,16 +146,19 @@ function createHandleRecord(
   let contents = initial.doc
   let options = initial
   let pending: OrderedListNormalizationNotice | null = null
+  // `state.doc` mirrors CM's Text semantics: an immutable object frozen at the
+  // content it was created with. Doc-changing updates swap the reference
+  // (Text.replace always builds a new node); selection-only updates keep it.
   // `lines` mirrors CM's state.doc.lines: applyDocumentScalePolicy reads it to
   // classify document scale without splitting the full text.
-  const state = {
-    doc: {
-      toString: () => contents,
-      get lines() {
-        return contents ? contents.split("\n").length : 1
-      },
+  const fakeDoc = (value: string) => ({
+    toString: () => value,
+    get lines() {
+      return value ? value.split("\n").length : 1
     },
-  }
+  })
+  const state = { doc: fakeDoc(initial.doc) }
+  const swapDoc = (value: string) => { state.doc = fakeDoc(value) }
   pendingByState.set(state, () => pending)
   const view = {
     state,
@@ -167,9 +170,14 @@ function createHandleRecord(
   const handle: FakeEditorHandle = {
     view,
     getOptions: () => options,
-    setContents: value => { contents = value },
+    setContents: value => {
+      contents = value
+      // 全文档替换（等同 resetEditorDocument/setState）：Text 身份随之更换。
+      swapDoc(value)
+    },
     emit: update => {
       contents = update.doc
+      if (update.docChanged) swapDoc(update.doc)
       pending = update.pendingNormalization
       act(() => notifyHost(options, {
         docChanged: update.docChanged,
@@ -184,6 +192,7 @@ function createHandleRecord(
     rebind: next => {
       options = next
       contents = next.doc
+      swapDoc(next.doc)
       pending = null
     },
   }

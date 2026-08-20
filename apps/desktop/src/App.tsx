@@ -771,7 +771,10 @@ export default function App({
   }
   resetTabDocumentRef.current = resetTabDocument
 
-  // 大纲刷新（tab 感知，唯一调用方是 activateTab，view 恒属激活 tab）：
+  // 大纲刷新（tab 感知）。调用方有三：activateTab 传入激活 tab 的 view；大纲
+  // 防抖 effect 与悬停弹出传 viewRef.current —— 惰性 tab 首激活的窗口期它可能
+  // 仍指向上一个 tab 的 view，故 view 并不恒属激活 tab，下方守卫对外来 view
+  // 保守置空大纲（fail-safe），真正计算/入缓存前再校验归属：
   //   1. 缓存命中（tabId + 文档版本一致）—— setOutline 复用，零重算，这是
   //      大文件 tab 反复切换的主要成本来源（collectOutline 同步全树遍历）。
   //   2. 未命中且非 over-scale —— 同步首算并写缓存（普通文档便宜，维持原行为）。
@@ -2175,16 +2178,21 @@ export default function App({
       : null,
     [findOpen, findRegexMode, findQuery, findCase],
   )
-  const matchCount = useMemo(
-    () => findOpen
-      ? collectMatches(doc, {
+  const matchCount = useMemo<number | null>(
+    () => {
+      if (!findOpen) return 0
+      // 安全模式（Spec 05）门控全文正则扫描：over-scale tab（含只读）与字数统计
+      // 同口径不跑 collectMatches，计数返回 null 由 FindBar 显示占位；文档缩回
+      // 正常规模或切到普通 tab 后恢复即时计数。
+      if (safeModeActive) return null
+      return collectMatches(doc, {
         query: findQuery,
         caseSensitive: findCase,
         regex: findRegexMode,
         wholeWord: findWholeWord,
       }).length
-      : 0,
-    [findOpen, doc, findQuery, findCase, findRegexMode, findWholeWord],
+    },
+    [findOpen, doc, findQuery, findCase, findRegexMode, findWholeWord, safeModeActive],
   )
 
   return (
