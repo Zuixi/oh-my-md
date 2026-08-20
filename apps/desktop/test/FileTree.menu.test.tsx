@@ -62,7 +62,7 @@ async function openTreeMenu(label: string): Promise<void> {
 }
 
 describe("FileTree sidebar menu", () => {
-  it("creates a new markdown file in the clicked file's parent, opens it, and refreshes the listing", async () => {
+  it("creates a new markdown file in the clicked file's parent, opens and focuses it, and refreshes the listing", async () => {
     const harness = makeAppHarness()
     let entries = [
       { name: "doc.md", path: "/notes/doc.md", is_dir: false },
@@ -79,6 +79,7 @@ describe("FileTree sidebar menu", () => {
     harness.renderApp()
     await harness.openIntoActive("/notes/doc.md", "saved")
     await waitFor(() => expect(screen.getByText("untitled.md")).toBeTruthy())
+    const editorsBefore = new Set(harness.allEditors())
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
@@ -92,6 +93,9 @@ describe("FileTree sidebar menu", () => {
     })
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
     await waitFor(() => expectPathShown("/notes/untitled-2.md"))
+    const added = harness.allEditors().filter(handle => !editorsBefore.has(handle))
+    expect(added).toHaveLength(1)
+    expect(added[0].view.focus).toHaveBeenCalled()
   })
 
   it("creates a new folder in the clicked directory and refreshes the listing", async () => {
