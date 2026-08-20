@@ -44,8 +44,15 @@ export function addTab(workspace: Workspace, session?: EditorSession): Workspace
 
 export function closeTab(workspace: Workspace, id: number): Workspace {
   if (workspace.tabs.length === 1) return workspace
+  const index = workspace.tabs.findIndex(tab => tab.id === id)
+  if (index < 0) return workspace
   const tabs = workspace.tabs.filter(tab => tab.id !== id)
-  const activeId = workspace.activeId === id ? tabs[tabs.length - 1].id : workspace.activeId
+  // Closing the active tab activates the neighbor that slides into its slot
+  // (next, else previous) — with equal-width tabs the close button stays under
+  // the pointer, so tabs can be closed in one continuous click run.
+  const activeId = workspace.activeId === id
+    ? (tabs[index] ?? tabs[index - 1]).id
+    : workspace.activeId
   return { ...workspace, tabs, activeId }
 }
 
