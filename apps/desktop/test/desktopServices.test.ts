@@ -33,6 +33,20 @@ describe("setMenuLocale", () => {
   })
 })
 
+describe("listSystemFonts", () => {
+  it("invokes list_system_fonts with no arguments", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce(["Arial", "Menlo"])
+    await expect(defaultServices.listSystemFonts?.()).resolves.toEqual(["Arial", "Menlo"])
+    expect(invoke).toHaveBeenCalledWith("list_system_fonts")
+  })
+
+  it("resolves null when the invoke rejects", async () => {
+    invoke.mockRejectedValueOnce(new Error("font enumeration failed"))
+    await expect(defaultServices.listSystemFonts?.()).resolves.toBeNull()
+  })
+})
+
 describe("revealInFinder", () => {
   it("delegates to the official plugin-opener binding with the path", async () => {
     revealItemInDir.mockResolvedValueOnce(undefined)

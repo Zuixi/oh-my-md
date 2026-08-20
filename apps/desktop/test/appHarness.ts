@@ -311,6 +311,7 @@ function harnessServices(context: HarnessContext): HarnessServices {
     confirmExternalChange: vi.fn(() => true),
     getSettings: vi.fn(async () => DEFAULT_SETTINGS),
     saveSettings: vi.fn(async () => undefined),
+    listSystemFonts: vi.fn(async () => ["Arial", "Menlo"]),
     getSessionState: vi.fn(async () => null),
     saveSessionState: vi.fn(async () => undefined),
     reportError: vi.fn(),
