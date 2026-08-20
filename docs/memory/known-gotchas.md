@@ -440,3 +440,27 @@ Counting only `b'\n'` under-reports for such files; use
 `count_line_separators` (documents.rs), which also carries a chunk-trailing
 `\r` across streaming chunk boundaries so a CRLF split mid-stream is not
 misread as two separators.
+
+## Tauri plugin commands are wire contracts; raw `invoke("plugin:…")` drifts silently
+
+`tauri-plugin-opener`'s `reveal_item_in_dir` expects `paths: Vec<PathBuf>`
+(a JSON array), but `desktopServices.ts` raw-invoked it with `{ path }` — the
+invoke rejected during argument deserialization before any OS code ran, so
+"Reveal in File Manager" (file-tree context menu + save-conflict banner) was a
+silent no-op on every platform since it landed (66be269). Both call sites fired
+it with `void` and no `.catch`, so the rejection was invisible: the bug read as
+"the button does nothing" instead of surfacing an error.
+
+Plugin commands are wire contracts exactly like custom IPC (same trap family as
+the `search_markdown` casing drift). Rules:
+
+- Prefer the official JS binding (`revealItemInDir`, `openUrl` from
+  `@tauri-apps/plugin-opener`) over hand-written `invoke("plugin:…", …)` — the
+  binding owns the argument shape and evolves with the plugin.
+- Never fire-and-forget a plugin invoke with `void` and no `.catch`; attach a
+  handler that reports through `services.reportError` so payload drift becomes
+  a visible error, not a dead button.
+- `apps/desktop/test/desktopServices.test.ts` pins the delegation
+  (`revealInFinder` → `revealItemInDir(path)`); add the same pin when wiring
+  another plugin binding.
+
