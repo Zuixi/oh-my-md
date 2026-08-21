@@ -149,6 +149,15 @@ fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) -> Resu
     window.set_theme(theme).map_err(|e| e.to_string())
 }
 
+// Startup no-flash source of truth: the window must carry the saved theme
+// before its first paint, because the webview only learns the theme after
+// React loads settings over IPC (tauri-apps/tauri#6027). Anything unreadable,
+// missing, or "system" maps to None so the window keeps following the OS.
+fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
+    let value: serde_json::Value = serde_json::from_str(raw_settings).ok()?;
+    window_theme_from_arg(value.get("theme")?.as_str()?).ok()
+}
+
 // In-app menubar (non-macOS) needs an explicit quit entry and a version for
 // the About dialog; macOS gets both from the native app menu instead. The
 // menubar quit flushes session state first — `app.exit` skips ExitRequested,
@@ -607,6 +616,15 @@ pub fn run() {
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
         .setup(|app| {
+            // Apply the persisted theme before the first paint; the webview's
+            // set_window_theme push arrives only after React boots, which
+            // leaves the title bar flashing the OS appearance at startup.
+            if let Some(window) = app.get_webview_window("main") {
+                let raw = workspace::get_settings().unwrap_or_default();
+                if let Err(e) = window.set_theme(startup_window_theme(&raw)) {
+                    log::warn!("startup window theme failed: {e}");
+                }
+            }
             menu::install(app)?;
             watcher::install(app.handle());
             if let Err(e) = workspace::migrate_legacy_config() {
@@ -1141,5 +1159,25 @@ mod tests {
         ));
         assert!(window_theme_from_arg("system").is_err());
         assert!(window_theme_from_arg("").is_err());
+    }
+
+    #[test]
+    fn startup_window_theme_reads_persisted_theme_tolerantly() {
+        assert!(matches!(
+            startup_window_theme(r#"{"theme":"dark"}"#),
+            Some(tauri::Theme::Dark)
+        ));
+        assert!(matches!(
+            startup_window_theme(r#"{"theme":"light","fontSize":18}"#),
+            Some(tauri::Theme::Light)
+        ));
+        // "system", absent, malformed, and non-string values all fall back to
+        // following the OS rather than guessing a theme.
+        assert!(startup_window_theme("{}").is_none());
+        assert!(startup_window_theme(r#"{"theme":"system"}"#).is_none());
+        assert!(startup_window_theme(r#"{"theme":null}"#).is_none());
+        assert!(startup_window_theme(r#"{"theme":42}"#).is_none());
+        assert!(startup_window_theme("not json").is_none());
+        assert!(startup_window_theme("").is_none());
     }
 }

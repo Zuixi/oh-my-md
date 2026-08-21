@@ -329,6 +329,10 @@ export default function App({
   const sessionSaveTimerRef = useRef<number | null>(null)
   const sessionRestoredRef = useRef(false)
   const [theme, setTheme] = useState<AppTheme>("light")
+  // The window theme is applied pre-paint by Rust from persisted settings;
+  // frontend pushes stay off until those settings load, so the "light"
+  // default can't flip the title bar dark→light→dark.
+  const [themeSyncReady, setThemeSyncReady] = useState(false)
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
@@ -892,6 +896,7 @@ export default function App({
     ensureViews()
     void (async () => {
       const initial = await loadInitialSettings()
+      if (mountedRef.current) setThemeSyncReady(true)
       if (!localeInitRef.current) {
         localeInitRef.current = true
         initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
@@ -969,11 +974,12 @@ export default function App({
 
   useEffect(() => {
     applyTheme(theme, customCss)
+    if (!themeSyncReady) return
     // data-theme only restyles the webview; the native title bar follows the
     // window's own appearance, so the resolved theme must also cross IPC.
     // "system" clears the override so the window keeps following the OS.
     void services.setWindowTheme?.(theme === "system" ? null : theme)
-  }, [theme, customCss, services])
+  }, [theme, customCss, services, themeSyncReady])
 
   useEffect(() => {
     document.documentElement.dataset.typewriter = typewriter ? "on" : "off"

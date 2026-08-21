@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { screen, fireEvent, waitFor } from "@testing-library/react"
+import { screen, fireEvent, waitFor, act } from "@testing-library/react"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, resetMountedApps } from "./appHarness"
@@ -66,6 +66,27 @@ describe("App native window theme sync", () => {
     await waitFor(() => {
       expect(harness.services.setWindowTheme).toHaveBeenCalledWith(null)
     })
+  })
+
+  it("does not push the default light theme before settings load", async () => {
+    const harness = createAppHarness(editor)
+    let resolveSettings: (value: UserSettings) => void = () => {}
+    vi.mocked(harness.services.getSettings!).mockImplementation(
+      () => new Promise<UserSettings>(resolve => { resolveSettings = resolve }),
+    )
+    harness.renderApp()
+
+    // Mount-time theme state is the "light" default; pushing it would flip
+    // the title bar dark→light→dark after Rust already applied the saved
+    // theme before first paint.
+    await act(async () => { await Promise.resolve() })
+    expect(harness.services.setWindowTheme).not.toHaveBeenCalled()
+
+    await act(async () => { resolveSettings(settingsWith({ theme: "dark" })) })
+    await waitFor(() => {
+      expect(harness.services.setWindowTheme).toHaveBeenCalledWith("dark")
+    })
+    expect(harness.services.setWindowTheme).not.toHaveBeenCalledWith("light")
   })
 
   it("re-syncs the native window when the theme changes in settings", async () => {
