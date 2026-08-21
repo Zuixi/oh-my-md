@@ -19,6 +19,8 @@ html[data-theme="light"] {
   --omd-chrome: #f7f7f7;
   --omd-panel-bg: #ffffff;
   --omd-content-width: 780px;
+  /* matches CM focused selection layer (&light .cm-selectionBackground #d7d4f0) */
+  --omd-selection-bg: rgba(215, 212, 240, 0.55);
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -36,6 +38,8 @@ html[data-theme="dark"] {
   --omd-chrome: #161616;
   --omd-panel-bg: #252526;
   --omd-content-width: 780px;
+  /* matches CM focused selection layer (&dark .cm-selectionBackground #233) */
+  --omd-selection-bg: rgba(34, 51, 51, 0.55);
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
    fall back to inherited/initial values, so unthemed tokens stay correct. */
@@ -184,6 +188,14 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 
 /* M2 block widgets */
 .editor-host .omd-block { position: relative; margin: 0.5em 0; }
+/* 选区完整包含块时保持渲染的选中态覆盖（Typora 语义：选区是视觉的） */
+.editor-host .omd-block.omd-block-covered::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--omd-selection-bg, rgba(215, 212, 240, 0.55));
+  pointer-events: none;
+}
 .editor-host .omd-block-edit {
   position: absolute; top: 2px; right: 4px; z-index: 1;
   border: none; background: transparent; color: var(--omd-muted); cursor: pointer;

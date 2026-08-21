@@ -2,13 +2,15 @@ import { Compartment, StateEffect, StateField, type EditorState, type Transactio
 import { keymap, type Command } from "@codemirror/view"
 import { livePreviewField } from "../decorations/build"
 import { liveBuildDriver } from "../decorations/buildDriver"
+import { blockSelectionOverlay } from "../decorations/blockSelectionOverlay"
 import { orderedRenumber } from "../lists/ordered"
 
 export function livePreviewExt() {
   // decorations via StateField；block widgets 只能走 field。
   // liveBuildDriver 以 idle 分片消耗 LiveDeco.pending（不产出 decoration），
   // orderedRenumber 编号写回源码走 ViewPlugin，不产出 block decoration。
-  return [livePreviewField, liveBuildDriver, orderedRenumber]
+  // blockSelectionOverlay 只切 DOM 类（选区完整包含时给块加选中覆盖），不产 decoration。
+  return [livePreviewField, liveBuildDriver, blockSelectionOverlay, orderedRenumber]
 }
 
 export const livePreviewCompartment = new Compartment()

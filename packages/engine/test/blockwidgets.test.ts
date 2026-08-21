@@ -56,6 +56,18 @@ describe("block widget pipeline", () => {
     // 光标越过边界 → 块恢复渲染态
     const past = state.update({ selection: { anchor: 21 } }).state
     expect(blockSelected(past, 7, 19)).toBe(false)
+    // 完整包含（Cmd+A / 跨块拖选 / Shift+↓ 跨块）→ 保持渲染，不显源码
+    const selectAll = state.update({ selection: { anchor: 0, head: 26 } }).state
+    expect(blockSelected(selectAll, 7, 19)).toBe(false)
+    const cover = state.update({ selection: { anchor: 0, head: 20 } }).state
+    expect(blockSelected(cover, 7, 19)).toBe(false)
+    const exactCover = state.update({ selection: { anchor: 7, head: 19 } }).state
+    expect(blockSelected(exactCover, 7, 19)).toBe(false)
+    // 部分重叠（选区一端扎进块内）→ 编辑意图，显源码
+    const partial = state.update({ selection: { anchor: 7, head: 18 } }).state
+    expect(blockSelected(partial, 7, 19)).toBe(true)
+    const partialEnd = state.update({ selection: { anchor: 10, head: 25 } }).state
+    expect(blockSelected(partialEnd, 7, 19)).toBe(true)
   })
 
   it("fenced code becomes a code widget off-cursor, line styles on-cursor", () => {
