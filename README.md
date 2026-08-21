@@ -1,74 +1,123 @@
+<div align="center">
+  <img src="docs/images/logo.png" width="110" alt="oh-my-md app icon" />
+
 # oh-my-md
 
-一个对标 Typora 的开源桌面 Markdown 编辑器。基于 CodeMirror 6 Live Preview 与 Tauri 2，主打大文档性能与 AI 原生。
+**A free, open-source Markdown editor with true live preview — built to stay fast on documents with hundreds of thousands of lines.**
 
-## 特性
+[English](./README.md) · [简体中文](./README-zh.md)
 
-- Live Preview + 源码模式（`⌘E`），语法标记折叠，所见即所得
-- CommonMark + GFM 全量：表格、任务列表、脚注、删除线
-- 扩展：KaTeX 公式、Mermaid 图表、代码高亮、`==高亮==`、gemoji
-- 图片粘贴 / 拖放 / 文件选择，写入本地 `assets/`
-- 多标签、文件树、大纲、文件夹搜索、最近文件、命令面板（`⇧⌘P`）
-- 冲突安全保存、崩溃恢复、会话恢复
-- 导出 HTML / PDF / PNG（公式、代码、图表与预览一致）
-- 亮/暗主题、自定义 CSS、Typewriter / Focus 模式
+[![CI](https://github.com/Zuixi/open-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/open-md/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS-black)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
-## 安装
+<!-- TODO(repo-rename): update repo URLs (badges, clone, Releases) once the repository is renamed to oh-my-md. -->
+</div>
 
-> v1 仅支持 macOS。
+![oh-my-md: dark theme with file tree and outline, live preview rendering KaTeX math and an inline Mermaid diagram](docs/images/hero.png)
+
+<!-- TODO(demo-gif): record a 10–15 s demo GIF — ⌘E live⇄source toggle plus typing — save it as docs/images/demo.gif, then uncomment the line below.
+![demo: toggle live preview and source mode with ⌘E](docs/images/demo.gif)
+-->
+
+## Why oh-my-md?
+
+Typora proved that a Markdown editor can feel like a modern word processor — then it went closed-source and paid. MarkText kept the faith but hasn't shipped a release since 2022. **oh-my-md is a fresh attempt: free, Apache-2.0, wrapped in a lightweight Tauri shell, with an editing engine designed from day one for very large documents.**
+
+|  | oh-my-md | Typora | MarkText |
+| --- | --- | --- | --- |
+| Open source | ✅ Apache-2.0 | ❌ | ✅ MIT |
+| Price | Free | $14.99 | Free |
+| Live preview, no split pane | ✅ | ✅ | ✅ |
+| Responsive on 100k+ lines¹ | ✅ measured | — | — |
+| Export | HTML · PDF · PNG | HTML · PDF · DOCX … | HTML · PDF |
+| App shell | Tauri 2 | Electron | Electron |
+| Platforms | macOS (Windows/Linux planned) | macOS · Windows · Linux | macOS · Windows · Linux |
+
+¹ "—" means no published figures, not a judgment on those editors.
+
+## Features
+
+**Writing**
+- **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to a plain source mode any time
+- **Full CommonMark + GFM** — tables, task lists, footnotes, strikethrough
+- **Rich blocks** — KaTeX math, Mermaid diagrams, Shiki code highlighting, `==highlights==`, `:gemoji:`
+- **Typewriter & Focus modes**, with careful IME handling for CJK input
+
+**Files & workspace**
+- Single-file centered — double-click any `.md` to open it; mount a folder workspace for a file tree, folder search, outline panel, and tabs
+- Paste, drag, or pick images — they are stored in a local `assets/` folder beside your file
+- Conflict-safe saving, external-change detection, crash and session recovery
+
+**Export**
+- HTML, PDF, and PNG output that matches the live preview exactly — formulas, code, and diagrams included
+
+**Appearance**
+- Light and dark themes with matching code themes, plus custom CSS
+
+## Performance
+
+One promise: **you should never split a document up because of the editor.**
+
+- Keystroke latency stays far inside the 16 ms frame budget on every document we benchmark — **2 ms (p95, source mode) even on a 20 MB / 750k-line file**
+- `⌘E` mode switching builds only a seed around the cursor — **sub-millisecond, independent of document size**
+- Documents past 50k lines enter a *safe mode* (source view by default, viewport-windowed live rendering, remembered for the session) so editing stays responsive — you can still toggle live preview any time
+
+| Document | Typing p95 (live / source) | Main-thread open |
+| --- | --- | --- |
+| 10k lines | 5.5 / 2 ms | 32 ms |
+| 10 MB · 380k lines | 2.5 / 2 ms² | ~15 ms |
+| 20 MB · 750k lines | — / 2 ms | ~30 ms |
+
+² Safe mode: live rendering is viewport-windowed.
+
+Figures come from the built-in advisory benchmark on an M-series machine — run `pnpm --filter @omd/engine bench` and see for yourself.
+
+## Installation
+
+oh-my-md is at **v0.1.0** and currently **macOS-only**.
+
+**Download** — signed, notarized `.dmg` builds will appear on the [Releases](https://github.com/Zuixi/open-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
+
+**Build from source** — you need [pnpm](https://pnpm.io/) (or Corepack), a [Rust toolchain](https://rustup.rs/), and Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
+git clone https://github.com/Zuixi/open-md.git   # repo is being renamed to oh-my-md shortly
+cd open-md
 pnpm install
+pnpm dev        # launches the app
 ```
 
-## 开发
+For a packaged `.app` / `.dmg`: `pnpm --filter @omd/desktop tauri build`.
 
-> **开发前置**：本地开发目前仅支持 macOS（需 pnpm 与 Rust 工具链）。项目面向 macOS / Windows / Linux 三平台，Linux 本地开发与 CI 自 P1 起、Windows 自 P2 起（跨平台计划推进中；三 OS 矩阵首次真实运行观察待推送后进行）；期间导出 PDF / 图片仅 macOS 可用。
+## Keyboard shortcuts
 
-```sh
-pnpm dev        # 启动 Tauri 开发窗口
-pnpm verify     # 测试 + 构建（引擎 / 桌面 / Rust）
-```
+Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and every command is reachable from the command palette (`⇧⌘P`) — nothing to memorize. See the [full shortcut reference](./docs/guides/keyboard-shortcuts.md).
 
-## 测试
+## Roadmap
 
-```sh
-pnpm test                                   # 引擎（tsc + Vitest）
-pnpm --filter @omd/desktop test             # 桌面（tsc + Vitest）
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml  # Rust
-```
+- [ ] Signed, auto-updating macOS releases
+- [ ] Linux support — local dev and CI first, packages after
+- [ ] Windows support
+- [ ] Block-level AI actions (polish / continue / translate) via OpenAI-compatible APIs and local Ollama
+- [ ] Plugin architecture — foundations already reserved in the design
 
-## 性能
+## FAQ
 
-大文档基准（`pnpm --filter @omd/engine bench`，M-series 开发机，advisory；逐键为 steady 口径 = 生产稳态部分树，见 known-gotchas「complete-tree trap」）：
+- **Is it really free?** Yes. Apache-2.0, no account, no feature gates.
+- **Where does my data live?** In plain `.md` files on your disk — nothing is uploaded, ever.
+- **Windows or Linux?** macOS first; both are on the roadmap, with Linux leading.
+- **Will it open my existing notes?** If they are Markdown, yes — CommonMark + GFM plus common extras such as `==highlight==`, footnotes, KaTeX math, and Mermaid.
+- **What about AI?** Designed but not shipped yet — see the [roadmap](#roadmap).
 
-| 指标 | 10k 行 | 50k 行（安全模式） | 10MB/38 万行 | 20MB/75 万行 | 预算 |
-|---|---|---|---|---|---|
-| 逐键事务 p95 | 5.5 ms（live）/ 2 ms（source） | 1.9 ms（source） | 2 ms（source）/ 2.5 ms（live 安全模式窗口化） | 2 ms（source） | < 16 ms |
-| ⌘E 切 Live（reconfigure + 光标种子构建）p95 | — | — | 0.3 ms（纯种子 0.1 ms） | 0.3 ms（纯种子 0.1 ms） | < 100 ms |
-| 冷打开摄入（主线程，source / live） | — | — | 14.6 / 14.4 ms | 31.5 / 27.3 ms | < 2000 / 4000 ms |
-| 冷启动解析 | 32 ms | 159 ms | — | — | — |
-| 装饰重建 | 6 ms | — | — | — | — |
-| documentStats | — | 11.7 ms | — | — | < 8 ms（超限，已按需化） |
+## Contributing
 
-> 50k 行以上自动进入安全模式：默认源码模式、按需字数统计、复杂块渲染延迟到接近视口（可手动切回，本次会话内记住）。超大文档（10-20MB）逐键路径零 O(doc) 应用层工作：编辑载荷不携带文档字符串、恢复写入防抖 800ms、内容按 250ms 节奏从编辑器拉取（保存/关闭前同步 flush）。⌘E 切 Live 不再全量构建：切换交易只做光标附近种子构建（10-20MB 均 < 1ms，与文档规模解耦），其余区间由 idle 分片渐进补齐；安全模式下 live 装饰以视口窗口为界（10MB 窗口化逐键 p95 与 source 稳态同量级）。完整树是 worst case（10k 行 ~11ms/键），生产代码禁止强制全树解析（护栏测试守护）。
+Issues and pull requests are welcome! Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev setup, the per-domain test matrix, and commit conventions. `pnpm verify` should pass before you open a PR.
 
-## 发布
+## Acknowledgments
 
-**版本单一来源：** `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 字段。升版本用：
-
-```sh
-pnpm release:version 0.2.0   # 同步四处版本号（conf / Cargo.toml / 两个 package.json）
-pnpm release:changelog       # 从 conventional commits 生成 CHANGELOG
-```
-
-**本机构建打包产物：**
-
-```sh
-pnpm --filter @omd/desktop tauri build   # 产出 .app / .dmg（bundle 含 .md 文件关联与更新签名材料）
-```
-
-**CI：** 每次 push / PR 跑四个 job（engine / desktop / rust / link，见 `.github/workflows/ci.yml`）。发布产物流水线（签名公证 + GitHub Release + `latest.json`）阻塞于 Apple Developer 账号审批，解锁清单见 [13-B 计划](./docs/superpowers/plans/2026-08-16-13b-release-cicd.md)。updater 签名私钥已配入 GitHub secrets（`TAURI_SIGNING_PRIVATE_KEY`）；`tauri.conf.json` 已含 updater 公钥与 `createUpdaterArtifacts`，release CI 产出 `latest.json` 后应用内「检查更新…」即可端到端生效。
+Built on excellent open source: [CodeMirror 6](https://codemirror.net/) and [Lezer](https://lezer.codemirror.net/), [Tauri](https://tauri.app/), [KaTeX](https://katex.org/), [Mermaid](https://mermaid.js.org/), [Shiki](https://shiki.style/), [React](https://react.dev/), and [Vite](https://vite.dev/). Typora's interaction design remains a standing inspiration.
 
 ## License
 
