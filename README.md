@@ -7,12 +7,11 @@
 
 [English](./README.md) · [简体中文](./README-zh.md)
 
-[![CI](https://github.com/Zuixi/open-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/open-md/actions/workflows/ci.yml)
+[![CI](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20·%20Windows%20·%20Linux-black)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
-<!-- TODO(repo-rename): update repo URLs (badges, clone, Releases) once the repository is renamed to oh-my-md. -->
 </div>
 
 ![oh-my-md: dark theme with file tree and outline, live preview rendering KaTeX math and an inline Mermaid diagram](docs/images/hero.png)
@@ -78,13 +77,13 @@ Figures come from the built-in advisory benchmark on an M-series machine — run
 
 oh-my-md is at **v0.1.0** and supports **macOS, Windows, and Linux**.
 
-**Download** — builds will appear on the [Releases](https://github.com/Zuixi/open-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
+**Download** — builds will appear on the [Releases](https://github.com/Zuixi/oh-my-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
 
 **Build from source** — you need [pnpm](https://pnpm.io/) (or Corepack) and a [Rust toolchain](https://rustup.rs/). Platform-specific: macOS requires Xcode Command Line Tools (`xcode-select --install`), Linux needs `libwebkit2gtk` and friends (see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)), and Windows needs Microsoft Visual Studio C++ Build Tools.
 
 ```sh
-git clone https://github.com/Zuixi/open-md.git   # repo is being renamed to oh-my-md shortly
-cd open-md
+git clone https://github.com/Zuixi/oh-my-md.git
+cd oh-my-md
 pnpm install
 pnpm dev        # launches the app
 ```
