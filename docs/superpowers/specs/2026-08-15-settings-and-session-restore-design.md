@@ -124,7 +124,11 @@ Extend `DesktopServices`:
    - For each path in `openPaths`: check file existence via `readDocument`, open as tab if existing.
    - Activate `activePath` if present among opened tabs.
 2. During runtime:
-   - When `workspace.folder`, `workspace.tabs`, or `workspace.activeTabId` changes, run a 500ms debounced save of `SavedSessionState`.
+   - When `workspace.folder`, `workspace.tabs`, or `workspace.activeTabId` changes, run a 1s debounced save of `SavedSessionState`.
+3. On quit — quit-time session flush (added 2026-08-21):
+   - Debounce alone cannot persist the final second: every workspace change resets the timer, webview teardown cancels it, so a rapid close-tabs-then-quit left `session.json` on the last snapshot that had a full second of quiet.
+   - Rust owns the quit gate (`session_flush.rs` `FlushGate`). On window `CloseRequested` it prevents the close, emits the `session-flush` event, waits for `session_flush_ack` (bounded by a 2s timeout), then destroys the window. On user-initiated `RunEvent::ExitRequested` (`code: None`, macOS Cmd+Q) it prevents exit, flushes, then `app.exit(0)`. The in-app menubar `quit_app` command runs the same gate inline before exiting, because `app.exit` skips `ExitRequested`.
+   - A completed flush sets a one-shot `flushed` flag so the exit request that follows window teardown passes through without re-flushing. The webview handler cancels the pending debounce, persists the current workspace, and acks even when persistence fails — a hung or failing webview never blocks quit beyond the timeout.
 
 ---
 

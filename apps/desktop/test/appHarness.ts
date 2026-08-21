@@ -87,6 +87,7 @@ export interface AppHarness {
   saveActive: () => Promise<void>
   failNextReset: (error: Error) => void
   requestCloseTab: (tabId: number) => void
+  triggerSessionFlush: () => Promise<void> | undefined
   runExternalCheck: () => Promise<void>
   runWatcher: () => Promise<void>
   nextSaveResult: (result: SaveDocumentResult) => void
@@ -266,6 +267,7 @@ interface HarnessContext {
   autosaveMs: number
   watchMs: number
   docMaterializeMs: number
+  flushHandler: (() => void | Promise<void>) | null
 }
 
 let lastMountedApp: RenderResult | null = null
@@ -335,6 +337,11 @@ function harnessServices(context: HarnessContext): HarnessServices {
     listSystemFonts: vi.fn(async () => ["Arial", "Menlo"]),
     getSessionState: vi.fn(async () => null),
     saveSessionState: vi.fn(async () => undefined),
+    sessionFlushAck: vi.fn(async () => undefined),
+    listenSessionFlush: vi.fn((handler: () => void | Promise<void>) => {
+      context.flushHandler = handler
+      return () => { context.flushHandler = null }
+    }),
     reportError: vi.fn(),
     notifySuccess: vi.fn(),
     revealInFinder: vi.fn(async () => undefined),
@@ -486,6 +493,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     // 默认同步物化：既有套件保持 emit→docsRef 即时可见的旧语义；
     // 时序专项测试（App.docMaterialize/App.stats）按需传 250。
     docMaterializeMs: 0,
+    flushHandler: null,
   }
   context.services = harnessServices(context)
   installEditorMock(context)
@@ -525,6 +533,10 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     requestCloseTab: tabId => {
       activateTab(context, tabId)
       fireEvent.keyDown(window, { key: "w", metaKey: true })
+    },
+    triggerSessionFlush: () => {
+      const handler = context.flushHandler
+      return handler ? Promise.resolve(handler()) : undefined
     },
     runExternalCheck: () => runWatcherPoll(context),
     runWatcher: () => runWatcherPoll(context),

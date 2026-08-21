@@ -426,6 +426,27 @@ commands; `write_recovery`/`read_recovery`/`save_session_state`/
 purpose: its menu rebuild is macOS-only (no-op on Windows/Linux, menu.rs gates
 on `target_os`), and menu mutation must stay on the main thread.
 
+## A debounced save cannot persist quit-time state; Rust must gate the quit
+
+The 1s trailing debounce on `SavedSessionState` (App.tsx) resets on every
+workspace change and is *cancelled* by teardown, so a rapid close-tabs-then-quit
+lost every close — `session.json` kept the last snapshot that had a full second
+of quiet (this restored 10 tabs after the user closed 9 and quit). WKWebView
+teardown runs no JS and fires no `beforeunload` you can rely on, so the flush
+must be coordinated from Rust: prevent close/exit → emit `session-flush` →
+wait for the `session_flush_ack` command (bounded, 2s timeout; timeout still
+finishes so a hung webview never traps the user). Three exit paths need three
+hooks: `WindowEvent::CloseRequested` (red X / Cmd+W; finish with
+`window.destroy()` — `close()` would re-trigger CloseRequested),
+`RunEvent::ExitRequested` with `code: None` (user-initiated, macOS Cmd+Q;
+prevent_exit → flush → `app.exit(0)`), and the `quit_app` command itself
+(`app.exit` skips ExitRequested, so it must run the gate inline). Order inside
+the gate is load-bearing: register the round *before* emitting, or an ack
+racing an unregistered round no-ops and stalls the close until the timeout.
+The webview handler must ack even when persistence throws — an escaping
+rejection from an event handler is an unhandled webview rejection and the
+un-acked quit burns the full timeout.
+
 ## Open-path scale policy has one entry point; entry paths must not bypass it
 
 `applyDocumentScalePolicy` (safe mode by lines OR bytes, render budget,
