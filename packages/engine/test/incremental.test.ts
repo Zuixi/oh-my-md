@@ -9,6 +9,7 @@ import { editorExtensions } from "../src/index"
 import { buildLiveDecorations, drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
 import { blockSelectionOverlay } from "../src/decorations/blockSelectionOverlay"
 import { liveBuildDriver } from "../src/decorations/buildDriver"
+import { blockMotionKeymap } from "../src/navigation/blockEntry"
 import { ImageWidget } from "../src/decorations/widgets/image"
 import { livePreviewExt } from "../src/modes/livePreview"
 import { orderedRenumber } from "../src/lists/ordered"
@@ -265,6 +266,6 @@ describe("incremental live decorations", () => {
   })
 
   it("keeps block decorations on a StateField and non-block plugins on ViewPlugins", () => {
-    expect(livePreviewExt()).toEqual([livePreviewField, liveBuildDriver, blockSelectionOverlay, orderedRenumber])
+    expect(livePreviewExt()).toEqual([livePreviewField, liveBuildDriver, blockSelectionOverlay, blockMotionKeymap, orderedRenumber])
   })
 })
