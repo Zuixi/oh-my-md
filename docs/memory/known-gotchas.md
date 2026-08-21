@@ -645,3 +645,18 @@ Rules:
   OS); `desktopServices.setWindowTheme` owns the wire call.
 - When renaming a CSS class in a TSX file, grep `styles.css` in the same
   change — dead selectors compile fine and read as styling at a glance.
+
+Startup corollary (verified 2026-08-21): applying the theme only from the
+webview still flashes — the window paints its first frame following the *OS*
+appearance, because the saved theme reaches the frontend only after React
+boots and `get_settings` resolves (tauri-apps/tauri#6027). The Rust `setup`
+hook therefore reads `settings.json` and calls `set_theme` on the main window
+before the event loop starts (`startup_window_theme` in `lib.rs`). Two rules
+keep that fix honest:
+
+- The frontend effect must not push `set_window_theme` until initial settings
+  have loaded — the `"light"` default state would otherwise flip the title bar
+  dark→light→dark right after the pre-paint application
+  (`App.windowTheme.test.tsx` pins the no-push-before-load behavior).
+- New startup-time native appearance must read the same persisted source Rust
+  owns (`workspace::get_settings`), not a second copy of the theme state.
