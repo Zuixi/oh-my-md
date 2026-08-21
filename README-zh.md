@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/Zuixi/open-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/open-md/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS-black)
+![Platform](https://img.shields.io/badge/platform-macOS%20·%20Windows%20·%20Linux-black)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
 <!-- TODO(repo-rename): 仓库改名为 oh-my-md 后，更新仓库相关链接（badge、clone、Releases）。 -->
@@ -33,7 +33,7 @@ Typora 证明了 Markdown 编辑器可以像现代文字处理器一样顺滑—
 | 十万行以上仍然流畅¹ | ✅ 有实测 | — | — |
 | 导出 | HTML · PDF · PNG | HTML · PDF · DOCX … | HTML · PDF |
 | 外壳 | Tauri 2 | Electron | Electron |
-| 平台 | macOS（Windows/Linux 规划中） | macOS · Windows · Linux | macOS · Windows · Linux |
+| 平台 | macOS · Windows · Linux | macOS · Windows · Linux | macOS · Windows · Linux |
 
 ¹ "—" 表示无公开数据，不代表对它们的结论。
 
@@ -76,11 +76,11 @@ Typora 证明了 Markdown 编辑器可以像现代文字处理器一样顺滑—
 
 ## 安装
 
-oh-my-md 当前为 **v0.1.0**，**仅支持 macOS**。
+oh-my-md 当前为 **v0.1.0**，支持 **macOS、Windows 和 Linux**。
 
-**下载** —— 签名公证的 `.dmg` 将在发布流水线就绪后上架 [Releases](https://github.com/Zuixi/open-md/releases) 页面；在那之前，源码构建大约需要五分钟。
+**下载** —— 安装包将在发布流水线就绪后上架 [Releases](https://github.com/Zuixi/open-md/releases) 页面；在那之前，源码构建大约需要五分钟。
 
-**源码构建** —— 需要 [pnpm](https://pnpm.io/)（或 Corepack）、[Rust 工具链](https://rustup.rs/) 与 Xcode 命令行工具（`xcode-select --install`）。
+**源码构建** —— 需要 [pnpm](https://pnpm.io/)（或 Corepack）与 [Rust 工具链](https://rustup.rs/)。各平台额外依赖：macOS 需 Xcode 命令行工具（`xcode-select --install`），Linux 需 `libwebkit2gtk` 等（见 [Tauri Linux 前置条件](https://v2.tauri.app/start/prerequisites/#linux)），Windows 需 Visual Studio C++ 生成工具。
 
 ```sh
 git clone https://github.com/Zuixi/open-md.git   # 仓库即将改名为 oh-my-md
@@ -97,9 +97,7 @@ pnpm dev        # 启动应用
 
 ## 路线图
 
-- [ ] 签名 + 自动更新的 macOS 发布
-- [ ] Linux 支持——先本地开发与 CI，再出安装包
-- [ ] Windows 支持
+- [ ] 签名 + 自动更新的发布
 - [ ] 块级 AI 操作（润色 / 续写 / 翻译），支持 OpenAI 兼容接口与本地 Ollama
 - [ ] 插件架构——设计已预留边界
 
@@ -107,7 +105,7 @@ pnpm dev        # 启动应用
 
 - **真的免费吗？** 是。Apache-2.0 开源，无账号、无功能门槛。
 - **我的数据在哪里？** 就是磁盘上的普通 `.md` 文件——任何内容都不会上传。
-- **支持 Windows / Linux 吗？** macOS 优先，两者都在路线图上，Linux 在前。
+- **支持 Windows / Linux 吗？** 三平台均已支持。
 - **能打开我现有的笔记吗？** 只要是 Markdown 就行——CommonMark + GFM，外加 `==高亮==`、脚注、KaTeX 公式、Mermaid 等常用扩展。
 - **AI 功能呢？** 设计已完成、尚未发布——见[路线图](#路线图)。
 

@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/Zuixi/open-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/open-md/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS-black)
+![Platform](https://img.shields.io/badge/platform-macOS%20·%20Windows%20·%20Linux-black)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
 <!-- TODO(repo-rename): update repo URLs (badges, clone, Releases) once the repository is renamed to oh-my-md. -->
@@ -33,7 +33,7 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 | Responsive on 100k+ lines¹ | ✅ measured | — | — |
 | Export | HTML · PDF · PNG | HTML · PDF · DOCX … | HTML · PDF |
 | App shell | Tauri 2 | Electron | Electron |
-| Platforms | macOS (Windows/Linux planned) | macOS · Windows · Linux | macOS · Windows · Linux |
+| Platforms | macOS · Windows · Linux | macOS · Windows · Linux | macOS · Windows · Linux |
 
 ¹ "—" means no published figures, not a judgment on those editors.
 
@@ -76,11 +76,11 @@ Figures come from the built-in advisory benchmark on an M-series machine — run
 
 ## Installation
 
-oh-my-md is at **v0.1.0** and currently **macOS-only**.
+oh-my-md is at **v0.1.0** and supports **macOS, Windows, and Linux**.
 
-**Download** — signed, notarized `.dmg` builds will appear on the [Releases](https://github.com/Zuixi/open-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
+**Download** — builds will appear on the [Releases](https://github.com/Zuixi/open-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
 
-**Build from source** — you need [pnpm](https://pnpm.io/) (or Corepack), a [Rust toolchain](https://rustup.rs/), and Xcode Command Line Tools (`xcode-select --install`).
+**Build from source** — you need [pnpm](https://pnpm.io/) (or Corepack) and a [Rust toolchain](https://rustup.rs/). Platform-specific: macOS requires Xcode Command Line Tools (`xcode-select --install`), Linux needs `libwebkit2gtk` and friends (see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)), and Windows needs Microsoft Visual Studio C++ Build Tools.
 
 ```sh
 git clone https://github.com/Zuixi/open-md.git   # repo is being renamed to oh-my-md shortly
@@ -97,9 +97,7 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 
 ## Roadmap
 
-- [ ] Signed, auto-updating macOS releases
-- [ ] Linux support — local dev and CI first, packages after
-- [ ] Windows support
+- [ ] Signed, auto-updating releases
 - [ ] Block-level AI actions (polish / continue / translate) via OpenAI-compatible APIs and local Ollama
 - [ ] Plugin architecture — foundations already reserved in the design
 
@@ -107,7 +105,7 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 
 - **Is it really free?** Yes. Apache-2.0, no account, no feature gates.
 - **Where does my data live?** In plain `.md` files on your disk — nothing is uploaded, ever.
-- **Windows or Linux?** macOS first; both are on the roadmap, with Linux leading.
+- **Windows or Linux?** All three platforms are supported.
 - **Will it open my existing notes?** If they are Markdown, yes — CommonMark + GFM plus common extras such as `==highlight==`, footnotes, KaTeX math, and Mermaid.
 - **What about AI?** Designed but not shipped yet — see the [roadmap](#roadmap).
 
