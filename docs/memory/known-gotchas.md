@@ -17,14 +17,14 @@ When adding a block rule, test the block by itself and nested under another Mark
 
 ## Editing state depends on selection, not only document text
 
-Live preview rebuilds after selection changes. Inline syntax marks remain visible on the cursor's entire line, while block widgets disappear when the selection overlaps their source range **including both boundaries** (`sf <= to && st >= from`).
+Live preview rebuilds after selection changes. Only a **collapsed caret** reveals source: inline marks unfold on the caret's line, and block widgets disappear when the caret (or a partially-overlapping selection) enters their source range **including both boundaries**. A selection that **fully covers** a block (`sel.from <= from && sel.to >= to` — Cmd+A, drag across, Shift+↓) keeps the widget rendered with the `omd-block-covered` overlay (`decorations/blockSelectionOverlay.ts`).
 
 Rebuild ranges use `endLine.to + 1` as an **exclusive** end (the next line's `from`). Removal overlap must be half-open (`from < range.to`). A closed check drops the next line's point decorations (`line:omd-blockquote-N` at `line.from`). The incremental iterate does not re-enter the inner `Blockquote` that starts after that boundary, so a click on an empty `>` line leaves the following nested quote looking like a plain paragraph (marks still folded, bar gone). Deduplicate rebuilt specs against retained keys so decorations that only touch `range.to` are not added twice. Empty ranges (`from === to`, last empty line) stay closed so that line can still rebuild.
 
 Boundary positions are intentionally different:
 
 - Inline folding uses a line-based `nearCursor` check.
-- QuoteMark is the exception: it folds unless the cursor/selection is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Inline marks inside a quote follow the same mark-range rule; line-based `nearCursor` would unfold `**` when the user clicks the quote text. A whole-line selection (triple-click) covers every mark and must not count as `cursorInside`.
+- QuoteMark is the exception: it folds unless the **caret** is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Inline marks inside a quote follow the same mark-range rule; line-based `nearCursor` would unfold `**` when the user clicks the quote text. Non-empty selections never count as `cursorInside` — selection is visual.
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
 - List indent inside a quote must start after the folded `> `; using `line.from` overlaps `replace:QuoteMark` and can make `Decoration.set` throw. List marks inside quotes also use mark-range activation, not line-based `nearCursor`.
 - A list inside a quote and a quote inside a list must not share `omd-li-N`. List-in-quote keeps `omd-blockquote-N` + `omd-li-N` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li-N` instead, which sets `--omd-bq-bar` to the list indent and disables hang. Reusing `omd-li-N` for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
@@ -71,7 +71,21 @@ The `atomicRanges` facet makes ranges un-enterable for cursor motion and deletio
 - **Right-click paste inserts extra line**: when the paste position is adjacent to a block widget boundary, CodeMirror expands the replacement range to cover the atomic unit, pulling in the next line.
 Block widgets use `Decoration.replace({ block: true })`, which CodeMirror already handles for layout and cursor positioning. Atomic constraints are redundant and harmful on top.
 
-`buildLiveDecorations` therefore emits two sets: `deco` (everything) and `atomic` (only tags starting with `replace:` or `widget:` **excluding** `widget:block:`). The `isAtomicTag` predicate enforces both rules. Never widen it without re-reading this entry.
+**Rule 3 — no line-start or cross-line atoms.** `skipAtomsForSelection` (pointer-origin selection sync) pushes selection endpoints outward to atomic boundaries in a loop. A line-start atom (`# `, `> `, `- `, list indent/mark) lets a pushed endpoint cross the newline and land inside the next line's line-start atom, cascading again — "clicking a line highlights the next one". A cross-line atom (Setext `replace:HeaderMark`, `block: true` spanning `line.to + 1`) does the same. Excluding them is safe: a caret landing inside a folded line-start mark is revealed by the line-based `nearCursor` rule (self-healing), so atomicity was redundant there anyway.
+
+`buildLiveDecorations` therefore emits two sets: `deco` (everything) and `atomic` (`isAtomicSpec`: tags starting with `replace:` or `widget:`, **excluding** `widget:block:*`, and only when the range is mid-line — `spec.from > line.from && spec.to <= line.to`). Never widen it without re-reading this entry.
+
+## Selection is visual, the caret is editing
+
+Three reveal paths share one Typora-style rule — **only a collapsed caret reveals Markdown source; a non-empty selection never does**:
+
+- `nearCursor` returns false for any non-empty selection (no line reveal while dragging).
+- `cursorInside` is collapsed-caret-only (`sf === st && sf >= from && sf < to`); the old non-empty overlap branch and its triple-click special case are gone.
+- `blockSelected` treats full coverage (`sel.from <= from && sel.to >= to`) as "not editing": the widget stays mounted and `blockSelectionOverlay` toggles `omd-block-covered` on its wrap. Partial overlap (one endpoint poking into the block) is still edit intent and reveals source.
+
+Why beyond taste: during a drag, reveal/fold flips relayout the lines under the pointer, so `posAtCoords` maps the same mouse position to shifting document positions — the endpoint drifts across newlines (feeding the atomicRanges Rule 3 cascade). Keeping the preview stable during selection removes that jitter at the source.
+
+Companion: ArrowUp/ArrowDown (`navigation/blockEntry.ts`, `Prec.high`, Live-only) dispatch a caret inside an adjacent block widget — the keyboard path into a block mirrors the mouse click. `blockEntryPosition` skips fence/delimiter lines (```/~~~/$$) so the caret lands on the first/last content line. Shift+arrows deliberately fall through to default motion so cross-block selections cover rendered blocks.
 
 ## Right-click paste on macOS deletes extra lines (WebKit selectionchange + skipAtomsForSelection)
 

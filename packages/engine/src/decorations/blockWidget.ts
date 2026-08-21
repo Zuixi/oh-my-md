@@ -3,6 +3,7 @@ import type { EditorState } from "@codemirror/state"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
+import { registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
 
 export interface BlockEmbed {
   quoteDepth: number
@@ -24,13 +25,15 @@ function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
   return classes.join(" ")
 }
 
-// 光标/选区与 [from, to] 重叠（含边界）→ 块处于编辑态（显示源码）。
+// 光标/选区与 [from, to] 重叠（含边界）且**未完整包含**→ 块处于编辑态（显示源码）。
+// 完整包含（sel.from <= from && sel.to >= to，Cmd+A / 跨块拖选 / Shift+↓ 跨块）
+// 保持渲染 + omd-block-covered 选中态覆盖（Typora 语义：选区是视觉的，光标才是编辑）。
 // 边界算块内（root cause C）：敲完 closing fence 光标恰停在 node.to，
 // 若算块外，widget 会在打字中途吞掉整块、光标被卡死在边界。
 // 光标彻底离开块后才渲染 widget（Typora 行为）。
 export function blockSelected(state: EditorState, from: number, to: number) {
   const { from: sf, to: st } = state.selection.main
-  return sf <= to && st >= from
+  return sf <= to && st >= from && !(sf <= from && st >= to)
 }
 
 // 统一块 widget 生命周期：创建(src) → toDOM/renderInto(可异步)
@@ -102,6 +105,7 @@ export abstract class BlockWidget extends WidgetType {
       this.pendingEntry = { widget: this, view, pos: this.pos, start }
       deferBlockRender(this.pendingEntry)
     }
+    registerBlockWidget(this, wrap)
     return wrap
   }
 
@@ -113,6 +117,7 @@ export abstract class BlockWidget extends WidgetType {
 
   destroy(_dom?: HTMLElement) {
     this.alive = false
+    unregisterBlockWidget(this)
     if (this.pendingEntry) dropPendingBlockRender(this.pendingEntry)
   }
 }

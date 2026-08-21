@@ -63,6 +63,22 @@ describe("block syntax", () => {
       .not.toContain("replace:QuoteMark")
   })
 
+  it("keeps the quote mark folded under a non-caret selection", () => {
+    const doc = "> quoted text\n"
+    // 部分行选区压住 "> "（旧 cursorInside 的重叠分支曾在此显源码）
+    const partial = makeState(doc).update({ selection: { anchor: 0, head: 5 } }).state
+    expect(collectDecorationSpecs(partial, 0, doc.length).map(d => d.tag))
+      .toContain("replace:QuoteMark")
+    // caret 在引用内容上（越过 "> "）→ 仍折叠
+    const inContent = makeState(doc).update({ selection: { anchor: 3 } }).state
+    expect(collectDecorationSpecs(inContent, 0, doc.length).map(d => d.tag))
+      .toContain("replace:QuoteMark")
+    // caret 在 "> " 内部 → 展开（光标仍是编辑入口）
+    const onMark = makeState(doc).update({ selection: { anchor: 0 } }).state
+    expect(collectDecorationSpecs(onMark, 0, doc.length).map(d => d.tag))
+      .not.toContain("replace:QuoteMark")
+  })
+
   it("keeps nested quote and emphasis marks folded when clicking the content", () => {
     const doc = [
       "> **用户反馈**：这个功能很有用！",
