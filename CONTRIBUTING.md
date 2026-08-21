@@ -9,8 +9,8 @@ Thanks for helping build a Markdown editor that stays out of your way. This guid
 Prerequisites: Node.js LTS, [pnpm](https://pnpm.io/) ≥ 11 (or Corepack), a [Rust toolchain](https://rustup.rs/), and Xcode Command Line Tools.
 
 ```sh
-git clone https://github.com/Zuixi/open-md.git
-cd open-md
+git clone https://github.com/Zuixi/oh-my-md.git
+cd oh-my-md
 pnpm install      # also wires up the git hooks from .githooks/
 pnpm dev          # launch the Tauri dev window
 ```

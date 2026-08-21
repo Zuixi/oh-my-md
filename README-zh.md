@@ -7,12 +7,11 @@
 
 [English](./README.md) · 简体中文
 
-[![CI](https://github.com/Zuixi/open-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/open-md/actions/workflows/ci.yml)
+[![CI](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20·%20Windows%20·%20Linux-black)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
-<!-- TODO(repo-rename): 仓库改名为 oh-my-md 后，更新仓库相关链接（badge、clone、Releases）。 -->
 </div>
 
 ![oh-my-md：暗色主题，文件树与大纲，Live 预览渲染 KaTeX 公式与 Mermaid 图表](docs/images/hero.png)
@@ -78,13 +77,13 @@ Typora 证明了 Markdown 编辑器可以像现代文字处理器一样顺滑—
 
 oh-my-md 当前为 **v0.1.0**，支持 **macOS、Windows 和 Linux**。
 
-**下载** —— 安装包将在发布流水线就绪后上架 [Releases](https://github.com/Zuixi/open-md/releases) 页面；在那之前，源码构建大约需要五分钟。
+**下载** —— 安装包将在发布流水线就绪后上架 [Releases](https://github.com/Zuixi/oh-my-md/releases) 页面；在那之前，源码构建大约需要五分钟。
 
 **源码构建** —— 需要 [pnpm](https://pnpm.io/)（或 Corepack）与 [Rust 工具链](https://rustup.rs/)。各平台额外依赖：macOS 需 Xcode 命令行工具（`xcode-select --install`），Linux 需 `libwebkit2gtk` 等（见 [Tauri Linux 前置条件](https://v2.tauri.app/start/prerequisites/#linux)），Windows 需 Visual Studio C++ 生成工具。
 
 ```sh
-git clone https://github.com/Zuixi/open-md.git   # 仓库即将改名为 oh-my-md
-cd open-md
+git clone https://github.com/Zuixi/oh-my-md.git
+cd oh-my-md
 pnpm install
 pnpm dev        # 启动应用
 ```
