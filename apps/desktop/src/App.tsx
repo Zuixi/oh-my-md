@@ -969,7 +969,11 @@ export default function App({
 
   useEffect(() => {
     applyTheme(theme, customCss)
-  }, [theme, customCss])
+    // data-theme only restyles the webview; the native title bar follows the
+    // window's own appearance, so the resolved theme must also cross IPC.
+    // "system" clears the override so the window keeps following the OS.
+    void services.setWindowTheme?.(theme === "system" ? null : theme)
+  }, [theme, customCss, services])
 
   useEffect(() => {
     document.documentElement.dataset.typewriter = typewriter ? "on" : "off"

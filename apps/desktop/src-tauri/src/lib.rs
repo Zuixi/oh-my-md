@@ -127,6 +127,28 @@ fn set_view_menu_state(app: tauri::AppHandle, state: menu::ViewMenuState) {
     menu::set_view_state(&app, &state);
 }
 
+// The in-app theme toggle only flips a DOM attribute; the native title bar
+// follows the window's own appearance, so the resolved theme must be pushed
+// here. `None` (frontend "system") removes the override so the window keeps
+// following the OS appearance. Window mutation stays on the main thread, which
+// is why this command is deliberately sync like the menu setters.
+fn window_theme_from_arg(value: &str) -> Result<tauri::Theme, String> {
+    match value {
+        "light" => Ok(tauri::Theme::Light),
+        "dark" => Ok(tauri::Theme::Dark),
+        other => Err(format!("unknown theme: {other}")),
+    }
+}
+
+#[tauri::command]
+fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) -> Result<(), String> {
+    let theme = match theme {
+        Some(value) => Some(window_theme_from_arg(&value)?),
+        None => None,
+    };
+    window.set_theme(theme).map_err(|e| e.to_string())
+}
+
 // In-app menubar (non-macOS) needs an explicit quit entry and a version for
 // the About dialog; macOS gets both from the native app menu instead. The
 // menubar quit flushes session state first — `app.exit` skips ExitRequested,
@@ -648,6 +670,7 @@ pub fn run() {
             allow_workspace_dir,
             set_recent_files,
             set_view_menu_state,
+            set_window_theme,
             quit_app,
             session_flush_ack,
             app_version,
@@ -1104,5 +1127,19 @@ mod tests {
         );
         // A drain consumes the queue; a second drain sees nothing.
         assert!(take_pending_open_files().is_empty());
+    }
+
+    #[test]
+    fn window_theme_from_arg_maps_wire_values_and_rejects_unknown() {
+        assert!(matches!(
+            window_theme_from_arg("light"),
+            Ok(tauri::Theme::Light)
+        ));
+        assert!(matches!(
+            window_theme_from_arg("dark"),
+            Ok(tauri::Theme::Dark)
+        ));
+        assert!(window_theme_from_arg("system").is_err());
+        assert!(window_theme_from_arg("").is_err());
     }
 }

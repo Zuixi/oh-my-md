@@ -17,6 +17,11 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] Cmd+E 在 live/source 间来回切换，文本零丢失、光标位置合理
 - [ ] 切换后滚动位置保持
 
+## 主题切换（dark mode）
+- [ ] 设置面板切到 dark：编辑区滚动条、原生标题栏、设置面板 Reset to Defaults / Done 按钮全部变深色（不只是正文背景）
+- [ ] 切到 system：应用跟随系统外观；系统在外部切换深浅时标题栏与滚动条随之变化
+- [ ] 切回 light：以上元素全部还原，无残留深色
+
 ## 文件 IO
 - [ ] Cmd+O 打开含中文路径的 .md，内容正确
 - [ ] 当前文档 dirty 时 Cmd+O 会确认；取消后路径、内容、dirty 状态均不变

@@ -346,6 +346,7 @@ function harnessServices(context: HarnessContext): HarnessServices {
     notifySuccess: vi.fn(),
     revealInFinder: vi.fn(async () => undefined),
     clearRecovery: vi.fn(async () => undefined),
+    setWindowTheme: vi.fn(async () => undefined),
   }
 }
 

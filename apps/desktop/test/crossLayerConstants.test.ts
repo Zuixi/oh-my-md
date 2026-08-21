@@ -103,3 +103,27 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
     expect(SAFE_MODE_LINES).toBe(ENGINE_SAFE_MODE_LINES)
   })
 })
+
+describe("dark mode coverage (styles.css ↔ SettingsModal.tsx)", () => {
+  const SETTINGS_MODAL_TSX = readFileSync(resolve(process.cwd(), "src/SettingsModal.tsx"), "utf8")
+
+  function themeBlock(selector: string): string {
+    const match = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([\\s\\S]*?)\\n\\}`).exec(STYLES_CSS)
+    if (!match) throw new Error(`missing styles.css block for ${selector}`)
+    return match[1]
+  }
+
+  it("light and dark theme blocks declare matching color-scheme", () => {
+    // Native scrollbars and form controls follow color-scheme, not
+    // data-theme variables — omitting it leaves them light in dark mode.
+    expect(themeBlock(':root,\nhtml[data-theme="light"]')).toContain("color-scheme: light")
+    expect(themeBlock('html[data-theme="dark"]')).toContain("color-scheme: dark")
+  })
+
+  it("settings footer button classes used by SettingsModal exist in styles.css", () => {
+    for (const cls of ["settings-btn-primary", "settings-btn-secondary"]) {
+      expect(SETTINGS_MODAL_TSX).toContain(cls)
+      expect(new RegExp(`\\.${cls}\\s*\\{`).test(STYLES_CSS)).toBe(true)
+    }
+  })
+})

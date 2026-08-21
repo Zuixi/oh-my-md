@@ -173,6 +173,7 @@ export interface DesktopServices {
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
   setMenuLocale?: (locale: string) => Promise<void>
+  setWindowTheme?: (theme: "light" | "dark" | null) => Promise<void>
   quitApp?: () => Promise<void>
   appVersion?: () => Promise<string>
   allowDocumentAssets: (path: string) => Promise<void>
@@ -329,6 +330,9 @@ export const defaultServices: DesktopServices = {
   },
   setMenuLocale: async locale => {
     await invoke("set_menu_locale", { locale })
+  },
+  setWindowTheme: async theme => {
+    await invoke("set_window_theme", { theme })
   },
   quitApp: async () => {
     await invoke("quit_app")
