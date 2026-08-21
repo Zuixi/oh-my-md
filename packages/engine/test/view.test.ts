@@ -125,6 +125,32 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("keeps a block widget mounted with covered overlay when a selection fully covers it", async () => {
+    const doc = "intro\n\n```ts\nconst a = 1\n```\n\noutro\n"
+    const { view, errors } = makeView(doc)
+    await tick()
+    expect(view.dom.querySelector(".omd-block")).toBeTruthy()   // 光标在文末，块已渲染
+    // 完整覆盖（Cmd+A 语义）→ 保持渲染 + 选中态覆盖类
+    view.dispatch({ selection: { anchor: 0, head: doc.length } })
+    await tick()
+    const covered = view.dom.querySelector(".omd-block") as HTMLElement
+    expect(covered).toBeTruthy()
+    expect(covered.classList.contains("omd-block-covered")).toBe(true)
+    // 光标进入块内 → 编辑态，widget 卸载
+    const fenceEnd = doc.indexOf("\n", doc.indexOf("```ts")) + 1
+    view.dispatch({ selection: { anchor: fenceEnd } })
+    await tick()
+    expect(view.dom.querySelector(".omd-block")).toBeNull()
+    // 光标离开 → 恢复渲染，覆盖类消失
+    view.dispatch({ selection: { anchor: doc.length } })
+    await tick()
+    const restored = view.dom.querySelector(".omd-block") as HTMLElement
+    expect(restored).toBeTruthy()
+    expect(restored.classList.contains("omd-block-covered")).toBe(false)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
 
   it("keeps checkbox edit position correct after inserting before it", async () => {
     const doc = "before\n\n- [ ] task\n"
@@ -154,6 +180,24 @@ describe("view smoke (real EditorView)", () => {
     let covered = false
     atomic.between(0, state.doc.length, (from, to) => { if (from <= 2 && to >= 3) covered = true })
     expect(covered).toBe(false)   // 位置 2 在 "text" 里，只被 mark:omd-link 覆盖，不得原子化
+  })
+
+  it("keeps line-start and cross-line atoms out of atomic ranges", () => {
+    const doc = "# Title\n\n> quoted\n\n- item\n\nSetext\n===\n\ntext with **bold** here\n"
+    const state = EditorState.create({ doc, extensions: editorExtensions() })
+    const { atomic } = state.field(livePreviewField)
+    const ranges: [number, number][] = []
+    atomic.between(0, doc.length, (from, to) => { ranges.push([from, to]) })
+    for (const [from, to] of ranges) {
+      const line = state.doc.lineAt(from)
+      // 行首原子（#、>、- 等）与跨行原子（Setext underline）都不进原子集：
+      // skipAtomsForSelection 会循环外推端点，这两类原子让外推跨过换行符、
+      // 级联高亮下一行（指针选区同步 bug）。
+      expect(from === line.from).toBe(false)
+      expect(to <= line.to).toBe(true)
+    }
+    // 行中原子（**bold** 的两侧 **）保持原子化 —— WYSIWYG 选区应包住整个渲染粗体
+    expect(ranges.some(([from, to]) => doc.slice(from, to) === "**")).toBe(true)
   })
 
   it("renders meaningful final DOM for synchronous and async widgets", async () => {
