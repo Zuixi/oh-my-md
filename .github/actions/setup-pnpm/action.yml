@@ -1,0 +1,24 @@
+name: Setup pnpm + Node
+description: >-
+  pnpm (version from the root packageManager field) + Node 22 with pnpm store
+  cache, then `pnpm install --frozen-lockfile` unless install=false.
+inputs:
+  install:
+    description: Run `pnpm install --frozen-lockfile` after setup
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    # No `version` input: the single source of truth is package.json's
+    # packageManager field, so CI cannot drift from local dev.
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: 22
+        cache: pnpm
+    - name: Install dependencies
+      # Composite-action step `if` is not implicitly wrapped in ${{ }}.
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      run: pnpm install --frozen-lockfile
