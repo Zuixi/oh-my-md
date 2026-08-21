@@ -617,3 +617,31 @@ suite (`test/docText.test.ts`, every-chunk-boundary scans against
 `Text.of(s.split(/\r\n?|\n/))`) is the guard. Related trap in the same file:
 an empty streaming chunk must not adjudicate a pending chunk-trailing `\r`
 (`"\r" + "" + "\n"` is one `\r\n` separator, not two).
+
+## `html[data-theme]` only restyles the webview; native chrome needs `color-scheme` + window theme sync
+
+The in-app theme toggle sets `document.documentElement.dataset.theme`, which
+swaps `--omd-*` CSS variables — nothing else. Three families of UI ignore
+those variables entirely and used to stay light in dark mode (verified
+2026-08-21):
+
+- **Native scrollbars** (editor `.cm-scroller`, modal bodies) follow the CSS
+  `color-scheme` property, which defaults to `light` no matter what
+  `data-theme` says.
+- **Unstyled form controls** render in the `color-scheme` appearance: the
+  settings footer buttons had drifted to `settings-btn-*` classes while
+  `styles.css` still defined the old `.settings-done-btn`, so Reset/Done fell
+  back to browser-default light buttons even in light mode.
+- **The native title bar** follows the *window's* appearance, which only
+  `WebviewWindow::set_theme` can change; the DOM cannot reach it at all.
+
+Rules:
+
+- Every theme block in `styles.css` declares `color-scheme` next to the
+  `--omd-*` variables; `test/crossLayerConstants.test.ts` guards both blocks
+  plus the settings footer class pair against TSX/CSS drift.
+- The App theme effect pushes the resolved theme over IPC
+  (`set_window_theme`, `null` for "system" so the window keeps following the
+  OS); `desktopServices.setWindowTheme` owns the wire call.
+- When renaming a CSS class in a TSX file, grep `styles.css` in the same
+  change — dead selectors compile fine and read as styling at a glance.

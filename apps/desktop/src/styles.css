@@ -2,6 +2,9 @@
 
 :root,
 html[data-theme="light"] {
+  /* Native scrollbars and form controls follow color-scheme, not the
+     data-theme variables below — both must flip together. */
+  color-scheme: light;
   --omd-bg: #ffffff;
   --omd-fg: #1a1a1a;
   --omd-muted: #666666;
@@ -18,6 +21,7 @@ html[data-theme="light"] {
   --omd-content-width: 780px;
 }
 html[data-theme="dark"] {
+  color-scheme: dark;
   --omd-bg: #1e1e1e;
   --omd-fg: #e8e8e8;
   --omd-muted: #9a9a9a;
@@ -1246,17 +1250,27 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   border-top: 1px solid var(--omd-border);
   background: var(--omd-chrome);
 }
-.settings-done-btn {
+.settings-btn {
   padding: 6px 14px;
-  background: var(--omd-link);
-  color: #fff;
-  border: none;
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }
-.settings-done-btn:hover {
+.settings-btn-secondary {
+  border: 1px solid var(--omd-border);
+  background: var(--omd-bg);
+  color: var(--omd-fg);
+}
+.settings-btn-secondary:hover {
+  background: var(--omd-code-bg);
+}
+.settings-btn-primary {
+  border: none;
+  background: var(--omd-link);
+  color: #fff;
+}
+.settings-btn-primary:hover {
   opacity: 0.9;
 }
 

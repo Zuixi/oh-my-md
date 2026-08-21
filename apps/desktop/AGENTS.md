@@ -126,6 +126,7 @@ Current Rust commands are:
 - `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
 - `set_view_menu_state(state)` — mirror the frontend view-mode state (source/sidebar/outline/typewriter/focus) into the checkable View menu items (`CheckMenuItem::set_checked` on stable ids).
 - `set_menu_locale(locale)` — update managed `MenuState.locale` and rebuild the native menu (zh/en; unknown → en). Called by the frontend `initLocale`/`setLocale`; single-field IPC (`{ locale }`), no multi-word casing trap.
+- `set_window_theme(theme)` — push the resolved app theme onto the native window (`"light"`/`"dark"`; `null` = system-follow) so the title bar matches the in-app toggle. Deliberately sync (window mutation belongs on the main thread, like the menu setters). Called from the App theme effect via `desktopServices.setWindowTheme`.
 - `quit_app()` / `app_version()` — explicit quit and About-dialog version for the in-app menubar on Windows/Linux (macOS covers both with the native app menu).
 
 The native menu (`menu.rs`) has File / Edit / Format / View / Window top-level menus and only installs as a menubar on macOS (`rebuild_from_state` early-returns off macOS). Item clicks emit `menu-command` to the webview, except the `window-*` items which are handled natively in Rust (`handle_window_command`) and never forwarded. Do not use `PredefinedMenuItem` for window actions — their macOS selectors go through the responder chain and do not act on the Tauri window. Do not reimplement those actions as sidebar buttons.
