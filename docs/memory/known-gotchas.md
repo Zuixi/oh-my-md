@@ -480,3 +480,43 @@ Selection drawing is therefore vendored in `apps/desktop/src/tightSelection.ts` 
 
 Whenever `@codemirror/view` is bumped, re-diff the vendored geometry and the copied blink/cursor code against the new upstream `drawSelection.ts`/`cursor.ts` and port upstream changes — otherwise the vendored copy silently drifts from the installed version's layer semantics.
 
+## macOS font enumeration must use CoreText, not NSFontManager
+
+`list_system_fonts` (`apps/desktop/src-tauri/src/fonts.rs`) is an `async`
+command whose enumeration body runs under
+`tauri::async_runtime::spawn_blocking` (the blocking-work rule from
+"Tauri 2 sync commands run on the Rust main thread (Spec 05b)"). That pool
+thread is not the main thread, and AppKit's `NSFontManager` / `NSFont` are
+**main-thread-confined**: enumeration written against them compiles and then
+misbehaves at runtime. macOS font enumeration under `spawn_blocking` must use
+CoreText, which is thread-safe for read-only enumeration:
+`CTFontCollection::from_available_fonts` → `matching_font_descriptors()` →
+read the `kCTFontFamilyNameAttribute` attribute (via `objc2-core-text` /
+`objc2-core-foundation`, already Cargo dependencies).
+
+The other platforms follow the same shape: Windows uses DirectWrite
+(`GetSystemFontCollection` on the shared factory, callable from any thread,
+en-US preferred name); Linux shells out to `fc-list : family` best-effort and
+reports an empty list when fontconfig is absent — the picker then offers
+presets only, which is the designed degradation, not an error to fix.
+
+## Font family names must be quoted before entering `--omd-font-family`
+
+`App.tsx` copies `settings.fontFamily` verbatim into the `--omd-font-family`
+custom property (`document.documentElement.style.setProperty`) and
+`styles.css` consumes it as `font-family: var(--omd-font-family, …)`. A
+multi-word family name written unquoted (`Microsoft YaHei`, `Times New
+Roman`) degrades into a run of bare identifiers in the declaration: a name
+that cannot form a CSS identifier (leading digit, dot-prefixed system names)
+invalidates the whole `font-family` value, and a name colliding with a
+keyword (`serif`) resolves to the wrong family — either way the picked font
+silently does not apply.
+
+Route every system family through `cssFamily`
+(`apps/desktop/src/settings.ts`), which wraps the name into a single-quoted
+token and escapes embedded single quotes; `familyFromCssValue` maps a stored
+value back to a family through the same quoting, so an unquoted value also
+breaks the round-trip and the trigger label falls back to "Custom".
+`FONT_FAMILY_PRESETS` are the exception: they are hand-written multi-family
+stacks that already carry their own quoting and must pass through unchanged.
+

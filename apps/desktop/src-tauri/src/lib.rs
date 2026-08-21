@@ -1,6 +1,7 @@
 mod diagnostics;
 mod documents;
 mod export;
+mod fonts;
 mod menu;
 mod watcher;
 mod workspace;
@@ -609,7 +610,8 @@ pub fn run() {
             take_pending_open_files,
             diagnostics::export_diagnostics,
             menu::set_menu_locale,
-            export::export_preview
+            export::export_preview,
+            fonts::list_system_fonts
         ])
         .build(tauri::generate_context!())
         .expect("error while building oh-my-md")

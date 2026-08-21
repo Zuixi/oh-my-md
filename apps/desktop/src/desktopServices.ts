@@ -188,6 +188,8 @@ export interface DesktopServices {
   confirmExternalChange?: () => boolean
   getSettings?: () => Promise<UserSettings>
   saveSettings?: (settings: UserSettings) => Promise<void>
+  /** null when font enumeration fails or the runtime is not Tauri */
+  listSystemFonts?: () => Promise<string[] | null>
   getSessionState?: () => Promise<SavedSessionState | null>
   saveSessionState?: (state: SavedSessionState) => Promise<void>
   reportError: (message: string) => void
@@ -373,6 +375,13 @@ export const defaultServices: DesktopServices = {
       } catch {
         // ignore
       }
+    }
+  },
+  listSystemFonts: async () => {
+    try {
+      return await invoke<string[]>("list_system_fonts")
+    } catch {
+      return null
     }
   },
   getSessionState: async () => {
