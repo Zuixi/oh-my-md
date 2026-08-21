@@ -55,6 +55,10 @@ objc2-app-kit = { version = "0.3", features = [
     "NSWindow",
 ] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+objc2-core-text = { version = "0.3", features = [
+    "CTFontCollection",
+    "CTFontDescriptor",
+] }
 objc2-foundation = { version = "0.3", features = [
     "NSData",
     "NSDictionary",
@@ -75,4 +79,7 @@ objc2-web-kit = { version = "0.3", features = [
     "objc2-app-kit",
     "objc2-core-foundation",
 ] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Graphics_DirectWrite"] }
 

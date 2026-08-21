@@ -952,6 +952,7 @@ mod tests {
 
     #[test]
     fn recovery_roundtrip() {
+        let _guard = config_env_guard();
         let dir = tmp("recovery");
         reset_dir(&dir);
         std::env::set_var("OMD_RECOVERY_DIR", &dir);

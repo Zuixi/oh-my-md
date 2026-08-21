@@ -2396,6 +2396,7 @@ export default function App({
         settings={settings}
         onSave={handleSaveSettings}
         onClose={() => setSettingsOpen(false)}
+        listSystemFonts={services.listSystemFonts}
       />
       <AboutDialog
         isOpen={aboutOpen}
