@@ -186,7 +186,7 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
     if (prepared.nextNormalization !== host.getNormalization()) {
       host.setNormalization(prepared.nextNormalization)
     }
-    const { view, documentId, snapshot, capture } = prepared
+    const { view, documentId, snapshot, docAtStart, capture } = prepared
     const operationId = allocateOperationId(host.operationSeq)
     const saveCapture: SaveOperationCapture = {
       tabId,
@@ -265,7 +265,19 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
           host.rememberRecent(targetPath)
           host.onSaved?.(targetPath)
           if (pickedPath) host.onSavedAs?.(targetPath)
-          host.syncDoc(view.state.doc.toString(), tabId)
+          // doc 自快照后未变时复用已发给 Rust 的 snapshot 字符串引用写回 docsRef，
+          // 与 markSaved 写入 savedContents 的引用保持一致，使 sessionDirty 的
+          // `doc !== savedContents` 回到 O(1) 引用比较 —— 否则 50MB 级文档每次
+          // 保存后都会被 toString 重建字符串，此后每次 App 渲染的脏检查退化为
+          // O(n) 逐字节比较。Text 身份判定不会漏判：CM 仅在文档变更事务里换 Text
+          // 引用（ChangeSet.apply 对空变更原样返回 doc；Text.replace 恒建新对象，
+          // 选区/滚动等事务复用同一不可变对象），故身份相等 ⟹ 内容与 snapshot
+          // 逐字节一致；保存期间有过编辑则身份必变，退回全量 flatten，绝不用
+          // 旧快照覆盖新编辑。
+          host.syncDoc(
+            view.state.doc === docAtStart ? snapshot : view.state.doc.toString(),
+            tabId,
+          )
           host.clearRecovery(recoveryKey(saved))
           host.setSaveStates(updateTabSaveState(
             host.getSaveStates(),

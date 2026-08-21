@@ -51,17 +51,22 @@ export class CheckboxWidget extends WidgetType {
   eq(other: CheckboxWidget) {
     return this.checked === other.checked && this.pos === other.pos
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const el = document.createElement("input")
     el.type = "checkbox"
     el.checked = this.checked
     el.className = "omd-checkbox"
+    // 只读档（HUGE Live 预览）禁用勾选 affordance；readOnly 建档时固定，无翻转路径。
+    el.disabled = view.state.readOnly
     // prevent the editor from losing focus / moving the cursor on click
     el.addEventListener("mousedown", e => e.preventDefault())
     el.addEventListener("click", e => {
       e.preventDefault()
       const view = EditorView.findFromDOM(el.parentElement!)
       if (!view) return
+      // readOnly 是建议性 facet：widget 点击直 dispatch 绕过输入拦截，必须显式拒绝
+      // （disabled 只挡用户交互，程序化 click 仍可到达此处）。
+      if (view.state.readOnly) return
       const from = view.posAtDOM(el), to = from + 3   // "[ ]" / "[x]" — TaskMarker is 3 chars
       const insert = this.checked ? "[ ]" : "[x]"
       view.dispatch({ changes: { from, to, insert } })

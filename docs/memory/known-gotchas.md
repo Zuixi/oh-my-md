@@ -322,6 +322,8 @@ The hand-written Lezer inline parsers compare `cx.char(i)` against ASCII codes. 
 
 `watcher.rs` coalesces notify events for 300 ms before emitting `workspace-changed`, and macOS FSEvents may batch or reorder paths. The webview handler therefore probes **all** open tabs (fingerprint compare in Rust decides) instead of trusting event paths, and the old poll survives as a 30 s fallback (`watchMs` default in `App.tsx`). Never make an event path the basis for a reload decision — only `read_document_version`/guarded-save comparisons may change document state. Watch paths are canonicalized on both set and update; a non-canonical path in `state.watched` would make `diff_watches` leak watches that `unwatch` can never remove.
 
+`read_document_version` is stat-first (2026-08-20, Spec 05b §14.9 follow-up): Rust keeps a `(mtime_ns, size) → version` cache (`DocumentVersionCache`, keyed by requested path). A matching stat returns the cached fingerprint **without reading the file**; a mismatch pays the full read + blake3 and refreshes the cache (re-stat after read — a torn mid-read write is not cached); a missing/deleted file returns `Missing` and evicts its entry. Guarded-save still always reads fresh. Residual risk (accepted): on coarse-mtime filesystems (HFS+ 1s ticks) a same-size external write inside one mtime tick is invisible until the next stat change — the poll under-reports external changes for that window; likewise a symlink retargeted to a file with an identical (mtime_ns, size) pair.
+
 ## Doc-start `---` is front matter, not a thematic rule
 
 Since the FrontMatter parser landed, the first line `---` of a document always opens a front matter block (unclosed blocks swallow to EOF, matching the math-block tolerance). A document that merely starts with a horizontal rule is therefore rendered as front-matter source until a second `---` appears — this flipped `blocks.test.ts`'s hr-at-doc-start case, which now uses a mid-doc rule. The same ambiguity drives the stats stripper in `stats.ts` (leading `---`…`---` pair stripped from counts) and exists in every front-matter-aware renderer.
@@ -354,6 +356,46 @@ keystroke. `apps/desktop/test/crossLayerNoFullTree.test.ts` guards this by scann
 benchmarks may force full parses (they own their docs). Also mind the
 giant-paragraph cliff: one Lezer `advance()` parses an entire leaf block, so a
 multi-MB single paragraph (no blank lines) costs seconds per keystroke.
+
+## Decorations are seeded and windowed — never assume a full build
+
+Live decorations are **not** built synchronously for the whole document. Field
+create/reconfigure builds only the cursor seed (`LIVE_SEED_RADIUS_LINES` /
+`LIVE_SEED_RADIUS_CHARS` around the selection, `packages/engine/src/decorations/build.ts`);
+everything else lands in `LiveDeco.pending` and is drained progressively by
+`decorations/buildDriver.ts` (viewport-first microtask pass, then idle slices
+dispatching `liveBuildChunk`). Over-scale documents add **windowing**
+(`src/safeModeRendering.ts`): only pending inside the build window
+(`visibleRanges ± LIVE_WINDOW_CHARS`) is ever built, and after viewport/doc/
+selection changes `livePruneOutside` returns decorations outside the prune
+window back to pending. Consequence: at any moment decorations far from the
+viewport may legitimately be absent. Production code must never assume a
+decoration exists outside the viewport window (or that `pending` is empty).
+Tests that need a complete build must use the exported `drainPendingLiveBuild`
+helper — the synchronous test-only drain (production must never call it; same
+guard family as `crossLayerNoFullTree.test.ts`).
+
+## CodeMirror `readOnly` is advisory — every dispatch site must guard itself
+
+`EditorState.readOnly.of(true)` only blocks typed input in the view layer.
+Keymap commands (engine format/lists `dispatchSpec`s, `markdownKeymap`),
+`orderedRenumber` normalization dispatches, widget interactions (checkbox
+click, table toolbar/cell edit), and `domEventHandlers` all dispatch
+transactions directly and sail past the view's readOnly interception. The
+`domEventHandlers` family covers more than `htmlPaste` (which runs **before**
+the builtin paste handler's readOnly branch; handlers are first-true-wins):
+the image **drop** handler in `apps/desktop/src/imagePaste.ts` likewise runs
+before the builtin drop branch, and the drop/paste/pick paths all funnel
+through `insertImageFile` — which guards `state.readOnly` itself before any
+asset read/write. Belt and braces: `pickAndInsertImage` refuses to open the
+file picker, the App insert-image command checks `readonlyTabsRef`, and App
+autosave never schedules for a readonly tab, so no mutation path can persist
+changes to the user's ≥50MiB HUGE file. Every doc-changing dispatch site must
+still check `state.readOnly` itself. Guard suite:
+`packages/engine/test/readonly-guards.test.ts` plus the desktop cases in
+`apps/desktop/test/imagePaste.test.ts` and
+`apps/desktop/test/App.largeDocOpen.test.tsx` ("read-only tabs never mutate or
+persist") — add a case there whenever a new mutation path lands.
 
 ## Editing hot path owns zero O(doc) work (Spec 05a)
 
@@ -402,10 +444,29 @@ save would write the empty placeholder over the on-disk file.
 `resolveOpenTier` must return `"normal"` below `OPEN_STREAM_THRESHOLD_BYTES`.
 A fall-through `return "large"` after the LARGE confirm block classified every
 file as LARGE: tree/tab switches flashed `OpeningOverlay` and paid for
-streaming + confirm. Overlay is only for LARGE/HUGE. Construct LARGE/HUGE
-views with `defaultLivePreview: false` so `EditorState.create` never builds
-live decorations first; `setLivePreview(false)` after create is already too
-late on a 50MB live pass. Streaming failures must fall back to `readDocument`.
+streaming + confirm. Overlay is only for LARGE/HUGE. Since the progressive
+decoration build landed (2026-08-20), LARGE/HUGE views construct in Live mode
+on purpose — the engine seeds decorations around the cursor (~0.3ms at 20MB)
+and drains the rest in idle slices, so the old "construct with
+`defaultLivePreview: false`, `setLivePreview(false)` after create is too late
+on a 50MB live pass" freeze recipe is obsolete; do not reintroduce mode
+forcing in `applyDocumentScalePolicy` (safe-mode budget/windowing is orthogonal
+to mode). Streaming failures must fall back to `readDocument`.
+
+**The budget/windowing globals are process-global; only the ACTIVE tab's tier
+may drive them.** `setBlockRenderBudget`/`setSafeModeRendering` mutate engine
+module state shared by every view, while the desktop app mounts one
+`EditorView` per tab. `applyDocumentScalePolicy` therefore applies the globals
+only when `tabId === workspaceRef.current.activeId` (per-tab marking always
+runs), `ensureViews` re-applies for the current `activeId` after creating
+views, and the `[workspace.activeId]` effect is the mid-session corrector.
+This ordering is load-bearing: session restore reuses `tabs[0]`'s id for the
+primary tab, so `activeId` never changes during restore and the corrector
+effect never fires — letting a restored lazy placeholder's empty-view policy
+application flip the globals silently disabled windowing on the active 50MB
+tab (unbounded decoration memory, full-tree renumber scans, budget Infinity).
+Regression: `App.largeDocOpen.test.tsx` "keeps the active over-scale tab's
+safe mode when restore creates lazy placeholder views".
 
 ## Path containment checks must normalize separators
 
@@ -415,8 +476,10 @@ always false there, so every open file was watched twice (recursive folder
 watch + the file itself), doubling watcher events into `pollFileTabs` — which
 has no cross-round coalescing of its own and re-probes every tab per round.
 Use `pathWithinDir` (workspace.ts); `runFileTabsPoll` adds the in-flight
-dedupe. Poll still re-reads changed files in full (correctness first): a
-banner-without-contents divergence for huge docs is a recorded follow-up.
+dedupe. The version probe itself is stat-first (see the watcher entry: unchanged
+files cost a stat, not a 50MB read), but poll still re-reads **changed** files
+in full (correctness first): a banner-without-contents divergence for huge docs
+is a recorded follow-up.
 
 ## Bounded waits on the save queue; a timed-out open races the save
 
@@ -520,3 +583,16 @@ breaks the round-trip and the trigger label falls back to "Custom".
 `FONT_FAMILY_PRESETS` are the exception: they are hand-written multi-family
 stacks that already carry their own quoting and must pass through unchanged.
 
+## Text.append continues the last line; batched Text assembly needs a junction line
+
+`Text.append(other)` is `replace(length, length, other)` semantics: the first
+line of `other` is string-concatenated onto the accumulator's last line — no
+line break is inserted at the junction. `Text.of(["a"]).append(Text.of(["b"]))`
+is the single line `"ab"`, not `"a\nb"`. Any incremental assembly that appends
+line batches must prepend an empty "junction" line to each appended batch
+(`Text.of(["", ...batch])`: `last + ""` stays `last`, the following break is the
+real one) — that is what `packages/engine/src/docText.ts` does, and its parity
+suite (`test/docText.test.ts`, every-chunk-boundary scans against
+`Text.of(s.split(/\r\n?|\n/))`) is the guard. Related trap in the same file:
+an empty streaming chunk must not adjudicate a pending chunk-trailing `\r`
+(`"\r" + "" + "\n"` is one `\r\n` separator, not two).

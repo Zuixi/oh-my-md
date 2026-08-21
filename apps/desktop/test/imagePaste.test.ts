@@ -18,7 +18,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function makeView() {
+function makeView(options: { readOnly?: boolean } = {}) {
   let doc = { marker: "initial" }
   let selection = { from: 2, to: 4 }
   const dispatch = vi.fn()
@@ -28,6 +28,7 @@ function makeView() {
       return {
         doc,
         selection: { main: selection },
+        readOnly: options.readOnly ?? false,
       }
     },
     dispatch,
@@ -495,6 +496,62 @@ describe("image paste pipeline", () => {
     expect(options.onError).toHaveBeenCalledWith(
       "Document changed before the image could be inserted",
     )
+  })
+
+  it("rejects image paste on a read-only view without reading, writing, or dispatching", async () => {
+    // readOnly 是建议性 facet：domEventHandlers 的 paste 先于 CM 内建 readOnly
+    // 分支运行，insertImageFile 必须自己挡，且挡在读文件/写资产之前。
+    const { view, dispatch } = makeView({ readOnly: true })
+    const options = makeOptions()
+
+    await pasteImage(new File(["png"], "clip.png", { type: "image/png" }), view, options)
+
+    expect(options.onError).not.toHaveBeenCalled()
+    expect(options.readFile).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it("prevents image drops on a read-only view without writing assets", async () => {
+    const { view, dispatch, posAtCoords } = makeView({ readOnly: true })
+    posAtCoords.mockReturnValue(9)
+    const options = makeOptions()
+    const preventDefault = vi.fn()
+
+    const handled = handleImageDrop(
+      {
+        clientX: 30,
+        clientY: 12,
+        dataTransfer: {
+          files: [new File(["png"], "drop.png", { type: "image/png" })],
+        },
+        preventDefault,
+      } as unknown as DragEvent,
+      view,
+      options,
+    )
+
+    // 仍拦截事件（first-true-wins，不能放给内建 drop 分支），但不落任何变更。
+    expect(handled).toBe(true)
+    expect(preventDefault).toHaveBeenCalledOnce()
+    // insertImageFile 是 fire-and-forget 且排队在微任务链上：给足排空时间，
+    // 「未调用」断言才可信（单个 Promise.resolve 不够）。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(options.readFile).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it("does not open the picker for a read-only view", async () => {
+    const { view, dispatch } = makeView({ readOnly: true })
+    const options = makeOptions()
+    const pick = vi.fn(async () => new File(["png"], "picked.png", { type: "image/png" }))
+
+    await pickAndInsertImage(view, options, pick)
+
+    expect(pick).not.toHaveBeenCalled()
+    expect(options.writeImage).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
   })
 })
 
