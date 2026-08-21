@@ -2,7 +2,7 @@
 
 Thanks for helping build a Markdown editor that stays out of your way. This guide covers setup, everyday commands, and the rules that keep a three-layer codebase (engine / desktop / Rust) healthy. For the full workspace conventions, see the [AGENTS.md](./AGENTS.md) family — it is written for coding agents but documents the same engineering rules.
 
-> **Platform note:** local development currently targets macOS (pnpm + Rust toolchain). The product aims at macOS / Windows / Linux: Linux local dev and CI arrive in phase P1, Windows in P2. Until then, PDF/image export is macOS-only.
+> **Platform note:** oh-my-md runs on macOS, Windows, and Linux. Local development uses pnpm + Rust toolchain on any supported platform. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for platform-specific system dependencies.
 
 ## Setup
 
