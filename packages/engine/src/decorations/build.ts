@@ -44,15 +44,24 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
     !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
 }
 
-// 原子区间只收内联 replace 类装饰（折叠的语法标记 + 内联 widget，如 checkbox）。
-// mark/line 装饰若进原子区间，光标移动和删除会被锁死在样式文本外（root cause B）。
-// widget:block:* 块 widget 不能进原子区间：
-//   - 块 widget 跨越多行；加入原子区间后，方向键（↑/↓）会直接跳过整个块（bug: 第99行按↑跳到第1行）。
-//   - paste 时 CM 会把粘贴位置扩展到原子区间边界，导致连带选中下一行（bug: 右键粘贴包含下一行）。
-// block: true 的 Decoration.replace 已由 CM 自行处理块周围的光标定位，无需再加原子约束。
+// 原子区间只收“行中”的内联 replace 类装饰（折叠的语法标记 + 内联 widget，如 checkbox）。
+// 三条规则：
+//   Rule 1 — mark:/line: 装饰不进原子区间：光标移动/删除会被锁死在样式文本外（root cause B）。
+//   Rule 2 — widget:block:* 块 widget 不进原子区间：块 widget 跨越多行，加入后 ↑/↓ 直接跳过
+//     整块、paste 时 CM 扩展粘贴位置连带选中下一行。
+//   Rule 3 — 行首原子（from === line.from）与跨行原子（to > line.to）不进原子区间：
+//     skipAtomsForSelection 对指针选区端点做循环外推，这两类原子让外推跨过换行符、
+//     级联高亮下一行（“点击选中连带下一行”）。行首标记退出后不会产生不可见光标：
+//     nearCursor 的行级显源码会把整行展开（自愈路径）。
 function isAtomicTag(tag: string) {
   return (tag.startsWith("replace:") || tag.startsWith("widget:")) &&
     !tag.startsWith("widget:block:")
+}
+
+function isAtomicSpec(spec: DecoSpec, state: EditorState): boolean {
+  if (!isAtomicTag(spec.tag)) return false
+  const line = state.doc.lineAt(spec.from)
+  return spec.from > line.from && spec.to <= line.to
 }
 
 interface RebuildRange { from: number; to: number }
@@ -66,11 +75,11 @@ export interface LiveDeco {
   pending: { from: number; to: number }[]
 }
 
-function decorationSets(specs: DecoSpec[]) {
+function decorationSets(specs: DecoSpec[], state: EditorState) {
   return {
     deco: Decoration.set(specs.map(s => s.deco.range(s.from, s.to)), true),
     atomic: Decoration.set(
-      specs.filter(s => isAtomicTag(s.tag)).map(s => Decoration.replace({}).range(s.from, s.to)),
+      specs.filter(s => isAtomicSpec(s, state)).map(s => Decoration.replace({}).range(s.from, s.to)),
       true,
     ),
   }
@@ -80,7 +89,7 @@ function decorationSets(specs: DecoSpec[]) {
 // create/reconfigure 路径使用（那两条路径只做种子构建，见 seedLiveDecorations）。
 export function buildLiveDecorations(state: EditorState): LiveDeco {
   const specs = collectDecorationSpecs(state, 0, state.doc.length)
-  const sets = decorationSets(specs)
+  const sets = decorationSets(specs, state)
   return {
     ...sets,
     specs,
@@ -102,7 +111,7 @@ export function seedLiveDecorations(state: EditorState): LiveDeco {
   const to = Math.min(state.doc.line(lastLine).to, Math.min(length, head + LIVE_SEED_RADIUS_CHARS))
   const seed = { from: Math.min(from, to), to: Math.max(from, to) }
   const specs = collectDecorationSpecs(state, seed.from, seed.to)
-  const sets = decorationSets(specs)
+  const sets = decorationSets(specs, state)
   return {
     ...sets,
     specs,
@@ -373,7 +382,7 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     atomic: mappedAtomic.update({
       filter: keep,
       add: additions
-        .filter(spec => isAtomicTag(spec.tag))
+        .filter(spec => isAtomicSpec(spec, tr.state))
         .map(spec => Decoration.replace({}).range(spec.from, spec.to)),
       sort: true,
     }),

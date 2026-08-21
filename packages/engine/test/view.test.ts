@@ -156,6 +156,24 @@ describe("view smoke (real EditorView)", () => {
     expect(covered).toBe(false)   // 位置 2 在 "text" 里，只被 mark:omd-link 覆盖，不得原子化
   })
 
+  it("keeps line-start and cross-line atoms out of atomic ranges", () => {
+    const doc = "# Title\n\n> quoted\n\n- item\n\nSetext\n===\n\ntext with **bold** here\n"
+    const state = EditorState.create({ doc, extensions: editorExtensions() })
+    const { atomic } = state.field(livePreviewField)
+    const ranges: [number, number][] = []
+    atomic.between(0, doc.length, (from, to) => { ranges.push([from, to]) })
+    for (const [from, to] of ranges) {
+      const line = state.doc.lineAt(from)
+      // 行首原子（#、>、- 等）与跨行原子（Setext underline）都不进原子集：
+      // skipAtomsForSelection 会循环外推端点，这两类原子让外推跨过换行符、
+      // 级联高亮下一行（指针选区同步 bug）。
+      expect(from === line.from).toBe(false)
+      expect(to <= line.to).toBe(true)
+    }
+    // 行中原子（**bold** 的两侧 **）保持原子化 —— WYSIWYG 选区应包住整个渲染粗体
+    expect(ranges.some(([from, to]) => doc.slice(from, to) === "**")).toBe(true)
+  })
+
   it("renders meaningful final DOM for synchronous and async widgets", async () => {
     const doc = [
       "| a\\|b | `x\\|y` |",
