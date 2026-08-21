@@ -1,0 +1,103 @@
+name: Release (Windows)
+
+# Builds installable Windows packages (.msi via WiX and a .exe installer via
+# NSIS) on a GitHub Windows runner and attaches them to a GitHub Release.
+#
+# Tauri 2 cannot be cross-compiled to Windows from macOS because it links the
+# Windows WebView2 runtime and VC++ toolchain, so the only reliable way to ship
+# Windows binaries from this macOS-first repo is to build on windows-latest.
+#
+# Trigger: push a tag like `v0.1.0`, or run manually from the Actions tab
+# (manual runs only upload workflow artifacts, not a release).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Enable long paths
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.87.0
+
+      # Also runs `pnpm install --frozen-lockfile` (version from packageManager).
+      - uses: ./.github/actions/setup-pnpm
+
+      # `pnpm tauri build` runs the configured `beforeBuildCommand` (pnpm build)
+      # and then bundles the .msi and .exe installers for the runner arch.
+      - name: Build Windows installers
+        run: pnpm --filter @omd/desktop tauri build
+
+      # Optional Authenticode signing. Runs only when a PFX certificate is
+      # provided via repository secrets; with no secret it is skipped so the
+      # pipeline still produces unsigned installers. Decode the base64 PFX,
+      # then sign each installer with signtool (SHA256 + RFC3161 timestamp so
+      # the signature survives cert expiry).
+      #
+      # To enable later: add secrets WIN_SIGN_PFX_BASE64 (base64 of the .pfx)
+      # and WIN_SIGN_PFX_PASSWORD in the repo settings. Cloud-HSM signing
+      # (e.g. SSL.com eSigner, DigiCert KeyLocker) would replace this step with
+      # that provider's CLI/REST signer instead of a local PFX + signtool.
+      - name: Sign Windows installers (optional)
+        # `secrets` is not in the documented context set for a step `if`;
+        # mirror the secret into env and test that instead.
+        if: env.WIN_SIGN_PFX_BASE64 != ''
+        env:
+          WIN_SIGN_PFX_BASE64: ${{ secrets.WIN_SIGN_PFX_BASE64 }}
+          WIN_SIGN_PFX_PASSWORD: ${{ secrets.WIN_SIGN_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = Join-Path $env:RUNNER_TEMP "omd-sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WIN_SIGN_PFX_BASE64))
+          $signtool = (Get-ChildItem "C:\Program Files*\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found on the runner" }
+          $ts = "http://timestamp.digicert.com"
+          $files = Get-ChildItem -Path "apps/desktop/src-tauri/target/release/bundle" -Recurse -Include *.msi, *-setup.exe
+          if ($files.Count -eq 0) { throw "no installer artifacts found to sign" }
+          foreach ($file in $files) {
+            & $signtool sign /f $pfx /p $env:WIN_SIGN_PFX_PASSWORD /fd SHA256 /tr $ts /td SHA256 $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($file.FullName)" }
+          }
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-installers
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          name: "oh-my-md ${{ github.ref_name }}"
+          body: |
+            Windows installers:
+
+            - `oh-my-md_*_x64_en-US.msi` — system-level / MSI installer
+            - `oh-my-md_*_x64-setup.exe` — NSIS setup wizard
+
+            If the package is unsigned, SmartScreen may block the first launch;
+            click "Run anyway" to continue (automatic signing can be enabled via
+            repository secrets).
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
+          fail_on_unmatched_files: true

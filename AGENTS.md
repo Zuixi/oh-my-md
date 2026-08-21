@@ -29,7 +29,7 @@ oh-my-md/
 ├── packages/engine/       # Markdown language support and live-preview behavior
 │   ├── src/               # Lezer parsing, decorations, modes, widgets
 │   └── test/              # Vitest tests and Markdown fixtures
-├── .github/workflows/     # CI：engine/desktop/rust/link 四 job（发布流水线阻塞于 Apple 账号）
+├── .github/               # CI：changes 路径过滤 + engine/desktop/rust(含 link gate)/bench；复合 action 在 .github/actions（发布流水线阻塞于 Apple 账号）
 └── docs/                  # Product specs, implementation plans, QA, guides, agent memory
 ```
 

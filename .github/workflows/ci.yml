@@ -1,121 +1,128 @@
 name: CI
 
+# Feature branches are verified by the pull_request event; push only runs the
+# post-merge full verification on main, so a branch with an open PR is not
+# built twice.
 on:
   push:
+    branches: [main]
   pull_request:
 
+# A new push to the same PR/branch cancels the superseded in-progress run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
+  changes:
+    name: Detect changed domains
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny/paths-filter lists PR files via the API
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      rust: ${{ steps.filter.outputs.rust }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # push events diff against github.event.before; full history needed
+          fetch-depth: 0
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: filter
+        with:
+          # `filters` is a string input: the value is YAML embedded in a block
+          # scalar, not a mapping under `with:`.
+          filters: |
+            engine:
+              - "packages/engine/**"
+            # The desktop app consumes engine source directly (no package
+            # build step), so engine changes must also run desktop tests.
+            desktop:
+              - "packages/engine/**"
+              - "apps/desktop/src/**"
+              - "apps/desktop/test/**"
+              # top-level files only (package.json, tsconfig, vite.config, index.html)
+              - "apps/desktop/*"
+            rust:
+              - "apps/desktop/src-tauri/**"
+            # Workflow/dependency/script changes re-run everything.
+            shared:
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "scripts/*.sh"
+
   engine:
     name: Engine (tsc + Vitest)
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-pnpm
       - run: pnpm test
 
   desktop:
     name: Desktop (tsc + Vitest + build)
+    needs: changes
+    if: ${{ needs.changes.outputs.desktop == 'true' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-pnpm
       - run: pnpm --filter @omd/desktop test
       - run: pnpm --filter @omd/desktop build
 
+  # Merged former `rust` and `link` jobs: they shared the same setup (toolchain,
+  # Linux system deps, rust cache, pnpm install, frontend build), and cargo test
+  # + cargo build reuse one dependency compilation instead of two full jobs.
   rust:
-    name: Rust (fmt + cargo test) ${{ matrix.os }}
+    name: Rust (fmt + test + link) ${{ matrix.os }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - name: Enable long paths
         if: runner.os == 'Windows'
         run: git config --global core.longpaths true
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.87.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-rust
         with:
+          toolchain: 1.87.0
           components: rustfmt
-      - name: Install Tauri Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-pnpm
       # `tauri::generate_context!` embeds `frontendDist`; build it so cargo test compiles.
       - run: pnpm --filter @omd/desktop build
       - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-
-  link:
-    name: Link (frontend + rust binary) ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Enable long paths
-        if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.87.0
-      - name: Install Tauri Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # cargo test (test profile) never links the app binary; build.sh is the
+      # link gate that catches stale-target/toolchain link failures.
       - run: bash scripts/build.sh
 
   bench:
     name: Bench (advisory)
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-pnpm
       # Spec 05: advisory only — runner 抖动大，基准回归不阻断；>50% 回归读日志人工判断。
       - run: pnpm --filter @omd/engine bench

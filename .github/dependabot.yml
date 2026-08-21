@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in .github/workflows and .github/actions
+  # current (Dependabot bumps SHAs annotated with a `# vX.Y.Z` comment).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
