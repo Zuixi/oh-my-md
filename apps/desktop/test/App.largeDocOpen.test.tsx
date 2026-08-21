@@ -1,10 +1,17 @@
-import { fireEvent, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import { blockRenderBudget, SAFE_MODE_RENDER_BUDGET_LINES } from "@omd/engine"
+import { Text } from "@codemirror/state"
+import {
+  blockRenderBudget,
+  SAFE_MODE_RENDER_BUDGET_LINES,
+  safeModeRenderingEnabled,
+  setBlockRenderBudget,
+  setSafeModeRendering,
+} from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DocumentOpenStream } from "../src/desktopServices"
-import { createAppHarness, resetMountedApps } from "./appHarness"
+import { createAppHarness, expectPathShown, resetMountedApps, versionFor, type FakeEditorHandle } from "./appHarness"
 import {
   OPEN_READONLY_THRESHOLD_BYTES,
   SAFE_MODE_BYTES,
@@ -36,7 +43,13 @@ vi.mock("../src/Editor", async importOriginal => {
   }
 })
 
-afterEach(() => resetMountedApps())
+afterEach(() => {
+  resetMountedApps()
+  // 安全模式全局是进程级的（setSafeModeRendering/setBlockRenderBudget 直接改
+  // engine 模块状态）：本文件驱动/断言它，归位防止污染后续测试。
+  setSafeModeRendering(false)
+  setBlockRenderBudget(Infinity)
+})
 
 const MB = 1024 * 1024
 
@@ -47,7 +60,14 @@ async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, 
   await act(async () => { await Promise.resolve() })
 }
 
-import { act } from "@testing-library/react"
+/** Task 10：流式打开必须把 chunk 组装的 Text 交给编辑器（而非整串字符串）。 */
+function streamedDocText(handle: FakeEditorHandle): Text {
+  const doc = handle.getOptions().doc
+  if (typeof doc !== "object" || doc === null) {
+    throw new Error(`expected a Text doc from the streaming path, got: ${typeof doc}`)
+  }
+  return doc
+}
 
 describe("open tiers (Spec 05b)", () => {
   it("opens a NORMAL file with one-shot read and no overlay", async () => {
@@ -120,8 +140,9 @@ describe("open tiers (Spec 05b)", () => {
     expect(harness.services.readDocument).not.toHaveBeenCalled()
   })
 
-  it("forces source mode by bytes for a long-line document under the line threshold", async () => {
+  it("enters safe mode by bytes for a long-line document under the line threshold", async () => {
     // 10MB+ 的单行文件：行数轴失明，字节轴必须兜住（Spec 05b 盲区回归）。
+    // 渐进渲染落地后仍默认 Live —— 安全模式只影响预算/窗口化，不切模式。
     const singleLine = "x".repeat(SAFE_MODE_BYTES + 1)
     const harness = createAppHarness(editor)
     harness.seedFile("/long.md", singleLine)
@@ -134,11 +155,13 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/long.md", singleLine)
     expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
-    expect(harness.editorForTab(1).getOptions().defaultLivePreview).toBe(false)
+    // 默认 Live：键完全缺席（undefined 赋值也算缺席的更严口径），防回归。
+    expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
   })
 
-  it("opens a HUGE file read-only as plain text after confirm", async () => {
+  it("opens a HUGE file read-only in live preview after confirm", async () => {
     const harness = createAppHarness(editor)
     harness.seedFile("/huge.md", "huge body\n")
     harness.services.statDocument = vi.fn(async () => ({
@@ -150,8 +173,11 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/huge.md", "huge body\n")
     const options = harness.editorForTab(1).getOptions()
+    // 只读挡编辑，但语言/装饰照常装配（plainText 路径已从引擎移除）。
     expect(options.readOnly).toBe(true)
-    expect(options.plainText).toBe(true)
+    expect("plainText" in options).toBe(false)
+    expect("defaultLivePreview" in options).toBe(false)
+    expect(safeModeRenderingEnabled()).toBe(true)
     await waitFor(() => {
       expect(document.querySelector(".update-banner-message")?.textContent)
         .toContain("read-only")
@@ -198,7 +224,88 @@ describe("open tiers (Spec 05b)", () => {
     harness.renderApp()
     await harness.openFileTab("/stream.md", "disk copy that must not be used")
     expect(harness.services.readDocument).not.toHaveBeenCalled()
-    expect(harness.editorForTab(1).getOptions().doc).toBe("alpha beta")
+    // Task 10：编辑器收到的是 chunk 组装的 Text（而非 join 后的整串），
+    // 且与整串 split 的参照 Text 同构 —— EditorState.create 由此跳过整串切行。
+    const doc = streamedDocText(harness.editorForTab(1))
+    expect(doc.eq(Text.of("alpha beta".split(/\r\n?|\n/)))).toBe(true)
+    expect(harness.editorForTab(1).view.state.doc).toBe(doc)
+    // LARGE 档开箱即 Live（渐进渲染），不再以源码模式打开。
+    expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
+  })
+
+  it("carries a \\r\\n split across chunk boundaries into the Text doc", async () => {
+    // Rust 分块只对齐 UTF-8 字符边界：\r 与 \n 可能分属两个 chunk，切行助手
+    // 必须携带 pending 裁决（含空 chunk 不裁决）；编辑用 Text 归一为 \n 行。
+    const harness = createAppHarness(editor)
+    const joined = "alpha\r\nbeta\r\ngamma"
+    harness.seedFile("/crlf.md", joined)
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/crlf.md",
+      sizeBytes: 20 * MB,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha\r" })
+      onEvent({ kind: "chunk", index: 1, text: "" })
+      onEvent({ kind: "chunk", index: 2, text: "\nbeta\r" })
+      onEvent({ kind: "chunk", index: 3, text: "\ngamma" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/crlf.md",
+        version: versionFor("/crlf.md", joined),
+        stats: { byteLength: joined.length, lineCount: 3 },
+      }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/crlf.md", joined)
+    const doc = streamedDocText(harness.editorForTab(1))
+    expect(doc.eq(Text.of(joined.split(/\r\n?|\n/)))).toBe(true)
+    expect(doc.lines).toBe(3)
+    expect(harness.editorForTab(1).view.state.doc).toBe(doc)
+    // 字符串镜像仍是原始 joined（与 openSession 的 savedContents 同源）：
+    // 脏检查口径不变 —— 打开即是干净状态，无未保存标记。
+    expectPathShown("/crlf.md")
+  })
+
+  it("hands the streamed Text to a NEW tab's view via the docTexts stash", async () => {
+    // 新 tab 分支不经 resetTabDocument：组装 Text 走 docTextsRef 暂存（App.openPath
+    // inNewTab），由 ensureViews 建 view 时消费 —— 钉死 create 收到的就是 Text。
+    const harness = createAppHarness(editor)
+    harness.seedFile("/root.md", "root body")
+    harness.seedFile("/stream.md", "disk copy that must not be used")
+    harness.services.statDocument = vi.fn(async (path: string) => ({
+      kind: "existing" as const,
+      requestedPath: path,
+      sizeBytes: path === "/stream.md" ? 20 * MB : 9,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha " })
+      onEvent({ kind: "chunk", index: 1, text: "beta" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/stream.md",
+        version: { resolvedPath: "/stream.md", fingerprint: "v1:stream" },
+        stats: { byteLength: 10, lineCount: 1 },
+      }
+    })
+    harness.renderApp()
+    await harness.openFileTab("/root.md", "root body")
+    expect(editor.create).toHaveBeenCalledTimes(1)
+    // markdown 链接是新 tab 打开的真实入口（openPath(…, inNewTab=true)）。
+    await act(async () => {
+      harness.editorForTab(1).getOptions().onOpenMarkdownHref?.("/stream.md")
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(harness.allEditors()).toHaveLength(2))
+    expect(harness.services.readDocument).not.toHaveBeenCalledWith("/stream.md")
+    expect(editor.create).toHaveBeenCalledTimes(2)
+    const doc = streamedDocText(harness.editorForTab(2))
+    expect(doc.eq(Text.of("alpha beta".split(/\r\n?|\n/)))).toBe(true)
+    expect(harness.editorForTab(2).view.state.doc).toBe(doc)
+    // ensureViews 消费暂存的直接证据：第二次 create 的入参 options.doc 即该 Text。
+    expect(editor.create.mock.calls[1][1].doc).toBe(doc)
   })
 
   it("falls back to a one-shot read when streaming fails", async () => {
@@ -289,5 +396,120 @@ describe("lazy session restore (Spec 05b)", () => {
       expect(harness.editorForTab(2).getOptions().doc).toBe("beta")
     })
     expect(harness.services.readDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it("streams a lazily activated LARGE tab into a Text doc for the existing view", async () => {
+    // 惰性 tab 首激活走 loadLazyTab：流式快照的 docText 直达已挂载的空 view
+    // （resetTabDocument 主路径）；view 缺位的兜底与新 tab 分支共用 docTextsRef
+    // 暂存链路（ensureViews 消费），此处钉住 Text 端到端落到 view.state.doc。
+    const harness = createAppHarness(editor)
+    const joined = "alpha\r\nbeta\r\ngamma"
+    harness.seedFile("/small.md", "small")
+    harness.seedFile("/lazy.md", joined)
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/small.md", "/lazy.md"],
+      activePath: "/small.md",
+    }))
+    harness.services.statDocument = vi.fn(async (path: string) => ({
+      kind: "existing" as const,
+      requestedPath: path,
+      sizeBytes: path === "/lazy.md" ? 20 * MB : 5,
+    }))
+    harness.services.confirmLargeOpen = vi.fn(() => true)
+    harness.services.readDocumentStreaming = vi.fn(async (_path, onEvent) => {
+      onEvent({ kind: "chunk", index: 0, text: "alpha\r" })
+      onEvent({ kind: "chunk", index: 1, text: "\nbeta\r" })
+      onEvent({ kind: "chunk", index: 2, text: "\ngamma" })
+      return {
+        kind: "existing" as const,
+        requestedPath: "/lazy.md",
+        version: versionFor("/lazy.md", joined),
+        stats: { byteLength: joined.length, lineCount: 3 },
+      }
+    })
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe("small")
+    })
+    harness.activateTab(2)
+    await waitFor(() => {
+      expect(streamedDocText(harness.editorForTab(2)).eq(Text.of(joined.split(/\r\n?|\n/)))).toBe(true)
+    })
+    const doc = streamedDocText(harness.editorForTab(2))
+    expect(doc.lines).toBe(3)
+    expect(harness.editorForTab(2).view.state.doc).toBe(doc)
+    // 惰性档只有主路径整读一次；LARGE 激活必须走流式（不二次整读）。
+    expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the active over-scale tab's safe mode when restore creates lazy placeholder views", async () => {
+    // I-1 回归：restore 的主 tab 复用 tabs[0] 的 id，activeId 全程不变 ——
+    // ensureViews 为惰性占位 tab 建空 view 时若应用进程级全局（空文档 →
+    // safe-mode OFF / 预算 Infinity），激活的 over-scale tab 会静默丢窗口化，
+    // 且 [activeId] effect 因 id 未变不会纠正。全局只允许跟随激活 tab 档位。
+    const big = bigDoc(50010)
+    const harness = createAppHarness(editor)
+    harness.seedFile("/big.md", big)
+    harness.seedFile("/lazy.md", "lazy body")
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/big.md", "/lazy.md"],
+      activePath: "/big.md",
+    }))
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.editorForTab(1).getOptions().doc).toBe(big)
+    })
+    // 惰性占位 tab 的空 view 已由 ensureViews 创建（策略在其上运行过）。
+    await waitFor(() => expect(harness.allEditors()).toHaveLength(2))
+    expect(harness.editorForTab(1).getOptions().doc).toBe(big)
+    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
+    expect(safeModeRenderingEnabled()).toBe(true)
+  })
+})
+
+function bigDoc(lines: number): string {
+  return Array.from({ length: lines }, (_, i) => `line ${i}`).join("\n")
+}
+
+function openPaletteAndRun(query: string) {
+  fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
+  fireEvent.change(screen.getByPlaceholderText("Run a command…"), { target: { value: query } })
+  fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
+}
+
+describe("read-only tabs never mutate or persist (I-2)", () => {
+  function seedHugeFile(harness: ReturnType<typeof createAppHarness>) {
+    harness.seedFile("/huge.md", "huge body\n")
+    harness.services.statDocument = vi.fn(async () => ({
+      kind: "existing" as const,
+      requestedPath: "/huge.md",
+      sizeBytes: OPEN_READONLY_THRESHOLD_BYTES + 1,
+    }))
+    harness.services.confirmReadonlyOpen = vi.fn(() => true)
+  }
+
+  it("opens the insert-image command as a no-op on a read-only tab", async () => {
+    const harness = createAppHarness(editor)
+    seedHugeFile(harness)
+    harness.renderApp()
+    await harness.openFileTab("/huge.md", "huge body\n")
+    expect(harness.editorForTab(1).getOptions().readOnly).toBe(true)
+    openPaletteAndRun("insert image")
+    // 未经只读早退时 pickAndInsertImage 会往 body 挂 input[type=file]。
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it("never schedules autosave for a read-only tab, even when its buffer diverges", async () => {
+    // 纵深防御：readOnly facet 挡正常编辑，但若未来出现新的变异路径把只读
+    // buffer 弄脏，autosave 也不得把变化写回用户的 ≥50MiB 文件。
+    const harness = createAppHarness(editor)
+    seedHugeFile(harness)
+    harness.renderApp({ autosaveMs: 20 })
+    await harness.openFileTab("/huge.md", "huge body\n")
+    harness.editorForTab(1).emit({ doc: "mutated", docChanged: true, pendingNormalization: null })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)) })
+    expect(harness.services.saveDocument).not.toHaveBeenCalled()
   })
 })

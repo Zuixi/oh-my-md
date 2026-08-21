@@ -4,6 +4,7 @@
  * character it is. Never hard-code a different literal for the same character.
  */
 export const CHAR_NEWLINE = 10
+export const CHAR_CARRIAGE_RETURN = 13
 export const CHAR_SPACE = 32
 export const CHAR_DOLLAR = 36
 export const CHAR_PLUS = 43

@@ -1,5 +1,5 @@
 import type { EditorView } from "@codemirror/view"
-import type { TransactionSpec } from "@codemirror/state"
+import type { Text, TransactionSpec } from "@codemirror/state"
 import {
   acceptOrderedListNormalization,
   getPendingOrderedListNormalization,
@@ -168,6 +168,9 @@ interface PreparedTabSave {
   readonly view: EditorView
   readonly documentId: number
   readonly snapshot: string
+  /** snapshot 物化自的 Text 引用：保存期间无文档变更（Text 身份不变）时，
+   * 调用方可复用 snapshot 字符串引用写回 docsRef（sessionDirty 保持 O(1)）。 */
+  readonly docAtStart: Text
   readonly capture: NormalizationOperationCapture | null
   readonly nextNormalization: NormalizationByTab
 }
@@ -186,17 +189,18 @@ export function prepareTabSave(
     if (!canAutosaveTab(tabId, normalization)) return null
   }
   const documentId = tab.documentId
-  const snapshot = view.state.doc.toString()
+  const docAtStart = view.state.doc
+  const snapshot = docAtStart.toString()
   const tabNorm = normalization[tabId]
   if (trigger !== "explicit" || tabNorm?.action !== "idle" || !tabNorm.notice) {
-    return { tab, view, documentId, snapshot, capture: null, nextNormalization: normalization }
+    return { tab, view, documentId, snapshot, docAtStart, capture: null, nextNormalization: normalization }
   }
   const capture: NormalizationOperationCapture = {
     tabId, documentId, view, normalizationId: tabNorm.notice.id,
   }
   const saving = setNormalizationAction(normalization, tabId, tabNorm.notice.id, "saving")
   if (saving === normalization) return null
-  return { tab, view, documentId, snapshot, capture, nextNormalization: saving }
+  return { tab, view, documentId, snapshot, docAtStart, capture, nextNormalization: saving }
 }
 
 export interface TabSaveHost {

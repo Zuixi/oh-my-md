@@ -10,6 +10,10 @@ import { keymap, type Command } from "@codemirror/view"
 
 function dispatchSpec(spec: (state: EditorState) => TransactionSpec | null): Command {
   return target => {
+    // readOnly 是建议性 facet：keymap 命令直接 dispatch 会绕过输入拦截
+    // （typed input 才被 view 层挡下），只读 Live 预览档必须在此拒绝改写。
+    // 返回 false 与 @codemirror/commands 的 readOnly 约定一致，放行后续键位。
+    if (target.state.readOnly) return false
     const result = spec(target.state)
     if (!result) return false
     target.dispatch(result)

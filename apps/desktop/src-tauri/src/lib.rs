@@ -562,6 +562,7 @@ pub fn run() {
                 .build(),
         )
         .manage(documents::DocumentCoordinator::default())
+        .manage(documents::DocumentVersionCache::default())
         .setup(|app| {
             menu::install(app)?;
             watcher::install(app.handle());

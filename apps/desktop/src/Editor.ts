@@ -1,5 +1,5 @@
 import { EditorView, keymap, dropCursor, highlightActiveLine, type ViewUpdate } from "@codemirror/view"
-import { Compartment, EditorState, Facet } from "@codemirror/state"
+import { Compartment, EditorState, Facet, type Text } from "@codemirror/state"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
   classifyLink,
@@ -36,7 +36,12 @@ export interface EditorDocumentUpdate {
 }
 
 export interface CreateEditorOptions {
-  doc: string
+  /**
+   * Task 10：doc 直接收 Text（LARGE 档流式打开的 chunk 组装产物）时，
+   * EditorState.create 跳过对整串的 regex 切行；字符串路径（常规读盘、会话恢复
+   * 等无 docText 的调用方）行为不变。
+   */
+  doc: string | Text
   tabId: number
   documentId: number
   getDocPath: () => string | null
@@ -46,10 +51,9 @@ export interface CreateEditorOptions {
   onOpenMarkdownHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
-  /** Spec 05b HUGE 档：只读纯文本视图（无语言/装饰扩展）。 */
+  /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
   readOnly?: boolean
-  plainText?: boolean
-  /** Construct already in Source so large docs skip the first live-preview pass. */
+  /** Construct already in Source (no live decorations at create time). */
   defaultLivePreview?: boolean
   /** Notified when the live/source field flips, so the host can mirror it. */
   onModeChange?: (isLive: boolean) => void
@@ -176,7 +180,6 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
-        plainText: options.plainText === true,
         defaultLivePreview: options.defaultLivePreview,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],

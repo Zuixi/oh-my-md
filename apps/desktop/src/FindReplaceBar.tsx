@@ -10,7 +10,8 @@ export function FindReplaceBar(props: {
   wholeWord: boolean
   patternError: string | null
   replaceOpen: boolean
-  matchCount: number
+  /** null = 未计数（over-scale 安全模式 tab 不跑全文扫描，显示占位）。 */
+  matchCount: number | null
   activeIndex: number
   onQuery: (query: string) => void
   onReplacement: (value: string) => void
@@ -32,9 +33,11 @@ export function FindReplaceBar(props: {
 
   if (!props.open) return null
 
-  const status = props.matchCount === 0
-    ? t("find.status.zero")
-    : t("find.status.count", { active: props.activeIndex + 1, total: props.matchCount })
+  const status = props.matchCount === null
+    ? t("find.status.unavailable")
+    : props.matchCount === 0
+      ? t("find.status.zero")
+      : t("find.status.count", { active: props.activeIndex + 1, total: props.matchCount })
 
   function onBarKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {

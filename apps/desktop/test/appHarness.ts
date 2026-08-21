@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, type RenderResult } from "@tes
 import { createElement } from "react"
 import { expect, vi, type Mock } from "vitest"
 import type { EditorView } from "@codemirror/view"
+import type { Text } from "@codemirror/state"
 import {
   getPendingOrderedListNormalization,
   type NormalizationId,
@@ -143,19 +144,33 @@ function createHandleRecord(
   initial: CreateEditorOptions,
   onDestroy: (tabId: number) => void,
 ): HandleRecord {
-  let contents = initial.doc
+  // Task 10：流式大档打开会把 CodeMirror Text 直接作为 doc 传入 —— 镜像字符串
+  // 走 toString 物化一次（等同生产的 docsRef 口径），假 state.doc 则原样保留
+  // Text（其自身就有 toString/lines，与 fakeDoc 同形）。
+  const docToString = (doc: string | Text): string => (typeof doc === "string" ? doc : doc.toString())
+  const toStateDoc = (doc: string | Text): { toString(): string; readonly lines: number } =>
+    typeof doc === "string" ? fakeDoc(doc) : doc
+  let contents = docToString(initial.doc)
   let options = initial
   let pending: OrderedListNormalizationNotice | null = null
+  // `state.doc` mirrors CM's Text semantics: an immutable object frozen at the
+  // content it was created with. Doc-changing updates swap the reference
+  // (Text.replace always builds a new node); selection-only updates keep it.
   // `lines` mirrors CM's state.doc.lines: applyDocumentScalePolicy reads it to
   // classify document scale without splitting the full text.
-  const state = {
-    doc: {
-      toString: () => contents,
-      get lines() {
-        return contents ? contents.split("\n").length : 1
-      },
+  const fakeDoc = (value: string) => ({
+    toString: () => value,
+    get lines() {
+      return value ? value.split("\n").length : 1
     },
+  })
+  const state = {
+    doc: toStateDoc(initial.doc),
+    // CM state 恒有 selection；缺了它，走 selection 的路径（如 pickAndInsertImage）
+    // 只能以 TypeError 暴露，测试失败不可归因。
+    selection: { main: { from: 0, to: 0 } },
   }
+  const swapDoc = (value: string | Text) => { state.doc = toStateDoc(value) }
   pendingByState.set(state, () => pending)
   const view = {
     state,
@@ -167,9 +182,14 @@ function createHandleRecord(
   const handle: FakeEditorHandle = {
     view,
     getOptions: () => options,
-    setContents: value => { contents = value },
+    setContents: value => {
+      contents = value
+      // 全文档替换（等同 resetEditorDocument/setState）：Text 身份随之更换。
+      swapDoc(value)
+    },
     emit: update => {
       contents = update.doc
+      if (update.docChanged) swapDoc(update.doc)
       pending = update.pendingNormalization
       act(() => notifyHost(options, {
         docChanged: update.docChanged,
@@ -183,7 +203,8 @@ function createHandleRecord(
     contents: () => contents,
     rebind: next => {
       options = next
-      contents = next.doc
+      contents = docToString(next.doc)
+      swapDoc(next.doc)
       pending = null
     },
   }

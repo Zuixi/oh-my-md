@@ -175,6 +175,10 @@ export async function insertImageFile(
   mime: string,
   range?: { from: number; to: number },
 ): Promise<void> {
+  // readOnly 是建议性 facet：drop/paste 的 domEventHandlers 先于 CM 内建的
+  // readOnly 分支运行（first-true-wins），命令路径更无从拦截 —— 统一挡在
+  // 读文件/写资产之前，只读文档既不插入引用也不落盘图片资产。
+  if (view.state.readOnly) return
   const docPath = options.getDocPath()
   if (!docPath) {
     options.onError("Save the file before inserting an image")
@@ -263,6 +267,8 @@ export async function pickAndInsertImage(
   options: ImagePasteOptions,
   pick: () => Promise<File | null> = defaultPickImage,
 ): Promise<void> {
+  // 只读文档连文件选择器都不开（insertImageFile 兜底还会再拦一次）。
+  if (view.state.readOnly) return
   const docPath = options.getDocPath()
   if (!docPath) {
     options.onError("Save the file before inserting an image")

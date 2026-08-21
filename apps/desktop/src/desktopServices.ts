@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { toast } from "react-toastify"
+import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
 import { parseRecents } from "./recents"
 import {
@@ -45,6 +46,13 @@ export interface DocumentFileStats {
 export interface ExistingDiskSnapshot {
   readonly requestedPath: string
   readonly contents: string
+  /**
+   * LARGE 档流式打开时由前端在 chunk 到达途中组装的 Text（Task 10）：
+   * EditorState.create 收到 Text 即跳过对整串的 regex 切行。仅存在于
+   * readSnapshotForOpen 的流式拼装产物，IPC wire（read_document 等）不带
+   * 该字段 —— 脏检查/保存/会话等下游一律继续用 contents 字符串。
+   */
+  readonly docText?: Text
   readonly version: DocumentVersion
   /** Optional for older fixtures; production snapshots always carry it. */
   readonly stats?: DocumentFileStats

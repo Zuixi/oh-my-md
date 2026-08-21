@@ -74,6 +74,11 @@ export async function htmlPasteToMarkdown(
 export function htmlPaste(): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
+      // readOnly 是建议性 facet，且 domEventHandlers 先于 @codemirror/view 内建
+      // paste 处理器运行（内建的 readOnly 分支在我们返回 true 后不会再执行）——
+      // 本处理器若不拦截，preventDefault + dispatch 会直接改写只读文档。返回 true
+      // 与内建 paste/drop 处理器的只读分支同款：消费事件并由 CM preventDefault。
+      if (view.state.readOnly) return true
       const clipboard = event.clipboardData
       if (!clipboard) return false
       // An image flavor wins: the host's image-paste channel owns that case.

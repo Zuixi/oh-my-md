@@ -92,12 +92,22 @@ apps/desktop/
 6. **Normalization coexistence.** While a tab is in conflict or saveFailed, pending normalization stays visible but autosave to the on-disk path stays paused. Overwrite/recreate/successful guarded save may accept normalization; save copy and reload/discard clear stale pending per plan 01 rules.
 7. **Orchestration lives outside `App.tsx`.** Extend `conflictActions.ts`, `conflictSaveBinding.ts`, or `documentSaveRunner.ts` rather than growing the shell component.
 
+## Large-document tiers (Spec 05b + 2026-08-20 progressive rendering)
+
+- Scale policy no longer forces source mode: over-scale docs open in Live with safe mode = render budget (`SAFE_MODE_RENDER_BUDGET_LINES` = 60) + windowed live decorations + on-demand stats + viewport-bounded ordered renumber. All applied through `applyDocumentScalePolicy` in `App.tsx` — every path that first hands a view real content must call it.
+- The HUGE tier (≥ `OPEN_READONLY_THRESHOLD_BYTES`) also renders live, with `readOnly: true`. CodeMirror readOnly is advisory: engine keymaps, renumber dispatches, widget interactions, and paste handlers guard `state.readOnly` themselves (guard suite `packages/engine/test/readonly-guards.test.ts`; gotchas entry "CodeMirror `readOnly` is advisory").
+- Outlines are per-tab cached (`docVersionsRef` / `outlineCacheRef` in `App.tsx`): tab switches hit the cache (version-checked), and over-scale tabs return immediately with the outline filled from an idle callback.
+- LARGE opens stream (`readDocumentStreaming`) and assemble chunks into a CM `Text` directly (engine `docText.ts`; App's `docTextsRef` stash carries it to `ensureViews`/`resetTabDocument`), so `EditorState.create` skips the full-string line split. Streaming failure falls back to one-shot `readDocument`.
+- Version probing is stat-first: `stat_document` tiers opens before any read, and Rust's `DocumentVersionCache` (`(mtime_ns, size) → fingerprint`) lets background polls of unchanged 50MB tabs skip the read entirely (`src-tauri/src/documents.rs`).
+
 ## Tauri and File Rules
 
 Current Rust commands are:
 
 - `read_document(path)` — read Markdown as UTF-8 with typed `DiskSnapshot` (missing or existing + opaque version).
-- `read_document_version(path)` — fingerprint probe only; used by watcher and pre-save checks.
+- `stat_document(path)` — metadata-only probe (`missing` / `existing` + `sizeBytes`); used to tier opens (normal / LARGE stream / HUGE read-only) before any content read (Spec 05b).
+- `read_document_streaming(path, onEvent)` — LARGE-tier open: chunk events (`{ kind: "chunk", index, text }`, 512 KiB UTF-8-aligned) plus byte progress over a Tauri channel; the frontend assembles chunks into a CM `Text` (engine `docText.ts`) and falls back to `read_document` on failure.
+- `read_document_version(path)` — fingerprint probe only; used by watcher and pre-save checks. Stat-first: a `(mtime_ns, size)` cache hit returns the last fingerprint without reading (`DocumentVersionCache`).
 - `save_document(path, contents, expected)` — guarded save with double-compare; returns typed `SaveDocumentResult` (saved, content/deleted/created/path-changed/unexpected-symlink conflict, permission/metadata/internal errors).
 - `read_file(path)` — legacy UTF-8 read; not for editor document lifecycle.
 - `write_file(path, contents)` — legacy atomic replace; not for editor document saves.
