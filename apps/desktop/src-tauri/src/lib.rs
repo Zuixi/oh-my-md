@@ -3,6 +3,7 @@ mod documents;
 mod export;
 mod fonts;
 mod menu;
+mod session_flush;
 mod watcher;
 mod workspace;
 
@@ -127,10 +128,29 @@ fn set_view_menu_state(app: tauri::AppHandle, state: menu::ViewMenuState) {
 }
 
 // In-app menubar (non-macOS) needs an explicit quit entry and a version for
-// the About dialog; macOS gets both from the native app menu instead.
+// the About dialog; macOS gets both from the native app menu instead. The
+// menubar quit flushes session state first — `app.exit` skips ExitRequested,
+// so the flush gate must run inline before exiting.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
-    app.exit(0);
+    let gate = app.state::<session_flush::FlushGate>();
+    if gate.in_progress() {
+        // The in-flight round's finish exits the app.
+        return;
+    }
+    let exit_handle = app.clone();
+    if gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move || {
+        exit_handle.exit(0)
+    }) {
+        let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+    } else {
+        app.exit(0);
+    }
+}
+
+#[tauri::command]
+fn session_flush_ack(app: tauri::AppHandle) {
+    app.state::<session_flush::FlushGate>().ack();
 }
 
 #[tauri::command]
@@ -563,6 +583,7 @@ pub fn run() {
         )
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
+        .manage(session_flush::FlushGate::default())
         .setup(|app| {
             menu::install(app)?;
             watcher::install(app.handle());
@@ -571,6 +592,27 @@ pub fn run() {
             }
             log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Red X / Cmd+W: the webview's 1s debounced session save would be
+            // torn down with the window, so flush first and destroy after.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let gate = window.app_handle().state::<session_flush::FlushGate>();
+                if gate.in_progress() {
+                    return;
+                }
+                let app = window.app_handle();
+                let closing = window.clone();
+                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move || {
+                    let _ = closing.destroy();
+                }) {
+                    return;
+                }
+                // Begin before emit: an ack racing an unregistered round
+                // would no-op and stall the close until the timeout.
+                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             documents::read_document,
@@ -607,6 +649,7 @@ pub fn run() {
             set_recent_files,
             set_view_menu_state,
             quit_app,
+            session_flush_ack,
             app_version,
             take_pending_open_files,
             diagnostics::export_diagnostics,
@@ -619,7 +662,7 @@ pub fn run() {
         .run(|app, event| {
             // macOS "open with"/double-click/Finder-dock drops arrive here.
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Opened { urls } = event {
+            if let tauri::RunEvent::Opened { ref urls } = event {
                 for url in urls {
                     let Ok(path) = url.to_file_path() else {
                         continue;
@@ -629,6 +672,34 @@ pub fn run() {
                     }
                     record_open_file(app, path.to_string_lossy().into_owned());
                 }
+            }
+            // Cmd+Q / native quit arrives as ExitRequested without per-window
+            // CloseRequested. code: None marks user-initiated exits; our own
+            // post-flush `app.exit(0)` carries Some and passes through.
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                let gate = app.state::<session_flush::FlushGate>();
+                if gate.consume_flushed() {
+                    return;
+                }
+                if app.webview_windows().is_empty() {
+                    return;
+                }
+                api.prevent_exit();
+                if gate.in_progress() {
+                    // The window-path round destroys the last window, which
+                    // re-runs this handler with `flushed` set.
+                    return;
+                }
+                let exit_handle = app.clone();
+                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move || {
+                    exit_handle.exit(0)
+                }) {
+                    return;
+                }
+                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
             }
         });
 }

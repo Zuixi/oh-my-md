@@ -7,6 +7,7 @@ import { exportSaveOptions } from "./exportPath"
 import { parseRecents } from "./recents"
 import {
   MARKDOWN_EXTENSIONS,
+  SESSION_FLUSH_EVENT,
   STORAGE_KEY_RECENTS,
   STORAGE_KEY_SESSION,
   STORAGE_KEY_SETTINGS,
@@ -200,6 +201,10 @@ export interface DesktopServices {
   listSystemFonts?: () => Promise<string[] | null>
   getSessionState?: () => Promise<SavedSessionState | null>
   saveSessionState?: (state: SavedSessionState) => Promise<void>
+  /** Quit-time flush: Rust prevents close/exit, emits the session-flush event, and waits for this ack. */
+  listenSessionFlush?: (handler: () => void | Promise<void>) => () => void
+  /** Signals the Rust FlushGate that the webview finished persisting session state. */
+  sessionFlushAck?: () => Promise<void>
   reportError: (message: string) => void
   /** Fire-and-forget success feedback (toast-backed in production; optional so tests/browser builds may omit it). */
   notifySuccess?: (message: string) => void
@@ -415,6 +420,17 @@ export const defaultServices: DesktopServices = {
       } catch {
         // ignore
       }
+    }
+  },
+  listenSessionFlush: handler => {
+    const pending = listen(SESSION_FLUSH_EVENT, () => handler())
+    return () => { void pending.then(unlisten => unlisten()) }
+  },
+  sessionFlushAck: async () => {
+    try {
+      await invoke("session_flush_ack")
+    } catch {
+      // Rust bounds the wait anyway; never stall the quit on a lost ack.
     }
   },
   checkForUpdates: async () => {

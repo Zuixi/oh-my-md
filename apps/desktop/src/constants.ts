@@ -38,6 +38,11 @@ export const STORAGE_KEY_RECENTS = "omd.recent-files"
 export const STORAGE_KEY_SETTINGS = "omd_user_settings"
 export const STORAGE_KEY_SESSION = "omd_saved_session"
 
+/** Quit-time session flush event emitted by the Rust FlushGate
+ *  (src-tauri/src/session_flush.rs `SESSION_FLUSH_EVENT`); drift-guarded in
+ *  test/crossLayerConstants.test.ts. */
+export const SESSION_FLUSH_EVENT = "session-flush"
+
 /** File-sidebar drag-resize bounds; the default must match the
  *  `--omd-sidebar-width` fallback in styles.css (drift-guarded in
  *  test/crossLayerConstants.test.ts). */

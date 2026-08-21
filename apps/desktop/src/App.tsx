@@ -946,6 +946,27 @@ export default function App({
     }
   }, [workspace.folder, workspace.tabs, workspace.activeId, services])
 
+  // 退出前 flush：Rust 在 CloseRequested/ExitRequested 先 emit session-flush，
+  // 这里立即取消挂起的防抖、落盘当前 workspace，再 ack 放行关闭/退出。
+  // 保存失败也要 ack——ack 卡住只会把退出拖到 Rust 的 2s 超时。
+  useEffect(() => {
+    if (!services.listenSessionFlush || !services.sessionFlushAck) return
+    return services.listenSessionFlush(async () => {
+      if (sessionSaveTimerRef.current !== null) {
+        window.clearTimeout(sessionSaveTimerRef.current)
+        sessionSaveTimerRef.current = null
+      }
+      try {
+        await services.saveSessionState?.(extractSessionState(workspaceRef.current))
+      } catch {
+        // 落盘失败也要走完 ack——事件回调里的逃逸 rejection 只会变成
+        // webview 的未处理拒绝，还拖慢退出。
+      } finally {
+        await services.sessionFlushAck?.()
+      }
+    })
+  }, [services])
+
   useEffect(() => {
     applyTheme(theme, customCss)
   }, [theme, customCss])

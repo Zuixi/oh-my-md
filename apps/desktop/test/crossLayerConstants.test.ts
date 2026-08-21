@@ -12,6 +12,7 @@ import {
   MAX_SEARCH_HITS,
   MAX_SNAPSHOTS_PER_FILE,
   SAFE_MODE_LINES,
+  SESSION_FLUSH_EVENT,
   SIDEBAR_DEFAULT_WIDTH,
 } from "../src/constants"
 import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
@@ -26,6 +27,7 @@ import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SA
 
 const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf8")
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
+const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
 
 function rustConstNumber(source: string, name: string): number {
@@ -80,6 +82,12 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("assets directory name matches lib.rs ASSETS_DIR_NAME", () => {
     expect(ASSETS_DIR_NAME).toBe(rustConstString(LIB_RS, "ASSETS_DIR_NAME"))
+  })
+
+  it("session flush event name matches session_flush.rs SESSION_FLUSH_EVENT", () => {
+    expect(SESSION_FLUSH_EVENT).toBe(
+      rustConstString(SESSION_FLUSH_RS, "SESSION_FLUSH_EVENT"),
+    )
   })
 
   it("content max width matches styles.css --omd-content-width", () => {
