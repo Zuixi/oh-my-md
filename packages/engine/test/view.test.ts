@@ -125,6 +125,32 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("keeps a block widget mounted with covered overlay when a selection fully covers it", async () => {
+    const doc = "intro\n\n```ts\nconst a = 1\n```\n\noutro\n"
+    const { view, errors } = makeView(doc)
+    await tick()
+    expect(view.dom.querySelector(".omd-block")).toBeTruthy()   // 光标在文末，块已渲染
+    // 完整覆盖（Cmd+A 语义）→ 保持渲染 + 选中态覆盖类
+    view.dispatch({ selection: { anchor: 0, head: doc.length } })
+    await tick()
+    const covered = view.dom.querySelector(".omd-block") as HTMLElement
+    expect(covered).toBeTruthy()
+    expect(covered.classList.contains("omd-block-covered")).toBe(true)
+    // 光标进入块内 → 编辑态，widget 卸载
+    const fenceEnd = doc.indexOf("\n", doc.indexOf("```ts")) + 1
+    view.dispatch({ selection: { anchor: fenceEnd } })
+    await tick()
+    expect(view.dom.querySelector(".omd-block")).toBeNull()
+    // 光标离开 → 恢复渲染，覆盖类消失
+    view.dispatch({ selection: { anchor: doc.length } })
+    await tick()
+    const restored = view.dom.querySelector(".omd-block") as HTMLElement
+    expect(restored).toBeTruthy()
+    expect(restored.classList.contains("omd-block-covered")).toBe(false)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
 
   it("keeps checkbox edit position correct after inserting before it", async () => {
     const doc = "before\n\n- [ ] task\n"
