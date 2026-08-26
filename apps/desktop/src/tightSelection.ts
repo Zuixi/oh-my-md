@@ -14,7 +14,7 @@
  * line end of a selection to the content-box right edge and covers the lines
  * between the first and last selected line with a single full-width band.
  * That is not configurable (discuss.codemirror.net threads 9495/9735), so
- * this port clamps the geometry instead (see NUB_PX and the Modification A/B
+ * this port clamps the geometry instead (see NUB_PX and the Modification A/B/C
  * comments below).
  *
  * iOS selection handles are out of scope (macOS-first desktop app), so the
@@ -272,6 +272,19 @@ function tightRectanglesForRange(
       }
     if (horizontal.length == 0)
       addSpan(start, from == null, end, to == null, view.textDirection)
+    // Modification C: coordsAtPos returns glyph metrics (textHeight). When
+    // CSS line-height > 1 the line box is taller, so per-line markers leave
+    // visible gaps between rows. Snap the vertical span outward onto the
+    // defaultLineHeight grid (origin = content box top) so each touched row
+    // fills its line box and adjacent rows abut — matching mainstream
+    // editors — while Modification A keeps horizontal clamps tight to text.
+    // Outward snap (not mid-line expand) also preserves empty-line spans
+    // whose before-side start coord sits on the previous row.
+    if (top < bottom) {
+      let lh = view.defaultLineHeight, origin = contentRect.top
+      top = origin + Math.floor((top - origin) / lh + 1e-6) * lh
+      bottom = origin + Math.ceil((bottom - origin) / lh - 1e-6) * lh
+    }
     return { top, bottom, horizontal }
   }
   function tightDrawForWidget(block: BlockInfo, top: boolean): DrawnLine {

@@ -65,7 +65,7 @@ apps/desktop/
 
 - Do not enable `indentOnInput`, `closeBrackets`, or generic `autocompletion`; current live-preview decorations conflict with them. Emoji `:` completion comes from `editorExtensions`.
 - Preserve history, selection drawing, drop cursor, active-line highlighting, and standard editing keymaps unless the task explicitly changes host behavior.
-- Selection drawing is the vendored tight-selection extension (`src/tightSelection.ts`), not stock `drawSelection()` from `@codemirror/view`: multi-line highlights stop at each line's text end (+ `NUB_PX`) instead of running to the content right edge. Do not re-add stock `drawSelection()`, and re-diff the vendored geometry against upstream whenever `@codemirror/view` is bumped.
+- Selection drawing is the vendored tight-selection extension (`src/tightSelection.ts`), not stock `drawSelection()` from `@codemirror/view`: multi-line highlights stop at each line's text end (+ `NUB_PX`) instead of running to the content right edge, and each per-line bar snaps to the line-box height so rows abut under `line-height` > 1. Do not re-add stock `drawSelection()`, and re-diff the vendored geometry against upstream whenever `@codemirror/view` is bumped.
 - Block decorations must not have vertical margins: CodeMirror excludes them from its height map, so the error accumulates until clicks target another line. Put visual spacing in wrapper padding and keep borders/overflow on `.omd-block-body`; `test/blockWidgetLayout.test.ts` guards the rule.
 - Pass host-dependent behavior through engine options, such as resolving Markdown image sources to loadable URLs.
 - Destroy `EditorView` during React cleanup and clear retained references.
