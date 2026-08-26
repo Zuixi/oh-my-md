@@ -903,9 +903,11 @@ export default function App({
       }
       const pendingOpen = await services.takePendingOpenFiles?.() ?? []
       if (pendingOpen.length > 0) {
-        // An explicit launch request (double-click / Open With) wins over
+        // An explicit launch request (double-click / Open With / CLI) wins over
         // restoring the previous session.
-        for (const path of pendingOpen) openRecentRef.current(path)
+        for (const path of pendingOpen) {
+          await openExternalRef.current(path)
+        }
       } else {
         const restored = await restoreSavedSession()
         if (!restored) {
@@ -1427,6 +1429,21 @@ export default function App({
     return runOpen(async () => path)
   }
 
+  function openExternal(nextPath: string): Promise<void> {
+    const existing = findTabByPath(workspaceRef.current, nextPath)
+    if (existing) {
+      activateTab(existing.id)
+      rememberRecent(nextPath)
+      return Promise.resolve()
+    }
+    const active = sessionRef.current
+    const activeHasContent =
+      sessionPath(active) !== null
+      || (docsRef.current.get(active.id) ?? "").length > 0
+      || sessionDirty(active, docRef.current)
+    return openPath(nextPath, activeHasContent)
+  }
+
   async function checkForUpdatesNow(manual: boolean) {
     if (!services.checkForUpdates) return
     const update = await services.checkForUpdates()
@@ -1780,9 +1797,11 @@ export default function App({
     return pollFileTabsRef.current().finally(() => { pollInFlightRef.current = false })
   }
   const openRecentRef = useRef(openRecent)
+  const openExternalRef = useRef(openExternal)
   const refreshTreeRef = useRef(refreshTree)
   pollFileTabsRef.current = pollFileTabs
   openRecentRef.current = openRecent
+  openExternalRef.current = openExternal
   refreshTreeRef.current = refreshTree
 
   const runEditorCommand = (command: (view: EditorView) => boolean): (() => void) => () => {
@@ -2019,7 +2038,7 @@ export default function App({
 
   useEffect(() => {
     if (!services.listenOpenFile) return
-    return services.listenOpenFile(path => { void openRecentRef.current(path) })
+    return services.listenOpenFile(path => { void openExternalRef.current(path) })
   }, [services])
 
   useEffect(() => {
@@ -2029,7 +2048,7 @@ export default function App({
         const ext = path.split(".").pop()?.toLowerCase() ?? ""
         return MARKDOWN_EXTENSIONS.includes(ext)
       })
-      if (markdown) void openRecentRef.current(markdown)
+      if (markdown) void openExternalRef.current(markdown)
     })
   }, [services])
 

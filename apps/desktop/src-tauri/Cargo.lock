@@ -76,42 +76,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "appsdesktop"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "blake3",
- "block2",
- "dirs",
- "ignore",
- "log",
- "notify",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-text",
- "objc2-foundation",
- "objc2-web-kit",
- "os_info",
- "regex",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tempfile",
- "thiserror 2.0.20",
- "trash",
- "windows 0.61.3",
- "xattr",
- "zip 2.4.2",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2800,6 +2764,42 @@ dependencies = [
  "objc2-foundation",
  "objc2-javascript-core",
  "objc2-security",
+]
+
+[[package]]
+name = "omd"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "blake3",
+ "block2",
+ "dirs",
+ "ignore",
+ "log",
+ "notify",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-text",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "os_info",
+ "regex",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tempfile",
+ "thiserror 2.0.20",
+ "trash",
+ "windows 0.61.3",
+ "xattr",
+ "zip 2.4.2",
 ]
 
 [[package]]

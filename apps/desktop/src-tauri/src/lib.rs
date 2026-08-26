@@ -560,7 +560,7 @@ fn is_markdown_path(path: &Path) -> bool {
 
 fn queue_open_file(path: String) {
     if let Ok(mut pending) = PENDING_OPEN_FILES.lock() {
-        if pending.len() < MAX_PENDING_OPEN_FILES {
+        if !pending.contains(&path) && pending.len() < MAX_PENDING_OPEN_FILES {
             pending.push(path);
         }
     }
@@ -569,6 +569,32 @@ fn queue_open_file(path: String) {
 fn record_open_file(app: &tauri::AppHandle, path: String) {
     queue_open_file(path.clone());
     let _ = app.emit(OPEN_FILE_EVENT, path);
+}
+
+fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Option<&str>) {
+    let clean = raw_arg
+        .strip_prefix("file://")
+        .unwrap_or(raw_arg)
+        .trim_matches('"');
+    let path = Path::new(clean);
+    let resolved = if path.is_relative() {
+        if let Some(base) = cwd {
+            Path::new(base).join(path)
+        } else if let Ok(base) = std::env::current_dir() {
+            base.join(path)
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+    if is_markdown_path(&resolved) {
+        let canonical = std::fs::canonicalize(&resolved)
+            .unwrap_or(resolved)
+            .to_string_lossy()
+            .into_owned();
+        record_open_file(app, canonical);
+    }
 }
 
 /// Drained by the webview after mount: launch-time Opened events can fire
@@ -584,7 +610,7 @@ fn take_pending_open_files() -> Vec<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // A second launch focuses the running window; markdown file
             // arguments open in this instance (macOS delivers the same via
             // RunEvent::Opened instead of a second process).
@@ -593,9 +619,8 @@ pub fn run() {
                 let _ = window.set_focus();
             }
             for arg in argv.iter().skip(1) {
-                let path = arg.strip_prefix("file://").unwrap_or(arg);
-                if is_markdown_path(Path::new(path)) {
-                    record_open_file(app, path.to_string());
+                if !arg.starts_with('-') {
+                    resolve_and_record_open_arg(app, arg, Some(&cwd));
                 }
             }
         }))
@@ -616,6 +641,11 @@ pub fn run() {
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
         .setup(|app| {
+            for arg in std::env::args().skip(1) {
+                if !arg.starts_with('-') {
+                    resolve_and_record_open_arg(app.handle(), &arg, None);
+                }
+            }
             // Apply the persisted theme before the first paint; the webview's
             // set_window_theme push arrives only after React boots, which
             // leaves the title bar flashing the OS appearance at startup.
