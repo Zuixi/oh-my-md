@@ -168,6 +168,28 @@ describe("block widget pipeline", () => {
     dom.remove()
   }, 2000)
 
+  it("maps code-widget clicks to the clicked source line", () => {
+    let anchor = -1
+    const view = {
+      requestMeasure: () => {},
+      posAtCoords: () => 9999,
+      dispatch: ({ selection }: { selection: { anchor: number } }) => { anchor = selection.anchor },
+      focus: () => {},
+    }
+    const widget = new CodeWidget("line 1\nline 2\nline 3", 0, "js", 100, 117)
+    const dom = widget.toDOM(view as never)
+    const body = dom.querySelector(".omd-block-body") as HTMLElement
+    body.innerHTML = "<pre><code><span class='line'>line 1</span><span class='line'>line 2</span><span class='line'>line 3</span></code></pre>"
+    const firstLine = body.querySelector(".line") as HTMLElement
+    firstLine.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+      clientX: 20,
+      clientY: 20,
+    }))
+    expect(anchor).toBe(100)
+  })
+
   it("writes mermaid SVG into the widget body", async () => {
     const widget = new MermaidWidget("graph TD; A-->B", 0)
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
