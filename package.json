@@ -12,6 +12,8 @@
     "perf:smoke": "node scripts/perf-smoke.mjs",
     "release:version": "bash scripts/sync-version.sh",
     "release:changelog": "bash scripts/changelog.sh",
+    "package": "bash scripts/package.sh",
+    "package:win": "powershell -ExecutionPolicy Bypass -File scripts/package.ps1",
     "prepare": "git config core.hooksPath .githooks"
   }
 }
