@@ -15,6 +15,20 @@ export function unregisterBlockWidget(widget: BlockWidget) {
   liveWraps.delete(widget)
 }
 
+export function blockWidgetRange(widget: BlockWidget, view: EditorView): { from: number; to: number } | null {
+  const state = (view as EditorView & { state?: EditorView["state"] }).state
+  if (!state || typeof state.field !== "function") return null
+  const specs = state.field(livePreviewField, false)?.specs ?? []
+  for (const spec of specs) {
+    if (!spec.tag.startsWith("widget:block:")) continue
+    const candidate = (spec.deco.spec as { widget?: BlockWidget }).widget
+    if (candidate && (candidate === widget || candidate.eq(widget) || widget.eq(candidate))) {
+      return { from: spec.from, to: spec.to }
+    }
+  }
+  return null
+}
+
 const COVERED = "omd-block-covered"
 
 // 装饰重建会产生新 widget 实例（CM 按 eq() 复用 DOM，toDOM 不再调用），

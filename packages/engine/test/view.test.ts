@@ -108,6 +108,21 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("clicking a rendered code row selects the corresponding source row", async () => {
+    const doc = "before\n\n```powershell\nfirst\nsecond\nthird\n```\n\nafter"
+    const { view, errors } = makeView(doc)
+    const row = await waitFor(".omd-code .line", view, 3000)
+    expect(row).toBeTruthy()
+    ;(row as HTMLElement).dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+    }))
+    await tick()
+    expect(view.state.selection.main.head).toBe(doc.indexOf("first"))
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("keeps block click position correct after inserting before the widget", async () => {
     const doc = "before\n\n| a |\n|---|\n| 1 |\n"
     const { view, errors } = makeView(doc)

@@ -148,7 +148,7 @@ Verified 2026-08-26 in a real-browser reproduction (Chrome + `@codemirror/view` 
 
 Consequences: mouse clicks on rendered code blocks land on an arbitrary nearby line (depends on document layout), arrow-key entry is fine only because `navigation/blockEntry.ts::blockEntryPosition` maps to a content line itself — the mouse path has no equivalent. A correct fix must (a) map the clicked rendered row to a source line inside the replaced range directly (skip fence lines), and (b) after any async widget render, get the map refreshed (a DOM-redrawing transaction, e.g. via decoration touch — bare `requestMeasure()` provably does not). Tables/hr/front-matter are synchronous renders (measured correctly on the next measure after mount) but still hit defect 2.
 
-Status update (implemented): code blocks now render a synchronous `<pre>` source placeholder before Shiki async rendering, so initial heightmap no longer starts from a near-zero body; and code-widget click mapping no longer uses `posAtCoords` on the opaque replace block, instead mapping to source lines from clicked `.line` rows (fallback: Y-ratio over body). This fixes "click row 1, caret lands far away / fence line" for fenced code widgets.
+Status update (implemented): code blocks now render a synchronous `<pre>` source placeholder before Shiki async rendering, refresh the owning StateField after async DOM changes, and resolve click coordinates from the current `livePreviewField.specs` range rather than stale constructor offsets or opaque-block `posAtCoords`. Clicks on rendered `.line` rows map to the corresponding source line (fallback: Y-ratio over body).
 
 ## Structure and appearance live in different packages
 
