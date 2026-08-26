@@ -3,8 +3,8 @@ import { livePreviewField } from "./build"
 import type { BlockWidget } from "./blockWidget"
 
 // 存活块 widget 实例 → wrap DOM（BlockWidget.toDOM 注册 / destroy 注销）。
-// 覆盖判定用 livePreviewField.specs 的 from/to（构造期 pos 会随编辑漂移，
-// posAtDOM 在无布局环境不可靠）；注册表只负责按实例找 DOM。
+// 覆盖判定用 livePreviewField.specs 的 from/to（构造期 pos 会随编辑漂移）。
+// DOM 位置只用于在多个 eq() widget 中确认当前实例，最终范围仍来自 specs。
 const liveWraps = new Map<BlockWidget, HTMLElement>()
 const liveRanges = new Map<HTMLElement, { from: number; to: number }>()
 
@@ -19,22 +19,40 @@ export function unregisterBlockWidget(widget: BlockWidget) {
 }
 
 export function blockWidgetRange(widget: BlockWidget, view: EditorView, dom?: HTMLElement): { from: number; to: number } | null {
-  if (dom) {
-    const range = liveRanges.get(dom)
-    if (range) return range
-  }
   const state = (view as EditorView & { state?: EditorView["state"] }).state
   if (!state || typeof state.field !== "function") return null
   const specs = state.field(livePreviewField, false)?.specs ?? []
-  for (const spec of specs) {
-    if (!spec.tag.startsWith("widget:block:")) continue
+  const candidates = specs.flatMap(spec => {
+    if (!spec.tag.startsWith("widget:block:")) return []
     const candidate = (spec.deco.spec as { widget?: BlockWidget }).widget
-    if (candidate && (candidate === widget || candidate.eq(widget) || widget.eq(candidate))) {
-      if (dom) liveRanges.set(dom, { from: spec.from, to: spec.to })
-      return { from: spec.from, to: spec.to }
-    }
+    return candidate ? [{ spec, candidate }] : []
+  })
+
+  // Prefer identity before eq(): two blocks may intentionally have identical
+  // source/embed values, but their DOM must stay bound to distinct ranges.
+  const exact = candidates.find(({ candidate }) => candidate === widget)
+  if (exact) {
+    const range = { from: exact.spec.from, to: exact.spec.to }
+    if (dom) liveRanges.set(dom, range)
+    return range
   }
-  return null
+
+  const equalAt = (from: number) => candidates.find(({ spec, candidate }) =>
+    spec.from === from &&
+    candidate.constructor === widget.constructor &&
+    (candidate.eq(widget) || widget.eq(candidate)))
+  let matched = null
+  if (dom && view.dom.contains(dom) && typeof view.posAtDOM === "function") {
+    matched = equalAt(view.posAtDOM(dom)) ?? null
+  }
+  if (!matched && dom) {
+    const cached = liveRanges.get(dom)
+    if (cached) matched = equalAt(cached.from) ?? null
+  }
+  if (!matched) return null
+  const range = { from: matched.spec.from, to: matched.spec.to }
+  if (dom) liveRanges.set(dom, range)
+  return range
 }
 
 const COVERED = "omd-block-covered"

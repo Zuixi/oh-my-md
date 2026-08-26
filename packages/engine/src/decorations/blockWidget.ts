@@ -63,8 +63,9 @@ export abstract class BlockWidget extends WidgetType {
   protected abstract get cssClass(): string
   protected renderPlaceholder(_el: HTMLElement): void {}
   protected abstract renderInto(el: HTMLElement): void | Promise<void>
-  protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
-    return view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? this.pos
+  protected clickPos(view: EditorView, _event: MouseEvent, wrap: HTMLElement): number {
+    const range = blockWidgetRange(this, view, wrap)
+    return range?.from ?? view.posAtDOM(wrap)
   }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }

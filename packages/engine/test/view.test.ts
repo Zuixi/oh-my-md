@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { EditorView } from "@codemirror/view"
 import { EditorState } from "@codemirror/state"
 import {
@@ -108,6 +108,23 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  it("enters opaque block source from its current decoration range", async () => {
+    const doc = "intro\n\n$$\nx^2\n$$\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const block = view.dom.querySelector(".omd-math") as HTMLElement
+    expect(block).toBeTruthy()
+    expect(view.posAtDOM(block, 0)).toBe(doc.indexOf("$$"))
+    expect(view.posAtDOM(block, -1)).toBe(doc.indexOf("$$"))
+    vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
+
+    block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+
+    expect(view.state.selection.main.head).toBe(doc.indexOf("$$"))
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("clicking a rendered code row selects the corresponding source row", async () => {
     const doc = "before\n\n```powershell\nfirst\nsecond\nthird\n```\n\nafter"
     const { view, errors } = makeView(doc)
@@ -119,6 +136,21 @@ describe("view smoke (real EditorView)", () => {
     }))
     await tick()
     expect(view.state.selection.main.head).toBe(doc.indexOf("first"))
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps identical block widgets bound to their own source ranges", async () => {
+    const block = "```js\nsame()\n```"
+    const doc = `${block}\n\nmiddle\n\n${block}\n\ntail`
+    const { view, errors } = makeView(doc)
+    await tick()
+    const widgets = view.dom.querySelectorAll(".omd-code")
+    expect(widgets).toHaveLength(2)
+
+    widgets[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+
+    expect(view.state.selection.main.head).toBe(doc.lastIndexOf("```js"))
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
