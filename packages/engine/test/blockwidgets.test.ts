@@ -8,6 +8,7 @@ import { ImageWidget, imageResolver } from "../src/decorations/widgets/image"
 import { CodeWidget } from "../src/decorations/widgets/code"
 import { TableWidget, type TableData } from "../src/decorations/widgets/table"
 import { MermaidWidget } from "../src/decorations/widgets/mermaid"
+import { MathBlockWidget } from "../src/decorations/widgets/math"
 
 vi.mock("mermaid", () => ({
   default: {
@@ -149,6 +150,17 @@ describe("block widget pipeline", () => {
     dom.remove()
   })
 
+  it("installs async block placeholders before the first layout measure", () => {
+    const view = { requestMeasure: () => {} } as never
+    const math = new MathBlockWidget("$$\nx^2\n$$", 0).toDOM(view)
+    const mermaid = new MermaidWidget("graph TD; A-->B", 0).toDOM(view)
+
+    expect(math.querySelector(".omd-block-body pre")?.textContent).toBe("$$\nx^2\n$$")
+    expect(mermaid.querySelector(".omd-block-body pre")?.textContent).toBe("graph TD; A-->B")
+    math.remove()
+    mermaid.remove()
+  })
+
   it("requests a layout measure after rendering an error fallback", async () => {
     let measures = 0
     const widget = new RejectedWidget("source", 0)
@@ -234,12 +246,12 @@ describe("block widget pipeline", () => {
     dom.remove()
   }, 2000)
 
-  it("does not write mermaid SVG after destroy", async () => {
+  it("keeps source placeholder without writing Mermaid output after destroy", async () => {
     const widget = new MermaidWidget("graph TD; A-->B", 0)
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     widget.destroy(dom)
     await new Promise(resolve => setTimeout(resolve, 600))
     expect(dom.querySelector("svg")).toBeNull()
-    expect(dom.querySelector(".omd-block-body")?.textContent).toBe("")
+    expect(dom.querySelector(".omd-block-body")?.textContent).toBe("graph TD; A-->B")
   }, 2000)
 })

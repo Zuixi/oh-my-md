@@ -15,6 +15,12 @@ async function renderMath(
 
 export class MathBlockWidget extends BlockWidget {
   protected get cssClass() { return "omd-math" }
+  protected renderPlaceholder(el: HTMLElement) {
+    const pre = document.createElement("pre")
+    pre.className = "omd-block-placeholder"
+    pre.textContent = this.src
+    el.appendChild(pre)
+  }
   protected renderInto(el: HTMLElement) {
     // 剥掉首尾 $$ 标记（单行与多行通用）
     const tex = this.src.replace(/^\$\$|\$\$\s*$/g, "").trim()

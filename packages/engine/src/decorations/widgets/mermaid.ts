@@ -17,6 +17,13 @@ let counter = 0
 export class MermaidWidget extends BlockWidget {
   protected get cssClass() { return "omd-mermaid" }
 
+  protected renderPlaceholder(el: HTMLElement) {
+    const pre = document.createElement("pre")
+    pre.className = "omd-block-placeholder"
+    pre.textContent = this.src
+    el.appendChild(pre)
+  }
+
   protected async renderInto(el: HTMLElement) {
     // spec 性能底线：mermaid 重编译 debounce 500ms。widget 只在文本稳定后渲染；
     // 若渲染前 widget 已被 CM 销毁（继续打字 → 回到源码态），直接放弃。

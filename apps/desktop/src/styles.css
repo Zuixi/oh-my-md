@@ -154,7 +154,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
     transparent calc(var(--omd-bq-bar) + 3em + 3px));
 }
 .editor-host .omd-hr { border-top: 1px solid var(--omd-bar); }
-.editor-host .omd-hr-block { margin: 0.4em 0; }
+.editor-host .omd-block.omd-hr-block { padding: 0.4em 0; }
 .editor-host .omd-hr-block .omd-block-body { padding: 0; }
 .editor-host .omd-hr-block hr { border: none; border-top: 1px solid var(--omd-bar); margin: 0.5em 0; }
 .editor-host .omd-front-matter { padding: 2px 0; }
@@ -186,8 +186,10 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-block.omd-li-3,
 .editor-host .omd-block.omd-li-4 { --omd-li-hang: 0; }
 
-/* M2 block widgets */
-.editor-host .omd-block { position: relative; margin: 0.5em 0; }
+/* M2 block widgets
+   CodeMirror's height map does not include vertical margins on block
+   decorations. Keep whitespace inside the measured widget DOM. */
+.editor-host .omd-block { position: relative; padding: 0.5em 0; }
 /* 选区完整包含块时保持渲染的选中态覆盖（Typora 语义：选区是视觉的） */
 .editor-host .omd-block.omd-block-covered::after {
   content: "";
@@ -207,13 +209,24 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   background: var(--omd-error-bg); border: 1px solid var(--omd-error-border); border-radius: 4px;
   padding: 8px; white-space: pre-wrap; color: var(--omd-error-fg);
 }
+.editor-host .omd-block-placeholder {
+  margin: 0;
+  padding: 4px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.85em/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--omd-muted);
+}
 .editor-host .omd-table {
   max-width: 100%;
+  padding: 0.8em 0;
+}
+.editor-host .omd-table .omd-block-body {
   overflow-x: auto;
-  margin: 0.8em 0;
   border-radius: 6px;
   border: 1px solid var(--omd-border);
 }
+.editor-host .omd-table .omd-block-edit { top: calc(0.8em + 2px); }
 .editor-host .omd-table table {
   width: 100%;
   border-collapse: collapse;
