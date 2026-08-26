@@ -72,6 +72,20 @@ interface FakeViewSpec {
    * `lineWrapping` on; one block per document line spanning all its rows).
    */
   wrapColumn?: number
+  /**
+   * `.cm-line` padding-left (px) for leftSide. Glyph coords stay un-padded so
+   * tests can reproduce code-block/widget lines where leftSide sits left of text.
+   */
+  linePaddingLeft?: number
+  /**
+   * Extra px per 1-based line number added to glyph x (simulates omd-li-N padding).
+   */
+  lineNestIndent?: number
+  /**
+   * When set, visible ranges skip this many leading chars on every line (hidden
+   * list-indent / syntax folds still in the document selection).
+   */
+  hiddenPrefixChars?: number
 }
 
 function makeFakeView(spec: FakeViewSpec): EditorView {
@@ -107,7 +121,8 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
   // the collapsed line-end caret on the line's last row.
   const glyphCell = (line: Line, glyph: number) => {
     const row = wrap > 0 ? Math.min(Math.floor(glyph / wrap), rowsOf(line) - 1) : 0
-    const x = CONTENT_LEFT + (glyph - row * wrap) * CHAR_W
+    const nest = spec.lineNestIndent ?? 0
+    const x = CONTENT_LEFT + (line.number - 1) * nest + (glyph - row * wrap) * CHAR_W
     const rowTop = CONTENT_TOP + blockTops[line.number - 1] + row * LINE_H
     // Center the shorter glyph rect inside the line box (half-leading above/below).
     const top = rowTop + (LINE_H - TEXT_H) / 2
@@ -155,6 +170,20 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
     new DOMRect(CONTENT_LEFT, CONTENT_TOP, CONTENT_RIGHT - CONTENT_LEFT, 300)
   const contentDOM = document.createElement("div")
   contentDOM.getBoundingClientRect = fakeRect
+  const linePaddingLeft = spec.linePaddingLeft ?? 0
+  if (linePaddingLeft > 0) {
+    const lineElt = document.createElement("div")
+    lineElt.className = "cm-line"
+    contentDOM.appendChild(lineElt)
+    const style = {
+      paddingLeft: String(linePaddingLeft),
+      paddingRight: "0",
+      textIndent: "0",
+    } as CSSStyleDeclaration
+    const orig = window.getComputedStyle.bind(window)
+    window.getComputedStyle = ((elt: Element) =>
+      elt === lineElt ? style : orig(elt)) as typeof window.getComputedStyle
+  }
   const scrollDOM = document.createElement("div")
   scrollDOM.getBoundingClientRect = fakeRect
   Object.defineProperty(scrollDOM, "clientWidth", {
@@ -162,10 +191,18 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
   })
   const dom = document.createElement("div")
   dom.getBoundingClientRect = fakeRect
+  const hiddenPrefix = spec.hiddenPrefixChars ?? 0
+  const visibleRanges = hiddenPrefix > 0
+    ? lines.flatMap(line => {
+        const skip = Math.min(hiddenPrefix, line.length)
+        const from = line.from + skip
+        return from < line.to ? [{ from, to: line.to }] : []
+      })
+    : [{ from: 0, to: doc.length }]
   return {
     state,
     viewport: { from: 0, to: doc.length },
-    visibleRanges: [{ from: 0, to: doc.length }],
+    visibleRanges,
     viewportLineBlocks: blocks,
     textDirection: spec.textDirection ?? Direction.LTR,
     lineWrapping: wrap > 0,
@@ -207,15 +244,61 @@ describe("tightSelection geometry (fake view)", () => {
     expect(top.left).toBe(CHAR_W)
     expect(rightEdge(top)).toBe(3 * CHAR_W + NUB_PX)
     expect(top.top).toBe(0)
-    // Middle line: full line drawn on its own row, ending at its own text
-    // end + nub instead of one full-width band across the gap.
+    // Middle line: full line drawn on its own row at the shared leftSide,
+    // ending at its own text end + nub instead of one full-width band.
     expect(middle.left).toBe(0)
     expect(rightEdge(middle)).toBe(4 * CHAR_W + NUB_PX)
     expect(middle.top).toBe(LINE_H)
-    // Bottom line: starts at leftSide, ends at the selected text end.
+    // Bottom line: starts at the line's text start, ends at the selected text end.
     expect(bottom.left).toBe(0)
     expect(rightEdge(bottom)).toBe(2 * CHAR_W)
     expect(bottom.top).toBe(2 * LINE_H)
+  })
+
+  it("multi-line range: open line starts align at leftSide, not per-line glyph padding", () => {
+    // VS Code / Typora: fully-selected rows share one vertical left edge
+    // (content padding), even when nested lists or hidden syntax shift glyphs.
+    const view = makeFakeView({
+      doc: "abc\ndefg\nhij",
+      anchor: 1,
+      head: 11,
+      linePaddingLeft: 32,
+    })
+    const markers = tightSelectionMarkers(view)
+    expect(markers).toHaveLength(3)
+    const [, middle, bottom] = markers
+    expect(middle.left).toBe(32)
+    expect(bottom.left).toBe(32)
+  })
+
+  it("multi-line range: open line starts ignore per-line nest indent", () => {
+    const view = makeFakeView({
+      doc: "abc\ndefg\nhij",
+      anchor: 1,
+      head: 11,
+      lineNestIndent: 3 * CHAR_W,
+      linePaddingLeft: 32,
+    })
+    const markers = tightSelectionMarkers(view)
+    expect(markers).toHaveLength(3)
+    const [, middle, bottom] = markers
+    expect(middle.left).toBe(32)
+    expect(bottom.left).toBe(32)
+    expect(middle.left).not.toBe(3 * CHAR_W)
+    expect(bottom.left).not.toBe(6 * CHAR_W)
+  })
+
+  it("multi-line range: hidden list-indent prefix still uses unified leftSide", () => {
+    const view = makeFakeView({
+      doc: "abc\n    defg\nhij",
+      anchor: 1,
+      head: 13,
+      hiddenPrefixChars: 4,
+      linePaddingLeft: 48,
+    })
+    const markers = tightSelectionMarkers(view)
+    const middle = markers[1]
+    expect(middle.left).toBe(48)
   })
 
   it("multi-line range: per-line markers fill the line box and abut with no vertical gaps", () => {
@@ -240,8 +323,8 @@ describe("tightSelection geometry (fake view)", () => {
     const view = makeFakeView({ doc: "abc\n\nhij", anchor: 1, head: 8 })
     const markers = tightSelectionMarkers(view)
     expect(markers).toHaveLength(3)
-    // The empty line's fallback span starts at leftSide and its open end
-    // clamps to the (empty) text end + nub. Its before-side start rect sits
+    // The empty line's fallback span starts at the line text start and its open
+    // end clamps to the (empty) text end + nub. Its before-side start rect sits
     // at the previous line's end, so it may cover part of the row above.
     const emptyLine = markers.find(m => m.width === NUB_PX)
     expect(emptyLine).toBeDefined()
@@ -266,7 +349,7 @@ describe("tightSelection geometry (fake view)", () => {
     expect(middle.top).toBe(LINE_H)
     // The RTL span's logical end renders on the left: the open end clamps to
     // the last glyph's left edge minus the nub instead of extending to the
-    // content-box left edge (leftSide would put the marker's left edge at 0).
+    // content-box left edge.
     expect(middle.left).toBe(3 * CHAR_W - NUB_PX)
     expect(middle.left).not.toBe(0)
   })
