@@ -3,6 +3,7 @@ import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage } from "../../shiki/languages"
 import { EditorView } from "@codemirror/view"
+import { blockWidgetRange } from "../blockSelectionOverlay"
 
 // 渲染 debounce：快速打字时 widget 在此窗口内被销毁（回到编辑态）则放弃渲染。
 const RENDER_DEBOUNCE_MS = 150
@@ -55,7 +56,8 @@ export class CodeWidget extends BlockWidget {
   protected clickPos(view: EditorView, event: MouseEvent, wrap: HTMLElement): number {
     const lines = lineStartOffsets(this.src)
     if (lines.length === 0) return this.contentFrom
-    const blockFrom = typeof view.posAtDOM === "function" ? view.posAtDOM(wrap, -1) : null
+    const range = blockWidgetRange(this, view)
+    const blockFrom = range?.from ?? (typeof view.posAtDOM === "function" ? view.posAtDOM(wrap, -1) : null)
     const currentState = (view as EditorView & { state?: EditorView["state"] }).state
     const contentFrom = blockFrom === null || !currentState
       ? this.contentFrom

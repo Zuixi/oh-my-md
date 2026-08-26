@@ -3,7 +3,7 @@ import type { EditorState } from "@codemirror/state"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
-import { registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
+import { blockWidgetRange, registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
 import { measureBlockWidget } from "./widgetMeasure"
 
 export interface BlockEmbed {
@@ -97,9 +97,7 @@ export abstract class BlockWidget extends WidgetType {
         if (this.isActive(body)) {
           view.requestMeasure()
           if (typeof view.dispatch === "function") {
-            const pos = typeof view.posAtDOM === "function"
-              ? view.posAtDOM(wrap, -1) ?? this.pos
-              : this.pos
+            const pos = blockWidgetRange(this, view)?.from ?? this.pos
             view.dispatch({ effects: measureBlockWidget.of({ pos }) })
           }
         }
@@ -110,9 +108,7 @@ export abstract class BlockWidget extends WidgetType {
         body.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
         view.requestMeasure()
         if (typeof view.dispatch === "function") {
-          const pos = typeof view.posAtDOM === "function"
-            ? view.posAtDOM(wrap, -1) ?? this.pos
-            : this.pos
+          const pos = blockWidgetRange(this, view)?.from ?? this.pos
           view.dispatch({ effects: measureBlockWidget.of({ pos }) })
         }
       })
