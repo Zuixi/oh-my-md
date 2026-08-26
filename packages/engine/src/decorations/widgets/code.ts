@@ -53,10 +53,16 @@ export class CodeWidget extends BlockWidget {
 
   protected get cssClass() { return "omd-code" }
 
+  protected renderPlaceholder(el: HTMLElement) {
+    const pre = document.createElement("pre")
+    pre.textContent = this.src
+    el.appendChild(pre)
+  }
+
   protected clickPos(view: EditorView, event: MouseEvent, wrap: HTMLElement): number {
     const lines = lineStartOffsets(this.src)
     if (lines.length === 0) return this.contentFrom
-    const range = blockWidgetRange(this, view)
+    const range = blockWidgetRange(this, view, wrap)
     const blockFrom = range?.from ?? (typeof view.posAtDOM === "function" ? view.posAtDOM(wrap, -1) : null)
     const currentState = (view as EditorView & { state?: EditorView["state"] }).state
     const contentFrom = blockFrom === null || !currentState

@@ -6,16 +6,23 @@ import type { BlockWidget } from "./blockWidget"
 // 覆盖判定用 livePreviewField.specs 的 from/to（构造期 pos 会随编辑漂移，
 // posAtDOM 在无布局环境不可靠）；注册表只负责按实例找 DOM。
 const liveWraps = new Map<BlockWidget, HTMLElement>()
+const liveRanges = new Map<HTMLElement, { from: number; to: number }>()
 
 export function registerBlockWidget(widget: BlockWidget, dom: HTMLElement) {
   liveWraps.set(widget, dom)
 }
 
 export function unregisterBlockWidget(widget: BlockWidget) {
+  const dom = liveWraps.get(widget)
+  if (dom) liveRanges.delete(dom)
   liveWraps.delete(widget)
 }
 
-export function blockWidgetRange(widget: BlockWidget, view: EditorView): { from: number; to: number } | null {
+export function blockWidgetRange(widget: BlockWidget, view: EditorView, dom?: HTMLElement): { from: number; to: number } | null {
+  if (dom) {
+    const range = liveRanges.get(dom)
+    if (range) return range
+  }
   const state = (view as EditorView & { state?: EditorView["state"] }).state
   if (!state || typeof state.field !== "function") return null
   const specs = state.field(livePreviewField, false)?.specs ?? []
@@ -23,6 +30,7 @@ export function blockWidgetRange(widget: BlockWidget, view: EditorView): { from:
     if (!spec.tag.startsWith("widget:block:")) continue
     const candidate = (spec.deco.spec as { widget?: BlockWidget }).widget
     if (candidate && (candidate === widget || candidate.eq(widget) || widget.eq(candidate))) {
+      if (dom) liveRanges.set(dom, { from: spec.from, to: spec.to })
       return { from: spec.from, to: spec.to }
     }
   }
@@ -56,6 +64,7 @@ function refresh(view: EditorView) {
     const dom = findWrap(widget, used)
     if (!dom) continue
     used.add(dom)
+    liveRanges.set(dom, { from: spec.from, to: spec.to })
     const covered = sel.from <= spec.from && sel.to >= spec.to
     dom.classList.toggle(COVERED, covered)
   }
