@@ -73,6 +73,27 @@ function fencedCodeSource(node: SyntaxNode, state: EditorState): string {
   return parts.join("")
 }
 
+function fencedCodeContentRange(
+  node: SyntaxNode,
+  state: EditorState,
+): { from: number; to: number } | null {
+  let from = Number.POSITIVE_INFINITY
+  let to = Number.NEGATIVE_INFINITY
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name !== "CodeText") continue
+    from = Math.min(from, child.from)
+    to = Math.max(to, child.to)
+  }
+  if (from !== Number.POSITIVE_INFINITY && to !== Number.NEGATIVE_INFINITY) return { from, to }
+  const first = state.doc.lineAt(node.from)
+  const last = state.doc.lineAt(node.to)
+  if (last.number > first.number) {
+    const entry = Math.min(first.to + 1, node.to)
+    return { from: entry, to: entry }
+  }
+  return null
+}
+
 function listDepth(node: SyntaxNode): number {
   let depth = 0
   for (let parent = node.parent; parent; parent = parent.parent) {
@@ -131,6 +152,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   const info = node.node.getChild("CodeInfo")
   const lang = info ? state.doc.sliceString(info.from, info.to).trim().split(/\s/)[0] : ""
   const src = fencedCodeSource(node.node, state)
+  const contentRange = fencedCodeContentRange(node.node, state)
   const embed = blockEmbed(node.node)
   if (lang === "mermaid") {
     out.push({
@@ -145,7 +167,17 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   }
   out.push({
     from: node.from, to: node.to, tag: "widget:block:code",
-    deco: Decoration.replace({ widget: new CodeWidget(src, node.from, lang, embed), block: true }),
+    deco: Decoration.replace({
+      widget: new CodeWidget(
+        src,
+        node.from,
+        lang,
+        contentRange?.from ?? node.from,
+        contentRange?.to ?? node.to,
+        embed,
+      ),
+      block: true,
+    }),
   })
   return true
 }

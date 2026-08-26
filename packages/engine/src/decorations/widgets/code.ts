@@ -2,6 +2,7 @@ import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage } from "../../shiki/languages"
+import { EditorView } from "@codemirror/view"
 
 // 渲染 debounce：快速打字时 widget 在此窗口内被销毁（回到编辑态）则放弃渲染。
 const RENDER_DEBOUNCE_MS = 150
@@ -27,22 +28,67 @@ function getHighlighter(): Promise<HighlighterCore> {
 const htmlCache = new Map<string, string>()
 
 export class CodeWidget extends BlockWidget {
-  constructor(src: string, pos: number, readonly lang: string, embed?: BlockEmbed) {
-    super(src, pos, embed)
+  private readonly contentFrom: number
+  private readonly contentTo: number
+  constructor(
+    src: string,
+    pos: number,
+    readonly lang: string,
+    contentFromOrEmbed: number | BlockEmbed = pos,
+    contentTo = pos,
+    embed?: BlockEmbed,
+  ) {
+    const resolvedEmbed = typeof contentFromOrEmbed === "number" ? embed : contentFromOrEmbed
+    super(src, pos, resolvedEmbed)
+    if (typeof contentFromOrEmbed === "number") {
+      this.contentFrom = contentFromOrEmbed
+      this.contentTo = contentTo
+    } else {
+      this.contentFrom = pos
+      this.contentTo = pos
+    }
   }
   eq(other: CodeWidget) { return super.eq(other) && this.lang === other.lang }
 
   protected get cssClass() { return "omd-code" }
 
+  protected clickPos(view: EditorView, event: MouseEvent, wrap: HTMLElement): number {
+    const lines = lineStartOffsets(this.src)
+    if (lines.length === 0) return this.contentFrom
+    const body = wrap.querySelector(".omd-block-body")
+    if (!body) return super.clickPos(view, event, wrap)
+    const line = event.target instanceof Element ? event.target.closest(".line") : null
+    if (line) {
+      let index = 0
+      for (let cur = line.previousElementSibling; cur; cur = cur.previousElementSibling) {
+        if (cur.classList.contains("line")) index++
+      }
+      return this.linePosition(index, lines)
+    }
+    const rect = body.getBoundingClientRect()
+    if (rect.height <= 0) return super.clickPos(view, event, wrap)
+    const ratio = (event.clientY - rect.top) / rect.height
+    const index = Math.floor(ratio * lines.length)
+    return this.linePosition(index, lines)
+  }
+
+  private linePosition(index: number, lineStarts: number[]): number {
+    const clamped = Math.max(0, Math.min(index, lineStarts.length - 1))
+    const mapped = this.contentFrom + lineStarts[clamped]
+    return Math.max(this.contentFrom, Math.min(mapped, this.contentTo))
+  }
+
   protected async renderInto(el: HTMLElement) {
     const fallback = () => {
+      el.replaceChildren()
       const pre = document.createElement("pre")
       pre.textContent = this.src
       el.appendChild(pre)
     }
+    fallback()
     try {
       const lang = resolveCodeLanguage(this.lang)
-      if (!lang) { fallback(); return }
+      if (!lang) return
 
       // 命中缓存：直接写入，跳过整个 Shiki 异步链路
       const cacheKey = `${lang}:${this.src}`
@@ -74,7 +120,16 @@ export class CodeWidget extends BlockWidget {
       htmlCache.set(cacheKey, html)
       if (this.isActive(el)) el.innerHTML = html
     } catch {
-      if (this.isActive(el)) fallback()
+      // 已有源码 fallback，异常时保持原状
     }
   }
+}
+
+function lineStartOffsets(src: string): number[] {
+  if (src.length === 0) return [0]
+  const offsets = [0]
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] === "\n") offsets.push(i + 1)
+  }
+  return offsets
 }

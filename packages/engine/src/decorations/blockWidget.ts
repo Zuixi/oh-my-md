@@ -61,6 +61,9 @@ export abstract class BlockWidget extends WidgetType {
 
   protected abstract get cssClass(): string
   protected abstract renderInto(el: HTMLElement): void | Promise<void>
+  protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
+    return view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? this.pos
+  }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
 
@@ -72,8 +75,7 @@ export abstract class BlockWidget extends WidgetType {
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       e.preventDefault()
-      // 用鼠标实际坐标定位，比 posAtDOM(wrap) 更精确，单击和双击均落到正确位置。
-      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.pos
+      const pos = this.clickPos(view, e, wrap)
       view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
       view.focus()
     })
