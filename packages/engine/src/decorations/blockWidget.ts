@@ -4,6 +4,7 @@ import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
 import { registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
+import { measureBlockWidget } from "./widgetMeasure"
 
 export interface BlockEmbed {
   quoteDepth: number
@@ -50,7 +51,7 @@ export abstract class BlockWidget extends WidgetType {
   ) { super() }
 
   eq(other: BlockWidget) {
-    // pos 不参与相等性：click handler 已改用 posAtCoords（实时坐标）定位，
+    // pos 不参与相等性：click handler 使用实时 DOM 边界或坐标定位，
     // 此处只需 src/embed 相同即可复用 DOM，避免在块前插入文字（pos 变但内容不变）时
     // 触发不必要的 Shiki/KaTeX/Mermaid 重渲。ImageWidget 同样不含 pos in eq。
     return this.src === other.src
@@ -93,13 +94,27 @@ export abstract class BlockWidget extends WidgetType {
     const start = () => Promise.resolve()
       .then(() => this.renderInto(body))
       .then(() => {
-        if (this.isActive(body)) view.requestMeasure()
+        if (this.isActive(body)) {
+          view.requestMeasure()
+          if (typeof view.dispatch === "function") {
+            const pos = typeof view.posAtDOM === "function"
+              ? view.posAtDOM(wrap, -1) ?? this.pos
+              : this.pos
+            view.dispatch({ effects: measureBlockWidget.of({ pos }) })
+          }
+        }
       })
       .catch(err => {
         if (!this.isActive(body)) return
         body.classList.add("omd-block-error")
         body.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
         view.requestMeasure()
+        if (typeof view.dispatch === "function") {
+          const pos = typeof view.posAtDOM === "function"
+            ? view.posAtDOM(wrap, -1) ?? this.pos
+            : this.pos
+          view.dispatch({ effects: measureBlockWidget.of({ pos }) })
+        }
       })
     // 预算外（距光标远且不在视口）挂起，由 renderBudgetFlush 在光标/视口接近时补渲。
     if (withinRenderBudget(view, this.pos)) start()

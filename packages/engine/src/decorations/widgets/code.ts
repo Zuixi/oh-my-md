@@ -55,6 +55,14 @@ export class CodeWidget extends BlockWidget {
   protected clickPos(view: EditorView, event: MouseEvent, wrap: HTMLElement): number {
     const lines = lineStartOffsets(this.src)
     if (lines.length === 0) return this.contentFrom
+    const blockFrom = typeof view.posAtDOM === "function" ? view.posAtDOM(wrap, -1) : null
+    const currentState = (view as EditorView & { state?: EditorView["state"] }).state
+    const contentFrom = blockFrom === null || !currentState
+      ? this.contentFrom
+      : Math.min(currentState.doc.length, currentState.doc.lineAt(blockFrom).to + 1)
+    const contentTo = currentState
+      ? Math.min(currentState.doc.length, contentFrom + this.src.length)
+      : this.contentTo
     const body = wrap.querySelector(".omd-block-body")
     if (!body) return super.clickPos(view, event, wrap)
     const line = event.target instanceof Element ? event.target.closest(".line") : null
@@ -63,19 +71,24 @@ export class CodeWidget extends BlockWidget {
       for (let cur = line.previousElementSibling; cur; cur = cur.previousElementSibling) {
         if (cur.classList.contains("line")) index++
       }
-      return this.linePosition(index, lines)
+      return this.linePosition(index, lines, contentFrom, contentTo)
     }
     const rect = body.getBoundingClientRect()
     if (rect.height <= 0) return super.clickPos(view, event, wrap)
     const ratio = (event.clientY - rect.top) / rect.height
     const index = Math.floor(ratio * lines.length)
-    return this.linePosition(index, lines)
+    return this.linePosition(index, lines, contentFrom, contentTo)
   }
 
-  private linePosition(index: number, lineStarts: number[]): number {
+  private linePosition(
+    index: number,
+    lineStarts: number[],
+    contentFrom = this.contentFrom,
+    contentTo = this.contentTo,
+  ): number {
     const clamped = Math.max(0, Math.min(index, lineStarts.length - 1))
-    const mapped = this.contentFrom + lineStarts[clamped]
-    return Math.max(this.contentFrom, Math.min(mapped, this.contentTo))
+    const mapped = contentFrom + lineStarts[clamped]
+    return Math.max(contentFrom, Math.min(mapped, contentTo))
   }
 
   protected async renderInto(el: HTMLElement) {
