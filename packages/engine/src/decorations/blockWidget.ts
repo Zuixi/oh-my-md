@@ -61,6 +61,7 @@ export abstract class BlockWidget extends WidgetType {
   }
 
   protected abstract get cssClass(): string
+  protected renderPlaceholder(_el: HTMLElement): void {}
   protected abstract renderInto(el: HTMLElement): void | Promise<void>
   protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
     return view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? this.pos
@@ -90,6 +91,7 @@ export abstract class BlockWidget extends WidgetType {
     const body = document.createElement("div")
     body.className = "omd-block-body"
     wrap.appendChild(body)
+    this.renderPlaceholder(body)
 
     const start = () => Promise.resolve()
       .then(() => this.renderInto(body))
@@ -97,7 +99,7 @@ export abstract class BlockWidget extends WidgetType {
         if (this.isActive(body)) {
           view.requestMeasure()
           if (typeof view.dispatch === "function") {
-            const pos = blockWidgetRange(this, view)?.from ?? this.pos
+            const pos = blockWidgetRange(this, view, wrap)?.from ?? this.pos
             view.dispatch({ effects: measureBlockWidget.of({ pos }) })
           }
         }
@@ -108,7 +110,7 @@ export abstract class BlockWidget extends WidgetType {
         body.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
         view.requestMeasure()
         if (typeof view.dispatch === "function") {
-          const pos = blockWidgetRange(this, view)?.from ?? this.pos
+          const pos = blockWidgetRange(this, view, wrap)?.from ?? this.pos
           view.dispatch({ effects: measureBlockWidget.of({ pos }) })
         }
       })

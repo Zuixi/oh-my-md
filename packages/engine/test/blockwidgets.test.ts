@@ -142,6 +142,13 @@ describe("block widget pipeline", () => {
     dom.remove()
   })
 
+  it("installs the code placeholder before the first layout measure", () => {
+    const widget = new CodeWidget("line 1\nline 2", 0, "js")
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    expect(dom.querySelector(".omd-block-body pre")?.textContent).toBe("line 1\nline 2")
+    dom.remove()
+  })
+
   it("requests a layout measure after rendering an error fallback", async () => {
     let measures = 0
     const widget = new RejectedWidget("source", 0)
