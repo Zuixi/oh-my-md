@@ -14,7 +14,7 @@
  * line end of a selection to the content-box right edge and covers the lines
  * between the first and last selected line with a single full-width band.
  * That is not configurable (discuss.codemirror.net threads 9495/9735), so
- * this port clamps the geometry instead (see NUB_PX and the Modification A/B/C
+ * this port clamps the geometry instead (see NUB_PX and the Modification A–C
  * comments below).
  *
  * iOS selection handles are out of scope (macOS-first desktop app), so the
@@ -241,16 +241,23 @@ function tightRectanglesForRange(
         return
       top = Math.min(fromCoords.top, toCoords.top, top)
       bottom = Math.max(fromCoords.bottom, toCoords.bottom, bottom)
-      if (dir == Direction.LTR)
+      if (dir == Direction.LTR) {
         // Modification A: clamp open line-END edges to the text end plus a
-        // nub instead of extending to the content-box right edge. Line-start
-        // edges (the leftSide terms) keep stock behavior.
-        horizontal.push(ltr && fromOpen ? leftSide : fromCoords.left, ltr && toOpen ? Math.min(rightSide, toCoords.right + NUB_PX) : toCoords.right)
-      else
+        // nub instead of extending to the content-box right edge.
+        // Open line-START edges stay stock (leftSide) so every fully-selected
+        // row shares one vertical left edge — matching VS Code / Typora.
+        let spanLeft = ltr && fromOpen ? leftSide : fromCoords.left
+        let spanRight = ltr && toOpen ? Math.min(rightSide, toCoords.right + NUB_PX) : toCoords.right
+        horizontal.push(spanLeft, spanRight)
+      }
+      else {
         // Modification A, mirrored for RTL spans: the logical end renders on
         // the left, so the open end clamps to the text end minus a nub
         // instead of extending to the content-box left edge.
-        horizontal.push(!ltr && toOpen ? Math.max(leftSide, toCoords.left - NUB_PX) : toCoords.left, !ltr && fromOpen ? rightSide : fromCoords.right)
+        let spanLeft = !ltr && toOpen ? Math.max(leftSide, toCoords.left - NUB_PX) : toCoords.left
+        let spanRight = !ltr && fromOpen ? rightSide : fromCoords.right
+        horizontal.push(spanLeft, spanRight)
+      }
     }
     let start = from ?? line.from, end = to ?? line.to
     // Split the range by visible range and document line
@@ -271,7 +278,7 @@ function tightRectanglesForRange(
         }
       }
     if (horizontal.length == 0)
-      addSpan(start, from == null, end, to == null, view.textDirection)
+      addSpan(line.from, from == null, end, to == null, view.textDirection)
     // Modification C: coordsAtPos returns glyph metrics (textHeight). When
     // CSS line-height > 1 the line box is taller, so per-line markers leave
     // visible gaps between rows. Snap the vertical span outward onto the
