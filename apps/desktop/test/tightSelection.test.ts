@@ -36,7 +36,11 @@ import {
 //   x → col so `wrappedLine()` narrowing works through these stubs.
 
 const CHAR_W = 8 // fake character cell width (px)
-const LINE_H = 20 // fake line height (px)
+const LINE_H = 20 // fake line-box height (px)
+// Glyph client-rect height — WebKit (Tauri) returns text metrics shorter than
+// the line box when line-height > 1. Modeling that gap is what surfaces the
+// striped multi-line selection bug.
+const TEXT_H = 14 // fake glyph/textHeight (px); must stay < LINE_H
 const CONTENT_LEFT = 100 // fake content-box left edge (px)
 const CONTENT_TOP = 50 // fake content-box top edge (px)
 const CONTENT_RIGHT = 700 // fake content-box right edge (px)
@@ -104,8 +108,10 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
   const glyphCell = (line: Line, glyph: number) => {
     const row = wrap > 0 ? Math.min(Math.floor(glyph / wrap), rowsOf(line) - 1) : 0
     const x = CONTENT_LEFT + (glyph - row * wrap) * CHAR_W
-    const top = CONTENT_TOP + blockTops[line.number - 1] + row * LINE_H
-    return { x, top, bottom: top + LINE_H }
+    const rowTop = CONTENT_TOP + blockTops[line.number - 1] + row * LINE_H
+    // Center the shorter glyph rect inside the line box (half-leading above/below).
+    const top = rowTop + (LINE_H - TEXT_H) / 2
+    return { x, top, bottom: top + TEXT_H }
   }
   const coordsAtPos = (pos: number, side = 1) => {
     if (side < 0 && pos > 0 && pos < doc.length && doc.lineAt(pos).from === pos) {
@@ -212,6 +218,24 @@ describe("tightSelection geometry (fake view)", () => {
     expect(bottom.top).toBe(2 * LINE_H)
   })
 
+  it("multi-line range: per-line markers fill the line box and abut with no vertical gaps", () => {
+    // Regression: coordsAtPos returns TEXT_H < LINE_H (WebKit). Markers must
+    // expand to the line box so adjacent rows share an edge — otherwise the
+    // selection reads as striped bands instead of a continuous highlight.
+    const view = makeFakeView({ doc: "abc\ndefg\nhij", anchor: 1, head: 11 })
+    const markers = tightSelectionMarkers(view)
+    expect(markers).toHaveLength(3)
+    const [top, middle, bottom] = markers
+    for (const m of markers) expect(m.height).toBe(LINE_H)
+    expect(top.top).toBe(0)
+    expect(middle.top).toBe(top.top + top.height)
+    expect(bottom.top).toBe(middle.top + middle.height)
+    // Horizontal tight clamps stay intact (open ends still stop at text + nub).
+    expect(rightEdge(top)).toBe(3 * CHAR_W + NUB_PX)
+    expect(rightEdge(middle)).toBe(4 * CHAR_W + NUB_PX)
+    expect(rightEdge(bottom)).toBe(2 * CHAR_W)
+  })
+
   it("empty middle line: nub-width bar, never a full-width band", () => {
     const view = makeFakeView({ doc: "abc\n\nhij", anchor: 1, head: 8 })
     const markers = tightSelectionMarkers(view)
@@ -308,7 +332,7 @@ describe("tightSelection geometry (fake view)", () => {
     expect(caret).toHaveLength(1)
     expect(caret[0].width).toBeNull() // cursors get no width style
     expect(caret[0].left).toBe(2 * CHAR_W)
-    expect(caret[0].top).toBe(0)
+    expect(caret[0].top).toBe((LINE_H - TEXT_H) / 2) // glyph rect, not line box
 
     const range = tightCursorMarkers(makeFakeView({ doc: "abc", anchor: 0, head: 3 }))
     expect(range).toHaveLength(1) // drawRangeCursor defaults to true
