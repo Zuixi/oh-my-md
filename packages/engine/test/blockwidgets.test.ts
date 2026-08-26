@@ -173,7 +173,9 @@ describe("block widget pipeline", () => {
     const view = {
       requestMeasure: () => {},
       posAtCoords: () => 9999,
-      dispatch: ({ selection }: { selection: { anchor: number } }) => { anchor = selection.anchor },
+      dispatch: ({ selection }: { selection?: { anchor: number } }) => {
+        if (selection) anchor = selection.anchor
+      },
       focus: () => {},
     }
     const widget = new CodeWidget("line 1\nline 2\nline 3", 0, "js", 100, 117)
@@ -188,6 +190,31 @@ describe("block widget pipeline", () => {
       clientY: 20,
     }))
     expect(anchor).toBe(100)
+  })
+
+  it("recomputes code source position after the block moves", () => {
+    let anchor = -1
+    const wrap = document.createElement("div")
+    const view = {
+      requestMeasure: () => {},
+      posAtCoords: () => 9999,
+      posAtDOM: () => 50,
+      state: { doc: { length: 200, lineAt: (pos: number) => ({ to: pos + 9 }) } },
+      dispatch: ({ selection }: { selection?: { anchor: number } }) => {
+        if (selection) anchor = selection.anchor
+      },
+      focus: () => {},
+    }
+    const widget = new CodeWidget("line 1\nline 2", 0, "js", 0, 13)
+    const dom = widget.toDOM(view as never)
+    const body = dom.querySelector(".omd-block-body") as HTMLElement
+    body.innerHTML = "<pre><code><span class='line'>line 1</span><span class='line'>line 2</span></code></pre>"
+    wrap.appendChild(dom)
+    ;(body.querySelectorAll(".line")[1] as HTMLElement).dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+    }))
+    expect(anchor).toBe(67)
   })
 
   it("writes mermaid SVG into the widget body", async () => {

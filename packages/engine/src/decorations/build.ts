@@ -10,6 +10,7 @@ import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import type { DecoSpec } from "./types"
+import { measureBlockWidget } from "./widgetMeasure"
 
 export { nearCursor, type DecoSpec } from "./types"
 
@@ -214,6 +215,12 @@ function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
 
 function rebuildRanges(tr: Transaction) {
   const ranges: RebuildRange[] = []
+
+  for (const effect of tr.effects) {
+    if (effect.is(measureBlockWidget)) {
+      ranges.push(expandRange(tr.state, effect.value.pos, effect.value.pos, SELECTION_BLOCKS))
+    }
+  }
 
   if (tr.docChanged) {
     tr.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
