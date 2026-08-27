@@ -633,6 +633,15 @@ Related: `view.defaultLineHeight` is a default, not a document row pitch. This e
 
 The fake-view harness in `apps/desktop/test/tightSelection.test.ts` originally modeled zero content padding and one uniform line height, encoding exactly the assumptions the code got wrong, so the suite stayed green through the bug. A test double for layout must carry the properties that break naive geometry — non-zero padding and non-uniform line boxes — or it only re-asserts the implementation.
 
+## Selection colors must be driven by `--omd-selection-bg`; CM's dark flag is never set
+
+Selections are painted by two systems. Editor text is drawn by the vendored `tightSelection()` layer as `.cm-selectionLayer .cm-selectionBackground` rectangles behind the text; block-widget DOM (table cells, code blocks) and focused nested editors (the table cell `<input>`) paint through the browser's native `::selection`. The two diverge the moment either stops consuming the theme token (verified 2026-08-28: dark mode painted light lavender behind light text; light mode painted native blue inside tables/code):
+
+- CM's `&light`/`&dark` base-theme rules key off the editor's internal dark flag (`EditorView.theme(spec, {dark: true})` → `darkTheme` facet). Nothing in the app ever sets it, and `html[data-theme]` is CSS-only, so the editor is permanently "light" as far as CM is concerned: base `#d7d4f0` (focused layer) / `#d9d9d9` behind dark-mode text `#e8e8e8` is light-on-light, contrast ~1.2:1.
+- `tightSelection.ts` vendors upstream's `.cm-content :focus ::selection → Highlight !important` rule for focused nested editors, and widget DOM outside `.cm-line` keeps native selection while dragging — both are native blue unless overridden.
+
+`styles.css` therefore drives every surface from `--omd-selection-bg`: the full-chain `.editor-host .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground` override (6 class selectors must outrank the base theme's 5 — CM injects its styles after this stylesheet, so ties lose on order, same as the active-line gotcha above), an `.editor-host .cm-editor .cm-content :focus ::selection` `!important` override against the vendored Highlight rule, and `.editor-host .omd-block ::selection` for drag-selection inside widgets. `apps/desktop/test/selectionTheme.test.ts` guards the pairing — if you touch selection styling, keep the test and this file in sync. The token stays translucent (0.55 alpha) on purpose: tightSelection's remainder-band dedup assumes translucent backgrounds (a doubly-painted row reads darker than its neighbours).
+
 ## macOS font enumeration must use CoreText, not NSFontManager
 
 `list_system_fonts` (`apps/desktop/src-tauri/src/fonts.rs`) is an `async`
