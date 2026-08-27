@@ -44,11 +44,14 @@
       "nsis": {
         "displayLanguageSelector": true,
         "languages": ["English", "SimpChinese"],
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp"
       },
       "wix": {
         "language": "en-US",
-        "bannerPath": "icons/Square71x71Logo.png"
+        "bannerPath": "icons/wix-banner.bmp",
+        "dialogImagePath": "icons/wix-dialog.bmp"
       }
     }
   },
