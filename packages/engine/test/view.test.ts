@@ -187,11 +187,12 @@ describe("view smoke (real EditorView)", () => {
     const covered = view.dom.querySelector(".omd-block") as HTMLElement
     expect(covered).toBeTruthy()
     expect(covered.classList.contains("omd-block-covered")).toBe(true)
-    // 光标进入块内 → 编辑态，widget 卸载
+    // 光标进入块内 → 仍保持 widget（Live 编辑在 widget 内）
     const fenceEnd = doc.indexOf("\n", doc.indexOf("```ts")) + 1
     view.dispatch({ selection: { anchor: fenceEnd } })
     await tick()
-    expect(view.dom.querySelector(".omd-block")).toBeNull()
+    expect(view.dom.querySelector(".omd-block")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-code-editing")).toBeTruthy()
     // 光标离开 → 恢复渲染，覆盖类消失
     view.dispatch({ selection: { anchor: doc.length } })
     await tick()
@@ -216,11 +217,11 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("typing the closing fence keeps source visible (no premature widget)", async () => {
+  it("keeps a code widget while typing the closing fence", async () => {
     const { view, errors } = makeView("```js\nlet x = 1\n``")
-    view.dispatch({ changes: { from: 16, insert: "`" } })   // 敲出第三个 backtick，光标在块尾
+    view.dispatch({ changes: { from: 16, insert: "`" } })
     await tick()
-    expect(view.dom.querySelector(".omd-code")).toBeNull()   // 边界算块内 → 还是源码
+    expect(view.dom.querySelector(".omd-code")).toBeTruthy()
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

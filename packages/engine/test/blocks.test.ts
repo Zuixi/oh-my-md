@@ -283,21 +283,19 @@ describe("block syntax", () => {
 
   it("styles fenced code block lines in edit state (cursor inside)", () => {
     const doc = "```js\nconst x = **not bold**\n```"
-    // 光标在块内 → 编辑态：行样式 + 无 widget；行内语法不折叠
     const s = makeState(doc).update({ selection: { anchor: 10 } }).state
     const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
-    expect(t.filter(x => x === "line:omd-codeblock")).toHaveLength(3)
-    expect(t).not.toContain("widget:block:code")
-    expect(t).not.toContain("replace:EmphasisMark")
+    expect(t).toContain("widget:block:code")
+    expect(t).not.toContain("line:omd-codeblock")
   })
 
-  it("folds fenced-code fence marks in live mode while editing content", () => {
+  it("keeps a code widget when the cursor is inside fenced content", () => {
     const doc = "```sh\npnpm install\npnpm dev\n```"
     const content = doc.indexOf("pnpm")
     const s = makeState(doc).update({ selection: { anchor: content } }).state
     const tags = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
-    expect(tags.filter(t => t === "replace:CodeMark")).toHaveLength(2)
-    expect(tags).toContain("replace:CodeInfo")
+    expect(tags).toContain("widget:block:code")
+    expect(tags).not.toContain("replace:CodeMark")
   })
 
   it("folds fence marks on no-language fenced code when cursor is away", () => {

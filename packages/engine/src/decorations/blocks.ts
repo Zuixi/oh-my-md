@@ -10,6 +10,7 @@ import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
+import { parseFenceInfo } from "../fenceInfo"
 
 const MAX_QUOTE_DEPTH = 4
 const MAX_LIST_DEPTH = 4
@@ -145,37 +146,40 @@ function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[],
 }
 
 function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
-  if (blockSelected(state, node.from, node.to)) {
-    styleCodeblockLines(node, state, out)
-    return false
-  }
-  const info = node.node.getChild("CodeInfo")
-  const lang = info ? state.doc.sliceString(info.from, info.to).trim().split(/\s/)[0] : ""
+  const infoNode = node.node.getChild("CodeInfo")
+  const infoRaw = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to) : ""
+  const { lang: langToken, title } = parseFenceInfo(infoRaw)
   const src = fencedCodeSource(node.node, state)
   const contentRange = fencedCodeContentRange(node.node, state)
   const embed = blockEmbed(node.node)
-  if (lang === "mermaid") {
+  const editing = blockSelected(state, node.from, node.to)
+
+  if (langToken === "mermaid") {
     out.push({
       from: node.from, to: node.to, tag: "widget:block:mermaid",
       deco: Decoration.replace({ widget: new MermaidWidget(src, node.from, embed), block: true }),
     })
     return true
   }
-  if (!lang || insideBlockquote(node.node)) {
+  if (!langToken || insideBlockquote(node.node)) {
     styleCodeblockLines(node, state, out)
     return false
   }
   out.push({
     from: node.from, to: node.to, tag: "widget:block:code",
     deco: Decoration.replace({
-      widget: new CodeWidget(
+      widget: CodeWidget.fromOptions({
         src,
-        node.from,
-        lang,
-        contentRange?.from ?? node.from,
-        contentRange?.to ?? node.to,
+        pos: node.from,
+        lang: langToken,
+        title,
+        infoFrom: infoNode?.from ?? node.from,
+        infoTo: infoNode?.to ?? node.from,
+        contentFrom: contentRange?.from ?? node.from,
+        contentTo: contentRange?.to ?? node.to,
         embed,
-      ),
+        editing,
+      }),
       block: true,
     }),
   })
