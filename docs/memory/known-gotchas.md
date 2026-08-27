@@ -740,4 +740,15 @@ Use the generated assets referenced from `tauri.conf.json`:
 - WiX `bannerPath` → `icons/wix-banner.bmp` (493×58)
 - WiX `dialogImagePath` → `icons/wix-dialog.bmp` (493×312)
 
+### WiX banner: WixUI paints transparent page titles over its left strip
+
+Tauri's MSI uses `WixUI_InstallDir`, which draws a transparent black page title — "Installing oh-my-md", "Ready to install oh-my-md", … — over X=15..215 dialog units at the top of **every inner page**, on top of `WixUIBannerBmp`. Anything baked into that strip of `wix-banner.bmp` collides with the live title and renders as overlapping, unreadable glyphs (spotted 2026-08-28: a baked left-aligned logo + wordmark under "Installing oh-my-md" at 150% DPI). The failure is invisible on macOS dev machines; it only appears when the MSI is actually installed on Windows, so the pixel drift test is the only dev-time guard.
+
+Rule: `render_wix_banner()` keeps `x < WIX_BANNER_TITLE_SAFE_W` (220) flat `BANNER_BG`; branding goes only at the banner's right end, with the icon's baked white backdrop keyed out (`strip_white_background`) so no white tile shows on the gray strip. `apps/desktop/test/tauriConfig.test.ts` asserts both the strip's pixels and every BMP's dimensions — run it after any regeneration. Positions are dialog units scaled by DPI (150% scaling turns a 40-unit tile into ~60px), never pixels.
+
+Related traps in the same generator:
+
+- `wix-dialog.bmp` (Welcome/Exit background) is safe with branding on its left 164px because those dialogs draw their title at x=135 **over the flat right area** — the inverse of the banner rule.
+- `nsis-sidebar.bmp` bakes the version string from `tauri.conf.json`; rerun `scripts/generate-installer-images.sh` after `pnpm release:version` or the wizard shows a stale version.
+
 Regenerate from `apps/desktop/app-icon.png` with `scripts/generate-installer-images.sh` after changing the master icon. `installerIcon` stays the `.ico` for the exe/setup file icon only — it is not the wizard header bitmap.
