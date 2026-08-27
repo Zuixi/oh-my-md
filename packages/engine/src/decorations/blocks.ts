@@ -74,27 +74,6 @@ function fencedCodeSource(node: SyntaxNode, state: EditorState): string {
   return parts.join("")
 }
 
-function fencedCodeContentRange(
-  node: SyntaxNode,
-  state: EditorState,
-): { from: number; to: number } | null {
-  let from = Number.POSITIVE_INFINITY
-  let to = Number.NEGATIVE_INFINITY
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name !== "CodeText") continue
-    from = Math.min(from, child.from)
-    to = Math.max(to, child.to)
-  }
-  if (from !== Number.POSITIVE_INFINITY && to !== Number.NEGATIVE_INFINITY) return { from, to }
-  const first = state.doc.lineAt(node.from)
-  const last = state.doc.lineAt(node.to)
-  if (last.number > first.number) {
-    const entry = Math.min(first.to + 1, node.to)
-    return { from: entry, to: entry }
-  }
-  return null
-}
-
 function listDepth(node: SyntaxNode): number {
   let depth = 0
   for (let parent = node.parent; parent; parent = parent.parent) {
@@ -150,9 +129,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   const infoRaw = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to) : ""
   const { lang: langToken, title } = parseFenceInfo(infoRaw)
   const src = fencedCodeSource(node.node, state)
-  const contentRange = fencedCodeContentRange(node.node, state)
   const embed = blockEmbed(node.node)
-  const editing = blockSelected(state, node.from, node.to)
 
   if (langToken === "mermaid") {
     out.push({
@@ -165,20 +142,19 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     styleCodeblockLines(node, state, out)
     return false
   }
+  if (blockSelected(state, node.from, node.to)) {
+    styleCodeblockLines(node, state, out)
+    return true
+  }
   out.push({
     from: node.from, to: node.to, tag: "widget:block:code",
     deco: Decoration.replace({
-      widget: CodeWidget.fromOptions({
+      widget: new CodeWidget({
         src,
         pos: node.from,
         lang: langToken,
         title,
-        infoFrom: infoNode?.from ?? node.from,
-        infoTo: infoNode?.to ?? node.from,
-        contentFrom: contentRange?.from ?? node.from,
-        contentTo: contentRange?.to ?? node.to,
         embed,
-        editing,
       }),
       block: true,
     }),

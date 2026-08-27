@@ -3,7 +3,7 @@ import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../../shiki/languages"
 import { createCodeLangPicker } from "./codeLangPicker"
-import { formatFenceInfo } from "../../fenceInfo"
+import { replaceFenceInfo } from "../../fenceInfo"
 import { EditorView } from "@codemirror/view"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
@@ -12,13 +12,12 @@ import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
 
 const RENDER_DEBOUNCE_MS = 150
-const EDIT_DISPATCH_MS = 120
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
+const COPY_RESET_MS = 1500
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 let highlighterPromise: Promise<HighlighterCore> | null = null
 const htmlCache = new Map<string, string>()
-const pendingEditCaret = new Map<number, number>()
 
 function getHighlighter(): Promise<HighlighterCore> {
   return highlighterPromise ??= Promise.all([
@@ -37,12 +36,7 @@ export interface CodeWidgetOptions {
   pos: number
   lang: string
   title: string
-  infoFrom: number
-  infoTo: number
-  contentFrom: number
-  contentTo: number
   embed?: BlockEmbed
-  editing: boolean
 }
 
 function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
@@ -55,66 +49,53 @@ function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
   return classes.join(" ")
 }
 
-function caretOffset(el: HTMLElement): number {
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return 0
-  const range = sel.getRangeAt(0)
-  if (!el.contains(range.startContainer)) return 0
-  const pre = range.cloneRange()
-  pre.selectNodeContents(el)
-  pre.setEnd(range.startContainer, range.startOffset)
-  return pre.toString().length
-}
-
-function setCaretOffset(el: HTMLElement, offset: number) {
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-  let remaining = offset
-  let node = walker.nextNode()
-  while (node) {
-    const len = node.textContent?.length ?? 0
-    if (remaining <= len) {
-      const range = document.createRange()
-      range.setStart(node, remaining)
-      range.collapse(true)
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(range)
-      return
-    }
-    remaining -= len
-    node = walker.nextNode()
-  }
+function copyIcon(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  svg.setAttribute("viewBox", "0 0 16 16")
+  svg.setAttribute("width", "14")
+  svg.setAttribute("height", "14")
+  svg.setAttribute("aria-hidden", "true")
+  const rear = document.createElementNS("http://www.w3.org/2000/svg", "rect")
+  rear.setAttribute("x", "2")
+  rear.setAttribute("y", "2")
+  rear.setAttribute("width", "8")
+  rear.setAttribute("height", "9")
+  rear.setAttribute("rx", "1.2")
+  rear.setAttribute("fill", "none")
+  rear.setAttribute("stroke", "currentColor")
+  rear.setAttribute("stroke-width", "1.4")
+  const front = document.createElementNS("http://www.w3.org/2000/svg", "rect")
+  front.setAttribute("x", "5")
+  front.setAttribute("y", "5")
+  front.setAttribute("width", "8")
+  front.setAttribute("height", "9")
+  front.setAttribute("rx", "1.2")
+  front.setAttribute("fill", "none")
+  front.setAttribute("stroke", "currentColor")
+  front.setAttribute("stroke-width", "1.4")
+  svg.append(rear, front)
+  return svg
 }
 
 export class CodeWidget extends BlockWidget {
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
   private codePending: PendingRender | null = null
-  private editTimer: ReturnType<typeof setTimeout> | null = null
   private langPickerDestroy: (() => void) | null = null
+  private copyReset: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly opts: CodeWidgetOptions) {
     super(opts.src, opts.pos, opts.embed ?? EMPTY_EMBED)
   }
 
-  static fromOptions(opts: CodeWidgetOptions): CodeWidget {
-    return new CodeWidget(opts)
-  }
-
   get lang() { return this.opts.lang }
   get title() { return this.opts.title }
-  get infoFrom() { return this.opts.infoFrom }
-  get infoTo() { return this.opts.infoTo }
-  get contentFrom() { return this.opts.contentFrom }
-  get contentTo() { return this.opts.contentTo }
-  get editing() { return this.opts.editing }
 
   eq(other: BlockWidget) {
     if (!(other instanceof CodeWidget)) return false
     return super.eq(other)
       && this.lang === other.lang
       && this.title === other.title
-      && this.editing === other.editing
   }
 
   protected get cssClass() { return "omd-code" }
@@ -125,23 +106,11 @@ export class CodeWidget extends BlockWidget {
     const wrap = document.createElement("div")
     this.wrap = wrap
     wrap.className = blockWidgetClass(this.cssClass, this.embed)
-    if (this.editing) wrap.classList.add("omd-code-editing")
 
     wrap.appendChild(this.buildHeader(view))
     const body = document.createElement("div")
     body.className = "omd-block-body omd-code-body omd-code-lines"
     wrap.appendChild(body)
-
-    wrap.addEventListener("mousedown", e => {
-      if (e.button !== 0) return
-      if (e.target instanceof Element && e.target.closest(".omd-code-header")) return
-      view.focus()
-      if (this.editing) {
-        e.preventDefault()
-        const edit = body.querySelector(".omd-code-edit-line") as HTMLElement | null
-        edit?.focus()
-      }
-    })
 
     this.renderPlaceholder(body)
     const start = () => Promise.resolve()
@@ -196,32 +165,29 @@ export class CodeWidget extends BlockWidget {
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"
     copyBtn.className = "omd-code-copy"
-    copyBtn.title = "Copy code"
-    copyBtn.setAttribute("aria-label", "Copy code")
-    copyBtn.textContent = "Copy"
+    copyBtn.title = "Copy"
+    copyBtn.setAttribute("aria-label", "Copy")
+    copyBtn.appendChild(copyIcon())
     copyBtn.addEventListener("click", e => {
       e.preventDefault()
       e.stopPropagation()
-      void navigator.clipboard?.writeText(this.src)
+      this.copy(copyBtn)
     })
     tools.appendChild(copyBtn)
     header.appendChild(tools)
 
-    if (view.state?.readOnly) {
-      titleInput.disabled = true
-    }
+    if (view.state?.readOnly) titleInput.disabled = true
     return header
   }
 
   override ignoreEvent(event: Event) {
     if (event.type === "mousedown" || event.type === "dblclick") return true
     if (event.target instanceof Element && event.target.closest(".omd-code-lang-picker")) return true
-    if (this.editing && (event.type === "keydown" || event.type === "input")) return true
     return false
   }
 
   override destroy(dom?: HTMLElement) {
-    if (this.editTimer) clearTimeout(this.editTimer)
+    if (this.copyReset) clearTimeout(this.copyReset)
     this.langPickerDestroy?.()
     this.langPickerDestroy = null
     if (this.codePending) dropPendingBlockRender(this.codePending)
@@ -235,76 +201,39 @@ export class CodeWidget extends BlockWidget {
   }
 
   protected async renderInto(el: HTMLElement) {
-    if (this.editing) {
-      this.renderEditor(el)
-      return
-    }
     await this.renderShiki(el)
-  }
-
-  private renderEditor(el: HTMLElement) {
-    el.replaceChildren()
-    const lines = this.src.split("\n")
-    const rowEls: HTMLElement[] = []
-    for (const line of lines.length ? lines : [""]) {
-      const row = document.createElement("div")
-      row.className = "omd-code-edit-line"
-      row.contentEditable = "true"
-      row.spellcheck = false
-      row.textContent = line
-      row.addEventListener("mousedown", e => e.stopPropagation())
-      row.addEventListener("input", () => this.scheduleContentSync(rowEls))
-      row.addEventListener("blur", () => this.flushContentSync(rowEls))
-      el.appendChild(row)
-      rowEls.push(row)
-    }
-    const restore = pendingEditCaret.get(this.pos)
-    const focusRow = rowEls[0]
-    if (focusRow) {
-      focusRow.focus()
-      if (restore !== undefined) {
-        pendingEditCaret.delete(this.pos)
-        setCaretOffset(focusRow, restore)
-      } else {
-        setCaretOffset(focusRow, focusRow.textContent?.length ?? 0)
-      }
-    }
-  }
-
-  private readEditorText(rows: HTMLElement[]): string {
-    return rows.map(row => row.textContent ?? "").join("\n")
-  }
-
-  private scheduleContentSync(rows: HTMLElement[]) {
-    if (this.editTimer) clearTimeout(this.editTimer)
-    this.editTimer = setTimeout(() => this.flushContentSync(rows), EDIT_DISPATCH_MS)
-  }
-
-  private flushContentSync(rows: HTMLElement[]) {
-    if (this.editTimer) {
-      clearTimeout(this.editTimer)
-      this.editTimer = null
-    }
-    const view = this.view
-    if (!view || view.state.readOnly) return
-    const next = this.readEditorText(rows)
-    if (next === this.src) return
-    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    pendingEditCaret.set(this.pos, active ? caretOffset(active) : 0)
-    view.dispatch({
-      changes: { from: this.contentFrom, to: this.contentTo, insert: next },
-    })
   }
 
   private commitInfo(title: string, lang: string | null) {
     const view = this.view
-    if (!view || view.state.readOnly) return
+    const wrap = this.wrap
+    if (!view || !wrap || view.state.readOnly) return
+    const range = blockWidgetRange(this, view, wrap)
+    if (!range) return
     const nextLang = lang ?? this.lang
     const label = title.trim() === DEFAULT_TITLE_PLACEHOLDER ? "" : title.trim()
-    const info = formatFenceInfo(nextLang, label)
-    view.dispatch({
-      changes: { from: this.infoFrom, to: this.infoTo, insert: info },
-    })
+    const spec = replaceFenceInfo(view.state, range.from, nextLang, label)
+    if (spec) view.dispatch(spec)
+  }
+
+  private copy(btn: HTMLButtonElement) {
+    const mark = (ok: boolean) => {
+      btn.classList.toggle("omd-code-copied", ok)
+      btn.title = ok ? "Copied" : "Copy"
+      btn.setAttribute("aria-label", ok ? "Copied" : "Copy")
+      if (this.copyReset) clearTimeout(this.copyReset)
+      this.copyReset = setTimeout(() => {
+        btn.classList.remove("omd-code-copied")
+        btn.title = "Copy"
+        btn.setAttribute("aria-label", "Copy")
+      }, COPY_RESET_MS)
+    }
+    const write = navigator.clipboard?.writeText(this.src)
+    if (!write) {
+      mark(false)
+      return
+    }
+    void write.then(() => mark(true), () => mark(false))
   }
 
   private async renderShiki(el: HTMLElement) {

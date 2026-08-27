@@ -71,7 +71,7 @@ describe("block widget pipeline", () => {
     expect(blockSelected(partialEnd, 7, 19)).toBe(true)
   })
 
-  it("keeps a code widget mounted when the cursor is inside the block", () => {
+  it("unmounts a code widget when the cursor is inside the block", () => {
     const doc = "intro\n\n```js\nconst x = 1\n```\n"
     const state = makeState(doc)
     const off = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
@@ -80,8 +80,8 @@ describe("block widget pipeline", () => {
 
     const on = state.update({ selection: { anchor: 12 } }).state
     const t = collectDecorationSpecs(on, 0, doc.length).map(d => d.tag)
-    expect(t).toContain("widget:block:code")
-    expect(t).not.toContain("line:omd-codeblock")
+    expect(t).not.toContain("widget:block:code")
+    expect(t).toContain("line:omd-codeblock")
   })
 
   it("mermaid fenced block becomes a mermaid widget, not code", () => {
@@ -111,8 +111,8 @@ describe("block widget pipeline", () => {
     expect(new CheckboxWidget(false, 1).eq(new CheckboxWidget(false, 2))).toBe(false)
     expect(new ImageWidget("a.png", "first", "/a.png")
       .eq(new ImageWidget("a.png", "second", "/a.png"))).toBe(false)
-    expect(new CodeWidget({ src: "x = 1", pos: 0, lang: "js", title: "", infoFrom: 0, infoTo: 0, contentFrom: 0, contentTo: 5, editing: false })
-      .eq(new CodeWidget({ src: "x = 1", pos: 0, lang: "ts", title: "", infoFrom: 0, infoTo: 0, contentFrom: 0, contentTo: 5, editing: false }))).toBe(false)
+    expect(new CodeWidget({ src: "x = 1", pos: 0, lang: "js", title: "" })
+      .eq(new CodeWidget({ src: "x = 1", pos: 0, lang: "ts", title: "" }))).toBe(false)
     expect(new TableWidget("| a |\n|---|\n| 1 |", 0, table)
       .eq(new TableWidget("| a |\n|---|\n| 1 |", 0, { ...table, header: ["b"] }))).toBe(false)
   })
@@ -146,11 +146,12 @@ describe("block widget pipeline", () => {
 
   it("installs the code placeholder before the first layout measure", () => {
     const widget = new CodeWidget({
-      src: "line 1\nline 2", pos: 0, lang: "js", title: "", infoFrom: 0, infoTo: 0,
-      contentFrom: 0, contentTo: 13, editing: false,
+      src: "line 1\nline 2", pos: 0, lang: "js", title: "",
     })
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     expect(dom.querySelector(".omd-block-body pre")?.textContent).toBe("line 1\nline 2")
+    expect(dom.querySelector(".omd-code-copy svg")).toBeTruthy()
+    expect(dom.querySelector(".omd-code-copy")?.getAttribute("aria-label")).toBe("Copy")
     dom.remove()
   })
 
@@ -184,8 +185,7 @@ describe("block widget pipeline", () => {
 
   it("renders code with dual-theme dark CSS variables", async () => {
     const widget = new CodeWidget({
-      src: "const x = 1", pos: 0, lang: "js", title: "", infoFrom: 0, infoTo: 0,
-      contentFrom: 0, contentTo: 11, editing: false,
+      src: "const x = 1", pos: 0, lang: "js", title: "",
     })
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     document.body.appendChild(dom)
@@ -205,8 +205,7 @@ describe("block widget pipeline", () => {
       focus: () => {},
     }
     const widget = new CodeWidget({
-      src: "line 1\nline 2\nline 3", pos: 0, lang: "js", title: "", infoFrom: 0, infoTo: 0,
-      contentFrom: 100, contentTo: 117, editing: false,
+      src: "line 1\nline 2\nline 3", pos: 0, lang: "js", title: "",
     })
     const dom = widget.toDOM(view as never)
     const body = dom.querySelector(".omd-block-body") as HTMLElement
@@ -235,8 +234,7 @@ describe("block widget pipeline", () => {
       focus: () => {},
     }
     const widget = new CodeWidget({
-      src: "line 1\nline 2", pos: 0, lang: "js", title: "", infoFrom: 0, infoTo: 0,
-      contentFrom: 0, contentTo: 13, editing: false,
+      src: "line 1\nline 2", pos: 0, lang: "js", title: "",
     })
     const dom = widget.toDOM(view as never)
     const body = dom.querySelector(".omd-block-body") as HTMLElement

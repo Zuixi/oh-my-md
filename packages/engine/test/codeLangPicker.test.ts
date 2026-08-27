@@ -55,6 +55,19 @@ describe("createCodeLangPicker", () => {
     expect(root.querySelector(".omd-code-lang-popover")).toBeNull()
   })
 
+  it("keeps the hovered option node so a real pointer click can commit", () => {
+    const { root, onSelect } = mountPicker()
+    ;(root.querySelector(".omd-code-lang-trigger") as HTMLButtonElement).click()
+    const row = [...root.querySelectorAll(".omd-code-lang-row")]
+      .find(el => el.textContent?.includes("bash")) as HTMLButtonElement
+    row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }))
+    expect(row.isConnected).toBe(true)
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
+    row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
+    row.click()
+    expect(onSelect).toHaveBeenCalledWith("bash")
+  })
+
   it("closes the popover on an outside press", () => {
     const { root } = mountPicker()
     ;(root.querySelector(".omd-code-lang-trigger") as HTMLButtonElement).click()
