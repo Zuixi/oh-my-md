@@ -610,6 +610,14 @@ Selection drawing is therefore vendored in `apps/desktop/src/tightSelection.ts` 
 
 Whenever `@codemirror/view` is bumped, re-diff the vendored geometry and the copied blink/cursor code against the new upstream `drawSelection.ts`/`cursor.ts` and port upstream changes — otherwise the vendored copy silently drifts from the installed version's layer semantics. A guard in `apps/desktop/test/tightSelection.test.ts` compares the installed package version against the version recorded in the vendored file header and fails on a bump, so this is no longer a convention someone has to remember. It matters: upstream 6.43.7 shipped *"Fix incorrectly drawn selection when a line wrap point lies between widgets"* to `drawSelection.ts`, and vendored code receives no such fix automatically.
 
+## highlightActiveLine paints nothing but is still load-bearing
+
+`styles.css` overrides `.cm-activeLine` to a transparent background. CodeMirror's base theme paints it `#cceeff44`, a blue tied to no palette here, and because `highlightActiveLine()` emits a **line** decoration the tint covers every soft-wrapped row of a paragraph and the whole of a rendered block widget — so clicking a code block or table lit the entire block, which reads as "the block is selected". CodeMirror also applies it at `lineBlockAt(range.head)` with no empty-selection check, so it stays lit while dragging a selection; a screenshot showing two differently-tinted paragraphs is usually the selection in one and this in the other, not a selection bug.
+
+The extension must stay mounted anyway: focus mode is `html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35 }`, so the class is the only thing marking the line to keep bright. Removing the now-invisible extension would dim the entire document. `apps/desktop/test/Editor.test.ts` asserts both halves — the decoration reaches the DOM, and the override neutralizes it.
+
+The override needs three classes (`.editor-host .cm-content .cm-activeLine`) because CodeMirror injects its base theme into the head *after* this stylesheet, so an equally specific rule loses on order. This applies to any base-theme override, not just this one.
+
 ## contentRect is the border box, and the theme pads .cm-content on all four sides
 
 Stock `.cm-content` has `padding: 4px 0` — no horizontal padding — and upstream selection geometry is written against that, so `leftSide`/`rightSide` in `drawSelection.ts` add only the `.cm-line` padding to `contentRect.left`/`.right`. Our theme (`Editor.ts`) sets `padding: 16px 24px`, so every borrowed formula that treats `contentRect` as the content box is off by that padding. Symptom: fully-selected rows started 24px left of the text, so the highlight had a visible left overhang instead of Typora's flush edge. The vendored copy adds the content's own padding back (Modification D).

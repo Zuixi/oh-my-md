@@ -1082,6 +1082,13 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   color: var(--omd-fg); background: var(--omd-bg);
   border: 1px solid var(--omd-muted); border-radius: 4px;
 }
+/* CodeMirror's base theme paints .cm-activeLine a stock blue that belongs to
+   no palette here, and because it is a line decoration it tints a whole
+   soft-wrapped paragraph or an entire rendered block. Neutralize the paint but
+   keep the decoration: focus mode below dims every line that lacks the class.
+   Needs three classes to out-specify the base theme, which CodeMirror injects
+   into the head after this sheet. */
+.editor-host .cm-content .cm-activeLine { background: transparent; }
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */
