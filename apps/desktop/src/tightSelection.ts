@@ -14,14 +14,16 @@
  * line end of a selection to the content-box right edge and covers the lines
  * between the first and last selected line with a single full-width band.
  * That is not configurable (discuss.codemirror.net threads 9495/9735), so
- * this port clamps the geometry instead (see NUB_PX and the Modification A–C
+ * this port clamps the geometry instead (see NUB_PX and the Modification A–D
  * comments below).
  *
- * Every block-derived y in here is anchored at `view.documentTop`, which is
- * where `BlockInfo.top` is measured from. Upstream uses `contentRect.top` in
- * `drawForWidget`; that is short by the content's padding-top and is
- * deliberately not carried over — see the vendoring guards in
- * `test/tightSelection.test.ts`.
+ * Upstream may treat `contentRect` as the content box because stock
+ * `.cm-content` has no horizontal padding and block coordinates are only used
+ * for widget endpoints. Neither holds here: this editor's theme pads
+ * `.cm-content` on all four sides. So every block-derived y is anchored at
+ * `view.documentTop` (where `BlockInfo.top` is measured from, below the
+ * padding), and the horizontal edges add the content's own padding back
+ * (Modification D). See the vendoring guards in `test/tightSelection.test.ts`.
  *
  * iOS selection handles are out of scope (macOS-first desktop app), so the
  * vendored config only carries `cursorBlinkRate`/`drawRangeCursor`.
@@ -199,9 +201,16 @@ function tightRectanglesForRange(
   // content border box, which sits `padding-top` above the first line box.
   let docTop = view.documentTop
   let lineElt = content.querySelector(".cm-line"), lineStyle = lineElt && window.getComputedStyle(lineElt)
-  let leftSide = contentRect.left +
+  // Modification D: contentRect is the border box, so the content's own
+  // horizontal padding has to be added back to reach the text column. Upstream
+  // omits it because stock `.cm-content` has no horizontal padding; this
+  // editor's theme sets 24px, which used to make every fully-selected row
+  // overhang the text on the left. Typora keeps that edge flush with the text.
+  let contentStyle = window.getComputedStyle(content)
+  let leftSide = contentRect.left + (parseInt(contentStyle.paddingLeft) || 0) +
     (lineStyle ? parseInt(lineStyle.paddingLeft) + Math.min(0, parseInt(lineStyle.textIndent)) : 0)
-  let rightSide = contentRect.right - (lineStyle ? parseInt(lineStyle.paddingRight) : 0)
+  let rightSide = contentRect.right - (parseInt(contentStyle.paddingRight) || 0) -
+    (lineStyle ? parseInt(lineStyle.paddingRight) : 0)
   let startBlock = blockAt(view, from, 1), endBlock = blockAt(view, to, -1)
   let visualStart: VisualLine | null = startBlock.type == BlockType.Text ? wholeBlock(startBlock) : null
   let visualEnd: VisualLine | null = endBlock.type == BlockType.Text ? wholeBlock(endBlock) : null
