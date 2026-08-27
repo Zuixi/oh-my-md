@@ -2,6 +2,7 @@ import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../../shiki/languages"
+import { createCodeLangPicker } from "./codeLangPicker"
 import { formatFenceInfo } from "../../fenceInfo"
 import { EditorView } from "@codemirror/view"
 import {
@@ -90,6 +91,7 @@ export class CodeWidget extends BlockWidget {
   private wrap: HTMLDivElement | undefined
   private codePending: PendingRender | null = null
   private editTimer: ReturnType<typeof setTimeout> | null = null
+  private langPickerDestroy: (() => void) | null = null
 
   constructor(private readonly opts: CodeWidgetOptions) {
     super(opts.src, opts.pos, opts.embed ?? EMPTY_EMBED)
@@ -177,58 +179,51 @@ export class CodeWidget extends BlockWidget {
     titleInput.addEventListener("change", () => this.commitInfo(titleInput.value, null))
     header.appendChild(titleInput)
 
-    const langSelect = document.createElement("select")
-    langSelect.className = "omd-code-lang"
-    langSelect.title = "Language"
+    const tools = document.createElement("div")
+    tools.className = "omd-code-tools"
+
     const resolved = resolveCodeLanguage(this.lang)
     const current = resolved ?? this.lang.trim().toLowerCase()
-    for (const id of supportedLanguages()) {
-      const opt = document.createElement("option")
-      opt.value = id
-      opt.textContent = id
-      if (id === current) opt.selected = true
-      langSelect.appendChild(opt)
-    }
-    if (!resolved && this.lang.trim()) {
-      const custom = document.createElement("option")
-      custom.value = this.lang.trim()
-      custom.textContent = this.lang.trim()
-      custom.selected = true
-      langSelect.appendChild(custom)
-    }
-    langSelect.addEventListener("change", () => {
-      this.commitInfo(titleInput.value, langSelect.value)
+    const langPicker = createCodeLangPicker({
+      value: current || this.lang.trim(),
+      languages: supportedLanguages(),
+      disabled: view.state?.readOnly,
+      onSelect: lang => this.commitInfo(titleInput.value, lang),
     })
-    header.appendChild(langSelect)
+    this.langPickerDestroy = langPicker.destroy
+    tools.appendChild(langPicker.root)
 
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"
     copyBtn.className = "omd-code-copy"
     copyBtn.title = "Copy code"
     copyBtn.setAttribute("aria-label", "Copy code")
-    copyBtn.textContent = "⎘"
+    copyBtn.textContent = "Copy"
     copyBtn.addEventListener("click", e => {
       e.preventDefault()
       e.stopPropagation()
       void navigator.clipboard?.writeText(this.src)
     })
-    header.appendChild(copyBtn)
+    tools.appendChild(copyBtn)
+    header.appendChild(tools)
 
     if (view.state?.readOnly) {
       titleInput.disabled = true
-      langSelect.disabled = true
     }
     return header
   }
 
   override ignoreEvent(event: Event) {
     if (event.type === "mousedown" || event.type === "dblclick") return true
+    if (event.target instanceof Element && event.target.closest(".omd-code-lang-picker")) return true
     if (this.editing && (event.type === "keydown" || event.type === "input")) return true
     return false
   }
 
   override destroy(dom?: HTMLElement) {
     if (this.editTimer) clearTimeout(this.editTimer)
+    this.langPickerDestroy?.()
+    this.langPickerDestroy = null
     if (this.codePending) dropPendingBlockRender(this.codePending)
     super.destroy(dom)
   }
