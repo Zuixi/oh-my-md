@@ -202,6 +202,13 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 在 Windows VM（或 CI 产出的 NSIS 包 + VM 安装；P3 前用 dev 版）逐项目视；本环境无 VM，执行待人工，未跑项标 **NOT RUN**。
 
+### NSIS 安装向导（品牌与文案）
+
+- [ ] 欢迎页 / 完成页：左侧为蓝渐变品牌面板（logo + `oh-my-md` + 版本号），非灰底居中 logo。
+- [ ] 目录选择等内页：右上角**无** squashed / 居中 header logo（内页保持干净）。
+- [ ] 语言选「简体中文」：欢迎语为「欢迎使用 oh-my-md 安装向导…」；WebView2 / 重装等 Tauri 提示为中文。
+- [ ] 语言选 English：欢迎/完成页为短句英文 copy（非冗长默认 MUI 模板感）。
+
 - [ ] 启动无 crash、无多余控制台窗口（`windows_subsystem` 属性）。
 - [ ] 应用内菜单栏全量走查（同 Linux 清单）。
 - [ ] Ctrl 系快捷键全测（同 Linux 清单）。
