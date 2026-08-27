@@ -45,8 +45,11 @@
         "displayLanguageSelector": true,
         "languages": ["English", "SimpChinese"],
         "installerIcon": "icons/icon.ico",
-        "headerImage": "icons/nsis-header.bmp",
-        "sidebarImage": "icons/nsis-sidebar.bmp"
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "installerHooks": "windows/installer-text.nsh",
+        "customLanguageFiles": {
+          "SimpChinese": "windows/nsis-languages/SimpChinese.nsh"
+        }
       },
       "wix": {
         "language": "en-US",

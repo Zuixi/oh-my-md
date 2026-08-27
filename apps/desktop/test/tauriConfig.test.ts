@@ -56,11 +56,11 @@ describe("Tauri frontend security configuration", () => {
 })
 
 describe("Windows installer branding assets", () => {
-  it("uses NSIS and WiX bitmaps at the required aspect ratios", () => {
+  it("uses NSIS sidebar and WiX bitmaps at the required aspect ratios", () => {
     const config = readJson("../src-tauri/tauri.conf.json") as {
       bundle: {
         windows: {
-          nsis: { headerImage: string; sidebarImage: string }
+          nsis: { headerImage?: string; sidebarImage: string }
           wix: { bannerPath: string; dialogImagePath: string }
         }
       }
@@ -68,8 +68,9 @@ describe("Windows installer branding assets", () => {
     const nsis = config.bundle.windows.nsis
     const wix = config.bundle.windows.wix
 
+    expect(nsis.headerImage).toBeUndefined()
+
     for (const relativePath of [
-      nsis.headerImage,
       nsis.sidebarImage,
       wix.bannerPath,
       wix.dialogImagePath,
@@ -77,9 +78,28 @@ describe("Windows installer branding assets", () => {
       expect(existsSync(resolveTauriAsset(relativePath))).toBe(true)
     }
 
-    expect(bmpDimensions(nsis.headerImage)).toEqual({ width: 150, height: 57 })
     expect(bmpDimensions(nsis.sidebarImage)).toEqual({ width: 164, height: 314 })
     expect(bmpDimensions(wix.bannerPath)).toEqual({ width: 493, height: 58 })
     expect(bmpDimensions(wix.dialogImagePath)).toEqual({ width: 493, height: 312 })
+  })
+
+  it("wires NSIS copy hooks and SimpChinese language file", () => {
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      bundle: {
+        windows: {
+          nsis: {
+            installerHooks: string
+            customLanguageFiles: Record<string, string>
+          }
+        }
+      }
+    }
+    const nsis = config.bundle.windows.nsis
+
+    expect(existsSync(resolveTauriAsset(nsis.installerHooks))).toBe(true)
+    expect(nsis.customLanguageFiles.SimpChinese).toBe(
+      "windows/nsis-languages/SimpChinese.nsh",
+    )
+    expect(existsSync(resolveTauriAsset(nsis.customLanguageFiles.SimpChinese))).toBe(true)
   })
 })

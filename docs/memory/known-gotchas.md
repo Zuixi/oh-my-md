@@ -734,8 +734,7 @@ NSIS and WiX do not letterbox arbitrary PNG/ICO assets. A square app icon forced
 
 Use the generated assets referenced from `tauri.conf.json`:
 
-- NSIS `headerImage` → `icons/nsis-header.bmp` (150×57)
-- NSIS `sidebarImage` → `icons/nsis-sidebar.bmp` (164×314)
+- NSIS `sidebarImage` → `icons/nsis-sidebar.bmp` (164×314) — **only** welcome/finish brand panel; do not set `headerImage` (inner pages stay clean without a top-right logo).
 - WiX `bannerPath` → `icons/wix-banner.bmp` (493×58)
 - WiX `dialogImagePath` → `icons/wix-dialog.bmp` (493×312)
 
