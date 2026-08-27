@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { EditorState } from "@codemirror/state"
 import type { Extension, Line } from "@codemirror/state"
 import { BlockType, Direction, EditorView } from "@codemirror/view"
@@ -38,11 +38,14 @@ import {
 //   block tops document-relative like real BlockInfo); `posAtCoords` maps
 //   y → row then x → col so `wrappedLine()` narrowing works through these stubs.
 //
-// Two properties of the real editor are modeled deliberately, because the
-// geometry code has been wrong about both:
+// Three properties of the real editor are modeled deliberately, because the
+// geometry code has been wrong about all of them:
 // - `.cm-content` has a non-zero padding-top (CONTENT_PAD_TOP), so the first
 //   line box starts *below* the content box top. `view.documentTop` — not
 //   `contentRect.top` — is the origin of every BlockInfo coordinate.
+// - `.cm-content` has non-zero horizontal padding (CONTENT_PAD_LEFT/RIGHT), so
+//   `contentRect.left` is the border box, not where text starts. Upstream can
+//   ignore this because stock `.cm-content` has no horizontal padding.
 // - Line boxes are not uniform (`lineHeights`): headings are 1.25–1.8em and
 //   block widgets have arbitrary heights, so `defaultLineHeight` is a default,
 //   never a document-wide row pitch.
@@ -53,11 +56,13 @@ const LINE_H = 20 // fake default line-box height (px)
 // the line box when line-height > 1. Modeling that gap is what surfaces the
 // striped multi-line selection bug.
 const TEXT_H = 14 // fake glyph/textHeight (px) at LINE_H; must stay < LINE_H
-const CONTENT_LEFT = 100 // fake content-box left edge (px)
-const CONTENT_TOP = 50 // fake content-box top edge (px), i.e. the border box
+const CONTENT_LEFT = 100 // fake `.cm-content` border-box left edge (px)
+const CONTENT_TOP = 50 // fake `.cm-content` border-box top edge (px)
+const CONTENT_RIGHT = 700 // fake `.cm-content` border-box right edge (px)
 const CONTENT_PAD_TOP = 16 // fake `.cm-content` padding-top (px); must stay > 0
+const CONTENT_PAD_LEFT = 24 // fake `.cm-content` padding-left (px); must stay > 0
+const CONTENT_PAD_RIGHT = 24 // fake `.cm-content` padding-right (px); must stay > 0
 const DOC_TOP = CONTENT_TOP + CONTENT_PAD_TOP // fake view.documentTop
-const CONTENT_RIGHT = 700 // fake content-box right edge (px)
 const WRAP_COL = 20 // fake soft-wrap column (characters per visual row)
 
 interface FakeBlock {
@@ -76,6 +81,12 @@ const rightEdge = (m: { left: number; width: number | null }) =>
 
 /** Marker-space top of visual row `row` in a uniform-line-height document. */
 const rowTop = (row: number) => CONTENT_PAD_TOP + row * LINE_H
+
+// Marker coordinates are relative to `base.left`, i.e. the content border box.
+/** Marker-space x of glyph column `col`, i.e. where text actually starts. */
+const textX = (col: number) => CONTENT_PAD_LEFT + col * CHAR_W
+/** Marker-space right edge that full-width remainder bands must stop at. */
+const RIGHT_SIDE = CONTENT_RIGHT - CONTENT_LEFT - CONTENT_PAD_RIGHT
 
 interface FakeViewSpec {
   doc: string
@@ -111,6 +122,13 @@ interface FakeViewSpec {
    */
   lineHeights?: Record<number, number>
 }
+
+// The harness stubs computed styles for its own detached elements; the real
+// EditorView test at the bottom of this file needs the genuine implementation.
+const nativeGetComputedStyle = window.getComputedStyle.bind(window)
+afterEach(() => {
+  window.getComputedStyle = nativeGetComputedStyle as typeof window.getComputedStyle
+})
 
 /** A line box in marker coordinates (marker `top` is relative to `base.top`). */
 interface Box { top: number; bottom: number }
@@ -193,7 +211,7 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
     const rowH = rowHeightOf(line.number)
     const row = wrap > 0 ? Math.min(Math.floor(glyph / wrap), rowsOf(line.number) - 1) : 0
     const nest = spec.lineNestIndent ?? 0
-    const x = CONTENT_LEFT + (line.number - 1) * nest + (glyph - row * wrap) * CHAR_W
+    const x = CONTENT_LEFT + CONTENT_PAD_LEFT + (line.number - 1) * nest + (glyph - row * wrap) * CHAR_W
     const rowTop = DOC_TOP + blockTops[line.number - 1] + row * rowH
     // Center the shorter glyph rect inside the line box (half-leading above/below).
     const glyphH = rowH * (TEXT_H / LINE_H)
@@ -242,20 +260,20 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
     new DOMRect(CONTENT_LEFT, CONTENT_TOP, CONTENT_RIGHT - CONTENT_LEFT, 300)
   const contentDOM = document.createElement("div")
   contentDOM.getBoundingClientRect = fakeRect
-  const linePaddingLeft = spec.linePaddingLeft ?? 0
-  if (linePaddingLeft > 0) {
-    const lineElt = document.createElement("div")
-    lineElt.className = "cm-line"
-    contentDOM.appendChild(lineElt)
-    const style = {
-      paddingLeft: String(linePaddingLeft),
-      paddingRight: "0",
-      textIndent: "0",
-    } as CSSStyleDeclaration
-    const orig = window.getComputedStyle.bind(window)
-    window.getComputedStyle = ((elt: Element) =>
-      elt === lineElt ? style : orig(elt)) as typeof window.getComputedStyle
-  }
+  const lineElt = document.createElement("div")
+  lineElt.className = "cm-line"
+  contentDOM.appendChild(lineElt)
+  const fakeStyle = (paddingLeft: number, paddingRight: number) => ({
+    paddingLeft: String(paddingLeft),
+    paddingRight: String(paddingRight),
+    textIndent: "0",
+  } as CSSStyleDeclaration)
+  const styles = new Map<Element, CSSStyleDeclaration>([
+    [contentDOM, fakeStyle(CONTENT_PAD_LEFT, CONTENT_PAD_RIGHT)],
+    [lineElt, fakeStyle(spec.linePaddingLeft ?? 0, 0)],
+  ])
+  window.getComputedStyle = ((elt: Element) =>
+    styles.get(elt) ?? nativeGetComputedStyle(elt)) as typeof window.getComputedStyle
   const scrollDOM = document.createElement("div")
   scrollDOM.getBoundingClientRect = fakeRect
   Object.defineProperty(scrollDOM, "clientWidth", {
@@ -303,10 +321,21 @@ describe("tightSelection geometry (fake view)", () => {
     const markers = tightSelectionMarkers(view)
     expect(markers).toHaveLength(1)
     const marker = markers[0]
-    expect(marker.left).toBe(0)
+    expect(marker.left).toBe(textX(0))
     expect(marker.width).toBe(3 * CHAR_W) // text end, not text end + NUB_PX
     expect(marker.top).toBe(rowTop(0))
     expect(marker.height).toBe(LINE_H)
+  })
+
+  it("open line starts align with the text, not the content border box", () => {
+    // Typora keeps every fully-selected row flush with the text's left edge.
+    // Upstream's leftSide adds only the `.cm-line` padding to contentRect.left,
+    // which is the border box — stock `.cm-content` has no horizontal padding,
+    // ours has 24px, so the bars used to overhang the text on the left.
+    const view = makeFakeView({ doc: "abc\ndefg\nhij", anchor: 1, head: 11 })
+    const [, middle, bottom] = tightSelectionMarkers(view)
+    expect(middle.left).toBe(textX(0))
+    expect(bottom.left).toBe(textX(0))
   })
 
   it("single-line range: the marker stays inside its own line box", () => {
@@ -363,17 +392,17 @@ describe("tightSelection geometry (fake view)", () => {
     const [top, middle, bottom] = markers
     // Top line: starts at the first selected glyph, ends at the top line's
     // text end + nub — not at the content right edge.
-    expect(top.left).toBe(CHAR_W)
-    expect(rightEdge(top)).toBe(3 * CHAR_W + NUB_PX)
+    expect(top.left).toBe(textX(1))
+    expect(rightEdge(top)).toBe(textX(3) + NUB_PX)
     expect(top.top).toBe(rowTop(0))
     // Middle line: full line drawn on its own row at the shared leftSide,
     // ending at its own text end + nub instead of one full-width band.
-    expect(middle.left).toBe(0)
-    expect(rightEdge(middle)).toBe(4 * CHAR_W + NUB_PX)
+    expect(middle.left).toBe(textX(0))
+    expect(rightEdge(middle)).toBe(textX(4) + NUB_PX)
     expect(middle.top).toBe(rowTop(1))
     // Bottom line: starts at the line's text start, ends at the selected text end.
-    expect(bottom.left).toBe(0)
-    expect(rightEdge(bottom)).toBe(2 * CHAR_W)
+    expect(bottom.left).toBe(textX(0))
+    expect(rightEdge(bottom)).toBe(textX(2))
     expect(bottom.top).toBe(rowTop(2))
   })
 
@@ -389,8 +418,8 @@ describe("tightSelection geometry (fake view)", () => {
     const markers = tightSelectionMarkers(view)
     expect(markers).toHaveLength(3)
     const [, middle, bottom] = markers
-    expect(middle.left).toBe(32)
-    expect(bottom.left).toBe(32)
+    expect(middle.left).toBe(CONTENT_PAD_LEFT + 32)
+    expect(bottom.left).toBe(CONTENT_PAD_LEFT + 32)
   })
 
   it("multi-line range: open line starts ignore per-line nest indent", () => {
@@ -404,10 +433,10 @@ describe("tightSelection geometry (fake view)", () => {
     const markers = tightSelectionMarkers(view)
     expect(markers).toHaveLength(3)
     const [, middle, bottom] = markers
-    expect(middle.left).toBe(32)
-    expect(bottom.left).toBe(32)
-    expect(middle.left).not.toBe(3 * CHAR_W)
-    expect(bottom.left).not.toBe(6 * CHAR_W)
+    expect(middle.left).toBe(CONTENT_PAD_LEFT + 32)
+    expect(bottom.left).toBe(CONTENT_PAD_LEFT + 32)
+    expect(middle.left).not.toBe(textX(3))
+    expect(bottom.left).not.toBe(textX(6))
   })
 
   it("multi-line range: hidden list-indent prefix still uses unified leftSide", () => {
@@ -420,7 +449,7 @@ describe("tightSelection geometry (fake view)", () => {
     })
     const markers = tightSelectionMarkers(view)
     const middle = markers[1]
-    expect(middle.left).toBe(48)
+    expect(middle.left).toBe(CONTENT_PAD_LEFT + 48)
   })
 
   it("multi-line range: per-line markers fill the line box and abut with no vertical gaps", () => {
@@ -436,9 +465,9 @@ describe("tightSelection geometry (fake view)", () => {
     expect(middle.top).toBe(top.top + top.height)
     expect(bottom.top).toBe(middle.top + middle.height)
     // Horizontal tight clamps stay intact (open ends still stop at text + nub).
-    expect(rightEdge(top)).toBe(3 * CHAR_W + NUB_PX)
-    expect(rightEdge(middle)).toBe(4 * CHAR_W + NUB_PX)
-    expect(rightEdge(bottom)).toBe(2 * CHAR_W)
+    expect(rightEdge(top)).toBe(textX(3) + NUB_PX)
+    expect(rightEdge(middle)).toBe(textX(4) + NUB_PX)
+    expect(rightEdge(bottom)).toBe(textX(2))
   })
 
   it("empty middle line: nub-width bar confined to its own line box", () => {
@@ -450,7 +479,7 @@ describe("tightSelection geometry (fake view)", () => {
     // on the previous row, so the bar must be clamped back to its own box.
     const emptyLine = markers.find(m => m.width === NUB_PX)
     expect(emptyLine).toBeDefined()
-    expect(emptyLine!.left).toBe(0)
+    expect(emptyLine!.left).toBe(textX(0))
     expect(emptyLine!.top).toBe(rowTop(1))
     expect(emptyLine!.height).toBe(LINE_H)
     // No marker anywhere approaches the content width.
@@ -473,8 +502,8 @@ describe("tightSelection geometry (fake view)", () => {
     // The RTL span's logical end renders on the left: the open end clamps to
     // the last glyph's left edge minus the nub instead of extending to the
     // content-box left edge.
-    expect(middle.left).toBe(3 * CHAR_W - NUB_PX)
-    expect(middle.left).not.toBe(0)
+    expect(middle.left).toBe(textX(3) - NUB_PX)
+    expect(middle.left).not.toBe(textX(0))
   })
 
   it("wrapped start line: tight top row, full-width remainder band, tight middle/bottom lines", () => {
@@ -491,19 +520,19 @@ describe("tightSelection geometry (fake view)", () => {
     const [topRow, band, middle, bottom] = markers
     // Top row: tight bar ending at the row's text end + nub.
     expect(topRow.top).toBe(rowTop(0))
-    expect(rightEdge(topRow)).toBe(WRAP_COL * CHAR_W + NUB_PX)
-    // Remainder band: full width, covering exactly rows 1-2 of the wrapped
-    // start block (the rows below the drawn top row).
-    expect(band.left).toBe(0)
-    expect(band.width).toBe(CONTENT_RIGHT - CONTENT_LEFT)
+    expect(rightEdge(topRow)).toBe(textX(WRAP_COL) + NUB_PX)
+    // Remainder band: spans the text column (content box, not border box),
+    // covering exactly rows 1-2 of the wrapped start block.
+    expect(band.left).toBe(textX(0))
+    expect(rightEdge(band)).toBe(RIGHT_SIDE)
     expect(band.top).toBe(rowTop(1))
     expect(band.top + band.height).toBe(rowTop(3))
     // Whole intermediate line keeps its tight per-line bar.
     expect(middle.top).toBe(rowTop(3))
-    expect(rightEdge(middle)).toBe(5 * CHAR_W + NUB_PX)
+    expect(rightEdge(middle)).toBe(textX(5) + NUB_PX)
     // Bottom line tight as before (single row, no remainder above it).
     expect(bottom.top).toBe(rowTop(4))
-    expect(rightEdge(bottom)).toBe(2 * CHAR_W)
+    expect(rightEdge(bottom)).toBe(textX(2))
   })
 
   it("selection within one wrapped line: every visual row painted", () => {
@@ -515,10 +544,10 @@ describe("tightSelection geometry (fake view)", () => {
     // Row 0: tight bar from the selection start to the row text end + nub.
     const row0 = markers.find(m => m.top === rowTop(0))
     expect(row0).toBeDefined()
-    expect(row0!.left).toBe(5 * CHAR_W)
-    expect(rightEdge(row0!)).toBe(WRAP_COL * CHAR_W + NUB_PX)
+    expect(row0!.left).toBe(textX(5))
+    expect(rightEdge(row0!)).toBe(textX(WRAP_COL) + NUB_PX)
     // Row 1: full-width remainder band with the exact vertical span.
-    const bands = markers.filter(m => m.width === CONTENT_RIGHT - CONTENT_LEFT)
+    const bands = markers.filter(m => rightEdge(m) === RIGHT_SIDE)
     // Exactly one band: the start-block and end-block remainders describe the
     // same rows here, and the selection background is translucent, so painting
     // it twice would render this row darker than its neighbours.
@@ -528,8 +557,8 @@ describe("tightSelection geometry (fake view)", () => {
     // Row 2: tight bar from the row start to the selection end.
     const row2 = markers.find(m => m.top === rowTop(2))
     expect(row2).toBeDefined()
-    expect(row2!.left).toBe(0)
-    expect(rightEdge(row2!)).toBe(5 * CHAR_W)
+    expect(row2!.left).toBe(textX(0))
+    expect(rightEdge(row2!)).toBe(textX(5))
     // Every visual row of the line is covered by at least one marker.
     for (let row = 0; row < 3; row++) {
       const top = rowTop(row)
@@ -542,7 +571,7 @@ describe("tightSelection geometry (fake view)", () => {
     const caret = tightCursorMarkers(makeFakeView({ doc: "abc", anchor: 2 }))
     expect(caret).toHaveLength(1)
     expect(caret[0].width).toBeNull() // cursors get no width style
-    expect(caret[0].left).toBe(2 * CHAR_W)
+    expect(caret[0].left).toBe(textX(2))
     // Cursors keep the raw glyph rect (no line-box snap), but still start from
     // the first line box, i.e. below the content padding.
     expect(caret[0].top).toBe(rowTop(0) + (LINE_H - TEXT_H) / 2)
