@@ -52,4 +52,12 @@ describe("block widget layout", () => {
     expect(code).toMatch(/\bdisplay\s*:\s*flex\s*;/)
     expect(code).toMatch(/\bflex-direction\s*:\s*column\s*;/)
   })
+
+  it("shows code fence chrome by default, not only on hover", () => {
+    const header = declarationBlocks(".editor-host .omd-code-header").join("\n")
+    expect(header).toMatch(/\bdisplay\s*:\s*flex\s*;/)
+    expect(header).not.toMatch(/\bopacity\s*:\s*0\s*;/)
+    expect(header).not.toMatch(/\bvisibility\s*:\s*hidden\s*;/)
+    expect(() => declarationBlocks(".editor-host .omd-code:hover .omd-code-header")).toThrow()
+  })
 })

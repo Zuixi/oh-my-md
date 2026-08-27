@@ -18,14 +18,14 @@ Live 模式下代码块应像 Typora：有明确块级容器、Shiki 高亮、�
 
 | 状态 | 触发 | Shiki | 行号 | 顶栏（标签/语言/copy） | 可编辑 |
 |------|------|-------|------|------------------------|--------|
-| **Idle** | 光标在块外 | ✓ | ✓ | 隐藏 | 否 |
+| **Idle** | 光标在块外 | ✓ | ✓ | **显示** | 否 |
 | **Keyboard-active** | ↑/↓ 进入块内 | 卸载 widget | 源码行样式 | 无（widget 已卸） | ✓（CodeMirror 源码，光标在对应行） |
 | **Pointer-over** | 鼠标 enter/hover 块 | ✓ | ✓ | **显示** | 可选（点击 body 可聚焦编辑） |
 
 **顶栏显示规则（用户确认）：**
 
-> 只有鼠标进入或 hover 代码块时，才显示 fence info 可选区域（标签输入、语言下拉、copy）。  
-> 纯键盘 ↑/↓ 进入编辑时，不自动弹出顶栏；鼠标移入后才显示。
+> 预览态（widget 挂载）时 fence info 顶栏默认显示（标签输入、语言下拉、copy），避免 hover 才出现造成误导。  
+> 纯键盘 ↑/↓ 进入编辑时 widget 卸载，顶栏随 widget 消失。
 
 Source 模式（⌘E / Ctrl+E）：完整 Markdown 源码，含围栏行。
 
@@ -73,7 +73,7 @@ styleFencedCode (lang set, not mermaid, not in quote)
 
 ```text
 .omd-code
-  .omd-code-header     ← hover 时可见
+  .omd-code-header     ← 预览态默认可见
     input.omd-code-title
     select.omd-code-lang
     button.omd-code-copy
@@ -96,8 +96,7 @@ styleFencedCode (lang set, not mermaid, not in quote)
 
 ## 验收
 
-1. Idle：灰底容器 + Shiki + 行号，无顶栏
-2. Hover：顶栏出现，可选语言/改标签，copy 得纯代码
-3. ↑/↓ 进入：可编辑、Shiki 保持（允许 debounce 闪烁），顶栏不出现直至 hover
+1. Idle：灰底容器 + Shiki + 行号 + 顶栏（语言/标签/copy）
+2. ↑/↓ 进入：卸载 widget，源码可编辑，顶栏随 widget 消失
 4. Source 模式：完整 `` ``` ``
 5. fence info 持久化到 `CodeInfo` 行
