@@ -109,3 +109,7 @@ export function resolveCodeLanguage(lang: string): string | null {
   const canonical = LANGUAGE_ALIASES[key] ?? key
   return LANGUAGE_LOADERS[canonical] ? canonical : null
 }
+
+export function supportedLanguages(): readonly string[] {
+  return Object.keys(LANGUAGE_LOADERS).sort()
+}
