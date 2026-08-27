@@ -289,15 +289,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 0; background: transparent;
 }
 .editor-host .omd-code pre {
-  margin: 0; padding: 10px 12px 10px 3.25em; border-radius: 0;
-  font-size: 0.9em; overflow-x: auto; background: transparent;
+  margin: 0; padding: 6px 12px 6px 10px; border-radius: 0;
+  font-size: 0.9em; line-height: 1.45; overflow-x: auto; background: transparent;
 }
 .editor-host .omd-code {
   border: 1px solid var(--omd-border);
   border-radius: 6px;
   background: var(--omd-code-block-bg);
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .editor-host .omd-code-header {
   display: flex;
@@ -327,24 +327,92 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   outline: none;
 }
 .editor-host .omd-code-title::placeholder { color: var(--omd-muted); }
-.editor-host .omd-code-lang {
-  font-size: 0.8em;
+.editor-host .omd-code-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px;
   border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  background: var(--omd-bg);
+}
+.editor-host .omd-code-lang-picker {
+  position: relative;
+}
+.editor-host .omd-code-lang-trigger {
+  border: none;
   border-radius: 4px;
+  background: transparent;
+  color: var(--omd-fg);
+  font: inherit;
+  font-size: 0.8em;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.editor-host .omd-code-lang-trigger:hover { background: var(--omd-code-bg); }
+.editor-host .omd-code-lang-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.editor-host .omd-code-lang-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: min(220px, 70vw);
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--omd-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 20;
+}
+.editor-host .omd-code-lang-search {
+  border: none;
+  border-bottom: 1px solid var(--omd-border);
+  padding: 6px 8px;
   background: var(--omd-bg);
   color: var(--omd-fg);
-  padding: 2px 6px;
+  font-size: 0.8em;
+  outline: none;
 }
+.editor-host .omd-code-lang-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.editor-host .omd-code-lang-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--omd-fg);
+  font-size: 0.8em;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.editor-host .omd-code-lang-row-active { background: var(--omd-code-bg); }
+.editor-host .omd-code-lang-row[aria-selected="true"] { color: var(--omd-link); font-weight: 600; }
+.editor-host .omd-code-lang-check { margin-left: 8px; color: var(--omd-link); }
 .editor-host .omd-code-copy {
   border: none;
   background: transparent;
   color: var(--omd-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.8em;
   line-height: 1;
-  padding: 2px 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
-.editor-host .omd-code-copy:hover { color: var(--omd-fg); }
+.editor-host .omd-code-copy:hover { color: var(--omd-fg); background: var(--omd-code-bg); }
 .editor-host .omd-code-body { padding: 0; }
 .editor-host .omd-code-lines {
   counter-reset: omd-code-line;
@@ -353,8 +421,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-code-lines .omd-code-edit-line {
   display: block;
   position: relative;
-  padding-left: 3.25em;
-  min-height: 1.6em;
+  padding-left: 2.5em;
+  line-height: 1.45;
 }
 .editor-host .omd-code-lines .line::before,
 .editor-host .omd-code-lines .omd-code-edit-line::before {
@@ -362,13 +430,14 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   content: counter(omd-code-line);
   position: absolute;
   left: 0;
-  width: 2.5em;
+  width: 1.85em;
   text-align: right;
-  padding-right: 0.75em;
+  padding-right: 0.45em;
   color: var(--omd-muted);
   user-select: none;
   pointer-events: none;
   font-size: 0.85em;
+  line-height: inherit;
 }
 .editor-host .omd-code-edit-line {
   margin: 0;
@@ -377,13 +446,16 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding-right: 12px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.9em;
-  line-height: 1.6;
+  line-height: 1.45;
   white-space: pre-wrap;
   outline: none;
   background: transparent;
   color: var(--omd-fg);
 }
 .editor-host .omd-code-editing .omd-code-body pre { display: none; }
+.editor-host .omd-code-editing .omd-code-body {
+  padding: 6px 12px 6px 10px;
+}
 .editor-host .omd-math { overflow-x: auto; padding: 4px 0; }
 .editor-host .omd-inline-math { padding: 0 2px; }
 .editor-host .omd-image { max-width: 100%; border-radius: 4px; }
