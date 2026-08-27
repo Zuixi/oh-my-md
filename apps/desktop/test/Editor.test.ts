@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { undo } from "@codemirror/commands"
 import { RectangleMarker } from "@codemirror/view"
@@ -302,6 +304,28 @@ describe("desktop editor lifecycle", () => {
     )
     expect(view.lineWrapping).toBe(true)
     view.destroy()
+  })
+
+  it("keeps the active-line decoration for focus mode while painting no background of its own", () => {
+    // Focus mode dims every line *except* `.cm-activeLine`, so the decoration
+    // has to stay mounted even though nothing paints it. Deleting
+    // highlightActiveLine() as dead weight would dim the whole document.
+    const host = document.createElement("div")
+    document.body.appendChild(host)
+    const view = createEditor(host, editorOptions(vi.fn(), "alpha\nbeta"))
+    expect(view.contentDOM.querySelector(".cm-activeLine")).not.toBeNull()
+    view.destroy()
+    host.remove()
+
+    const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
+    expect(styles).toMatch(/html\[data-focus="on"\][^{]*:not\(\.cm-activeLine\)/)
+    // CodeMirror's base theme ships `.cm-activeLine { background: #cceeff44 }`,
+    // a blue that belongs to no palette here. The override has to out-specify
+    // it (base theme is two classes deep and is injected after this sheet).
+    const [, override] =
+      /\.editor-host\s+\.cm-content\s+\.cm-activeLine\s*\{([^}]*)\}/.exec(styles) ?? []
+    expect(override).toBeDefined()
+    expect(override).toMatch(/background\s*:\s*(?:transparent|none)\s*;/)
   })
 
   it("draws selection through the vendored tight-selection extension, not stock drawSelection", async () => {
