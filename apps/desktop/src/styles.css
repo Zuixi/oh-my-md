@@ -310,15 +310,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 6px 10px;
   border-bottom: 1px solid var(--omd-border);
   background: var(--omd-chrome);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-.editor-host .omd-code:hover .omd-code-header {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
 }
 .editor-host .omd-code-title {
   flex: 1;

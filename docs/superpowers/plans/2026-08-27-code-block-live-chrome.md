@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:executing-plans (or subagent-driven-development) task-by-task. TDD per `@omd/engine` AGENTS.md.
 
-**Goal:** Typora-like live code blocks: container chrome, mandatory line numbers, hover-only fence-info toolbar. Keyboard entry unmounts the widget into native source.
+**Goal:** Typora-like live code blocks: container chrome, mandatory line numbers, always-visible fence-info toolbar. Keyboard entry unmounts the widget into native source.
 
-**Architecture:** Mount `CodeWidget` only while the caret is outside; `blockSelected` → line styles; hover-only header; `replaceFenceInfo` on the live range; no contenteditable.
+**Architecture:** Mount `CodeWidget` only while the caret is outside; `blockSelected` → line styles; always-visible header; `replaceFenceInfo` on the live range; no contenteditable.
 
 **Tech stack:** `@omd/engine`, Shiki, CodeMirror 6, desktop `styles.css`
 
@@ -37,7 +37,7 @@ Remove `blockSelected` → line styles for lang blocks. Pass `infoFrom/infoTo`, 
 - Modify: `apps/desktop/src/styles.css`
 - Optional: `apps/desktop/src/constants.ts` + drift test for `#f8f8f8` token
 
-Header hidden by default; visible on `.omd-code:hover`. Line numbers via `.omd-code-lines .line::before`. Copy writes `this.src`.
+Header always visible on `.omd-code`. Line numbers via `.omd-code-lines .line::before`. Copy writes `this.src`.
 
 ---
 
@@ -70,9 +70,7 @@ When `editing=true`: contenteditable plain layer or sync; dispatch to `CodeText`
 
 | 输入 | 顶栏 | 编辑 | Shiki |
 |------|------|------|-------|
-| 无交互 | 隐藏 | 否 | ✓ |
-| mouseenter/hover | 显示 | 点击 body 可聚焦 | ✓ |
-| ↑/↓ 进入块 | 隐藏* | ✓ | ✓ |
+| 无交互 | 显示 | 否 | ✓ |
+| mouseenter/hover | 显示 | 否（点击不进源码） | ✓ |
+| ↑/↓ 进入块 | 无（widget 已卸） | ✓ | 源码行 |
 | ⌘E Source | N/A（无 Live 装饰） | CM 源码 | N/A |
-
-\*除非此时鼠标也在块上（`:hover`）
