@@ -278,10 +278,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   cursor: pointer;
 }
 .editor-host .omd-table-edit {
-  width: 100%; box-sizing: border-box;
-  font: inherit; color: inherit;
-  border: 1px solid var(--omd-link); border-radius: 3px;
-  padding: 2px 4px; background: var(--omd-bg);
+  /* width:100% contributes the input's default 20ch intrinsic width to an
+     auto-layout table and makes the column jump on click. This equivalent
+     fill pattern keeps the input inside the already-sized cell. */
+  display: block; width: 0; min-width: 100%; box-sizing: border-box;
+  font: inherit; line-height: inherit; color: inherit;
+  border: none; outline: none;
+  padding: 0; background: transparent;
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 10px 12px; border-radius: 6px;

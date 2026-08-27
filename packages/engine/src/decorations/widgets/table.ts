@@ -256,7 +256,8 @@ export class TableWidget extends BlockWidget {
       }
     })
     input.focus()
-    input.select()
+    const caret = input.value.length
+    input.setSelectionRange(caret, caret)
   }
 
   private cancelEdit() {

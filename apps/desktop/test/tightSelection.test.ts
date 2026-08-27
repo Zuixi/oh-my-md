@@ -121,6 +121,12 @@ interface FakeViewSpec {
    * `defaultLineHeight`.
    */
   lineHeights?: Record<number, number>
+  /**
+   * CodeMirror's measured default font line height. WebKit/font metrics can
+   * differ from a wrapped block's actual row pitch, so this must be
+   * independently configurable rather than derived from LINE_H.
+   */
+  defaultLineHeight?: number
 }
 
 // The harness stubs computed styles for its own detached elements; the real
@@ -298,7 +304,7 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
     lineWrapping: wrap > 0,
     scaleX: 1,
     scaleY: 1,
-    defaultLineHeight: LINE_H,
+    defaultLineHeight: spec.defaultLineHeight ?? LINE_H,
     documentTop: DOC_TOP,
     coordsAtPos,
     posAtCoords,
@@ -349,6 +355,39 @@ describe("tightSelection geometry (fake view)", () => {
     expect(markers[0].top).toBe(line2.top)
     expect(markers[0].top + markers[0].height).toBe(line2.bottom)
     expectConfinedToLines(markers, spec, [2])
+  })
+
+  it("selection inside one wrapped row never expands into the next row", () => {
+    // WKWebView can report a default font line height that differs from the
+    // actual row pitch of a wrapped block. Inferring row count from
+    // block.height/defaultLineHeight then snaps a one-row selection across
+    // two rows. A selection whose endpoints resolve to the same visual row
+    // must use their actual coordinates instead.
+    const spec: FakeViewSpec = {
+      doc: "a".repeat(50),
+      anchor: 2,
+      head: 12,
+      wrapColumn: WRAP_COL,
+      defaultLineHeight: 14,
+    }
+    const markers = tightSelectionMarkers(makeFakeView(spec))
+    expect(markers).toHaveLength(1)
+    expect(markers[0].top).toBeGreaterThanOrEqual(rowTop(0))
+    expect(markers[0].height).toBeGreaterThanOrEqual(TEXT_H)
+    expect(markers[0].top + markers[0].height).toBeLessThanOrEqual(rowTop(1))
+  })
+
+  it("selection on an unwrapped line still fills its row when wrapping is enabled", () => {
+    const view = makeFakeView({
+      doc: "short",
+      anchor: 1,
+      head: 4,
+      wrapColumn: WRAP_COL,
+    })
+    const markers = tightSelectionMarkers(view)
+    expect(markers).toHaveLength(1)
+    expect(markers[0].top).toBe(rowTop(0))
+    expect(markers[0].height).toBe(LINE_H)
   })
 
   it("selection below a taller line is not displaced by the line-height grid", () => {
