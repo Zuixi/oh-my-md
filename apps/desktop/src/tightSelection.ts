@@ -17,6 +17,12 @@
  * this port clamps the geometry instead (see NUB_PX and the Modification A–C
  * comments below).
  *
+ * Every block-derived y in here is anchored at `view.documentTop`, which is
+ * where `BlockInfo.top` is measured from. Upstream uses `contentRect.top` in
+ * `drawForWidget`; that is short by the content's padding-top and is
+ * deliberately not carried over — see the vendoring guards in
+ * `test/tightSelection.test.ts`.
+ *
  * iOS selection handles are out of scope (macOS-first desktop app), so the
  * vendored config only carries `cursorBlinkRate`/`drawRangeCursor`.
  */
@@ -55,6 +61,12 @@ export const NUB_PX = 2
  * treated as empty so sub-pixel rounding cannot create hairline artifacts.
  */
 const BAND_EPSILON_PX = 1
+
+/**
+ * Tolerance for the row-box snap, so a coordinate already sitting exactly on a
+ * row boundary is not pushed out to the next row by floating-point noise.
+ */
+const SNAP_EPSILON = 1e-6
 
 export interface TightSelectionConfig {
   /**
@@ -118,8 +130,17 @@ function getBase(view: EditorView) {
   return { left: left - view.scrollDOM.scrollLeft * view.scaleX, top: rect.top - view.scrollDOM.scrollTop * view.scaleY }
 }
 
-/** A line-shaped range: a viewport line block or a wrapped line segment. */
-interface VisualLine { from: number; to: number }
+/**
+ * A line-shaped range: a viewport line block or a wrapped line segment. The
+ * owning block travels with it because Modification C needs that block's real
+ * box from CodeMirror's height map.
+ */
+interface VisualLine { from: number; to: number; block: BlockInfo }
+
+/** The whole block as a visual line (no soft wrapping applied yet). */
+function wholeBlock(block: BlockInfo): VisualLine {
+  return { from: block.from, to: block.to, block }
+}
 
 function wrappedLine(view: EditorView, pos: number, side: number, inside: VisualLine): VisualLine {
   let coords = coordsAtPos(view, pos, side * 2)
@@ -131,7 +152,11 @@ function wrappedLine(view: EditorView, pos: number, side: number, inside: Visual
   let right = view.posAtCoords({ x: editorRect.right - 1, y })
   if (left == null || right == null)
     return inside
-  return { from: Math.max(inside.from, Math.min(left, right)), to: Math.min(inside.to, Math.max(left, right)) }
+  return {
+    ...inside,
+    from: Math.max(inside.from, Math.min(left, right)),
+    to: Math.min(inside.to, Math.max(left, right)),
+  }
 }
 
 /** From src/cursor.ts: resolve the block for a position, entering composite lines. */
@@ -170,13 +195,16 @@ function tightRectanglesForRange(
   let from = Math.max(range.from, view.viewport.from), to = Math.min(range.to, view.viewport.to)
   let ltr = view.textDirection == Direction.LTR
   let content = view.contentDOM, contentRect = content.getBoundingClientRect(), base = getBase(view)
+  // The origin of every BlockInfo coordinate. NOT contentRect.top: that is the
+  // content border box, which sits `padding-top` above the first line box.
+  let docTop = view.documentTop
   let lineElt = content.querySelector(".cm-line"), lineStyle = lineElt && window.getComputedStyle(lineElt)
   let leftSide = contentRect.left +
     (lineStyle ? parseInt(lineStyle.paddingLeft) + Math.min(0, parseInt(lineStyle.textIndent)) : 0)
   let rightSide = contentRect.right - (lineStyle ? parseInt(lineStyle.paddingRight) : 0)
   let startBlock = blockAt(view, from, 1), endBlock = blockAt(view, to, -1)
-  let visualStart: VisualLine | null = startBlock.type == BlockType.Text ? startBlock : null
-  let visualEnd: VisualLine | null = endBlock.type == BlockType.Text ? endBlock : null
+  let visualStart: VisualLine | null = startBlock.type == BlockType.Text ? wholeBlock(startBlock) : null
+  let visualEnd: VisualLine | null = endBlock.type == BlockType.Text ? wholeBlock(endBlock) : null
   if (visualStart && (view.lineWrapping || startBlock.widgetLineBreaks))
     visualStart = wrappedLine(view, from, 1, visualStart)
   if (visualEnd && (view.lineWrapping || endBlock.widgetLineBreaks))
@@ -204,17 +232,26 @@ function tightRectanglesForRange(
       // margin anyway, so full-width bands match Typora visually; without
       // wrapping these spans are zero-width. BAND_EPSILON_PX keeps sub-pixel
       // rounding from producing hairline artifacts.
-      let startBlockBottom = contentRect.top + startBlock.bottom
-      let endBlockTop = contentRect.top + endBlock.top
-      if (Math.min(startBlockBottom, bottom.top) - top.bottom > BAND_EPSILON_PX)
-        between.push(piece(leftSide, top.bottom, rightSide, Math.min(startBlockBottom, bottom.top)))
+      let startBlockBottom = docTop + startBlock.bottom
+      let endBlockTop = docTop + endBlock.top
+      let startBandBottom = Math.min(startBlockBottom, bottom.top)
+      if (startBandBottom - top.bottom > BAND_EPSILON_PX)
+        between.push(piece(leftSide, top.bottom, rightSide, startBandBottom))
       for (let block of view.viewportLineBlocks)
         if (block.from >= startTo && block.to <= endFrom)
-          between.push(...pieces(tightDrawForLine(null, null, block)))
-      if (bottom.top - Math.max(endBlockTop, top.bottom) > BAND_EPSILON_PX)
-        between.push(piece(leftSide, Math.max(endBlockTop, top.bottom), rightSide, bottom.top))
+          between.push(...pieces(tightDrawForLine(null, null, wholeBlock(block))))
+      // When the selection stays inside one soft-wrapped block, both remainder
+      // spans describe the same rows. `startBandBottom` in the lower bound
+      // collapses the second one to nothing — the selection background is
+      // translucent, so painting a row twice makes it darker than its
+      // neighbours. When the spans are genuinely disjoint it changes nothing.
+      let endBandTop = Math.max(endBlockTop, top.bottom, startBandBottom)
+      if (bottom.top - endBandTop > BAND_EPSILON_PX)
+        between.push(piece(leftSide, endBandTop, rightSide, bottom.top))
     }
-    else if (top.bottom < bottom.top && view.elementAtHeight((top.bottom + bottom.top) / 2).type == BlockType.Text)
+    // elementAtHeight takes a height relative to documentTop, not a client y.
+    else if (top.bottom < bottom.top &&
+      view.elementAtHeight((top.bottom + bottom.top) / 2 - docTop).type == BlockType.Text)
       top.bottom = bottom.top = (top.bottom + bottom.top) / 2
     return pieces(top).concat(between).concat(pieces(bottom))
   }
@@ -281,21 +318,33 @@ function tightRectanglesForRange(
       addSpan(line.from, from == null, end, to == null, view.textDirection)
     // Modification C: coordsAtPos returns glyph metrics (textHeight). When
     // CSS line-height > 1 the line box is taller, so per-line markers leave
-    // visible gaps between rows. Snap the vertical span outward onto the
-    // defaultLineHeight grid (origin = content box top) so each touched row
-    // fills its line box and adjacent rows abut — matching mainstream
-    // editors — while Modification A keeps horizontal clamps tight to text.
-    // Outward snap (not mid-line expand) also preserves empty-line spans
-    // whose before-side start coord sits on the previous row.
+    // visible gaps between rows. Snap the vertical span outward onto the row
+    // boxes of the line's own block, taken from CodeMirror's height map, so
+    // each touched row fills its line box and adjacent rows abut — matching
+    // mainstream editors — while Modification A keeps horizontal clamps tight
+    // to text. Outward snap (not mid-line expand) also preserves empty-line
+    // spans whose before-side start coord sits on the previous row.
+    //
+    // A document-wide grid does not work here: this editor's line boxes are
+    // not uniform (headings are 1.25-1.8em, block widgets are arbitrary), so
+    // `defaultLineHeight` is a default rather than a row pitch. Clamping into
+    // the block also bounds the worst case — an imprecise snap can only ever
+    // over-paint inside the same block, never onto a neighbouring line.
     if (top < bottom) {
-      let lh = view.defaultLineHeight, origin = contentRect.top
-      top = origin + Math.floor((top - origin) / lh + 1e-6) * lh
-      bottom = origin + Math.ceil((bottom - origin) / lh - 1e-6) * lh
+      let blockTop = docTop + line.block.top, blockBottom = blockTop + line.block.height
+      // Rows within one block are equal-height, so the block's own height
+      // divides evenly; defaultLineHeight only estimates how many there are.
+      let rows = Math.max(1, Math.round(line.block.height / view.defaultLineHeight))
+      let rowHeight = line.block.height / rows
+      top = Math.max(blockTop, blockTop + Math.floor((top - blockTop) / rowHeight + SNAP_EPSILON) * rowHeight)
+      bottom = Math.min(blockBottom, blockTop + Math.ceil((bottom - blockTop) / rowHeight - SNAP_EPSILON) * rowHeight)
+      if (bottom <= top)
+        bottom = Math.min(blockBottom, top + rowHeight)
     }
     return { top, bottom, horizontal }
   }
   function tightDrawForWidget(block: BlockInfo, top: boolean): DrawnLine {
-    let y = contentRect.top + (top ? block.top : block.bottom)
+    let y = docTop + (top ? block.top : block.bottom)
     return { top: y, bottom: y, horizontal: [] }
   }
 }
