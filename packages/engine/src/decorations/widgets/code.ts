@@ -7,7 +7,7 @@ import { EditorView } from "@codemirror/view"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "../renderBudget"
-import { blockWidgetRange, registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
+import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
 
 const RENDER_DEBOUNCE_MS = 150
