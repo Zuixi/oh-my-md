@@ -1,10 +1,23 @@
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 
 function readJson(relativePath: string): unknown {
   return JSON.parse(
     readFileSync(new URL(relativePath, import.meta.url), "utf8"),
   ) as unknown
+}
+
+function resolveTauriAsset(relativePath: string): string {
+  return resolve(process.cwd(), "src-tauri", relativePath)
+}
+
+function bmpDimensions(relativePath: string): { width: number; height: number } {
+  const buf = readFileSync(resolveTauriAsset(relativePath))
+  return {
+    width: buf.readInt32LE(18),
+    height: Math.abs(buf.readInt32LE(22)),
+  }
 }
 
 describe("Tauri frontend security configuration", () => {
@@ -39,5 +52,34 @@ describe("Tauri frontend security configuration", () => {
 
     expect(config.app.security.assetProtocol.enable).toBe(true)
     expect(config.app.security.assetProtocol.scope).toEqual([])
+  })
+})
+
+describe("Windows installer branding assets", () => {
+  it("uses NSIS and WiX bitmaps at the required aspect ratios", () => {
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      bundle: {
+        windows: {
+          nsis: { headerImage: string; sidebarImage: string }
+          wix: { bannerPath: string; dialogImagePath: string }
+        }
+      }
+    }
+    const nsis = config.bundle.windows.nsis
+    const wix = config.bundle.windows.wix
+
+    for (const relativePath of [
+      nsis.headerImage,
+      nsis.sidebarImage,
+      wix.bannerPath,
+      wix.dialogImagePath,
+    ]) {
+      expect(existsSync(resolveTauriAsset(relativePath))).toBe(true)
+    }
+
+    expect(bmpDimensions(nsis.headerImage)).toEqual({ width: 150, height: 57 })
+    expect(bmpDimensions(nsis.sidebarImage)).toEqual({ width: 164, height: 314 })
+    expect(bmpDimensions(wix.bannerPath)).toEqual({ width: 493, height: 58 })
+    expect(bmpDimensions(wix.dialogImagePath)).toEqual({ width: 493, height: 312 })
   })
 })

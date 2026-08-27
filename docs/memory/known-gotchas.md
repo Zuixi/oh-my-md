@@ -727,3 +727,16 @@ keep that fix honest:
   (`App.windowTheme.test.tsx` pins the no-push-before-load behavior).
 - New startup-time native appearance must read the same persisted source Rust
   owns (`workspace::get_settings`), not a second copy of the theme state.
+
+## Windows installer branding must use fixed-aspect BMPs
+
+NSIS and WiX do not letterbox arbitrary PNG/ICO assets. A square app icon forced into the NSIS header slot (150×57) or the WiX banner (493×58) stretches the logo horizontally, which is the squashed `omd` seen in setup wizards.
+
+Use the generated assets referenced from `tauri.conf.json`:
+
+- NSIS `headerImage` → `icons/nsis-header.bmp` (150×57)
+- NSIS `sidebarImage` → `icons/nsis-sidebar.bmp` (164×314)
+- WiX `bannerPath` → `icons/wix-banner.bmp` (493×58)
+- WiX `dialogImagePath` → `icons/wix-dialog.bmp` (493×312)
+
+Regenerate from `apps/desktop/app-icon.png` with `scripts/generate-installer-images.sh` after changing the master icon. `installerIcon` stays the `.ico` for the exe/setup file icon only — it is not the wizard header bitmap.
