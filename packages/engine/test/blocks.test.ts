@@ -285,17 +285,17 @@ describe("block syntax", () => {
     const doc = "```js\nconst x = **not bold**\n```"
     const s = makeState(doc).update({ selection: { anchor: 10 } }).state
     const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
-    expect(t).toContain("widget:block:code")
-    expect(t).not.toContain("line:omd-codeblock")
+    expect(t).toContain("line:omd-codeblock")
+    expect(t).not.toContain("widget:block:code")
   })
 
-  it("keeps a code widget when the cursor is inside fenced content", () => {
+  it("unmounts a code widget when the cursor is inside fenced content", () => {
     const doc = "```sh\npnpm install\npnpm dev\n```"
     const content = doc.indexOf("pnpm")
     const s = makeState(doc).update({ selection: { anchor: content } }).state
     const tags = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
-    expect(tags).toContain("widget:block:code")
-    expect(tags).not.toContain("replace:CodeMark")
+    expect(tags).not.toContain("widget:block:code")
+    expect(tags).toContain("line:omd-codeblock")
   })
 
   it("folds fence marks on no-language fenced code when cursor is away", () => {

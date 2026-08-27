@@ -46,4 +46,10 @@ describe("block widget layout", () => {
     expect(editor).toMatch(/(?:^|[;{])\s*width\s*:\s*0\s*;/m)
     expect(editor).toMatch(/\bmin-width\s*:\s*100%\s*;/)
   })
+
+  it("collapses Shiki newline text nodes so rendered line boxes match source lines", () => {
+    const code = declarationBlocks(".editor-host .omd-code pre code").join("\n")
+    expect(code).toMatch(/\bdisplay\s*:\s*flex\s*;/)
+    expect(code).toMatch(/\bflex-direction\s*:\s*column\s*;/)
+  })
 })

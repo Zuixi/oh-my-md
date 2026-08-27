@@ -292,6 +292,10 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   margin: 0; padding: 6px 12px 6px 10px; border-radius: 0;
   font-size: 0.9em; line-height: 1.45; overflow-x: auto; background: transparent;
 }
+.editor-host .omd-code pre code {
+  display: flex;
+  flex-direction: column;
+}
 .editor-host .omd-code {
   border: 1px solid var(--omd-border);
   border-radius: 6px;
@@ -403,29 +407,31 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-code-lang-row[aria-selected="true"] { color: var(--omd-link); font-weight: 600; }
 .editor-host .omd-code-lang-check { margin-left: 8px; color: var(--omd-link); }
 .editor-host .omd-code-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--omd-muted);
   cursor: pointer;
-  font-size: 0.8em;
   line-height: 1;
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
 }
+.editor-host .omd-code-copy svg { display: block; }
 .editor-host .omd-code-copy:hover { color: var(--omd-fg); background: var(--omd-code-bg); }
+.editor-host .omd-code-copy.omd-code-copied { color: var(--omd-link); }
 .editor-host .omd-code-body { padding: 0; }
 .editor-host .omd-code-lines {
   counter-reset: omd-code-line;
 }
-.editor-host .omd-code-lines .line,
-.editor-host .omd-code-lines .omd-code-edit-line {
+.editor-host .omd-code-lines .line {
   display: block;
   position: relative;
   padding-left: 2.5em;
   line-height: 1.45;
 }
-.editor-host .omd-code-lines .line::before,
-.editor-host .omd-code-lines .omd-code-edit-line::before {
+.editor-host .omd-code-lines .line::before {
   counter-increment: omd-code-line;
   content: counter(omd-code-line);
   position: absolute;
@@ -438,23 +444,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   pointer-events: none;
   font-size: 0.85em;
   line-height: inherit;
-}
-.editor-host .omd-code-edit-line {
-  margin: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  padding-right: 12px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.9em;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  outline: none;
-  background: transparent;
-  color: var(--omd-fg);
-}
-.editor-host .omd-code-editing .omd-code-body pre { display: none; }
-.editor-host .omd-code-editing .omd-code-body {
-  padding: 6px 12px 6px 10px;
 }
 .editor-host .omd-math { overflow-x: auto; padding: 4px 0; }
 .editor-host .omd-inline-math { padding: 0 2px; }

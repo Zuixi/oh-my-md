@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:executing-plans (or subagent-driven-development) task-by-task. TDD per `@omd/engine` AGENTS.md.
 
-**Goal:** Typora-like live code blocks: container chrome, mandatory line numbers, hover-only fence-info toolbar, keyboard entry keeps Shiki + in-block edit, label/lang in fence info.
+**Goal:** Typora-like live code blocks: container chrome, mandatory line numbers, hover-only fence-info toolbar. Keyboard entry unmounts the widget into native source.
 
-**Architecture:** Always mount `CodeWidget` for fenced+lang blocks; `editing` flag from `blockSelected`; hover-only header via CSS; `fenceInfo.ts` parse/format; contenteditable sync to `CodeText`.
+**Architecture:** Mount `CodeWidget` only while the caret is outside; `blockSelected` → line styles; hover-only header; `replaceFenceInfo` on the live range; no contenteditable.
 
 **Tech stack:** `@omd/engine`, Shiki, CodeMirror 6, desktop `styles.css`
 

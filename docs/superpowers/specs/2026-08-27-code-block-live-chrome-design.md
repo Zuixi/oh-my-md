@@ -1,7 +1,7 @@
 # Code Block Live Chrome（Typora 对齐）
 
 **Date:** 2026-08-27  
-**Status:** Approved for implementation  
+**Status:** Superseded in part — keyboard edit is native CodeMirror source (`blockSelected` unmounts `CodeWidget`), not in-widget `contenteditable`. Hover chrome + fence info remain.  
 **Related:** M2 block widgets, `CodeWidget`, fence info
 
 ## 问题
@@ -19,7 +19,7 @@ Live 模式下代码块应像 Typora：有明确块级容器、Shiki 高亮、�
 | 状态 | 触发 | Shiki | 行号 | 顶栏（标签/语言/copy） | 可编辑 |
 |------|------|-------|------|------------------------|--------|
 | **Idle** | 光标在块外 | ✓ | ✓ | 隐藏 | 否 |
-| **Keyboard-active** | ↑/↓ 进入块内 | ✓（debounce 重渲） | ✓ | **隐藏**（除非同时 hover） | ✓（widget 内编辑写回 `CodeText`） |
+| **Keyboard-active** | ↑/↓ 进入块内 | 卸载 widget | 源码行样式 | 无（widget 已卸） | ✓（CodeMirror 源码，光标在对应行） |
 | **Pointer-over** | 鼠标 enter/hover 块 | ✓ | ✓ | **显示** | 可选（点击 body 可聚焦编辑） |
 
 **顶栏显示规则（用户确认）：**
@@ -53,19 +53,17 @@ int main() {}
 
 ### 渲染策略
 
-有语言的 `FencedCode` 在 Live 模式下 **始终** emit `CodeWidget`，**不再**因 `blockSelected` 退回行样式。
+有语言的 `FencedCode` 在 Live 模式下：caret **在块外** emit `CodeWidget`；`blockSelected` 时退回 `styleCodeblockLines`，由 CodeMirror 原生编辑源码。
 
 ```text
 styleFencedCode (lang set, not mermaid, not in quote)
-  → CodeWidget(src, meta, embed, editing=blockSelected(...))
-  → 始终 block replace，子树 CodeMark/CodeInfo 仍 fold（围栏不可见）
+  → blockSelected? styleCodeblockLines
+  → else CodeWidget(src, lang, title, embed)
 ```
 
 ### 编辑写回
 
-参考 `TableWidget`：`contenteditable`（或 textarea）+ `dispatch` 替换 `CodeText` 区间；`readOnly` 禁用编辑与顶栏 mutators。
-
-Shiki：编辑中 `input` 写回 doc → widget `eq` 因 `src` 变化重建/debounce `renderInto`；150ms debounce 保留。
+不要在 widget 内 `contenteditable`。语言/标签通过 `replaceFenceInfo(state, liveRange.from, lang, title)` 替换当前 `CodeInfo`。Copy 用 `this.src` + 图标，成功后短暂 Copied。
 
 ### 行号
 

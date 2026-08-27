@@ -74,6 +74,13 @@ export function createCodeLangPicker(options: CodeLangPickerOptions): {
     close()
   }
 
+  function setActive(list: HTMLElement, index: number): void {
+    activeIndex = index
+    list.querySelectorAll(".omd-code-lang-row").forEach((row, i) => {
+      row.classList.toggle("omd-code-lang-row-active", i === index)
+    })
+  }
+
   function renderRows(list: HTMLElement, rows: string[]): void {
     list.replaceChildren()
     rows.forEach((id, index) => {
@@ -98,10 +105,7 @@ export function createCodeLangPicker(options: CodeLangPickerOptions): {
         event.stopPropagation()
         commit(id)
       })
-      row.addEventListener("mouseenter", () => {
-        activeIndex = index
-        renderRows(list, rows)
-      })
+      row.addEventListener("mouseenter", () => setActive(list, index))
       list.appendChild(row)
     })
   }
@@ -137,14 +141,12 @@ export function createCodeLangPicker(options: CodeLangPickerOptions): {
       }
       if (event.key === "ArrowDown") {
         event.preventDefault()
-        activeIndex = Math.min(activeIndex + 1, rows.length - 1)
-        renderRows(list, rows)
+        setActive(list, Math.min(activeIndex + 1, rows.length - 1))
         return
       }
       if (event.key === "ArrowUp") {
         event.preventDefault()
-        activeIndex = Math.max(activeIndex - 1, 0)
-        renderRows(list, rows)
+        setActive(list, Math.max(activeIndex - 1, 0))
         return
       }
       if (event.key === "Enter") {
