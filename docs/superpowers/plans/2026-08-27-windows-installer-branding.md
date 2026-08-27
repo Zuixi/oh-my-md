@@ -232,3 +232,4 @@ P2 Task 5          2h    欢迎/完成页文案（含模板 fork 维护）
 - [x] **版本号来源：** 生成脚本从 `tauri.conf.json` 读取 `version`。
 - [x] **Pillow 依赖：** `scripts/.venv`（gitignore）；`generate-installer-images.sh` 自动使用。
 - [x] **欢迎/完成文案：** 通过 `installerHooks`（`windows/installer-text.nsh`）注入，未 fork 完整 `installer.nsi`。
+- [x] **WiX banner（2026-08-28 修订，取代 P2 Task 2 的「左对齐 logo + 产品名」）：** WixUI 会在每个内页 banner 左侧（X=15..215 dialog units）叠绘透明页标题，左对齐烘焙内容与标题相撞（MSI 实装出现叠字）。改为左侧 `WIX_BANNER_TITLE_SAFE_W`=220 纯色安全区、logo 只贴右端且白底转透明；`apps/desktop/test/tauriConfig.test.ts` 断言左条带像素与各 BMP 尺寸（详见 `docs/memory/known-gotchas.md` installer 节）。

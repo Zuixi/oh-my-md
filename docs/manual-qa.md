@@ -209,6 +209,12 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 语言选「简体中文」：欢迎语为「欢迎使用 oh-my-md 安装向导…」；WebView2 / 重装等 Tauri 提示为中文。
 - [ ] 语言选 English：欢迎/完成页为短句英文 copy（非冗长默认 MUI 模板感）。
 
+### MSI 安装向导（WiX，需实机安装 .msi 走查）
+
+- [ ] 每个内页（选择目录 → 准备安装 → 正在安装 → 完成）：banner 左侧标题（"Installing oh-my-md" 等）清晰可读，无与位图叠字、无白色方块（150% 缩放下复查；WixUI 会在 banner 左侧叠绘透明标题，`WIX_BANNER_TITLE_SAFE_W` 左侧必须为纯色）。
+- [ ] banner 右端 omd logo：无白底贴片、无光晕，150% 缩放下不越过标题区。
+- [ ] 欢迎页 / 完成页：左侧品牌面板完整，大标题「Welcome to the oh-my-md Setup Wizard」落在右侧留白区、可读。
+
 - [ ] 启动无 crash、无多余控制台窗口（`windows_subsystem` 属性）。
 - [ ] 应用内菜单栏全量走查（同 Linux 清单）。
 - [ ] Ctrl 系快捷键全测（同 Linux 清单）。

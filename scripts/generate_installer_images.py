@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ICON = ROOT / "apps/desktop/app-icon.png"
@@ -18,6 +18,12 @@ PRODUCT_NAME = "oh-my-md"
 SIDEBAR_W, SIDEBAR_H = 164, 314
 WIX_BANNER_W, WIX_BANNER_H = 493, 58
 WIX_DIALOG_W, WIX_DIALOG_H = 493, 312
+
+# WixUI paints a transparent black page title ("Installing oh-my-md", …) over
+# X=15..215 dialog units of the banner on every inner page, at any DPI. Keep
+# this strip flat background — no baked-in logo or text. Drift-guarded by
+# WIX_BANNER_TITLE_SAFE_W / WIX_BANNER_BG in apps/desktop/test/tauriConfig.test.ts.
+WIX_BANNER_TITLE_SAFE_W = 220
 
 BRAND_TOP = (59, 130, 246)  # #3B82F6
 BRAND_BOT = (29, 78, 216)  # #1D4ED8
@@ -103,14 +109,31 @@ def render_wix_dialog(sidebar: Image.Image) -> Image.Image:
     return dialog
 
 
+def strip_white_background(logo: Image.Image) -> Image.Image:
+    """Turn the icon's baked white backdrop into alpha.
+
+    The master icon is dark art on opaque white; pasting it as-is leaves a
+    white tile on any non-white surface. Feathering around a near-white floor
+    keeps anti-aliased edges smooth (harmless on the light banner background).
+    """
+    rgb = logo.convert("RGB")
+    darkest = ImageChops.darker(
+        ImageChops.darker(rgb.getchannel("R"), rgb.getchannel("G")),
+        rgb.getchannel("B"),
+    )
+    alpha = darkest.point(lambda v: max(0, min(255, (245 - v) * 255 // 45)))
+    rgba = rgb.copy()
+    rgba.putalpha(alpha)
+    return rgba
+
+
 def render_wix_banner(logo: Image.Image) -> Image.Image:
     banner = Image.new("RGB", (WIX_BANNER_W, WIX_BANNER_H), BANNER_BG)
-    logo_fit = logo.convert("RGBA")
-    logo_fit.thumbnail((40, 40), Image.Resampling.LANCZOS)
-    banner.paste(logo_fit, (16, (WIX_BANNER_H - logo_fit.height) // 2), logo_fit)
-    draw = ImageDraw.Draw(banner)
-    font = load_font(16, bold=True)
-    draw.text((68, 18), PRODUCT_NAME, font=font, fill=(31, 41, 55))
+    assert WIX_BANNER_W - 16 - 36 > WIX_BANNER_TITLE_SAFE_W
+    logo_fit = strip_white_background(logo)
+    logo_fit.thumbnail((36, 36), Image.Resampling.LANCZOS)
+    x = WIX_BANNER_W - logo_fit.width - 16
+    banner.paste(logo_fit, (x, (WIX_BANNER_H - logo_fit.height) // 2), logo_fit)
     return banner
 
 
