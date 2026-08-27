@@ -148,6 +148,8 @@ describe("tables", () => {
     const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
     expect(input).toBeTruthy()
     expect(input!.value).toBe("1")
+    expect(input!.selectionStart).toBe(input!.value.length)
+    expect(input!.selectionEnd).toBe(input!.value.length)
     expect(dispatches.some(d => d !== null && typeof d === "object" && "selection" in d)).toBe(false)
     input!.value = "x"
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
@@ -299,5 +301,20 @@ describe("tables", () => {
     input.dispatchEvent(ev)
     expect(ev.defaultPrevented).toBe(false)
     expect(wrap.querySelector("input.omd-table-edit")).toBe(input)
+  })
+
+  it("opens an empty cell with a collapsed caret", async () => {
+    const widget = new TableWidget("| a |\n|---|\n|   |", 0, {
+      header: ["a"],
+      rows: [[""]],
+      aligns: [""],
+    })
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    wrap.querySelector("td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(0)
   })
 })

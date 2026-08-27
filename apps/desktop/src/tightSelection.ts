@@ -219,7 +219,14 @@ function tightRectanglesForRange(
   if (visualEnd && (view.lineWrapping || endBlock.widgetLineBreaks))
     visualEnd = wrappedLine(view, to, -1, visualEnd)
   if (visualStart && visualEnd && visualStart.from == visualEnd.from && visualStart.to == visualEnd.to) {
-    return pieces(tightDrawForLine(range.from, range.to, visualStart))
+    // The endpoint coordinates already identify the exact visual row. Do not
+    // run Modification C when wrappedLine narrowed the block to a real visual
+    // segment: deriving row count from block.height/defaultLineHeight is only
+    // an estimate, and WebKit font metrics can expand one row into its neighbour.
+    const isWrappedSegment = visualStart.from != visualStart.block.from
+      || visualStart.to != visualStart.block.to
+      || visualStart.block.widgetLineBreaks > 0
+    return pieces(tightDrawForLine(range.from, range.to, visualStart, !isWrappedSegment))
   }
   else {
     let top = visualStart ? tightDrawForLine(range.from, null, visualStart) : tightDrawForWidget(startBlock, false)
@@ -274,7 +281,12 @@ function tightRectanglesForRange(
     return pieces
   }
   // Gets passed from/to in line-local positions
-  function tightDrawForLine(from: number | null, to: number | null, line: VisualLine): DrawnLine {
+  function tightDrawForLine(
+    from: number | null,
+    to: number | null,
+    line: VisualLine,
+    snapRows = true,
+  ): DrawnLine {
     let top = 1e9, bottom = -1e9, horizontal: number[] = []
     function addSpan(from: number, fromOpen: boolean, to: number, toOpen: boolean, dir: Direction) {
       // Passing 2/-2 is a kludge to force the view to return
@@ -338,8 +350,9 @@ function tightRectanglesForRange(
     // not uniform (headings are 1.25-1.8em, block widgets are arbitrary), so
     // `defaultLineHeight` is a default rather than a row pitch. Clamping into
     // the block also bounds the worst case — an imprecise snap can only ever
-    // over-paint inside the same block, never onto a neighbouring line.
-    if (top < bottom) {
+    // over-paint inside the same block, never onto a neighbouring document
+    // line. Exact same-visual-row selections skip this estimate above.
+    if (snapRows && top < bottom) {
       let blockTop = docTop + line.block.top, blockBottom = blockTop + line.block.height
       // Rows within one block are equal-height, so the block's own height
       // divides evenly; defaultLineHeight only estimates how many there are.
