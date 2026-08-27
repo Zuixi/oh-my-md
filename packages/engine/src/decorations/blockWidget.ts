@@ -67,16 +67,21 @@ export abstract class BlockWidget extends WidgetType {
     const range = blockWidgetRange(this, view, wrap)
     return range?.from ?? view.posAtDOM(wrap)
   }
+  /** Live 预览代码块保持渲染以便复制；其它块仍单击进源码编辑。 */
+  protected enterSourceOnClick(): boolean { return true }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
 
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
     wrap.className = blockWidgetClass(this.cssClass, this.embed)
-    wrap.title = "Click to edit source"
-    // 整块点击即回源码（root cause D：只放行 ✎ 时块是砖，用户进不去）
+    wrap.title = this.enterSourceOnClick() ? "Click to edit source" : ""
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
+      if (!this.enterSourceOnClick()) {
+        view.focus()
+        return
+      }
       e.preventDefault()
       const pos = this.clickPos(view, e, wrap)
       view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })

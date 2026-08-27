@@ -53,6 +53,8 @@ export class CodeWidget extends BlockWidget {
 
   protected get cssClass() { return "omd-code" }
 
+  protected enterSourceOnClick(): boolean { return false }
+
   protected renderPlaceholder(el: HTMLElement) {
     const pre = document.createElement("pre")
     pre.textContent = this.src

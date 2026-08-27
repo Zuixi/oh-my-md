@@ -187,7 +187,7 @@ describe("block widget pipeline", () => {
     dom.remove()
   }, 2000)
 
-  it("maps code-widget clicks to the clicked source line", () => {
+  it("does not move the editor selection when clicking a rendered code row", () => {
     let anchor = -1
     const view = {
       requestMeasure: () => {},
@@ -208,10 +208,10 @@ describe("block widget pipeline", () => {
       clientX: 20,
       clientY: 20,
     }))
-    expect(anchor).toBe(100)
+    expect(anchor).toBe(-1)
   })
 
-  it("recomputes code source position after the block moves", () => {
+  it("does not dispatch selection when a code block moves under the pointer", () => {
     let anchor = -1
     const wrap = document.createElement("div")
     const view = {
@@ -233,7 +233,7 @@ describe("block widget pipeline", () => {
       bubbles: true,
       button: 0,
     }))
-    expect(anchor).toBe(67)
+    expect(anchor).toBe(-1)
   })
 
   it("writes mermaid SVG into the widget body", async () => {

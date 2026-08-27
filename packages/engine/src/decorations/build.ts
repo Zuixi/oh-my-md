@@ -25,6 +25,10 @@ export const LIVE_SEED_RADIUS_CHARS = 120_000
 // 单个 liveBuildChunk 的字符上限（2^18）：测试排空与分片驱动共用同一粒度。
 export const LIVE_BUILD_CHUNK_CHARS = 262_144
 
+function sortDecoSpecs(specs: DecoSpec[]): DecoSpec[] {
+  return [...specs].sort((a, b) => a.from - b.from || a.to - b.to || a.tag.localeCompare(b.tag))
+}
+
 export function collectDecorationSpecs(state: EditorState, from: number, to: number): DecoSpec[] {
   const out: DecoSpec[] = []
   syntaxTree(state).iterate({
@@ -39,10 +43,10 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
   // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃
   const scoped = out.filter(s => s.from <= to && s.to >= from)
   const blockWidgets = scoped.filter(s => s.tag.startsWith("widget:block:"))
-  if (!blockWidgets.length) return scoped
-  return scoped.filter(s =>
+  if (!blockWidgets.length) return sortDecoSpecs(scoped)
+  return sortDecoSpecs(scoped.filter(s =>
     s.tag.startsWith("widget:block:") ||
-    !blockWidgets.some(b => s.from >= b.from && s.to <= b.to))
+    !blockWidgets.some(b => s.from >= b.from && s.to <= b.to)))
 }
 
 // 原子区间只收“行中”的内联 replace 类装饰（折叠的语法标记 + 内联 widget，如 checkbox）。

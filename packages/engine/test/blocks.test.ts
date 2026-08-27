@@ -291,6 +291,22 @@ describe("block syntax", () => {
     expect(t).not.toContain("replace:EmphasisMark")
   })
 
+  it("folds fenced-code fence marks in live mode while editing content", () => {
+    const doc = "```sh\npnpm install\npnpm dev\n```"
+    const content = doc.indexOf("pnpm")
+    const s = makeState(doc).update({ selection: { anchor: content } }).state
+    const tags = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(tags.filter(t => t === "replace:CodeMark")).toHaveLength(2)
+    expect(tags).toContain("replace:CodeInfo")
+  })
+
+  it("folds fence marks on no-language fenced code when cursor is away", () => {
+    const doc = "```\nplain\n```\n\ntail"
+    const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const tags = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(tags.filter(t => t === "replace:CodeMark")).toHaveLength(2)
+  })
+
   it("styles fenced code block without language with line styles, not block widget even when cursor is away", () => {
     const doc = "```\nplain text code\nmore text\n```\n\ntail"
     const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
