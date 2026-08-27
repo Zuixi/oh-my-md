@@ -20,7 +20,8 @@ html[data-theme="light"] {
   --omd-chrome: #f7f7f7;
   --omd-panel-bg: #ffffff;
   --omd-content-width: 780px;
-  /* matches CM focused selection layer (&light .cm-selectionBackground #d7d4f0) */
+  /* Drives the CM selection layer and native ::selection fallbacks (see the
+     override rules below; CM's own base colors #d7d4f0/#233 are never used). */
   --omd-selection-bg: rgba(215, 212, 240, 0.55);
 }
 html[data-theme="dark"] {
@@ -40,7 +41,9 @@ html[data-theme="dark"] {
   --omd-chrome: #161616;
   --omd-panel-bg: #252526;
   --omd-content-width: 780px;
-  /* matches CM focused selection layer (&dark .cm-selectionBackground #233) */
+  /* Drives the CM selection layer and native ::selection fallbacks; CM's
+     base theme dark colors (#222/#233) would only apply if a theme extension
+     set {dark: true}, which nothing in the app does. */
   --omd-selection-bg: rgba(34, 51, 51, 0.55);
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
@@ -60,6 +63,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: var(--omd-font-size, 16px);
   line-height: var(--omd-line-height, 1.6);
   color: var(--omd-fg);
+}
+/* Selection colors follow --omd-selection-bg, not CM's internal dark flag:
+   no theme extension ever sets {dark: true}, so CM's base theme would paint
+   light lavender (#d7d4f0) behind dark-mode text. The focused-chain selector
+   outranks the base theme's focused rule (6 class selectors vs 5); the plain
+   one covers the unfocused layer (#d9d9d9/#222). Guarded by
+   test/selectionTheme.test.ts. */
+.editor-host .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.editor-host .cm-selectionLayer .cm-selectionBackground {
+  background-color: var(--omd-selection-bg);
+}
+/* tightSelection suppresses native ::selection inside .cm-line (its layer is
+   the only painter there), but block-widget DOM (tables, code blocks) sits
+   outside .cm-line and keeps native selection painting — theme it too, and
+   outrank the vendored `.cm-content :focus ::selection → Highlight
+   !important` rule so focused cell editors never paint native blue. */
+.editor-host .omd-block ::selection {
+  background-color: var(--omd-selection-bg);
+}
+.editor-host .cm-editor .cm-content :focus ::selection,
+.editor-host .cm-editor .cm-content :focus::selection {
+  background-color: var(--omd-selection-bg) !important;
 }
 .editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
