@@ -136,7 +136,7 @@ function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoS
   }
 }
 
-function foldQuotedFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
+function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   if (cursorInside(state, node.from, node.to)) return
   out.push({
     from: node.from, to: node.to, tag: `replace:${name}`,
@@ -315,12 +315,13 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
     case "ListMark": { styleListMark(node, state, out); break }
     case "FencedCode": return styleFencedCode(node, state, out)
     case "CodeMark": {
-      if (node.node.parent?.name === "FencedCode" && insideBlockquote(node.node))
-        foldQuotedFenceMark(node, state, out, "CodeMark")
+      if (node.node.parent?.name === "FencedCode")
+        foldFenceMark(node, state, out, "CodeMark")
       break
     }
     case "CodeInfo": {
-      if (insideBlockquote(node.node)) foldQuotedFenceMark(node, state, out, "CodeInfo")
+      if (node.node.parent?.name === "FencedCode")
+        foldFenceMark(node, state, out, "CodeInfo")
       break
     }
     case "CodeBlock": {   // 缩进代码块保持行样式（无语言信息，不值得 widget）

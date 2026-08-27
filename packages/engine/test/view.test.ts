@@ -125,9 +125,10 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("clicking a rendered code row selects the corresponding source row", async () => {
+  it("keeps a rendered code block mounted when clicking inside it (Typora live copy)", async () => {
     const doc = "before\n\n```powershell\nfirst\nsecond\nthird\n```\n\nafter"
     const { view, errors } = makeView(doc)
+    const headBefore = view.state.selection.main.head
     const row = await waitFor(".omd-code .line", view, 3000)
     expect(row).toBeTruthy()
     ;(row as HTMLElement).dispatchEvent(new MouseEvent("mousedown", {
@@ -135,22 +136,25 @@ describe("view smoke (real EditorView)", () => {
       button: 0,
     }))
     await tick()
-    expect(view.state.selection.main.head).toBe(doc.indexOf("first"))
+    expect(view.dom.querySelector(".omd-code")).toBeTruthy()
+    expect(view.state.selection.main.head).toBe(headBefore)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
 
-  it("keeps identical block widgets bound to their own source ranges", async () => {
+  it("keeps identical block widgets mounted when clicking either one", async () => {
     const block = "```js\nsame()\n```"
     const doc = `${block}\n\nmiddle\n\n${block}\n\ntail`
     const { view, errors } = makeView(doc)
     await tick()
     const widgets = view.dom.querySelectorAll(".omd-code")
     expect(widgets).toHaveLength(2)
+    const headBefore = view.state.selection.main.head
 
     widgets[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
-    expect(view.state.selection.main.head).toBe(doc.lastIndexOf("```js"))
+    expect(view.state.selection.main.head).toBe(headBefore)
+    expect(view.dom.querySelectorAll(".omd-code")).toHaveLength(2)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
