@@ -3,7 +3,7 @@ import {
   createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
-import type { EditorView } from "@codemirror/view"
+import { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
 import {
   applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
@@ -2386,7 +2386,11 @@ export default function App({
               const view = viewRef.current
               if (!view) return
               try {
-                view.dispatch({ selection: { anchor: from } })
+                // CM6 选区变更不自动滚动：必须显式请求滚动到标题处。
+                view.dispatch({
+                  selection: { anchor: from },
+                  effects: EditorView.scrollIntoView(from, { y: "start" }),
+                })
                 view.focus()
               } catch { /* mock views */ }
             }}
