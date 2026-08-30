@@ -205,10 +205,6 @@ function listIndentStart(lineFrom: number, markFrom: number, state: EditorState)
   return from
 }
 
-function listMarkActive(state: EditorState, from: number, to: number, inQuote: boolean): boolean {
-  return inQuote ? cursorInside(state, from, to) : nearCursor(state, from, to)
-}
-
 function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const line = state.doc.lineAt(node.from)
   let depth = 0
@@ -218,9 +214,10 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
   const cls = `omd-li-${Math.min(depth, MAX_LIST_DEPTH)}`
   out.push({ from: line.from, to: line.from, tag: `line:${cls}`, deco: Decoration.line({ class: cls }) })
 
-  const inQuote = insideBlockquote(node.node)
+  // 路线 A：列表符与缩进无条件折叠 —— 点击列表文本只定位光标，不闪源码；
+  // 列表增删走 toggleOrderedList / toggleUnorderedList 命令。
   const indentFrom = listIndentStart(line.from, node.from, state)
-  if (indentFrom < node.from && !listMarkActive(state, indentFrom, node.from, inQuote)) {
+  if (indentFrom < node.from) {
     out.push({
       from: indentFrom, to: node.from, tag: "replace:ListIndent",
       deco: Decoration.replace({}),
@@ -229,28 +226,18 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
   if (node.node.parent?.getChild("Task")) return
 
   const text = state.doc.sliceString(node.from, node.to)
-  const active = listMarkActive(state, node.from, node.to, inQuote)
   if (/^\d/.test(text)) {
-    if (active) {
-      out.push({
-        from: node.from, to: node.to, tag: "mark:omd-list-mark",
-        deco: Decoration.mark({ class: "omd-list-mark" }),
-      })
-    } else {
-      const label = orderedLabel(node.node, state) ?? text
-      out.push({
-        from: node.from, to: node.to, tag: "widget:ordered-mark",
-        deco: Decoration.replace({ widget: new OrderedWidget(label) }),
-      })
-    }
+    const label = orderedLabel(node.node, state) ?? text
+    out.push({
+      from: node.from, to: node.to, tag: "widget:ordered-mark",
+      deco: Decoration.replace({ widget: new OrderedWidget(label) }),
+    })
     return
   }
-  if (!active) {
-    out.push({
-      from: node.from, to: node.to, tag: "replace:ListMark",
-      deco: Decoration.replace({ widget: new BulletWidget() }),
-    })
-  }
+  out.push({
+    from: node.from, to: node.to, tag: "replace:ListMark",
+    deco: Decoration.replace({ widget: new BulletWidget() }),
+  })
 }
 
 function directCells(row: SyntaxNode, state: EditorState) {

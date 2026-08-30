@@ -255,10 +255,11 @@ describe("block syntax", () => {
     expect(t).not.toContain("replace:ListMark")
   })
 
-  it("expands bullet mark when cursor is on it", () => {
+  it("keeps the bullet mark folded when the cursor is on it", () => {
     const doc = "- item"
     const state = makeState(doc).update({ selection: { anchor: 0 } }).state
-    expect(collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)).not.toContain("replace:ListMark")
+    // 路线 A：光标落在列表行也不展开源码
+    expect(collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)).toContain("replace:ListMark")
   })
 
   it("tags list items with nesting depth classes", () => {
@@ -275,10 +276,11 @@ describe("block syntax", () => {
     expect(t).toContain("replace:ListIndent@8-10")
   })
 
-  it("reveals indent spaces on the cursor's line", () => {
+  it("keeps indent spaces folded on the cursor's line", () => {
     const doc = "- outer\n  - inner"
     const s = makeState(doc).update({ selection: { anchor: 12 } }).state  // cursor on inner line
-    expect(collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)).not.toContain("replace:ListIndent")
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(t).toContain("replace:ListIndent@8-10")
   })
 
   it("styles fenced code block lines in edit state (cursor inside)", () => {
@@ -338,12 +340,16 @@ describe("block syntax", () => {
     expect(labels).toEqual(["3.", "4."])
   })
 
-  it("shows the source ordered number when the cursor is on that line", () => {
+  it("keeps ordered widget labels regardless of the cursor line", () => {
     const doc = "1. 第一项\n3. 第二项\n7. 第三项"
     const second = doc.indexOf("3.")
     const s = makeState(doc).update({ selection: { anchor: second } }).state
     const t = collectDecorationSpecs(s, 0, s.doc.length)
-    expect(t.map(d => d.tag).filter(x => x === "widget:ordered-mark")).toHaveLength(2)
-    expect(t.map(d => d.tag)).toContain("mark:omd-list-mark")
+    const labels = t
+      .filter(d => d.tag === "widget:ordered-mark")
+      .map(d => (d.deco.spec.widget as { label: string }).label)
+    expect(labels).toEqual(["1.", "2.", "3."])
+    // 路线 A：光标行也不回退为源码标记
+    expect(t.map(d => d.tag)).not.toContain("mark:omd-list-mark")
   })
 })

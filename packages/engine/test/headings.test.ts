@@ -14,13 +14,13 @@ describe("headings", () => {
     expect(t).toContain("replace:HeaderMark@0-2")   // "# " hidden (cursor is on a different line)
   })
 
-  it("does not hide the HeaderMark when the cursor is on the heading line", () => {
+  it("keeps the HeaderMark folded even when the cursor is on the heading line", () => {
     const doc = "# Title"
     let state = makeState(doc)
-    // Cursor anywhere on the heading line → the mark stays visible.
+    // 路线 A：光标落在标题行也折叠 —— 点击只定位光标，不显源码。
     state = state.update({ selection: { anchor: 1 } }).state
-    const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
-    expect(t).not.toContain("replace:HeaderMark")
+    const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => `${d.tag}@${d.from}-${d.to}`)
+    expect(t).toContain("replace:HeaderMark@0-2")
   })
 
   it("styles a Setext H1 title line and hides the underline when the cursor is away", () => {
@@ -50,21 +50,21 @@ describe("headings", () => {
     expect(away).toContain("replace:HeaderMark@6-12")
   })
 
-  it("does not hide the Setext underline when the cursor is on the title line", () => {
+  it("keeps the Setext underline hidden when the cursor is on the title line", () => {
     const doc = "Title\n====="
     let state = makeState(doc)
     state = state.update({ selection: { anchor: 0 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
     expect(t).toContain("line:omd-h1")
-    expect(t).not.toContain("replace:HeaderMark")
+    expect(t).toContain("replace:HeaderMark")
   })
 
-  it("does not hide the Setext underline when the cursor is on the underline", () => {
+  it("keeps the Setext underline hidden when the cursor is on the underline", () => {
     const doc = "Title\n====="
     let state = makeState(doc)
     state = state.update({ selection: { anchor: 6 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
     expect(t).toContain("line:omd-h1")
-    expect(t).not.toContain("replace:HeaderMark")
+    expect(t).toContain("replace:HeaderMark")
   })
 })
