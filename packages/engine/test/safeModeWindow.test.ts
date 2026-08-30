@@ -420,10 +420,11 @@ describe("safe mode windowed driver", () => {
     expect(chunks[1]).toEqual({ from: 632070, to: 632099 })   // 可见区分片
     expect(chunks[2]).toEqual({ from: 369926, to: 632069 })   // idle 窗口剩余
     expect(chunks[3]).toEqual({ from: 632100, to: 632100 })   // 文末点位
-    // 顶部装饰全部归还 pending（引用区行对齐 span [0, 90299]），specs 清空
+    // 顶部装饰全部归还 pending（引用区行对齐 span [0, 90299] + 引用区后的空行装饰
+    // [90300, 90300]——空行 omd-empty 也走裁剪归还，行 span 相邻合并），specs 清空
     expect(view.state.field(livePreviewField).specs).toHaveLength(0)
     expect(pendingOf(view)).toEqual([
-      { from: 0, to: 90299 },
+      { from: 0, to: 90300 },
       { from: 262174, to: 369925 },
     ])
 
@@ -433,7 +434,7 @@ describe("safe mode windowed driver", () => {
     await Promise.resolve()
     tickUntilChunks({ chunks }, 6)
     expect(chunks[4]).toEqual({ from: 0, to: 29 })
-    expect(chunks[5]).toEqual({ from: 30, to: 90299 })
+    expect(chunks[5]).toEqual({ from: 30, to: 90300 })
     expect(specKeys(view)).toEqual(topKeys)
     expect(pendingOf(view)).toEqual([{ from: 262174, to: 369925 }])
     expectFieldConsistency(view)
@@ -449,7 +450,7 @@ describe("safe mode windowed driver", () => {
     expect(prunes).toHaveLength(2)
     expect(view.state.field(livePreviewField).specs).toHaveLength(0)
     expect(pendingOf(view)).toEqual([
-      { from: 0, to: 90299 },
+      { from: 0, to: 90300 },
       { from: 262174, to: 369925 },
     ])
     setVisible(view, 0, 30)
@@ -457,7 +458,7 @@ describe("safe mode windowed driver", () => {
     await Promise.resolve()
     tickUntilChunks({ chunks }, 8)
     expect(chunks[6]).toEqual({ from: 0, to: 29 })
-    expect(chunks[7]).toEqual({ from: 30, to: 90299 })
+    expect(chunks[7]).toEqual({ from: 30, to: 90300 })
     expect(specKeys(view)).toEqual(topKeys)
     expect(view.state.field(livePreviewField).specs).toHaveLength(topKeys.length)
     expect(pendingOf(view)).toEqual([{ from: 262174, to: 369925 }])
