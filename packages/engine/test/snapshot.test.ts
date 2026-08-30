@@ -147,6 +147,7 @@ describe("fixture snapshots", () => {
     expect(specsFor("cjk.md")).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
+        "replace:HeaderMark@0-2",
         "replace:EmphasisMark@17-19",
         "mark:omd-strong@17-23",
         "replace:EmphasisMark@21-23",
@@ -198,7 +199,9 @@ describe("fixture snapshots", () => {
   it("code-inline.md", () => {
     expect(specsFor("code-inline.md")).toMatchInlineSnapshot(`
       [
+        "replace:CodeMark@4-5",
         "mark:omd-inline-code@4-17",
+        "replace:CodeMark@16-17",
         "replace:CodeMark@91-93",
         "mark:omd-inline-code@91-112",
         "replace:CodeMark@110-112",
@@ -221,8 +224,12 @@ describe("fixture snapshots", () => {
   it("emphasis.md", () => {
     expect(specsFor("emphasis.md")).toMatchInlineSnapshot(`
       [
+        "replace:EmphasisMark@6-7",
         "mark:omd-em@6-14",
+        "replace:EmphasisMark@13-14",
+        "replace:EmphasisMark@19-21",
         "mark:omd-strong@19-27",
+        "replace:EmphasisMark@25-27",
         "replace:EmphasisMark@42-44",
         "mark:omd-strong@42-53",
         "replace:EmphasisMark@46-47",
@@ -274,6 +281,7 @@ describe("fixture snapshots", () => {
     expect(specsFor("heading.md")).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
+        "replace:HeaderMark@0-2",
         "line:omd-h2@12-12",
         "replace:HeaderMark@12-15",
         "line:omd-h3@25-25",
@@ -334,6 +342,7 @@ describe("fixture snapshots", () => {
     expect(specsFor("large.md", 3000)).toMatchInlineSnapshot(`
       [
         "line:omd-h1@0-0",
+        "replace:HeaderMark@0-2",
         "line:omd-h2@11-11",
         "replace:HeaderMark@11-14",
         "replace:EmphasisMark@37-39",

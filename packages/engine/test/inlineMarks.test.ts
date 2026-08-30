@@ -30,8 +30,8 @@ describe("non-caret selections keep marks folded (selection is visual)", () => {
     // 部分行选区压住 ** 也不展开（旧 cursorInside 的重叠分支曾在此显源码）
     const partial = tagsRange(doc, 6, 9)
     expect(partial).toContain("replace:EmphasisMark")
-    // caret 进入则展开（回归：光标仍是编辑入口）
-    expect(tags(doc, 8)).not.toContain("replace:EmphasisMark")
+    // 路线 A：caret 进入也不展开（点击只定位光标；增删改走 toggle 命令）
+    expect(tags(doc, 8)).toContain("replace:EmphasisMark")
   })
 
   it("keeps the heading mark folded while its line is selected", () => {
@@ -39,8 +39,8 @@ describe("non-caret selections keep marks folded (selection is visual)", () => {
     // 选区头在标题行上（旧 nearCursor 按 head 行展开整行标记）
     const sel = tagsRange(doc, 0, 5)
     expect(sel).toContain("replace:HeaderMark")
-    // caret 在标题行 → 展开（不变）
-    expect(tags(doc, 3)).not.toContain("replace:HeaderMark")
+    // 路线 A：caret 在标题行也不展开
+    expect(tags(doc, 3)).toContain("replace:HeaderMark")
   })
 
   it("keeps link URL folded while a selection crosses the link", () => {

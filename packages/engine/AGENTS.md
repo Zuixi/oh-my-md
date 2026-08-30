@@ -66,6 +66,7 @@ packages/engine/
 7. `BlockWidget.eq` compares source text and `embed`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild. Range lookup must prefer widget identity before `eq()` because two distinct blocks can have identical source.
 8. Async block widgets must install a synchronous source-shaped placeholder during `toDOM()` before CodeMirror's first layout measurement, then refresh the decoration StateField after the final DOM write. Failures must stay contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
 9. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
+10. **Route A mark folding** (`decorations/types.ts` documents the split): paired emphasis marks, ATX/Setext heading marks, and list marks fold **unconditionally** — the caret never reveals them, so clicking text only places the caret and lines never reflow. Editing goes through `format/commands.ts` toggles, or Backspace at a folded boundary (mid-line atoms delete whole via `skipAtomic`; line-start marks delete one char = progressive demotion). `nearCursor` survives only where source is the sole editing entry (link URL/title, image, inline math, footnote reference/definition); `cursorInside` serves QuoteMark, fence marks, entities/emoji, and links/images inside quotes. Never reintroduce caret-driven reveal for decorative marks — that is the click-flash regression this model removed.
 
 ## Parsing Rules
 
@@ -104,7 +105,7 @@ pnpm --filter @omd/engine bench
 - Mermaid, Shiki, and KaTeX may render asynchronously or throw on invalid source; preserve the original Markdown in error output.
 - Do not add `indentOnInput`, `closeBrackets`, or generic `autocompletion` to compensate for preview behavior. Fix the underlying parse/decoration interaction. A `:`-only emoji completion override in `parse/emojiComplete.ts` is the exception; keep it in the engine and do not turn on default word completion in `createEditor`.
 - Engine keymaps that must beat desktop `defaultKeymap` (`Enter`, `Tab`, `ArrowUp`/`ArrowDown`) need `Prec.high`. Desktop registers `defaultKeymap` before `editorExtensions()`, and earlier bindings win.
-- **Selection is visual, the caret is editing**: `nearCursor`/`cursorInside` return false for any non-empty selection, and a fully-covering selection keeps block widgets rendered (see known-gotchas). Never reintroduce selection-driven source reveal — it relayouts lines mid-drag and pushes pointer-selection endpoints across newlines (atomicRanges Rule 3).
+- **Selection is visual, the caret is editing**: `nearCursor`/`cursorInside` return false for any non-empty selection, and a fully-covering selection keeps block widgets rendered (see known-gotchas). Never reintroduce selection-driven source reveal — it relayouts lines mid-drag and pushes pointer-selection endpoints across newlines (atomicRanges Rule 3). Under Route A (invariant 10), decorative marks also never reveal to a collapsed caret.
 
 ## Documentation Maintenance
 

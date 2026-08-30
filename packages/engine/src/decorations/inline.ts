@@ -28,19 +28,21 @@ function childMarks(node: SyntaxNodeRef, name: string): { from: number; to: numb
   return marks
 }
 
-function markActive(state: EditorState, from: number, to: number, inQuote: boolean) {
-  return inQuote ? cursorInside(state, from, to) : nearCursor(state, from, to)
-}
-
-function foldPair(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], markName: string, markClass: string) {
-  const inQuote = hasAncestor(node.node, "Blockquote")
+// 路线 A：成对强调标记无条件折叠 —— 光标进入不显源码（不闪行），
+// 增删改走 format/commands.ts 的 toggle 命令或折叠边界 Backspace。
+function foldPair(node: SyntaxNodeRef, out: DecoSpec[], markName: string, markClass: string) {
   const marks = childMarks(node, markName)
   if (marks.length >= 2) {
     for (const m of [marks[0], marks[marks.length - 1]])
-      if (!markActive(state, m.from, m.to, inQuote))
-        out.push({ from: m.from, to: m.to, tag: `replace:${markName}`, deco: Decoration.replace({}) })
+      out.push({ from: m.from, to: m.to, tag: `replace:${markName}`, deco: Decoration.replace({}) })
   }
   out.push({ from: node.from, to: node.to, tag: `mark:${markClass}`, deco: Decoration.mark({ class: markClass }) })
+}
+
+// 仅供“源码本身是唯一编辑入口”的语法使用（链接/图片/行内公式/脚注引用）：
+// 非引号内按行展开，引号内要求光标精确进入 —— 见 types.ts 的分工说明。
+function markActive(state: EditorState, from: number, to: number, inQuote: boolean) {
+  return inQuote ? cursorInside(state, from, to) : nearCursor(state, from, to)
 }
 
 function foldLink(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
@@ -90,9 +92,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
         if (cursor.name === "HeaderMark") {
           const line = state.doc.lineAt(cursor.from)
           const end = Math.min(cursor.to + 1, line.to)  // ATX: include trailing space after '#'
-          const inQuote = hasAncestor(node.node, "Blockquote")
-          if (inQuote ? cursorInside(state, cursor.from, end) : nearCursor(state, node.from, node.to))
-            continue
+          // 路线 A：标题标记无条件折叠（含 Setext 下划线行）。
           // Setext underline is its own line; include the trailing newline so the empty
           // row collapses (replace across a line break must be block: true).
           if (line.from > node.from) {
@@ -111,14 +111,16 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
   }
 
   switch (node.name) {
-    case "StrongEmphasis": return foldPair(node, state, out, "EmphasisMark", "omd-strong")
-    case "Emphasis":       return foldPair(node, state, out, "EmphasisMark", "omd-em")
-    case "Strikethrough":  return foldPair(node, state, out, "StrikethroughMark", "omd-del")
-    case "Highlight":      return foldPair(node, state, out, "HighlightMark", "omd-highlight")
-    case "Underline":      return foldPair(node, state, out, "UnderlineMark", "omd-u")
-    case "Subscript":      return foldPair(node, state, out, "RiseMark", "omd-sub")
-    case "Superscript":    return foldPair(node, state, out, "RiseMark", "omd-sup")
-    case "InlineCode":     return foldPair(node, state, out, "CodeMark", "omd-inline-code")
+    // 链接/图片/行内公式/脚注引用保留“光标落行展开”：其源码（URL、src、tex、id）
+    // 没有其它编辑入口，展开是刻意的（见 types.ts 的分工说明）。
+    case "StrongEmphasis": return foldPair(node, out, "EmphasisMark", "omd-strong")
+    case "Emphasis":       return foldPair(node, out, "EmphasisMark", "omd-em")
+    case "Strikethrough":  return foldPair(node, out, "StrikethroughMark", "omd-del")
+    case "Highlight":      return foldPair(node, out, "HighlightMark", "omd-highlight")
+    case "Underline":      return foldPair(node, out, "UnderlineMark", "omd-u")
+    case "Subscript":      return foldPair(node, out, "RiseMark", "omd-sub")
+    case "Superscript":    return foldPair(node, out, "RiseMark", "omd-sup")
+    case "InlineCode":     return foldPair(node, out, "CodeMark", "omd-inline-code")
     case "Link":
     case "Autolink":       return foldLink(node, state, out)
     case "Image": {
