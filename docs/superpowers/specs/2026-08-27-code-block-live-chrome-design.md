@@ -100,3 +100,7 @@ styleFencedCode (lang set, not mermaid, not in quote)
 2. ↑/↓ 进入：卸载 widget，源码可编辑，顶栏随 widget 消失
 4. Source 模式：完整 `` ``` ``
 5. fence info 持久化到 `CodeInfo` 行
+
+### 补充（2026-08-28）：``` + Enter 成块
+
+正在输入的未闭合围栏行（FencedCode 仅覆盖 opening 行、光标在其上）不产生任何块样式（纯文本，避免“``` 还没按 Enter 就渲染”的观感）。在该行行尾按 Enter，`continueFenceSpec`（`format/fences.ts`）自动补全闭合围栏并让光标落在内容行——成块后走常规分支：光标在内 → 源码行样式（含 caret 行保灰底），光标离开 → widget。引用/列表内不劫持 Enter。

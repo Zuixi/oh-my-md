@@ -322,6 +322,21 @@ describe("block syntax", () => {
     expect(t).toContain("widget:block:code")
   })
 
+  it("keeps an unclosed fence being typed as plain text until it is completed", () => {
+    const doc = "```cpp"
+    const s = makeState(doc).update({ selection: { anchor: 6 } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(t).not.toContain("widget:block:code")
+    expect(t).not.toContain("line:omd-codeblock")
+  })
+
+  it("keeps an unclosed bare fence being typed as plain text", () => {
+    const doc = "```"
+    const s = makeState(doc).update({ selection: { anchor: 3 } }).state
+    const t = collectDecorationSpecs(s, 0, doc.length).map(d => d.tag)
+    expect(t).not.toContain("line:omd-codeblock")
+  })
+
   it("displays sequential ordered numbers even when source numbers skip", () => {
     const doc = "1. 第一项\n3. 第二项\n7. 第三项\n\ntail"
     const s = makeState(doc).update({ selection: { anchor: doc.length } }).state
