@@ -1081,9 +1081,11 @@ html[data-theme="dark"] .tab:hover {
   overflow: hidden;
 }
 /* Drag sash on the file sidebar's edge; flex sibling so it stays full-height
-   and never scrolls with the tree. */
+   and never scrolls with the tree. Painted chrome like the sidebars it
+   separates — a transparent sash would show --omd-bg as a bright seam. */
 .sidebar-resizer {
   flex: none; width: 4px; cursor: col-resize; position: relative; z-index: 5;
+  background: var(--omd-chrome);
 }
 .sidebar-resizer::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
