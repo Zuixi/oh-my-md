@@ -622,6 +622,8 @@ The extension must stay mounted anyway: focus mode is `html[data-focus="on"] .cm
 
 The override needs three classes (`.editor-host .cm-content .cm-activeLine`) because CodeMirror injects its base theme into the head *after* this stylesheet, so an equally specific rule loses on order. This applies to any base-theme override, not just this one.
 
+That transparent override also strips **any** line-level background on the caret line: `.omd-codeblock` paints `--omd-code-bg`, so the code-block line the caret sits on went white while every neighbouring block line stayed gray — users read it as "the caret is outside the code block" (reported 2026-08-28). `.editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg) }` repaints it (four classes needed for the same order reason); if a future line-level class gains a background, it needs the same exemption. `blockWidgetLayout.test.ts` guards the rule.
+
 ## contentRect is the border box, and the theme pads .cm-content on all four sides
 
 Stock `.cm-content` has `padding: 4px 0` — no horizontal padding — and upstream selection geometry is written against that, so `leftSide`/`rightSide` in `drawSelection.ts` add only the `.cm-line` padding to `contentRect.left`/`.right`. Our theme (`Editor.ts`) sets `padding: 16px 24px`, so every borrowed formula that treats `contentRect` as the content box is off by that padding. Symptom: fully-selected rows started 24px left of the text, so the highlight had a visible left overhang instead of Typora's flush edge. The vendored copy adds the content's own padding back (Modification D).
