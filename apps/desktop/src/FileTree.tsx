@@ -39,7 +39,7 @@ export function FileTree(props: {
               aria-label={t("filetree.aria.hideSidebar")}
               title={t("filetree.title.hideSidebar", { shortcut: shortcutFor("sidebar") ?? "" })}
             >
-              <PanelLeftClose size={15} />
+              <PanelLeftClose size={16} />
             </button>
           ) : null}
           <span className="sidebar-title-text">{title}</span>

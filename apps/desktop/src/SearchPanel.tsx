@@ -34,7 +34,7 @@ export function SearchPanel(props: {
           onClick={props.onClose}
           aria-label={t("search.aria.close")}
         >
-          <X size={14} />
+          <X size={16} />
         </button>
       </div>
       <div className="search-input-wrapper">

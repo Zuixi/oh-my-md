@@ -27,6 +27,9 @@ html[data-theme="light"] {
      line-height instead of the full 1.7 body height. Must stay a unitless
      number (multiplies the font size like any line-height). */
   --omd-empty-line-height: 0.9;
+  /* Shared size for icon tool buttons (sidebar toggle, outline toggle, panel
+     collapse/close) so panel chrome stays uniform. */
+  --omd-tool-btn-size: 26px;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -509,8 +512,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--omd-tool-btn-size);
+  height: var(--omd-tool-btn-size);
   border: none;
   background: transparent;
   color: var(--omd-muted);
@@ -756,7 +759,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   position: sticky;
   top: 8px;
   display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 4px;
+  width: var(--omd-tool-btn-size); height: var(--omd-tool-btn-size); border-radius: 4px;
   border: none; background: transparent; cursor: pointer;
   color: var(--omd-muted);
   transition: background 0.15s, color 0.15s;
@@ -1162,7 +1165,8 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 }
 .sidebar-collapse-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: none; background: transparent;
+  width: var(--omd-tool-btn-size); height: var(--omd-tool-btn-size);
+  border: none; background: transparent;
   color: var(--omd-muted); border-radius: 4px; cursor: pointer;
   transition: background 0.12s, color 0.12s; flex-shrink: 0;
 }
