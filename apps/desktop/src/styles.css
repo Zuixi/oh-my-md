@@ -1261,8 +1261,11 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    soft-wrapped paragraph or an entire rendered block. Neutralize the paint but
    keep the decoration: focus mode below dims every line that lacks the class.
    Needs three classes to out-specify the base theme, which CodeMirror injects
-   into the head after this sheet. */
+   into the head after this sheet. The follow-up rule repaints code-block lines:
+   without it the caret line loses the omd-codeblock background and the block
+   reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
+.editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */

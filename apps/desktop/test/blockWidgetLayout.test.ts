@@ -60,4 +60,11 @@ describe("block widget layout", () => {
     expect(header).not.toMatch(/\bvisibility\s*:\s*hidden\s*;/)
     expect(() => declarationBlocks(".editor-host .omd-code:hover .omd-code-header")).toThrow()
   })
+
+  it("keeps the code-block line background on the caret line", () => {
+    const active = declarationBlocks(
+      ".editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine",
+    ).join("\n")
+    expect(active).toMatch(/background(?:-color)?\s*:\s*var\(--omd-code-bg\)/)
+  })
 })
