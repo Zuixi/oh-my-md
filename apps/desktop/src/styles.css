@@ -23,6 +23,10 @@ html[data-theme="light"] {
   /* Drives the CM selection layer and native ::selection fallbacks (see the
      override rules below; CM's own base colors #d7d4f0/#233 are never used). */
   --omd-selection-bg: rgba(215, 212, 240, 0.55);
+  /* Blank-line density (Typora-style): non-caret blank lines render at this
+     line-height instead of the full 1.7 body height. Must stay a unitless
+     number (multiplies the font size like any line-height). */
+  --omd-empty-line-height: 0.9;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -90,6 +94,10 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
 .editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
 .editor-host .omd-h4, .editor-host .omd-h5, .editor-host .omd-h6 { font-weight: 700; }
+/* Blank lines fold to ~half height (Typora density); the caret's own blank
+   line carries no omd-empty class and keeps full height. Never display:none —
+   CM's line measurement and posAtCoords need a real, clickable box. */
+.editor-host .cm-content .cm-line.omd-empty { line-height: var(--omd-empty-line-height, 0.9); }
 .editor-host .omd-strong { font-weight: 700; }
 .editor-host .omd-em { font-style: italic; }
 .editor-host .omd-del { text-decoration: line-through; }

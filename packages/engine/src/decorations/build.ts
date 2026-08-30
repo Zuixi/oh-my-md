@@ -9,7 +9,7 @@ import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
-import type { DecoSpec } from "./types"
+import { nearCursor, type DecoSpec } from "./types"
 import { measureBlockWidget } from "./widgetMeasure"
 
 export { nearCursor, type DecoSpec } from "./types"
@@ -40,6 +40,22 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
       if (blockRules(node, state, out)) return false
     },
   })
+  // 空行密度（Typora 观感）：空白行无语法节点，走不到上面的迭代 —— 按行扫描
+  // 补发。非光标行折叠为半高（CSS line:omd-empty）；caret 所在空行保持全高
+  // （caret 需要完整行框，点击/键入时空隙展开，Typora 同款交互）。非空选区
+  // 压过空行不展开（nearCursor 语义）：拖选途中空行高度翻转会让 posAtCoords
+  // 漂移（atomicRanges Rule 3 同源教训）。line.from 必须落在 [from, to] 内才发：
+  // 非行对齐的调用边界由覆盖该行的那次调用负责，避免同一点装饰重复。
+  for (let pos = from; pos <= to; ) {
+    const line = state.doc.lineAt(pos)
+    if (line.from >= from && line.text.trim() === "" && !nearCursor(state, line.from, line.to)) {
+      out.push({
+        from: line.from, to: line.from, tag: "line:omd-empty",
+        deco: Decoration.line({ class: "omd-empty" }),
+      })
+    }
+    pos = line.to + 1
+  }
   // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃
   const scoped = out.filter(s => s.from <= to && s.to >= from)
   const blockWidgets = scoped.filter(s => s.tag.startsWith("widget:block:"))
