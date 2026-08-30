@@ -6,6 +6,7 @@ import { renderBudgetFlush } from "./decorations/renderBudget"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { listKeymap } from "./format/lists"
+import { fenceKeymap } from "./format/fences"
 import { htmlPaste } from "./paste/htmlPaste"
 
 // Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
@@ -36,6 +37,7 @@ export { applyToggle, isLivePreview, setLivePreview } from "./modes/livePreview"
 export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from "./modes/livePreview"
 export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
+export { continueFence, continueFenceSpec, fenceKeymap } from "./format/fences"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
@@ -99,6 +101,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     markdownLanguageSupport(),
     emojiCompletion,
     listKeymap,
+    fenceKeymap,
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,

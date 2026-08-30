@@ -131,6 +131,15 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   const src = fencedCodeSource(node.node, state)
   const embed = blockEmbed(node.node)
 
+  // 未闭合围栏正在输入（FencedCode 只有 opening 行且光标在其上）：保持纯文本。
+  // 围栏行一旦被解析就立即灰底/挂 widget，用户观感是“``` 还没按 Enter 就渲染了”
+  // （Typora 在 Enter 前不呈现块）。Enter 的闭合补全见 format/fences.ts，成块后
+  // 走下方常规分支（光标在内 → 源码行样式，光标离开 → widget）。
+  const singleLine = state.doc.lineAt(node.from).number === state.doc.lineAt(node.to).number
+  if (singleLine && blockSelected(state, node.from, node.to)) {
+    return true
+  }
+
   if (langToken === "mermaid") {
     out.push({
       from: node.from, to: node.to, tag: "widget:block:mermaid",
