@@ -8,7 +8,7 @@ import {
   replaceTableCell,
   type TableSourceChange,
 } from "../../tables/edit"
-import type { TableCellData, TableData, TableRowData } from "../../tables/model"
+import type { TableData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 
 interface PendingTableEdit {
@@ -39,28 +39,6 @@ function reportViewError(view: EditorView, error: unknown): void {
 }
 
 type ResolveSrc = (src: string) => string
-
-type LegacyTableData = {
-  readonly header: readonly string[]
-  readonly rows: readonly (readonly string[])[]
-  readonly aligns: TableData["aligns"]
-}
-
-function legacyRow(cells: readonly string[]): TableRowData {
-  const data: TableCellData[] = cells.map(text => ({ text, source: text, from: 0, to: text.length }))
-  return { from: 0, to: 0, lineFrom: 0, lineTo: 0, prefix: "", leadingPipe: true, trailingPipe: true, cells: data }
-}
-
-function normalizeTableData(table: TableData | LegacyTableData): TableData {
-  if (!Array.isArray(table.header)) return table as TableData
-  const legacy = table as LegacyTableData
-  return {
-    header: legacyRow(legacy.header),
-    delimiter: legacyRow(legacy.aligns.map(() => "---")),
-    rows: legacy.rows.map(legacyRow),
-    aligns: legacy.aligns,
-  }
-}
 
 function renderCellContainer(
   parent: HTMLElement,
@@ -157,12 +135,12 @@ export class TableWidget extends BlockWidget {
   constructor(
     src: string,
     pos: number,
-    table: TableData | LegacyTableData,
+    table: TableData,
     embed?: BlockEmbed,
     readonly resolveSrc?: ResolveSrc,
   ) {
     super(src, pos, embed)
-    this.table = normalizeTableData(table)
+    this.table = table
   }
 
   eq(other: TableWidget) {
@@ -300,10 +278,6 @@ export class TableWidget extends BlockWidget {
     return row === 0 ? this.table.header.cells[col] : this.table.rows[row - 1]?.cells[col]
   }
 
-  private cellSource(row: number, col: number) {
-    return this.cellData(row, col)?.source
-  }
-
   private bindCell(el: HTMLElement, row: number, col: number) {
     el.addEventListener("mousedown", e => {
       e.preventDefault()
@@ -343,7 +317,7 @@ export class TableWidget extends BlockWidget {
     const input = document.createElement("input")
     input.type = "text"
     input.className = "omd-table-edit"
-    input.value = this.cellSource(row, col) ?? ""
+    input.value = this.cellData(row, col)?.source ?? ""
     el.replaceChildren(input)
     this.editing = { el, row, col }
     input.addEventListener("mousedown", e => {
@@ -409,6 +383,13 @@ export class TableWidget extends BlockWidget {
     return { row: Math.floor(i / cols), col: i % cols }
   }
 
+  private tableToolChanges(act: TableToolAction, row: number, col: number) {
+    return act === "insert-row" ? insertTableRow(this.src, this.table, row)
+      : act === "insert-col" ? insertTableColumn(this.src, this.table, col)
+      : act === "delete-row" ? deleteTableRow(this.src, this.table, row - 1)
+      : deleteTableColumn(this.src, this.table, col)
+  }
+
   private tool(act: TableToolAction) {
     // 只读守卫（replace() 是最终权威，此处提前拒绝主路径）。
     if (this.view?.state.readOnly) return
@@ -445,15 +426,9 @@ export class TableWidget extends BlockWidget {
       // 输入值未变（no-op 提交）：等效于“无编辑”。保持 this.editing 不动，
       // 单事务结构操作失败（next === null）时输入框继续挂载。
     }
-    const next =
-      act === "insert-row" ? insertTableRow(this.src, this.table, this.row)
-      : act === "insert-col" ? insertTableColumn(this.src, this.table, this.col)
-      // `this.row` 是 1-based（0=表头，1=首数据行），而 deleteTableRow 的
-      // row 是 0-based 数据行索引。映射 active body row 到 this.row - 1；
-      // 表头（this.row === 0）会得到 -1，被 deleteTableRow 的界内校验拒绝，
-      // 从而守卫表头行为为 no-op。
-      : act === "delete-row" ? deleteTableRow(this.src, this.table, this.row - 1)
-      : deleteTableColumn(this.src, this.table, this.col)
+    // `this.row` 是 1-based（0=表头，1=首数据行），tableToolChanges 映射到
+    // deleteTableRow 的 0-based 数据行索引；表头映射到 -1，自然成为 no-op。
+    const next = this.tableToolChanges(act, this.row, this.col)
     if (!next) return
     this.editing = null
     this.replace(next)
@@ -471,11 +446,7 @@ export class TableWidget extends BlockWidget {
     // 检测 widget 已断开（销毁/切源码）：pending 已被消费，直接放弃补派发。
     if (!this.view || !this.wrap?.isConnected) return
     // 对重建后的 fresh Lezer 元数据（this.src/this.table）执行结构操作。
-    const next =
-      act === "insert-row" ? insertTableRow(this.src, this.table, row)
-      : act === "insert-col" ? insertTableColumn(this.src, this.table, col)
-      : act === "delete-row" ? deleteTableRow(this.src, this.table, row - 1)
-      : deleteTableColumn(this.src, this.table, col)
+    const next = this.tableToolChanges(act, row, col)
     if (!next) return  // 目标缺失或操作被拒绝 → 不再派发。
     this.replace(next)
   }

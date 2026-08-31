@@ -317,16 +317,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 /* Active row/column highlight while a cell editor is open: background-only so
    cell geometry never changes. The edited intersection honors both classes. */
-.editor-host .omd-table td.omd-table-row-active,
-.editor-host .omd-table th.omd-table-row-active {
+.editor-host .omd-table :is(td, th).omd-table-row-active {
   background: color-mix(in srgb, var(--omd-link) 8%, transparent);
 }
-.editor-host .omd-table td.omd-table-col-active,
-.editor-host .omd-table th.omd-table-col-active {
+.editor-host .omd-table :is(td, th).omd-table-col-active {
   background: color-mix(in srgb, var(--omd-link) 5%, transparent);
 }
-.editor-host .omd-table td.omd-table-row-active.omd-table-col-active,
-.editor-host .omd-table th.omd-table-row-active.omd-table-col-active {
+.editor-host .omd-table :is(td, th).omd-table-row-active.omd-table-col-active {
   background: color-mix(in srgb, var(--omd-link) 14%, transparent);
 }
 /* Synthetic ragged cells (no source slot) read as inert placeholders. */

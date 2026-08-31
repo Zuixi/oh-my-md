@@ -137,7 +137,7 @@ export function insertTableColumn(
 
   const changes: TableSourceChange[] = []
   const insertAfter = (row: TableRowData, fill: string): boolean => {
-    const cells = row.cells as readonly (TableCellData | null)[]
+    const cells = row.cells
     const present = cells.reduce((count, cell) => count + (cell === null ? 0 : 1), 0)
     if (present === 0) return false
     const anchorIndex = Math.min(afterColumn, present - 1)
@@ -184,7 +184,7 @@ export function deleteTableColumn(
 
   const changes: TableSourceChange[] = []
   const dropFrom = (row: TableRowData) => {
-    const cells = row.cells as readonly (TableCellData | null)[]
+    const cells = row.cells
     const present = cells.reduce((count, cell) => count + (cell === null ? 0 : 1), 0)
     if (column >= present) return // 缺失的 ragged 尾部：该行无需改动
     const last = present - 1

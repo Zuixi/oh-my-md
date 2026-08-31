@@ -96,15 +96,8 @@ describe("tables", () => {
   })
 
   it("renders table widget DOM with parsed rich cells", async () => {
-    const widget = new TableWidget(
-      "| Item | Details |\n|---|---|\n| Func | Line 1<br>_note_ |",
-      0,
-      {
-        header: ["Item", "Details"],
-        rows: [["Func", "Line 1<br>_note_"]],
-        aligns: ["left", "left"],
-      },
-    )
+    const src = "| Item | Details |\n|---|---|\n| Func | Line 1<br>_note_ |"
+    const widget = new TableWidget(src, 0, tableData(src))
     const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     const td = dom.querySelectorAll("td")[1]
@@ -113,13 +106,8 @@ describe("tables", () => {
   })
 
   it("resolves cell images through the widget resolveSrc", async () => {
-    const widget = new TableWidget(
-      "| Pic |\n|---|\n| ![a](x.png) |",
-      0,
-      { header: ["Pic"], rows: [["![a](x.png)"]], aligns: [""] },
-      undefined,
-      src => `/res/${src}`,
-    )
+    const src = "| Pic |\n|---|\n| ![a](x.png) |"
+    const widget = new TableWidget(src, 0, tableData(src), undefined, path => `/res/${path}`)
     const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/res/x.png")
