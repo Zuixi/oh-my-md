@@ -47,7 +47,7 @@ describe("BoundedLru", () => {
           maxSize: 10,
           sizeOf: (value) => value.length,
         }),
-    ).toThrow(RangeError)
+    ).toThrow("maxEntries must be a positive integer")
     expect(
       () =>
         new BoundedLru<string, string>({
@@ -55,6 +55,14 @@ describe("BoundedLru", () => {
           maxSize: 0,
           sizeOf: (value) => value.length,
         }),
-    ).toThrow(RangeError)
+    ).toThrow("maxSize must be a positive finite number")
+    expect(
+      () =>
+        new BoundedLru<string, string>({
+          maxEntries: 1,
+          maxSize: 1.5,
+          sizeOf: (value) => value.length,
+        }),
+    ).not.toThrow()
   })
 })
