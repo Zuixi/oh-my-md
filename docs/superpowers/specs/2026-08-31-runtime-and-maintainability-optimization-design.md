@@ -459,6 +459,17 @@ not require discarding unrelated improvements.
 
 ## 12. Implementation Evidence
 
+### Commands
+
+```sh
+git status --short
+git --no-pager log -1 --oneline
+pnpm --filter @omd/desktop build 2>&1 | tee /tmp/omd-desktop-build-before.log
+pnpm --filter @omd/engine bench 2>&1 | tee /tmp/omd-engine-bench-before.log
+time cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml \
+  search_caps_results_and_marks_truncated -- --nocapture
+```
+
 ### Before
 
 Baseline commit: `0990fee3e2ac1ef9e43223a3deb94a9b117d3d98`
@@ -471,3 +482,40 @@ Baseline commit: `0990fee3e2ac1ef9e43223a3deb94a9b117d3d98`
 | Largest lazy chunks | `cynefin-VYW2F7L2-C6jhMPZs.js` `687.89 kB` raw / `154.14 kB` gzip; `mermaid.core-Bun_w9uL.js` `622.22 kB` raw / `149.16 kB` gzip; `cytoscape.esm-D3_iZ_3b.js` `442.92 kB` raw / `141.93 kB` gzip |
 | Engine benchmark warnings | `92` `OVER BUDGET (> 8ms)` lines; the summary still reports `documentStats 50k` at `14.7908ms` p95 |
 | Rust search baseline | `500 hits, truncated=true` |
+
+Vitest bench prints each benchmark body many times; the `92` `OVER BUDGET` lines are repeated iterations from one advisory family (`documentStats 50k`), not 92 distinct scenarios.
+
+### Engine families from the raw logs
+
+Typing / parse / stats:
+
+| Family | Raw-log value |
+| --- | --- |
+| `typing p95 10k live steady` | `8.35ms` |
+| `typing p95 10k source steady` | `0.80ms` |
+| `typing p95 50k source steady` | `0.70ms` |
+| `typing p95 10MB source steady` | `0.81ms` |
+| `typing p95 20MB source steady` | `0.85ms` |
+| `typing p95 10MB live windowed steady` | `7.13ms` |
+| `typing p95 10k live complete-tree` | `18.63ms` |
+| `cold parse 10k` | `31.51ms` |
+| `cold parse 50k` | `161.44ms` |
+| `decoration rebuild 10k (live)` | `10.93ms` |
+| `documentStats 50k` | `13.99ms` |
+
+Open ingest / chunked Text / toggle:
+
+| Family | Raw-log value |
+| --- | --- |
+| `open ingest 10MB (source, steady)` | `21.14ms` |
+| `open ingest 20MB (source, steady)` | `44.42ms` |
+| `open ingest 50MB (source, steady)` | `88.27ms` |
+| `open ingest 10MB (live, steady)` | `12.52ms` |
+| `open ingest 20MB (live, steady)` | `32.10ms` |
+| `open ingest 10MB (string split, current)` | `20.78ms` |
+| `open ingest 10MB (chunked Text assembly)` | `19.86ms` |
+| `open ingest 50MB (string split, current)` | `80.57ms` |
+| `open ingest 50MB (chunked Text assembly)` | `110.83ms` |
+| `chunk splitter standalone 50MB` | `108.37ms` |
+| `live toggle 10MB (source → live, seed)` | `toggle 10MB tx p95 0.33ms; toggle 10MB pure seedLiveDecorations p95 0.12ms` |
+| `live toggle 20MB (source → live, seed)` | `toggle 20MB tx p95 6.19ms; toggle 20MB pure seedLiveDecorations p95 0.12ms` |
