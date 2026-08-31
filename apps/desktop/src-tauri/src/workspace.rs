@@ -541,7 +541,9 @@ pub(crate) fn search_markdown_sync(
     let walker = builder.build_parallel();
 
     let results = Mutex::new(Vec::new());
+    let remaining = AtomicUsize::new(MAX_SEARCH_HITS);
     let truncated = AtomicBool::new(false);
+    let synchronization_failed = AtomicBool::new(false);
 
     walker.run(|| {
         Box::new(|entry| {
@@ -565,30 +567,51 @@ pub(crate) fn search_markdown_sync(
                 Ok(text) => text,
                 Err(_) => return ignore::WalkState::Continue,
             };
-            let mut hits = results.lock().unwrap();
-            if hits.len() >= MAX_SEARCH_HITS {
-                truncated.store(true, Ordering::Relaxed);
+
+            let available = remaining.load(Ordering::Acquire);
+            if available == 0 {
+                truncated.store(true, Ordering::Release);
                 return ignore::WalkState::Quit;
             }
-            let remaining = MAX_SEARCH_HITS - hits.len();
-            let file_hits = collect_file_hits(path, content, &matcher, remaining);
-            let capped = file_hits.len() >= remaining;
-            hits.extend(file_hits);
-            if capped {
-                truncated.store(true, Ordering::Relaxed);
-                return ignore::WalkState::Quit;
+
+            let mut local = collect_file_hits(path, content, &matcher, available);
+            let accepted = reserve_slots(&remaining, local.len());
+            if accepted < local.len() {
+                local.truncate(accepted);
+                truncated.store(true, Ordering::Release);
+            }
+            if local.is_empty() {
+                return if remaining.load(Ordering::Acquire) == 0 {
+                    ignore::WalkState::Quit
+                } else {
+                    ignore::WalkState::Continue
+                };
+            }
+
+            match results.lock() {
+                Ok(mut shared) => shared.extend(local),
+                Err(_) => {
+                    synchronization_failed.store(true, Ordering::Release);
+                    return ignore::WalkState::Quit;
+                }
             }
             ignore::WalkState::Continue
         })
     });
 
-    let mut hits = results.into_inner().unwrap();
+    if synchronization_failed.load(Ordering::Acquire) {
+        return Err("workspace search result lock poisoned".into());
+    }
+
+    let mut hits = results
+        .into_inner()
+        .map_err(|_| "workspace search result lock poisoned".to_string())?;
     hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
     let capped = hits.len() >= MAX_SEARCH_HITS;
     hits.truncate(MAX_SEARCH_HITS);
     Ok(SearchResponse {
         hits,
-        truncated: truncated.load(Ordering::Relaxed) || capped,
+        truncated: truncated.load(Ordering::Acquire) || capped,
     })
 }
 
@@ -842,6 +865,28 @@ mod tests {
         let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
         assert!(response.truncated);
         assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn parallel_search_never_exceeds_the_cap_with_many_hits_per_file() {
+        let root = tmp("search-parallel-cap");
+        reset_dir(&root);
+        let content = std::iter::repeat("needle")
+            .take(40)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..64 {
+            fs::write(root.join(format!("f{index:02}.md")), &content).unwrap();
+        }
+
+        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        assert!(response.truncated);
+        assert!(response.hits.windows(2).all(|pair| {
+            pair[0].path < pair[1].path
+                || (pair[0].path == pair[1].path && pair[0].line <= pair[1].line)
+        }));
         fs::remove_dir_all(root).ok();
     }
 
