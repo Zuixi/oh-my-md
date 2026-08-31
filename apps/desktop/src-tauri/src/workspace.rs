@@ -822,6 +822,32 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "advisory workspace search benchmark"]
+    fn workspace_search_parallelism_benchmark() {
+        let root = tmp("search-parallelism-benchmark");
+        reset_dir(&root);
+        let content = std::iter::repeat_n("benchmark line", 199)
+            .chain(std::iter::once("needle"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..1_000 {
+            fs::write(root.join(format!("f{index:04}.md")), &content).unwrap();
+        }
+
+        let started = std::time::Instant::now();
+        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "workspace search 1000x200: {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        assert!(response.truncated);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn search_matches_case_insensitive_by_default() {
         let root = tmp("search-case");
         reset_dir(&root);
