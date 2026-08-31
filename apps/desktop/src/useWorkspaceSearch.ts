@@ -40,7 +40,7 @@ export function useWorkspaceSearch(options: {
 
   useEffect(() => {
     if (!open || !folder || query === "" || !search) {
-      setHits([])
+      setHits(prev => prev.length === 0 ? prev : [])
       setTruncated(false)
       return () => { requestRef.current += 1 }
     }
