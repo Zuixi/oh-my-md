@@ -78,6 +78,34 @@ describe("tableDataFromNode", () => {
     ])
   })
 
+  it("preserves a leading outer pipe on a ragged row", () => {
+    const leadingOuterRagged = `| A | B |
+| --- | --- |
+| only`
+    const { data } = firstTable(leadingOuterRagged)
+
+    expect(data.rows[0].leadingPipe).toBe(true)
+    expect(data.rows[0].trailingPipe).toBe(false)
+    expect(data.rows[0].cells).toEqual([
+      expect.objectContaining({ source: "only", text: "only" }),
+      null,
+    ])
+  })
+
+  it("preserves a trailing outer pipe without inventing an empty ragged slot", () => {
+    const trailingOuterRagged = `| A | B |
+| --- | --- |
+only |`
+    const { data } = firstTable(trailingOuterRagged)
+
+    expect(data.rows[0].leadingPipe).toBe(false)
+    expect(data.rows[0].trailingPipe).toBe(true)
+    expect(data.rows[0].cells).toEqual([
+      expect.objectContaining({ source: "only", text: "only" }),
+      null,
+    ])
+  })
+
   it("distinguishes escaped pipes, empty slots, and missing ragged tails", () => {
     const escapedAndRagged = `| a\\|b | c |
 | --- | --- |

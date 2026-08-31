@@ -69,18 +69,27 @@ function rowEnvelope(
   }
 }
 
-function sourceRow(row: SyntaxNode, table: SyntaxNode, columnCount: number, state: EditorState): TableRowData {
+interface RowPipeStyle {
+  readonly leadingPipe: boolean
+  readonly trailingPipe: boolean
+}
+
+function sourceRow(
+  row: SyntaxNode,
+  table: SyntaxNode,
+  columnCount: number,
+  state: EditorState,
+  expectedStyle?: RowPipeStyle,
+): TableRowData {
   const cellNodes = directChildren(row, "TableCell")
   const pipes = directChildren(row, "TableDelimiter")
-  const hasOnlyInternalPipes = pipes.length === columnCount - 1
-  const leadingPipe =
-    !hasOnlyInternalPipes &&
-    pipes.length > 0 &&
-    state.doc.sliceString(row.from, pipes[0].from).trim().length === 0
-  const trailingPipe =
-    !hasOnlyInternalPipes &&
-    pipes.length > 0 &&
-    state.doc.sliceString(pipes[pipes.length - 1].to, row.to).trim().length === 0
+  const startsAtPipe =
+    pipes.length > 0 && state.doc.sliceString(row.from, pipes[0].from).trim().length === 0
+  const endsAtPipe =
+    pipes.length > 0 && state.doc.sliceString(pipes[pipes.length - 1].to, row.to).trim().length === 0
+  const ambiguousPipeCount = pipes.length === columnCount - 1
+  const leadingPipe = startsAtPipe && (!ambiguousPipeCount || expectedStyle?.leadingPipe === true)
+  const trailingPipe = endsAtPipe && (!ambiguousPipeCount || expectedStyle?.trailingPipe === true)
   const boundaries = [row.from, ...pipes.map(pipe => pipe.to), row.to]
   const segmentEnds = [...pipes.map(pipe => pipe.from), row.to]
   const first = leadingPipe ? 1 : 0
@@ -127,7 +136,7 @@ export function tableDataFromNode(node: SyntaxNode, state: EditorState): TableDa
   const header = sourceRow(headerNode, node, delimiter.cells.length, state)
   if (header.cells.length === 0) return null
   const rows = directChildren(node, "TableRow").map(row => {
-    const data = sourceRow(row, node, header.cells.length, state)
+    const data = sourceRow(row, node, header.cells.length, state, header)
     const cells = [...data.cells]
     while (cells.length < header.cells.length) cells.push(null)
     return { ...data, cells }
