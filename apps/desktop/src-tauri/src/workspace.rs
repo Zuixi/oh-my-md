@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use regex::RegexBuilder;
@@ -541,7 +541,6 @@ pub(crate) fn search_markdown_sync(
     let walker = builder.build_parallel();
 
     let results = Mutex::new(Vec::new());
-    let remaining = AtomicUsize::new(MAX_SEARCH_HITS);
     let truncated = AtomicBool::new(false);
     let synchronization_failed = AtomicBool::new(false);
 
@@ -568,28 +567,22 @@ pub(crate) fn search_markdown_sync(
                 Err(_) => return ignore::WalkState::Continue,
             };
 
-            let available = remaining.load(Ordering::Acquire);
-            if available == 0 {
-                truncated.store(true, Ordering::Release);
-                return ignore::WalkState::Quit;
-            }
-
-            let mut local = collect_file_hits(path, content, &matcher, available);
-            let accepted = reserve_slots(&remaining, local.len());
-            if accepted < local.len() {
-                local.truncate(accepted);
-                truncated.store(true, Ordering::Release);
-            }
+            // One extra local hit proves truncation without retaining an
+            // unbounded file result. Line scanning remains outside the mutex.
+            let local = collect_file_hits(path, content, &matcher, MAX_SEARCH_HITS + 1);
             if local.is_empty() {
-                return if remaining.load(Ordering::Acquire) == 0 {
-                    ignore::WalkState::Quit
-                } else {
-                    ignore::WalkState::Continue
-                };
+                return ignore::WalkState::Continue;
             }
 
             match results.lock() {
-                Ok(mut shared) => shared.extend(local),
+                Ok(mut shared) => {
+                    shared.extend(local);
+                    shared.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+                    if shared.len() > MAX_SEARCH_HITS {
+                        shared.truncate(MAX_SEARCH_HITS);
+                        truncated.store(true, Ordering::Release);
+                    }
+                }
                 Err(_) => {
                     synchronization_failed.store(true, Ordering::Release);
                     return ignore::WalkState::Quit;
@@ -603,15 +596,12 @@ pub(crate) fn search_markdown_sync(
         return Err("workspace search result lock poisoned".into());
     }
 
-    let mut hits = results
+    let hits = results
         .into_inner()
         .map_err(|_| "workspace search result lock poisoned".to_string())?;
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    let capped = hits.len() >= MAX_SEARCH_HITS;
-    hits.truncate(MAX_SEARCH_HITS);
     Ok(SearchResponse {
         hits,
-        truncated: truncated.load(Ordering::Acquire) || capped,
+        truncated: truncated.load(Ordering::Acquire),
     })
 }
 
@@ -745,22 +735,9 @@ fn collect_file_hits(
     hits
 }
 
-pub(crate) fn reserve_slots(remaining: &AtomicUsize, requested: usize) -> usize {
-    if requested == 0 {
-        return 0;
-    }
-    match remaining.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-        (current > 0).then_some(current.saturating_sub(requested))
-    }) {
-        Ok(previous) => previous.min(requested),
-        Err(_) => 0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     fn tmp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("omd-ws-{}-{}", std::process::id(), name))
@@ -891,6 +868,36 @@ mod tests {
         let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
         assert!(response.truncated);
         assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn capped_search_retains_the_same_first_paths_regardless_of_worker_completion_order() {
+        let root = tmp("search-deterministic-cap");
+        reset_dir(&root);
+        let slow_prefix = std::iter::repeat_n("no match here", 2_000)
+            .chain(std::iter::once("needle"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..600 {
+            let content = if index < 100 { &slow_prefix } else { "needle" };
+            fs::write(root.join(format!("f{index:04}.md")), content).unwrap();
+        }
+
+        for _ in 0..5 {
+            let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+            assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+            assert!(response.truncated);
+            assert!(response.hits[0].path.ends_with("f0000.md"));
+            assert_eq!(response.hits[0].line, 2_001);
+            assert!(response.hits[499].path.ends_with("f0499.md"));
+            assert_eq!(response.hits[499].line, 1);
+            assert!(response.hits.iter().all(|hit| {
+                let name = Path::new(&hit.path).file_name().unwrap().to_string_lossy();
+                name.as_ref() <= "f0499.md"
+            }));
+        }
+
         fs::remove_dir_all(root).ok();
     }
 
@@ -1331,41 +1338,5 @@ mod tests {
             .take(hit.end - hit.start)
             .collect();
         assert_eq!(selected, "needle".encode_utf16().collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn reserve_slots_returns_zero_for_zero_request() {
-        let remaining = AtomicUsize::new(3);
-
-        assert_eq!(reserve_slots(&remaining, 0), 0);
-        assert_eq!(remaining.load(Ordering::Relaxed), 3);
-    }
-
-    #[test]
-    fn reserve_slots_never_exceeds_the_global_limit() {
-        let remaining = AtomicUsize::new(3);
-
-        assert_eq!(reserve_slots(&remaining, 2), 2);
-        assert_eq!(reserve_slots(&remaining, 2), 1);
-        assert_eq!(reserve_slots(&remaining, 1), 0);
-        assert_eq!(remaining.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn concurrent_slot_reservations_sum_to_the_limit() {
-        let remaining = Arc::new(AtomicUsize::new(500));
-        let threads: Vec<_> = (0..8)
-            .map(|_| {
-                let remaining = Arc::clone(&remaining);
-                std::thread::spawn(move || reserve_slots(&remaining, 100))
-            })
-            .collect();
-        let reserved: usize = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .sum();
-
-        assert_eq!(reserved, 500);
-        assert_eq!(remaining.load(Ordering::Relaxed), 0);
     }
 }
