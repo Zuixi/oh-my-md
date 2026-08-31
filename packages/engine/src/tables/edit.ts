@@ -1,3 +1,5 @@
+import type { TableCellData } from "./model"
+
 type Line = { lead: boolean; trail: boolean; cells: string[] }
 
 const ALIGN = /^:?-+:?$/
@@ -56,35 +58,42 @@ function parseTable(source: string): Table | null {
   return { header, sep, rows, nl }
 }
 
-function dataLine(table: Table, row: number): Line | null {
-  if (row === 0) return table.header
-  return table.rows[row - 1] ?? null
-}
-
 function serialize(table: Table): string {
   const body = [table.header, table.sep, ...table.rows].map(joinLine).join("\n")
   return table.nl ? `${body}\n` : body
 }
 
-function padded(cell: string, value: string): string {
-  const lead = cell.match(/^\s*/)?.[0] ?? ""
-  const trail = cell.match(/\s*$/)?.[0] ?? ""
-  if (cell.trim() === "" && lead.length + trail.length === cell.length)
-    return value === "" ? (cell || EMPTY) : `${lead || " "}${value}${trail || " "}`
-  return `${lead}${value}${trail}`
+export interface TableSourceChange {
+  readonly from: number
+  readonly to: number
+  readonly insert: string
+}
+
+export function escapeTableCellValue(value: string): string {
+  let escaped = ""
+  let backslashes = 0
+  for (const char of value) {
+    if (char === "\\") {
+      escaped += char
+      backslashes++
+      continue
+    }
+    if (char === "|" && backslashes % 2 === 0) escaped += "\\"
+    escaped += char
+    backslashes = 0
+  }
+  return escaped
 }
 
 export function replaceTableCell(
   source: string,
-  row: number,
-  column: number,
+  cell: TableCellData,
   value: string,
-): string | null {
-  const table = parseTable(source)
-  const line = table ? dataLine(table, row) : null
-  if (!table || !line || column < 0 || column >= line.cells.length) return null
-  line.cells[column] = padded(line.cells[column], value)
-  return serialize(table)
+): TableSourceChange | null {
+  const { from, to } = cell
+  if (from < 0 || from > to || to > source.length) return null
+  if (source.slice(from, to) !== cell.source) return null
+  return { from, to, insert: escapeTableCellValue(value) }
 }
 
 export function insertTableRow(source: string, afterRow: number): string | null {

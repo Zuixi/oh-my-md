@@ -6,6 +6,7 @@ import {
   insertTableColumn,
   insertTableRow,
   replaceTableCell,
+  type TableSourceChange,
 } from "../../tables/edit"
 import type { TableCellData, TableData, TableRowData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
@@ -232,8 +233,12 @@ export class TableWidget extends BlockWidget {
     }
   }
 
+  private cellData(row: number, col: number) {
+    return row === 0 ? this.table.header.cells[col] : this.table.rows[row - 1]?.cells[col]
+  }
+
   private cellSource(row: number, col: number) {
-    return row === 0 ? (this.table.header.cells[col]?.text ?? "") : (this.table.rows[row - 1]?.cells[col]?.text ?? "")
+    return this.cellData(row, col)?.source
   }
 
   private bindCell(el: HTMLElement, row: number, col: number) {
@@ -241,6 +246,7 @@ export class TableWidget extends BlockWidget {
       e.preventDefault()
       e.stopPropagation()
       if (e.target instanceof HTMLInputElement) return
+      if (!this.cellData(row, col)) return
       this.row = row
       this.col = col
       this.startEdit(el, row, col)
@@ -257,7 +263,7 @@ export class TableWidget extends BlockWidget {
     const input = document.createElement("input")
     input.type = "text"
     input.className = "omd-table-edit"
-    input.value = this.cellSource(row, col)
+    input.value = this.cellSource(row, col) ?? ""
     el.replaceChildren(input)
     this.editing = { el, row, col }
     input.addEventListener("mousedown", e => {
@@ -282,20 +288,20 @@ export class TableWidget extends BlockWidget {
     if (!edit) return
     this.editing = null
     edit.el.replaceChildren()
-    renderTableCellContent(edit.el, this.cellSource(edit.row, edit.col), this.resolveSrc)
+    renderTableCellContent(edit.el, this.cellData(edit.row, edit.col)?.text ?? "", this.resolveSrc)
   }
 
   private commitEdit(move: 1 | -1 | 0) {
     const edit = this.editing
     const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
     if (!edit || !input) return
-    const next = replaceTableCell(this.src, edit.row, edit.col, input.value)
-    if (!next) return
+    const cell = this.cellData(edit.row, edit.col)
+    if (!cell) return
+    const change = replaceTableCell(this.src, cell, input.value)
+    if (!change) return
     this.editing = null
     const dest = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
-    this.replace(next, dest)
-    if (next && dest && this.cells[dest.row]?.[dest.col])
-      this.startEdit(this.cells[dest.row][dest.col], dest.row, dest.col)
+    this.replace([change], dest)
   }
 
   private neighbor(row: number, col: number, dir: 1 | -1) {
@@ -311,8 +317,9 @@ export class TableWidget extends BlockWidget {
     const edit = this.editing
     const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
     if (edit && input) {
-      const committed = replaceTableCell(src, edit.row, edit.col, input.value)
-      if (committed) src = committed
+      const cell = this.cellData(edit.row, edit.col)
+      const committed = cell ? replaceTableCell(src, cell, input.value) : null
+      if (committed) src = src.slice(0, committed.from) + committed.insert + src.slice(committed.to)
     }
     const next = act === "insert-row" ? insertTableRow(src, this.row)
       : act === "insert-col" ? insertTableColumn(src, this.col)
@@ -320,7 +327,7 @@ export class TableWidget extends BlockWidget {
       : deleteTableColumn(src, this.col)
     if (!next) return
     this.editing = null
-    this.replace(next)
+    this.replace([{ from: 0, to: this.src.length, insert: next }])
   }
 
   private livePos() {
@@ -331,16 +338,19 @@ export class TableWidget extends BlockWidget {
     return this.pos
   }
 
-  private replace(next: string | null, dest: { row: number; col: number } | null = null) {
+  private replace(changes: readonly TableSourceChange[], dest: { row: number; col: number } | null = null) {
     // 权威只读守卫：commitEdit/tool 的所有源码改写都汇入此处。readOnly 是建议性
     // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 resumeEdit，
     // 微任务渲染恢复路径不会误开编辑器）。disabled 按钮只挡用户交互，程序化
     // click 仍可到达 tool()，故此处必须显式拒绝。
-    if (!next || !this.view || this.view.state.readOnly) return
-    const from = this.livePos()
-    if (dest) resumeEdit = { pos: from, row: dest.row, col: dest.col }
-    this.view.dispatch({
-      changes: { from, to: from + this.src.length, insert: next },
-    })
+    if (changes.length === 0 || !this.view || this.view.state.readOnly) return
+    const pos = this.livePos()
+    if (dest) resumeEdit = { pos, row: dest.row, col: dest.col }
+    const translated = changes.map(change => ({
+      from: pos + change.from,
+      to: pos + change.to,
+      insert: change.insert,
+    }))
+    this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
   }
 }

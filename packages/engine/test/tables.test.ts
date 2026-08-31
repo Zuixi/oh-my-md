@@ -1,10 +1,29 @@
+import { syntaxTree } from "@codemirror/language"
+import type { SyntaxNode } from "@lezer/common"
 import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
 import { TableWidget, renderTableCellContent } from "../src/decorations/widgets/table"
 import { imageResolver } from "../src/decorations/widgets/image"
+import { tableDataFromNode } from "../src/tables/model"
 
 const doc = "| a | b |\n|---|---|\n| 1 | 2 |"
+
+function tableData(source: string) {
+  const state = makeState(source)
+  let table: SyntaxNode | null = null
+  const cursor = syntaxTree(state).cursor()
+  do {
+    if (cursor.name === "Table") {
+      table = cursor.node
+      break
+    }
+  } while (cursor.next())
+  if (!table) throw new Error("expected a Table node")
+  const data = tableDataFromNode(table, state)
+  if (!data) throw new Error("expected table data")
+  return data
+}
 
 describe("tables", () => {
   it("renders as a block widget when cursor is outside", () => {
@@ -136,11 +155,7 @@ describe("tables", () => {
         }
       },
     }
-    const widget = new TableWidget(src, 0, {
-      header: ["a", "b"],
-      rows: [["1", "2"]],
-      aligns: ["", ""],
-    })
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
     const td = wrap.querySelector("td")!
@@ -172,11 +187,7 @@ describe("tables", () => {
         }
       },
     }
-    const widget = new TableWidget(src, 0, {
-      header: ["a", "b"],
-      rows: [["1", "2"]],
-      aligns: ["", ""],
-    })
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
@@ -187,7 +198,7 @@ describe("tables", () => {
     expect(doc).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
   })
 
-  it("toolbar follows the cell reached by Tab", async () => {
+  it("does not restart editing on the detached widget after Tab", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
     let doc = src
     const view = {
@@ -203,11 +214,7 @@ describe("tables", () => {
         }
       },
     }
-    const widget = new TableWidget(src, 0, {
-      header: ["a", "b"],
-      rows: [["1", "2"]],
-      aligns: ["", ""],
-    })
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
@@ -216,7 +223,7 @@ describe("tables", () => {
     const deleteCol = wrap.querySelector(".omd-table-toolbar [data-act='delete-col']") as HTMLElement
     deleteCol.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
     deleteCol.click()
-    expect(doc).toBe("| a |\n|---|\n| 1 |")
+    expect(doc).toBe("| b |\n|---|\n| 2 |")
   })
 
   it("replaces the live table range after the widget position moves", async () => {
@@ -237,18 +244,16 @@ describe("tables", () => {
         }
       },
     }
-    const widget = new TableWidget(src, 0, {
-      header: ["a", "b"],
-      rows: [["1", "2"]],
-      aligns: ["", ""],
-    })
+    const data = tableData(src)
+    const cell = data.rows[0].cells[0]!
+    const widget = new TableWidget(src, 0, data)
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
     const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
     input.value = "x"
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    expect(dispatches[0]).toMatchObject({ from: 4, to: 4 + src.length })
+    expect(dispatches[0]).toMatchObject({ from: 4 + cell.from, to: 4 + cell.to, insert: "x" })
     expect(doc).toBe("xx\n\n| a | b |\n|---|---|\n| x | 2 |")
   })
 
@@ -268,11 +273,7 @@ describe("tables", () => {
         }
       },
     }
-    const widget = new TableWidget(src, 0, {
-      header: ["a"],
-      rows: [["1"]],
-      aligns: [""],
-    })
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
@@ -288,11 +289,8 @@ describe("tables", () => {
   })
 
   it("lets the edit input keep native mousedown for caret placement", async () => {
-    const widget = new TableWidget("| a |\n|---|\n| 1 |", 0, {
-      header: ["a"],
-      rows: [["1"]],
-      aligns: [""],
-    })
+    const src = "| a |\n|---|\n| 1 |"
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
@@ -303,12 +301,29 @@ describe("tables", () => {
     expect(wrap.querySelector("input.omd-table-edit")).toBe(input)
   })
 
+  it("opens escaped cell source in the editor", async () => {
+    const src = "| a\\|b | c |\n|---|---|\n| 1 | 2 |"
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    wrap.querySelector("th")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    expect((wrap.querySelector("input.omd-table-edit") as HTMLInputElement).value).toBe("a\\|b")
+  })
+
+  it("does not open an editor for a synthetic ragged cell", async () => {
+    const src = "| a | b |\n|---|---|\n| only |"
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    wrap.querySelectorAll("td")[1]
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    expect(wrap.querySelector("input.omd-table-edit")).toBeNull()
+  })
+
   it("opens an empty cell with a collapsed caret", async () => {
-    const widget = new TableWidget("| a |\n|---|\n|   |", 0, {
-      header: ["a"],
-      rows: [[""]],
-      aligns: [""],
-    })
+    const src = "| a |\n|---|\n|   |"
+    const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
     await Promise.resolve()
     wrap.querySelector("td")!
