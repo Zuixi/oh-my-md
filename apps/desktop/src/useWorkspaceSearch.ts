@@ -11,6 +11,9 @@ export interface WorkspaceSearchState {
   setOpen(open: boolean): void
   setQuery(query: string): void
   setCaseSensitive(caseSensitive: boolean): void
+  /** Resets query/results and invalidates the in-flight request. Reserved
+   * (plan-mandated API): the panel currently clears by closing or emptying the
+   * query, which the effect already invalidates. */
   clear(): void
 }
 
