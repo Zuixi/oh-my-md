@@ -1,4 +1,4 @@
-import type { EditorView } from "@codemirror/view"
+import { EditorView } from "@codemirror/view"
 import { parseCell, type CellNode } from "../../parse/cell"
 import {
   deleteTableColumn,
@@ -18,6 +18,25 @@ interface PendingTableEdit {
 }
 
 const pendingTableEdits = new WeakMap<EditorView, PendingTableEdit>()
+
+type TableToolAction = "insert-row" | "insert-col" | "delete-row" | "delete-col"
+
+const pendingTableTools = new WeakMap<
+  EditorView,
+  { readonly pos: number; readonly act: TableToolAction; readonly row: number; readonly col: number }
+>()
+
+function changesNonOverlapping(changes: readonly TableSourceChange[]): boolean {
+  // changes 已按 from 升序；相邻区间不允许重叠（零宽插入允许贴边）。
+  for (let index = 1; index < changes.length; index++) {
+    if (changes[index].from < changes[index - 1].to) return false
+  }
+  return true
+}
+
+function reportViewError(view: EditorView, error: unknown): void {
+  for (const report of view.state.facet(EditorView.exceptionSink)) report(error)
+}
 
 type ResolveSrc = (src: string) => string
 
@@ -241,6 +260,23 @@ export class TableWidget extends BlockWidget {
         })
       }
     }
+
+    // 两阶段工具栏操作（删除 active 行/列与单元格提交重叠时）：单元格已先提交，
+    // 重建后的本表在此消费 pending，在微任务里对 fresh Lezer 元数据派发结构操作。
+    // Consume before scheduling：删除 entry 后再排微任务，任何后续失败都不会留下
+    // 可被其他表/视图消费的残留；位置不匹配（不同表/不同位置）则不触碰 entry。
+    const pendingTool = this.view && pendingTableTools.get(this.view)
+    if (pendingTool && pendingTool.pos === this.livePos()) {
+      pendingTableTools.delete(this.view!)
+      const { act, row, col } = pendingTool
+      queueMicrotask(() => {
+        try {
+          this.runPendingTool(act, row, col)
+        } catch (error) {
+          if (this.view) reportViewError(this.view, error)
+        }
+      })
+    }
   }
 
   private cellData(row: number, col: number) {
@@ -324,29 +360,74 @@ export class TableWidget extends BlockWidget {
     return { row: Math.floor(i / cols), col: i % cols }
   }
 
-  private tool(act: "insert-row" | "insert-col" | "delete-row" | "delete-col") {
-    let src = this.src
+  private tool(act: TableToolAction) {
+    // 只读守卫（replace() 是最终权威，此处提前拒绝主路径）。
+    if (this.view?.state.readOnly) return
     const edit = this.editing
     const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    let committed: TableSourceChange | null = null
     if (edit && input) {
       const cell = this.cellData(edit.row, edit.col)
-      const committed = cell ? replaceTableCell(src, cell, input.value) : null
-      if (committed) src = src.slice(0, committed.from) + committed.insert + src.slice(committed.to)
+      committed = cell ? replaceTableCell(this.src, cell, input.value) : null
+      // 陈旧元数据导致提交失败：保持输入框挂载，不静默销毁用户文本。
+      if (!committed) return
+      const isNoop = committed.insert === this.src.slice(committed.from, committed.to)
+      if (!isNoop) {
+        if (act === "insert-row" || act === "insert-col") {
+          const inserted =
+            act === "insert-row"
+              ? insertTableRow(this.src, this.table, this.row)
+              : insertTableColumn(this.src, this.table, this.col)
+          // 结构插入被拒绝（越界/陈旧）→ 保留输入框。
+          if (!inserted) return
+          // 单元格提交与结构 change 互不重叠时合并为一个排序、非重叠事务。
+          const merged = [committed, ...inserted].sort((a, b) => a.from - b.from)
+          if (changesNonOverlapping(merged)) {
+            this.editing = null
+            this.replace(merged)
+            return
+          }
+          // 意外重叠：退化为两阶段（与删除路径一致）。
+        }
+        // 删除 active 行/列必然覆盖正编辑的单元格：先提交单元格，重建后补结构操作。
+        this.deferTool(act, committed, edit)
+        return
+      }
+      // 输入值未变（no-op 提交）：等效于“无编辑”。保持 this.editing 不动，
+      // 单事务结构操作失败（next === null）时输入框继续挂载。
     }
-    // Task 4A: structural ops consume the table substring + Lezer model and
-    // return table-relative changes; replace() translates them via livePos().
-    // Dangling open-cell commits against stale offsets are rejected (null) and
-    // leave the input mounted — full two-phase toolbar commits land in Task 5.
-    const next = act === "insert-row" ? insertTableRow(src, this.table, this.row)
-      : act === "insert-col" ? insertTableColumn(src, this.table, this.col)
+    const next =
+      act === "insert-row" ? insertTableRow(this.src, this.table, this.row)
+      : act === "insert-col" ? insertTableColumn(this.src, this.table, this.col)
       // `this.row` 是 1-based（0=表头，1=首数据行），而 deleteTableRow 的
       // row 是 0-based 数据行索引。映射 active body row 到 this.row - 1；
       // 表头（this.row === 0）会得到 -1，被 deleteTableRow 的界内校验拒绝，
       // 从而守卫表头行为为 no-op。
-      : act === "delete-row" ? deleteTableRow(src, this.table, this.row - 1)
-      : deleteTableColumn(src, this.table, this.col)
+      : act === "delete-row" ? deleteTableRow(this.src, this.table, this.row - 1)
+      : deleteTableColumn(this.src, this.table, this.col)
     if (!next) return
     this.editing = null
+    this.replace(next)
+  }
+
+  private deferTool(act: TableToolAction, committed: TableSourceChange, edit: { el: HTMLElement; row: number; col: number }) {
+    this.editing = null
+    const pos = this.livePos()
+    pendingTableTools.set(this.view!, { pos, act, row: edit.row, col: edit.col })
+    // 只派发单元格提交；结构操作等重建后的本表消费 pending 再补做。
+    this.replace([committed])
+  }
+
+  private runPendingTool(act: TableToolAction, row: number, col: number) {
+    // 检测 widget 已断开（销毁/切源码）：pending 已被消费，直接放弃补派发。
+    if (!this.view || !this.wrap?.isConnected) return
+    // 对重建后的 fresh Lezer 元数据（this.src/this.table）执行结构操作。
+    const next =
+      act === "insert-row" ? insertTableRow(this.src, this.table, row)
+      : act === "insert-col" ? insertTableColumn(this.src, this.table, col)
+      : act === "delete-row" ? deleteTableRow(this.src, this.table, row - 1)
+      : deleteTableColumn(this.src, this.table, col)
+    if (!next) return  // 目标缺失或操作被拒绝 → 不再派发。
     this.replace(next)
   }
 
@@ -374,7 +455,9 @@ export class TableWidget extends BlockWidget {
     try {
       this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
     } catch (error) {
+      // 派发失败：清除本视图所有 pending（键盘续编与两阶段工具），不让其泄漏。
       if (dest) pendingTableEdits.delete(this.view)
+      pendingTableTools.delete(this.view)
       throw error
     }
   }

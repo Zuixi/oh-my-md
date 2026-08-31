@@ -561,6 +561,26 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+  function makeInteractView(doc: string) {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const errors: unknown[] = []
+    let docChanged = 0
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        selection: { anchor: doc.length },
+        extensions: [
+          editorExtensions(),
+          EditorView.exceptionSink.of(e => { errors.push(e) }),
+          EditorView.updateListener.of(u => { if (u.docChanged) docChanged++ }),
+        ],
+      }),
+      parent,
+    })
+    return { view, errors, count: () => docChanged }
+  }
+
   it("does not write mermaid output after the widget is destroyed", async () => {
     const mermaid = [
       "```mermaid",
@@ -577,4 +597,124 @@ describe("view smoke (real EditorView)", () => {
     expect(errors.map(String)).toEqual([])
   })
 
+  it("merges an open cell edit with an insert-row into one doc-changing transaction", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors, count } = makeInteractView(doc)
+    try {
+      const input = await openTableBodyCell(view, 0)
+      input.value = "9"
+      const before = count()
+      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-row']") as HTMLElement
+      expect(btn).toBeTruthy()
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      await tick()
+      // 合并为单一 doc 变更事务；单元格新值与新插入的行一次落盘。
+      expect(count() - before).toBe(1)
+      const out = view.state.doc.toString()
+      expect(out).toContain("| 9 | 2 |")
+      expect(out).toContain("|  |  |")
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("two-phase delete-current-row completes against the rebuilt model", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
+    const { view, errors, count } = makeInteractView(doc)
+    try {
+      const input = await openTableBodyCell(view, 0)
+      input.value = "9"
+      const before = count()
+      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      // 两次 doc 事务：先提交单元格，重建后对 fresh 元数据删除 active 行。
+      const started = Date.now()
+      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
+      expect(count() - before).toBe(2)
+      // active 行(row 1)被删；剩余 row 2 原样保留其值。
+      expect(view.state.doc.toString()).toBe("| a | b |\n|---|---|\n| 3 | 4 |\n\ntail")
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("two-phase delete-current-column completes against the rebuilt model", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
+    const { view, errors, count } = makeInteractView(doc)
+    try {
+      const input = await openTableBodyCell(view, 0)
+      input.value = "9"
+      const before = count()
+      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-col']") as HTMLElement
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      const started = Date.now()
+      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
+      expect(count() - before).toBe(2)
+      // active 列被删；剩余列 b / 2 / 4 原样保留。
+      expect(view.state.doc.toString()).toBe("| b |\n|---|\n| 2 |\n| 4 |\n\ntail")
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("does not leak a deferred delete to another editor view", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
+    const first = makeInteractView(doc)
+    const second = makeInteractView(doc)
+    try {
+      const input = await openTableBodyCell(first.view, 0)
+      input.value = "9"
+      const btn = first.view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      const started = Date.now()
+      while (Date.now() - started < 3000 && first.view.state.doc.toString().includes("| 9 | 2 |")) {
+        await tick(20)
+      }
+      expect(first.view.state.doc.toString()).not.toContain("| 9 | 2 |")
+      // 第二个视图未派发任何结构删除：文档逐字节未变。
+      expect(second.view.state.doc.toString()).toBe(doc)
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+    } finally { first.view.destroy(); second.view.destroy() }
+  })
+
+  it("does not run a deferred delete on a table at another position", async () => {
+    const doc = [
+      "| a | b |",
+      "|---|---|",
+      "| 1 | 2 |",
+      "| 3 | 4 |",
+      "",
+      "intro",
+      "",
+      "| c | d |",
+      "|---|---|",
+      "| 5 | 6 |",
+      "",
+      "tail",
+    ].join("\n")
+    const { view, errors } = makeInteractView(doc)
+    try {
+      const tbl = await waitFor(".omd-table", view)
+      const firstCell = tbl!.querySelectorAll("tbody td")[0] as HTMLElement
+      firstCell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      const input = firstCell.querySelector("input.omd-table-edit") as HTMLInputElement
+      expect(input).toBeTruthy()
+      input.value = "9"
+      const btn = view.dom.querySelectorAll(".omd-table .omd-table-toolbar [data-act='delete-row']")[0] as HTMLElement
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      // 等待结构删除真正发生：带 "9" 的 active 行消失（提交后、删除前仍含 "| 9 | 2 |"）。
+      const started = Date.now()
+      while (Date.now() - started < 3000 && view.state.doc.toString().includes("| 9 | 2 |")) {
+        await tick(20)
+      }
+      const out = view.state.doc.toString()
+      // 第一张表删除了 active 行；第二张表（不同位置）原样未动，pending 未串台。
+      expect(out).toContain("| a | b |\n|---|---|\n| 3 | 4 |\n\nintro")
+      expect(out).toContain("| c | d |\n|---|---|\n| 5 | 6 |")
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
 })

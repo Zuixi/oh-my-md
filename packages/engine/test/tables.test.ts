@@ -448,4 +448,76 @@ describe("tables", () => {
     expect(input.selectionStart).toBe(0)
     expect(input.selectionEnd).toBe(0)
   })
+
+  it("merges an open cell commit and an insert-row into one sorted transaction", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const dispatches: unknown[] = []
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
+        dispatches.push(spec)
+        if (spec.changes) {
+          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+          for (const change of [...list].sort((a, b) => b.from - a.from)) {
+            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
+          }
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    // 打开第一个数据单元格，输入新值，再点「下插一行」。
+    wrap.querySelector("tbody td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    input.value = "9"
+    const insertRow = wrap.querySelector(".omd-table-toolbar [data-act='insert-row']") as HTMLElement
+    insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    insertRow.click()
+    // 单个事务同时携带单元格改动与行插入（2 个排序、非重叠的本地 change）。
+    expect(dispatches).toHaveLength(1)
+    const changes = (dispatches[0] as { changes: Array<{ from: number; to: number; insert: string }> }).changes
+    expect(changes).toHaveLength(2)
+    expect(changes.map(c => c.from)).toEqual([...changes].sort((a, b) => a.from - b.from).map(c => c.from))
+    expect(doc).toBe("| a | b |\n|---|---|\n| 9 | 2 |\n|  |  |")
+  })
+
+  it("dispatches local structural changes, not a whole-table replacement, without an open editor", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    const dispatches: Array<{ changes?: Array<{ from: number; to: number; insert: string }> }> = []
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
+        dispatches.push(spec as never)
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    // 不打开任何单元格编辑器（this.row/this.col 仍为表头默认 0）直接加一列。
+    const insertCol = wrap.querySelector(".omd-table-toolbar [data-act='insert-col']") as HTMLElement
+    insertCol.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    insertCol.click()
+    expect(dispatches).toHaveLength(1)
+    const changes = dispatches[0].changes
+    expect(changes).toBeTruthy()
+    // 三处本地 change（表头、分隔符、首数据行），均不覆盖整表 —— 不是全表替换。
+    expect(changes!.length).toBe(3)
+    for (const c of changes!) {
+      expect(c.from).toBeGreaterThanOrEqual(0)
+      expect(c.to).toBeLessThanOrEqual(src.length)
+      expect(c.from).not.toBe(0)
+      expect(c.to).not.toBe(src.length)
+    }
+  })
 })
