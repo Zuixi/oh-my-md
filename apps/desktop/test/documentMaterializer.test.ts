@@ -129,6 +129,38 @@ describe("document materializer", () => {
     expect(materialize).not.toHaveBeenCalled()
   })
 
+  it("ignores queue after destroy so a stray update cannot re-arm the timer", () => {
+    const setTimer = vi.fn(() => 9)
+    const materialize = vi.fn()
+    const subject = createDocumentMaterializer({
+      delayMs: 250,
+      readViewText: () => "text",
+      materialize,
+      setTimer,
+      clearTimer: vi.fn(),
+    })
+    subject.destroy()
+    subject.queue(1)
+    expect(setTimer).not.toHaveBeenCalled()
+    expect(subject.hasPending(1)).toBe(false)
+    subject.flush()
+    expect(materialize).not.toHaveBeenCalled()
+  })
+
+  it("ignores queue after destroy in synchronous mode", () => {
+    const materialize = vi.fn()
+    const subject = createDocumentMaterializer({
+      delayMs: 0,
+      readViewText: () => "sync",
+      materialize,
+      setTimer: () => 1,
+      clearTimer: vi.fn(),
+    })
+    subject.destroy()
+    subject.queue(1)
+    expect(materialize).not.toHaveBeenCalled()
+  })
+
   it("hasPending reflects queue/discard/flush transitions", () => {
     const subject = createDocumentMaterializer({
       delayMs: 250,

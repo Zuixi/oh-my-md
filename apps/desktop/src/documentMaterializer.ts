@@ -5,11 +5,14 @@
  * 各处散落 Set/setTimeout 操作。
  */
 export interface DocumentMaterializer {
-  /** Marks a tab dirty; schedules (or immediately runs, when `delayMs === 0`) a flush. */
+  /** Marks a tab dirty; schedules (or immediately runs, when `delayMs === 0`) a flush.
+   * A no-op after `destroy()`, so a late update cannot re-arm the trailing timer. */
   queue(tabId: number): void
   /** Flushes every pending tab and clears the trailing timer. */
   flush(): void
-  /** Flushes one pending tab without touching the timer or other pending tabs. */
+  /** Flushes one pending tab without touching the timer or other pending tabs.
+   * Reserved (plan-mandated API): App's `activateTab` keeps its narrower direct
+   * `docsRef` update, which materialization would widen with a recovery write. */
   flushTab(tabId: number): void
   /** Drops a tab's pending flag without materializing it. */
   discard(tabId: number): void
@@ -32,6 +35,7 @@ export interface DocumentMaterializerDeps {
 export function createDocumentMaterializer(deps: DocumentMaterializerDeps): DocumentMaterializer {
   const pending = new Set<number>()
   let timerId: number | null = null
+  let destroyed = false
 
   function cancelTimer(): void {
     if (timerId === null) return
@@ -59,6 +63,7 @@ export function createDocumentMaterializer(deps: DocumentMaterializerDeps): Docu
   }
 
   function queue(tabId: number): void {
+    if (destroyed) return
     pending.add(tabId)
     if (deps.delayMs === 0) {
       flush()
@@ -78,6 +83,7 @@ export function createDocumentMaterializer(deps: DocumentMaterializerDeps): Docu
   }
 
   function destroy(): void {
+    destroyed = true
     cancelTimer()
     pending.clear()
   }
