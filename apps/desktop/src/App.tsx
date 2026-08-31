@@ -97,7 +97,8 @@ import {
 import { CommandPalette } from "./CommandPalette"
 import { QuickOpenModal } from "./QuickOpenModal"
 import { VersionHistoryModal } from "./VersionHistoryModal"
-import { SearchPanel, type SearchHit } from "./SearchPanel"
+import { SearchPanel } from "./SearchPanel"
+import { useWorkspaceSearch } from "./useWorkspaceSearch"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import {
   toggleBold,
@@ -403,14 +404,14 @@ export default function App({
     entries: SnapshotEntry[]
     loading: boolean
   }>({ open: false, path: null, entries: [], loading: false })
-  const [searchOpen, setSearchOpen] = useState(false)
-  const searchOpenRef = useRef(searchOpen)
-  searchOpenRef.current = searchOpen
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchHits, setSearchHits] = useState<SearchHit[]>([])
-  const [searchTruncated, setSearchTruncated] = useState(false)
-  const [searchCase, setSearchCase] = useState(false)
-  const searchRequestRef = useRef(0)
+  const search = useWorkspaceSearch({
+    folder: workspace.folder,
+    search: services.searchMarkdown,
+    reportError: error => services.reportError(errorMessage(t("error.searchFailed"), error)),
+    debounceMs: SEARCH_DEBOUNCE_MS,
+  })
+  const searchOpenRef = useRef(search.open)
+  searchOpenRef.current = search.open
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState("")
   const [findReplace, setFindReplace] = useState("")
@@ -1050,11 +1051,11 @@ export default function App({
   useEffect(() => {
     // Skip the whole poll while Search replaces the tree: the scan is pure
     // waste and its results are not rendered.
-    if (!watchMs || !workspace.folder || !services.listDir || searchOpen) return
+    if (!watchMs || !workspace.folder || !services.listDir || search.open) return
     const listDir = services.listDir
     const timer = window.setInterval(() => { void refreshTree(listDir) }, watchMs)
     return () => window.clearInterval(timer)
-  }, [watchMs, workspace.folder, services, searchOpen])
+  }, [watchMs, workspace.folder, services, search.open])
 
   useEffect(() => {
     if (!watchMs) return
@@ -2003,7 +2004,7 @@ export default function App({
       setFindOpen(true)
       setReplaceOpen(false)
     } },
-    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => setSearchOpen(true) },
+    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => search.setOpen(true) },
 { id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
@@ -2167,7 +2168,7 @@ export default function App({
   cancelOpeningRef.current = cancelOpening
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
-    paletteOpen || quickOpenState.open || searchOpen || settingsOpen || aboutOpen
+    paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -2210,22 +2211,6 @@ export default function App({
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
   }, [])
-
-  useEffect(() => {
-    if (!searchOpen || !workspace.folder || !searchQuery || !services.searchMarkdown) return
-    const request = ++searchRequestRef.current
-    const timer = window.setTimeout(() => {
-      void services.searchMarkdown?.(workspace.folder!, searchQuery, searchCase)
-        .then(response => {
-          if (searchRequestRef.current === request) {
-            setSearchHits(response.hits)
-            setSearchTruncated(response.truncated)
-          }
-        })
-        .catch(() => { /* stale or failed search; ignore */ })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [searchOpen, searchQuery, searchCase, workspace.folder, services])
 
   const [deferredDoc, setDeferredDoc] = useState(doc)
   useEffect(() => {
@@ -2333,15 +2318,15 @@ export default function App({
           aria-hidden={!sidebarOpen}
           inert={!sidebarOpen}
         >
-          {searchOpen ? (
+          {search.open ? (
             <SearchPanel
-              query={searchQuery}
-              hits={searchHits}
-              truncated={searchTruncated}
-              caseSensitive={searchCase}
-              onQuery={setSearchQuery}
-              onCaseSensitive={setSearchCase}
-              onClose={() => setSearchOpen(false)}
+              query={search.query}
+              hits={search.hits}
+              truncated={search.truncated}
+              caseSensitive={search.caseSensitive}
+              onQuery={search.setQuery}
+              onCaseSensitive={search.setCaseSensitive}
+              onClose={() => search.setOpen(false)}
               onOpen={hit => {
                 pendingJumpRef.current = hit.line
                 void openPath(hit.path, true)
@@ -2354,7 +2339,7 @@ export default function App({
               activePath={activeFilePath}
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
-              onSearch={() => setSearchOpen(true)}
+              onSearch={() => search.setOpen(true)}
               onNewFile={dir => void createTreeFile(dir)}
               onNewFolder={dir => void createTreeFolder(dir)}
               onRename={entry => void renameTreeEntry(entry)}
