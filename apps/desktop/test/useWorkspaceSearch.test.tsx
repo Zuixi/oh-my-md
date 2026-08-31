@@ -295,6 +295,47 @@ describe("useWorkspaceSearch", () => {
     }
   })
 
+  it("clears current results before reporting a search error", async () => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error("boom")
+      const search = vi.fn()
+        .mockResolvedValueOnce({ hits: [hit("old")], truncated: true })
+        .mockRejectedValueOnce(failure)
+      const reportError = vi.fn()
+      const { result } = renderHook(() => useWorkspaceSearch({
+        folder: "/notes",
+        search,
+        reportError,
+        debounceMs: 200,
+      }))
+      act(() => {
+        result.current.setOpen(true)
+        result.current.setQuery("old")
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(200)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(result.current.hits.map(item => item.text)).toEqual(["old"])
+      expect(result.current.truncated).toBe(true)
+
+      act(() => { result.current.setQuery("fails") })
+      await act(async () => {
+        vi.advanceTimersByTime(200)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(reportError).toHaveBeenCalledWith(failure)
+      expect(result.current.hits).toEqual([])
+      expect(result.current.truncated).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("ignores an error from a request superseded by a newer query", async () => {
     vi.useFakeTimers()
     try {
