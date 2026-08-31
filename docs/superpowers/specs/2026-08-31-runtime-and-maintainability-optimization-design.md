@@ -456,3 +456,18 @@ Each workstream must be independently revertible:
 
 Commits should follow these boundaries so a regression in one subsystem does
 not require discarding unrelated improvements.
+
+## 12. Implementation Evidence
+
+### Before
+
+Baseline commit: `0990fee3e2ac1ef9e43223a3deb94a9b117d3d98`
+
+| Metric | Before |
+| --- | --- |
+| Desktop main bundle | `dist/assets/index-BeHXo1aa.js`: `1,226.70 kB` raw / `410.07 kB` gzip |
+| Desktop build duration | `vite build` finished in `4.53s` (`real 0m6.654s`) |
+| Desktop chunk warnings | `(!) Some chunks are larger than 1200 kB after minification.` |
+| Largest lazy chunks | `cynefin-VYW2F7L2-C6jhMPZs.js` `687.89 kB` raw / `154.14 kB` gzip; `mermaid.core-Bun_w9uL.js` `622.22 kB` raw / `149.16 kB` gzip; `cytoscape.esm-D3_iZ_3b.js` `442.92 kB` raw / `141.93 kB` gzip |
+| Engine benchmark warnings | `92` `OVER BUDGET (> 8ms)` lines; the summary still reports `documentStats 50k` at `14.7908ms` p95 |
+| Rust search baseline | `500 hits, truncated=true` |
