@@ -564,9 +564,12 @@ themes also emitted as lazy chunks.
   measurement because it showed no material mutex contention.
 - **Main bundle:** the 10% raw-main target was met: `1,064.15 kB` is `13.251%`
   below `1,226.70 kB`.
-- **Table widget equality:** no optional production equality optimization was
-  made. Focused equality coverage was retained; there was no evidence requiring
-  a representation or comparison change.
+- **Table widget equality:** production equality was optimized after focused
+  equality and allocation-sensitive coverage. `TableWidget` now computes a
+  stable `tableEqualityKey` once at construction and reuses it in `eq`, avoiding
+  repeated `JSON.stringify` calls while still distinguishing cell content,
+  row/structure, alignment, and embed-context changes; identical table source at
+  distinct document positions remains reusable.
 
 ### Deviations and interpretation notes
 
