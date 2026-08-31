@@ -21,6 +21,10 @@ export interface TableData {
 
 type ResolveSrc = (src: string) => string
 
+export function tableEqualityKey(table: TableData): string {
+  return JSON.stringify(table)
+}
+
 function renderCellContainer(
   parent: HTMLElement,
   tag: string,
@@ -108,6 +112,7 @@ export class TableWidget extends BlockWidget {
   private col = 0
   private editing: { el: HTMLElement; row: number; col: number } | null = null
   private cells: HTMLElement[][] = []
+  private readonly equalityKey: string
 
   constructor(
     src: string,
@@ -117,11 +122,12 @@ export class TableWidget extends BlockWidget {
     readonly resolveSrc?: ResolveSrc,
   ) {
     super(src, pos, embed)
+    this.equalityKey = tableEqualityKey(table)
   }
 
   eq(other: TableWidget) {
     // resolveSrc 不参与相等性：由宿主 facet 注入，只在编辑器配置重建时变化。
-    return super.eq(other) && JSON.stringify(this.table) === JSON.stringify(other.table)
+    return super.eq(other) && this.equalityKey === other.equalityKey
   }
 
   override toDOM(view: EditorView) {
