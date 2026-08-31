@@ -22,11 +22,17 @@ describe("table widget equality", () => {
   })
 
   it("reuses a construction-time key across repeated equality checks", async () => {
+    const stringifySpy = vi.spyOn(JSON, "stringify")
     const { TableWidget } = await import("../src/decorations/widgets/table")
     const table = { header: ["a"], rows: [["1"]], aligns: [""] } satisfies TableData
     const left = new TableWidget("| a |", 0, table)
     const right = new TableWidget("| a |", 10, table)
-    expect(left.eq(right)).toBe(true)
-    expect(left.eq(right)).toBe(true)
+    try {
+      expect(left.eq(right)).toBe(true)
+      expect(left.eq(right)).toBe(true)
+      expect(stringifySpy).toHaveBeenCalledTimes(2)
+    } finally {
+      stringifySpy.mockRestore()
+    }
   })
 })
