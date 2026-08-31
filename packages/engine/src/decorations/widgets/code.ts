@@ -5,11 +5,13 @@ import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../..
 import { createCodeLangPicker } from "./codeLangPicker"
 import { replaceFenceInfo } from "../../fenceInfo"
 import { EditorView } from "@codemirror/view"
+import { createCodeHtmlCache } from "./codeHtmlCache"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "../renderBudget"
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
+export { createCodeHtmlCache } from "./codeHtmlCache"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
@@ -17,7 +19,7 @@ const COPY_RESET_MS = 1500
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 let highlighterPromise: Promise<HighlighterCore> | null = null
-const htmlCache = new Map<string, string>()
+const htmlCache = createCodeHtmlCache()
 
 function getHighlighter(): Promise<HighlighterCore> {
   return highlighterPromise ??= Promise.all([
@@ -245,8 +247,9 @@ export class CodeWidget extends BlockWidget {
       const lang = resolveCodeLanguage(this.lang)
       if (!lang) return
       const cacheKey = `${lang}:${this.src}`
-      if (htmlCache.has(cacheKey)) {
-        if (this.isActive(el)) el.innerHTML = htmlCache.get(cacheKey)!
+      const cached = htmlCache.get(cacheKey)
+      if (cached !== undefined) {
+        if (this.isActive(el)) el.innerHTML = cached
         return
       }
       await new Promise(r => setTimeout(r, RENDER_DEBOUNCE_MS))
