@@ -89,13 +89,34 @@ describe("document scale registry", () => {
     expect(setSafeModeRendering).toHaveBeenLastCalledWith(true)
   })
 
-  it("getBytes reflects the last set value without requiring classify", () => {
+  it("evaluate reads the line, byte, and read-only axes without mutating cached isSafeMode", () => {
     const { registry } = makeRegistry()
-    expect(registry.getBytes(1)).toBeUndefined()
-    registry.setBytes(1, 123)
-    expect(registry.getBytes(1)).toBe(123)
-    registry.setBytes(1, undefined)
-    expect(registry.getBytes(1)).toBeUndefined()
+    // Line axis.
+    expect(registry.evaluate(1, THRESHOLDS.safeModeLines)).toEqual({ safeMode: false, readOnly: false })
+    expect(registry.evaluate(1, THRESHOLDS.safeModeLines + 1)).toEqual({ safeMode: true, readOnly: false })
+    expect(registry.isSafeMode(1)).toBe(false) // still unmutated by either call above
+
+    // Byte axis.
+    registry.setBytes(2, THRESHOLDS.safeModeBytes + 1)
+    expect(registry.evaluate(2, 10)).toEqual({ safeMode: true, readOnly: false })
+    expect(registry.isSafeMode(2)).toBe(false)
+
+    // Read-only axis.
+    registry.setReadOnly(3, true)
+    expect(registry.evaluate(3, 1)).toEqual({ safeMode: true, readOnly: true })
+    expect(registry.isSafeMode(3)).toBe(false)
+  })
+
+  it("evaluate never mutates the cached safe-mode set even after classify has cached a different value", () => {
+    const { registry } = makeRegistry()
+    registry.classify(1, 10)
+    expect(registry.isSafeMode(1)).toBe(false)
+    // A render-time evaluate() crossing the threshold must not update the cache.
+    expect(registry.evaluate(1, THRESHOLDS.safeModeLines + 1).safeMode).toBe(true)
+    expect(registry.isSafeMode(1)).toBe(false)
+    // classify() still owns writing the cache.
+    expect(registry.classify(1, THRESHOLDS.safeModeLines + 1).safeMode).toBe(true)
+    expect(registry.isSafeMode(1)).toBe(true)
   })
 
   it("remove clears bytes, stashed text, read-only, and safe-mode state for a tab", () => {
@@ -109,7 +130,7 @@ describe("document scale registry", () => {
 
     registry.remove(1)
 
-    expect(registry.getBytes(1)).toBeUndefined()
+    expect(registry.evaluate(1, 10)).toEqual({ safeMode: false, readOnly: false })
     expect(registry.isReadOnly(1)).toBe(false)
     expect(registry.isSafeMode(1)).toBe(false)
     expect(registry.takeText(1)).toBeUndefined()
