@@ -186,23 +186,46 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  it("opens https links with window.open", () => {
+  it("opens a Ctrl-clicked https link through the desktop host", () => {
     const onOpenMarkdownHref = vi.fn()
+    const onOpenExternalHref = vi.fn()
     const open = vi.spyOn(window, "open").mockReturnValue(null)
-    const view = createEditor(
-      document.createElement("div"),
-      { ...editorOptions(vi.fn(), "[n](https://example.com)"), onOpenMarkdownHref },
-    )
+    const options: CreateEditorOptions = {
+      ...editorOptions(vi.fn(), "[n](https://example.com)"),
+      onOpenMarkdownHref,
+      onOpenExternalHref,
+    }
+    const view = createEditor(document.createElement("div"), options)
     const link = view.dom.querySelector(".omd-link")
     expect(link).not.toBeNull()
     vi.spyOn(view, "posAtCoords").mockReturnValue(1)
-    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)
-    expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer")
+    expect(onOpenExternalHref).toHaveBeenCalledWith("https://example.com")
     expect(onOpenMarkdownHref).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
     open.mockRestore()
+    view.destroy()
+  })
+
+  it("routes a Ctrl-clicked table-cell link through the desktop host", () => {
+    const onOpenExternalHref = vi.fn()
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn()), onOpenExternalHref },
+    )
+    const link = document.createElement("a")
+    link.className = "omd-link"
+    link.href = "https://example.com"
+    view.dom.appendChild(link)
+    vi.spyOn(view, "posAtCoords").mockReturnValue(0)
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
+    Object.defineProperty(event, "target", { value: link })
+
+    expect(activateLink(view, event)).toBe(true)
+    expect(onOpenExternalHref).toHaveBeenCalledWith("https://example.com")
     view.destroy()
   })
 
