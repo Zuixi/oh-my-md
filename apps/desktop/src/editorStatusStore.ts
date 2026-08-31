@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react"
-import type { EditorStatus } from "./Editor"
+import { sameEditorStatus, type EditorStatus } from "./editorStatus"
 
 const DEFAULT_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
 
@@ -22,7 +22,7 @@ export function createEditorStatusStore(
       return () => listeners.delete(listener)
     },
     publish: (next) => {
-      if (next.cursor === snapshot.cursor && next.mode === snapshot.mode) return
+      if (sameEditorStatus(next, snapshot)) return
       snapshot = next
       for (const listener of listeners) listener()
     },

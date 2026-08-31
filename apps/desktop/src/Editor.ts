@@ -18,6 +18,7 @@ import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
 import { tightSelection } from "./tightSelection"
 import { CONTENT_MAX_WIDTH } from "./constants"
+import { sameEditorStatus, type EditorStatus } from "./editorStatus"
 import { t } from "./i18n"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
@@ -161,7 +162,7 @@ function createStatusReporter(options: CreateEditorOptions) {
   return (view: EditorView) => {
     if (!options.onStatusChange) return
     const next = editorStatus(view)
-    if (previous?.cursor === next.cursor && previous.mode === next.mode) return
+    if (previous && sameEditorStatus(previous, next)) return
     previous = next
     options.onStatusChange(next)
   }
@@ -239,10 +240,9 @@ export function createEditor(
   return view
 }
 
-export interface EditorStatus {
-  readonly cursor: string
-  readonly mode: "live" | "source"
-}
+/** The status snapshot type lives in `editorStatus.ts` with its equality; re-exported
+ * here because the editor is where hosts pick it up (`CreateEditorOptions.onStatusChange`). */
+export type { EditorStatus }
 
 const NO_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
 
