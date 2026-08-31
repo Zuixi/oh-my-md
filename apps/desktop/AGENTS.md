@@ -16,6 +16,10 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
+│   ├── editorStatusStore.ts # Cursor/mode snapshot store + useEditorStatus (StatusBar-only rerenders)
+│   ├── documentMaterializer.ts  # Trailing pull-based doc materialization (queue/flush/discard)
+│   ├── useWorkspaceSearch.ts    # Debounced folder-search state with stale-request invalidation
+│   ├── documentScaleRegistry.ts # Per-tab safe-mode/byte/read-only/stashed-Text policy registry
 │   ├── constants.ts         # TS↔Rust contract values + localStorage keys (drift-tested)
 │   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
 │   ├── transientStatus.ts   # Shared transient-status timer for save/normalization status lines
@@ -60,6 +64,7 @@ apps/desktop/
 6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
 7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
 8. User-visible feedback goes through `services.reportError` / `services.notifySuccess` (toast-backed via react-toastify; container mounts only in `main.tsx`); never call `window.alert` directly in desktop code.
+9. Editor cursor/mode status is published through the dedicated editor-status store so CodeMirror updates rerender `StatusBar`, not the App shell. Document text still enters React only through the trailing materializer. `EditorStatus` and its single equality helper live in `editorStatus.ts`; the Editor reporter and the store both deduplicate through `sameEditorStatus`, and `test/editorStatus.test.ts` fails if a snapshot field is added without updating that comparison.
 
 ## CodeMirror Host Rules
 
@@ -97,11 +102,12 @@ apps/desktop/
 
 ## Large-document tiers (Spec 05b + 2026-08-20 progressive rendering)
 
-- Scale policy no longer forces source mode: over-scale docs open in Live with safe mode = render budget (`SAFE_MODE_RENDER_BUDGET_LINES` = 60) + windowed live decorations + on-demand stats + viewport-bounded ordered renumber. All applied through `applyDocumentScalePolicy` in `App.tsx` — every path that first hands a view real content must call it.
+- Scale policy no longer forces source mode: over-scale docs open in Live with safe mode = render budget (`SAFE_MODE_RENDER_BUDGET_LINES` = 60) + windowed live decorations + on-demand stats + viewport-bounded ordered renumber. All applied through `applyDocumentScalePolicy` in `App.tsx`, which delegates classification and process-global render-policy application to `documentScaleRegistry.ts` — every path that first hands a view real content must call it.
 - The HUGE tier (≥ `OPEN_READONLY_THRESHOLD_BYTES`) also renders live, with `readOnly: true`. CodeMirror readOnly is advisory: engine keymaps, renumber dispatches, widget interactions, and paste handlers guard `state.readOnly` themselves (guard suite `packages/engine/test/readonly-guards.test.ts`; gotchas entry "CodeMirror `readOnly` is advisory").
 - Outlines are per-tab cached (`docVersionsRef` / `outlineCacheRef` in `App.tsx`): tab switches hit the cache (version-checked), and over-scale tabs return immediately with the outline filled from an idle callback.
-- LARGE opens stream (`readDocumentStreaming`) and assemble chunks into a CM `Text` directly (engine `docText.ts`; App's `docTextsRef` stash carries it to `ensureViews`/`resetTabDocument`), so `EditorState.create` skips the full-string line split. Streaming failure falls back to one-shot `readDocument`.
+- LARGE opens stream (`readDocumentStreaming`) and assemble chunks into a CM `Text` directly (engine `docText.ts`; `documentScaleRegistry.stashText`/`takeText` carries it one-shot to `ensureViews`/`resetTabDocument`), so `EditorState.create` skips the full-string line split. Streaming failure falls back to one-shot `readDocument`.
 - Version probing is stat-first: `stat_document` tiers opens before any read, and Rust's `DocumentVersionCache` (`(mtime_ns, size) → fingerprint`) lets background polls of unchanged 50MB tabs skip the read entirely (`src-tauri/src/documents.rs`).
+- Document-scale state (byte count, read-only flag, stashed streamed `Text`, and the derived safe-mode set) lives in one per-App `documentScaleRegistry` instance (`documentScaleRegistry.ts`), not in parallel `App.tsx` refs. Only the active tab may call `applyRenderPolicy`, which pushes the process-global `setBlockRenderBudget`/`setSafeModeRendering` engine state; non-active tabs only update the registry's cached classification.
 
 ## Tauri and File Rules
 

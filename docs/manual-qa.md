@@ -116,6 +116,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 右侧只有 Outline，没有 Export 面板；导出走 File 菜单或 ⇧⌘P
 - [ ] Outline 可用左侧常驻窄条的按钮或 ⇧⌘O 折叠/展开（命令面板也有 Toggle outline）；折叠状态跨会话记住；折叠后面板 aria-hidden/inert，动画无文字挤压
 - [ ] 大纲点击跳转到标题；状态栏显示 `{words} words · {chars} chars`、光标行列、live/source；中文文档按字计词
+- [ ] 状态栏光标行列即时跟随：只移动光标/改选区（方向键、点击、拖选，不输入文字）时行列立即更新，无可感延迟；⌘E 切换 live/source 状态栏同步；连续打字时行列同样即时（字数/字符数按物化节奏稍后跟上属预期）
 - [ ] ⇧⌘P 能打开/保存/切主题/Focus/导出；File 菜单与命令面板共用同一命令
 - [ ] 编辑器排版快捷键（live/source 两模式一致）：⌘B 粗体、⌘I 斜体、⇧⌘X 删除线、⇧⌘` 行内代码、⇧⌘K 代码块、⌘1–⌘6 标题、⌥⌘7 有序列表、⌥⌘8 无序列表、⌥⌘9 引用、⌘K 插入链接；再次按同键可切换（去掉标记）；命令面板含同一组命令
 - [ ] 原生菜单含 File / Edit / Format / View / Window 五组，且与命令面板共用同一命令：File 含 New/Open/Open Folder/Open Recent/Close/Save/Save As/Export▸(HTML/PDF/Image)；Edit 含剪贴板 + Find▸(Find ⌘F / Search in Folder ⇧⌘F)；Format 含 ⌘B/⌘I/⇧⌘X/⇧⌘`/⇧⌘K、⌘1–⌘6、⌥⌘7/8/9、⌘K 链接、Insert Image；View 含 Show Source Code ⌘E / Sidebar ⌘\ / Outline ⇧⌘O / Typewriter / Focus / Toggle Theme / Load Custom CSS，其中前五项为勾选项、勾选状态与 UI 实际一致且切标签后刷新；Window 含 Minimize ⌘M / Zoom / Toggle Full Screen / Bring All to Front
@@ -123,6 +124,8 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 通过原生菜单触发格式/视图命令与快捷键结果一致（菜单 accelerator 会先于 webview 拦截按键）；⌘E 切 Source 后 View 菜单 Show Source Code 勾选状态同步
 - [ ] ⌘F 打开文档查找条（不打开文件夹搜索）；Enter / ⌘G 下一个，⇧Enter / ⇧⌘G 上一个；Escape 关闭并焦点回编辑器；⌘H 展开替换；Replace 改当前匹配，Replace all 一次改完全部；区分大小写可选；`.*` 正则模式（`$1` 捕获替换生效、无效正则显示 role=alert 提示且不跳转）；全字匹配仅文本模式可用（正则开启时禁用），中文查询在全字模式下仍可命中
 - [ ] ⇧⌘F 或 FileTree「Search in folder…」打开文件夹搜索 `.md`，点结果打开并定位；命中词高亮；默认大小写不敏感，Case 开关可区分大小写；超过 500 条命中显示封顶提示；快速改查询不闪旧结果
+- [ ] 文件夹搜索失败（如把工作区目录改为不可读后再搜）弹出错误提示（toast），面板不卡在旧结果上
+- [ ] 文件夹搜索的清空与重搜：清空查询框或关闭搜索面板后结果立即清空；关闭/清空瞬间在途的旧请求返回也不会回填结果；重新输入同一查询会重新搜索并给出结果；切换文件夹或改 Case 开关同样重搜
 - [ ] ⌘P 或 File 菜单「Quick Open…」打开文件名快开（需已打开文件夹）：子串过滤大小写不敏感、↑↓ 移动高亮、Enter 打开所选、Esc 关闭、点击背景关闭；未打开文件夹时按 ⌘P 出现 transient 提示不弹层；超大文件夹（>5000 个 .md）显示截断提示
 - [ ] 列表项 Enter 续写同类型 marker，空项退出列表；Tab / Shift-Tab 仅在列表项缩进/反缩进
 - [ ] Settings → Spellcheck 打开后编辑区可对英文词显示原生拼写红线；关闭后 `.cm-content` 为 `spellcheck="false"`；改设置立即作用于当前文档
