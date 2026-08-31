@@ -55,8 +55,10 @@ export interface CreateEditorOptions {
   readOnly?: boolean
   /** Construct already in Source (no live decorations at create time). */
   defaultLivePreview?: boolean
-  /** Notified when the live/source field flips, so the host can mirror it. */
+  /** Notified when the live/source mode flips, so the host can mirror it. */
   onModeChange?: (isLive: boolean) => void
+  /** Notified on every update with a lightweight cursor/mode snapshot. */
+  onStatusChange?: (status: EditorStatus) => void
 }
 
 export function makeImageResolver(
@@ -154,6 +156,17 @@ function reportModeChange(options: CreateEditorOptions, update: ViewUpdate): voi
   if (before !== after) options.onModeChange(after)
 }
 
+function createStatusReporter(options: CreateEditorOptions) {
+  let previous: EditorStatus | null = null
+  return (view: EditorView) => {
+    if (!options.onStatusChange) return
+    const next = editorStatus(view)
+    if (previous?.cursor === next.cursor && previous.mode === next.mode) return
+    previous = next
+    options.onStatusChange(next)
+  }
+}
+
 const spellcheckCompartment = new Compartment()
 
 function spellcheckAttr(on: boolean) {
@@ -164,7 +177,10 @@ export function setEditorSpellcheck(view: EditorView, on: boolean): void {
   view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckAttr(on)) })
 }
 
-function createEditorState(options: CreateEditorOptions): EditorState {
+function createEditorState(
+  options: CreateEditorOptions,
+  reportStatus: (view: EditorView) => void,
+): EditorState {
   return EditorState.create({
     doc: options.doc,
     extensions: [
@@ -195,6 +211,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       EditorView.updateListener.of((update) => {
         reportEditorUpdate(options, update)
         reportModeChange(options, update)
+        reportStatus(update.view)
       }),
       EditorView.theme({
         "&": { height: "100%", fontSize: "15px" },
@@ -213,10 +230,13 @@ export function createEditor(
   parent: HTMLElement,
   options: CreateEditorOptions,
 ): EditorView {
-  return new EditorView({
-    state: createEditorState(options),
+  const reportStatus = createStatusReporter(options)
+  const view = new EditorView({
+    state: createEditorState(options, reportStatus),
     parent,
   })
+  reportStatus(view)
+  return view
 }
 
 export interface EditorStatus {
@@ -254,5 +274,7 @@ export function resetEditorDocument(
   options: CreateEditorOptions,
 ): void {
   lastFootnoteJump.delete(view)
-  view.setState(createEditorState(options))
+  const reportStatus = createStatusReporter(options)
+  view.setState(createEditorState(options, reportStatus))
+  reportStatus(view)
 }
