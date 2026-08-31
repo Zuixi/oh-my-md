@@ -1,4 +1,5 @@
 import { useT } from "./i18n"
+import { useEditorStatus, type EditorStatusStore } from "./editorStatusStore"
 
 export type SaveStatus = "idle" | "saving" | "save failed" | "conflict"
 
@@ -12,15 +13,15 @@ function saveStatusDisplay(status: SaveStatus, t: (key: string) => string): stri
 }
 
 export function StatusBar(props: {
+  statusStore: EditorStatusStore
   /** null = stats are suppressed (safe mode) until onRequestStats runs. */
   stats: { words: number; chars: number } | null
-  cursor: string
-  mode: string
   normalizationReviewRequired: boolean
   saveStatus: SaveStatus
   onRequestStats?: () => void
 }) {
   const t = useT()
+  const { cursor, mode } = useEditorStatus(props.statusStore)
   return (
     <div className="statusbar">
       {props.normalizationReviewRequired
@@ -36,8 +37,8 @@ export function StatusBar(props: {
               {t("statusbar.countWords")}
             </button>
           : null}
-      <span>{props.cursor}</span>
-      <span>{props.mode}</span>
+      <span>{cursor}</span>
+      <span>{mode}</span>
     </div>
   )
 }

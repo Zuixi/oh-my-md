@@ -5,6 +5,7 @@ import {
 } from "./Editor"
 import { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
+import { createEditorStatusStore } from "./editorStatusStore"
 import {
   applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
@@ -285,6 +286,9 @@ export default function App({
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
   const viewRef = useRef<EditorView | null>(null)
   const viewsRef = useRef(new Map<number, EditorView>())
+  // Task 3：状态栏订阅这个外部 store，与 App 渲染树解耦——光标/模式逐键更新
+  // 不再经 App state，避免每键触发整棵应用重渲染。每次 App 挂载仅建一个实例。
+  const [editorStatusStore] = useState(createEditorStatusStore)
   const workspaceRef = useRef<Workspace>(createWorkspace())
   const [workspace, setWorkspace] = useState(workspaceRef.current)
   const sessionRef = useRef<EditorSession>(activeSession(workspaceRef.current))
@@ -343,10 +347,6 @@ export default function App({
   // Spec 05a：拉取式物化——doc 更新只发轻量信号，内容按 250ms 节奏从 view 拉取。
   const pendingDocTabsRef = useRef(new Set<number>())
   const docMaterializeTimerRef = useRef<number | null>(null)
-  // 每键（仅 docChanged，纯选区更新在 reportEditorUpdate 已早退）触发一次 O(UI) 重渲染：
-  // 状态栏光标列号在渲染期读 viewRef（editorStatus），需要每键刷新才能与 05a 前行为一致。
-  // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
-  const [, setDocVersion] = useState(0)
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
   // Set 只记录经菜单/命令面板 source 命令切过模式的 tab —— 编辑器内 ⌘E keymap
   // 由引擎直接 toggle，不经过此写入点。渐进渲染落地后策略不再强制模式
@@ -674,7 +674,6 @@ export default function App({
           docMaterializeMs,
         )
       }
-      setDocVersion(v => v + 1)
     }
     commitNormalization(projectNormalizationNotice(
       normalizationRef.current,
@@ -711,6 +710,15 @@ export default function App({
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
       onModeChange: isLive => setSourceMode(!isLive),
+      // Stale tab/document/view identities must not publish active status:
+      // a background tab's view keeps firing selection/mode updates while
+      // hidden, and only the currently active binding may reach the store.
+      onStatusChange: status => {
+        const tab = tabById(tabId)
+        if (!tab || tab.documentId !== documentId) return
+        if (workspaceRef.current.activeId !== tabId) return
+        editorStatusStore.publish(status)
+      },
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
@@ -2062,8 +2070,12 @@ export default function App({
   // Mirror the active tab's editor mode into React so the native View menu
   // checkbox can reflect it. The active view is read, not tracked per tab.
   useEffect(() => {
-    setSourceMode(editorStatus(viewRef.current).mode === "source")
-  }, [workspace.activeId])
+    const status = editorStatus(viewRef.current)
+    setSourceMode(status.mode === "source")
+    // Activating a tab does not fire the editor's update listener, so the
+    // store must be re-published here to reflect the newly active view.
+    editorStatusStore.publish(status)
+  }, [workspace.activeId, editorStatusStore])
 
   // Push view-mode state to the native menu checkboxes. The menu item click
   // itself flows back through the same commands and settles here.
@@ -2224,7 +2236,6 @@ export default function App({
     return () => window.clearTimeout(timer)
   }, [searchOpen, searchQuery, searchCase, workspace.folder, services])
 
-  const { cursor, mode } = editorStatus(viewRef.current)
   const [deferredDoc, setDeferredDoc] = useState(doc)
   useEffect(() => {
     const timer = window.setTimeout(() => setDeferredDoc(doc), STATS_DEBOUNCE_MS)
@@ -2543,9 +2554,8 @@ export default function App({
         </div>
       </div>
       <StatusBar
+        statusStore={editorStatusStore}
         stats={stats}
-        cursor={cursor}
-        mode={mode}
         normalizationReviewRequired={bannerKind === "normalization"}
         saveStatus={saveStatusLabel(activeSaveState)}
         onRequestStats={safeModeActive ? () => setStatsRequested(n => n + 1) : undefined}
