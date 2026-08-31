@@ -16,6 +16,9 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
+│   ├── editorStatusStore.ts # Cursor/mode snapshot store + useEditorStatus (StatusBar-only rerenders)
+│   ├── documentMaterializer.ts  # Trailing pull-based doc materialization (queue/flush/discard)
+│   ├── useWorkspaceSearch.ts    # Debounced folder-search state with stale-request invalidation
 │   ├── documentScaleRegistry.ts # Per-tab safe-mode/byte/read-only/stashed-Text policy registry
 │   ├── constants.ts         # TS↔Rust contract values + localStorage keys (drift-tested)
 │   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
@@ -61,7 +64,7 @@ apps/desktop/
 6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
 7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
 8. User-visible feedback goes through `services.reportError` / `services.notifySuccess` (toast-backed via react-toastify; container mounts only in `main.tsx`); never call `window.alert` directly in desktop code.
-9. Editor cursor/mode status is published through the dedicated editor-status store so CodeMirror updates rerender `StatusBar`, not the App shell. Document text still enters React only through the trailing materializer.
+9. Editor cursor/mode status is published through the dedicated editor-status store so CodeMirror updates rerender `StatusBar`, not the App shell. Document text still enters React only through the trailing materializer. `EditorStatus` and its single equality helper live in `editorStatus.ts`; the Editor reporter and the store both deduplicate through `sameEditorStatus`, and `test/editorStatus.test.ts` fails if a snapshot field is added without updating that comparison.
 
 ## CodeMirror Host Rules
 
