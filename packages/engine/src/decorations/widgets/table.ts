@@ -142,6 +142,9 @@ export function renderTableCellContent(parent: HTMLElement, text: string, resolv
   for (const node of parseCell(text)) renderCellNode(parent, node, resolveSrc)
 }
 
+/** 合成缺失单元格（ragged 行的视觉填充）的语义标注。 */
+const MISSING_CELL_TITLE = "Missing source cell; add a column or edit Markdown source"
+
 export class TableWidget extends BlockWidget {
   readonly table: TableData
   private view: EditorView | undefined
@@ -188,6 +191,10 @@ export class TableWidget extends BlockWidget {
     // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
     // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
     const readonly = this.view?.state.readOnly ?? false
+    // 仅剩一行/一列时结构性删除无效：工具栏按当前模型禁用对应按钮，
+    // 用户在编辑状态下点 disabled 控件不会落入「先提交、后 no-op」路径。
+    const canDeleteRow = this.table.rows.length > 1
+    const canDeleteCol = this.table.header.cells.length > 1
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
     for (const [act, label, title] of [
@@ -203,6 +210,8 @@ export class TableWidget extends BlockWidget {
       btn.title = title
       btn.tabIndex = -1
       btn.disabled = readonly
+        || (act === "delete-row" && !canDeleteRow)
+        || (act === "delete-col" && !canDeleteCol)
       btn.addEventListener("mousedown", e => {
         e.preventDefault()
         e.stopPropagation()
@@ -237,8 +246,16 @@ export class TableWidget extends BlockWidget {
       const tr = document.createElement("tr")
       const line: HTMLElement[] = []
       for (let i = 0; i < this.table.header.cells.length; i++) {
+        const cell = row.cells[i]
         const td = document.createElement("td")
-        renderTableCellContent(td, row.cells[i]?.text ?? "", this.resolveSrc)
+        renderTableCellContent(td, cell?.text ?? "", this.resolveSrc)
+        // ragged 行缺失源码槽的视觉填充：语义标识为不可用，不能打开输入框
+        // （没有可写源码范围，输入也无法提交）。
+        if (!cell) {
+          td.className = "omd-table-cell-missing"
+          td.setAttribute("aria-disabled", "true")
+          td.title = MISSING_CELL_TITLE
+        }
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
         this.bindCell(td, r + 1, i)
         line.push(td)
@@ -299,6 +316,20 @@ export class TableWidget extends BlockWidget {
     })
   }
 
+  private clearActive() {
+    for (const line of this.cells) {
+      for (const el of line) {
+        el.classList.remove("omd-table-row-active")
+        el.classList.remove("omd-table-col-active")
+      }
+    }
+  }
+
+  private applyActive(row: number, col: number) {
+    this.cells[row]?.forEach(el => el.classList.add("omd-table-row-active"))
+    for (const line of this.cells) line[col]?.classList.add("omd-table-col-active")
+  }
+
   private startEdit(el: HTMLElement, row: number, col: number) {
     // 只读档不开行内编辑器（开了也无法提交 —— replace() 会拒绝 dispatch）。
     // 防御所有入口（点击与重建后的键盘续编）：合成 ragged cell 没有可写源码范围。
@@ -307,6 +338,8 @@ export class TableWidget extends BlockWidget {
     this.cancelEdit()
     this.row = row
     this.col = col
+    this.clearActive()
+    this.applyActive(row, col)
     const input = document.createElement("input")
     input.type = "text"
     input.className = "omd-table-edit"
@@ -319,7 +352,9 @@ export class TableWidget extends BlockWidget {
     input.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault()
-        this.commitEdit(e.key === "Tab" && e.shiftKey ? -1 : 1)
+        const tab = e.key === "Tab"
+        const shiftTab = tab && e.shiftKey
+        this.commitEdit(shiftTab ? -1 : 1, shiftTab ? "shift-tab" : tab ? "tab" : "enter")
       } else if (e.key === "Escape") {
         e.preventDefault()
         this.cancelEdit()
@@ -334,11 +369,12 @@ export class TableWidget extends BlockWidget {
     const edit = this.editing
     if (!edit) return
     this.editing = null
+    this.clearActive()
     edit.el.replaceChildren()
     renderTableCellContent(edit.el, this.cellData(edit.row, edit.col)?.text ?? "", this.resolveSrc)
   }
 
-  private commitEdit(move: 1 | -1 | 0) {
+  private commitEdit(move: 1 | -1 | 0, fromKey?: "tab" | "shift-tab" | "enter") {
     const edit = this.editing
     const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
     if (!edit || !input) return
@@ -347,9 +383,22 @@ export class TableWidget extends BlockWidget {
     const change = replaceTableCell(this.src, cell, input.value)
     if (!change) return
     this.editing = null
+    this.clearActive()
     const neighbor = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
-    const dest = neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null
-    this.replace([change], dest)
+    let dest = neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null
+    let changes: TableSourceChange[] = [change]
+
+    // 末格 Tab：同一事务提交当前单元格并在表尾追加一个空行，重建后聚焦新行首格
+    // （oldRowCount + 1 行、0 列）。只有按键是 Tab 才插行 —— Enter 在末格只提交、
+    // 不扩展行；Shift-Tab 在首格只提交、不开表外输入框。绝不凭 move 推断插行意图。
+    if (!neighbor && move === 1 && fromKey === "tab") {
+      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
+      if (inserted && changesNonOverlapping([change, ...inserted])) {
+        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
+        dest = { row: this.table.rows.length + 1, col: 0 }
+      }
+    }
+    this.replace(changes, dest)
   }
 
   private neighbor(row: number, col: number, dir: 1 | -1) {

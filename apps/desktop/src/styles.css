@@ -315,6 +315,32 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-radius: 4px; background: var(--omd-chrome); color: var(--omd-muted);
   cursor: pointer;
 }
+/* Active row/column highlight while a cell editor is open: background-only so
+   cell geometry never changes. The edited intersection honors both classes. */
+.editor-host .omd-table td.omd-table-row-active,
+.editor-host .omd-table th.omd-table-row-active {
+  background: color-mix(in srgb, var(--omd-link) 8%, transparent);
+}
+.editor-host .omd-table td.omd-table-col-active,
+.editor-host .omd-table th.omd-table-col-active {
+  background: color-mix(in srgb, var(--omd-link) 5%, transparent);
+}
+.editor-host .omd-table td.omd-table-row-active.omd-table-col-active,
+.editor-host .omd-table th.omd-table-row-active.omd-table-col-active {
+  background: color-mix(in srgb, var(--omd-link) 14%, transparent);
+}
+/* Synthetic ragged cells (no source slot) read as inert placeholders. */
+.editor-host .omd-table td.omd-table-cell-missing {
+  color: var(--omd-muted);
+  background: color-mix(in srgb, var(--omd-chrome) 60%, transparent);
+  opacity: 0.65;
+}
+/* Unavailable structural actions: keep layout, communicate inertness. */
+.editor-host .omd-table-toolbar button:disabled {
+  color: var(--omd-muted);
+  opacity: 0.45;
+  cursor: default;
+}
 .editor-host .omd-table-edit {
   /* width:100% contributes the input's default 20ch intrinsic width to an
      auto-layout table and makes the column jump on click. This equivalent

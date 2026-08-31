@@ -520,4 +520,130 @@ describe("tables", () => {
       expect(c.to).not.toBe(src.length)
     }
   })
+
+  it("disables delete-row when there is one data row and delete-column when there is one column", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    const delRow = wrap.querySelector("[data-act='delete-row']") as HTMLButtonElement
+    const delCol = wrap.querySelector("[data-act='delete-col']") as HTMLButtonElement
+    expect(delRow.disabled).toBe(true)
+    expect(delCol.disabled).toBe(false)
+
+    const oneColSrc = "| a |\n|---|\n| 1 |\n| 2 |"
+    const oneCol = new TableWidget(oneColSrc, 0, tableData(oneColSrc))
+    const wrap2 = oneCol.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    const delRow2 = wrap2.querySelector("[data-act='delete-row']") as HTMLButtonElement
+    const delCol2 = wrap2.querySelector("[data-act='delete-col']") as HTMLButtonElement
+    expect(delRow2.disabled).toBe(false)
+    expect(delCol2.disabled).toBe(true)
+  })
+
+  it("applies active row and column classes to the edited cell row and column", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    const bodyTds = wrap.querySelectorAll("tbody td")
+    const target = bodyTds[1] as HTMLElement  // row1 col1
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    expect(target.classList.contains("omd-table-row-active")).toBe(true)
+    expect(target.classList.contains("omd-table-col-active")).toBe(true)
+    // 同行的另一格只带 row-active
+    expect((bodyTds[0] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
+    expect((bodyTds[0] as HTMLElement).classList.contains("omd-table-col-active")).toBe(false)
+    // 该列的下方格子只带 col-active
+    expect((bodyTds[3] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
+    expect((bodyTds[3] as HTMLElement).classList.contains("omd-table-row-active")).toBe(false)
+    // 表头同列也带 col-active
+    expect((wrap.querySelectorAll("th")[1] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
+    // Escape 取消后 active 类清空
+    target.querySelector("input.omd-table-edit")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
+    expect(wrap.querySelector(".omd-table-row-active")).toBeNull()
+    expect(wrap.querySelector(".omd-table-col-active")).toBeNull()
+  })
+
+  it("renders synthetic ragged cells disabled and input-less", async () => {
+    const src = "| a | b |\n|---|---|\n| only |"
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    const missing = wrap.querySelectorAll("td")[1] as HTMLElement
+    expect(missing.classList.contains("omd-table-cell-missing")).toBe(true)
+    expect(missing.getAttribute("aria-disabled")).toBe("true")
+    expect(missing.title).toBe("Missing source cell; add a column or edit Markdown source")
+    expect(missing.querySelector("input")).toBeNull()
+    expect((wrap.querySelectorAll("td")[0] as HTMLElement).classList.contains("omd-table-cell-missing")).toBe(false)
+  })
+
+  it("Enter in the final cell commits without inserting a row", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelectorAll("tbody td")[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    input.value = "x"
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+    // Enter 在末格只提交，绝不因 move=1 而附加空行。
+    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | x |")
+  })
+
+  it("final-cell Tab commits the cell and appends one blank row focusing its first cell", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    let doc = src
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
+        if (spec.changes) {
+          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+          for (const change of [...list].sort((a, b) => b.from - a.from)) {
+            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
+          }
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    wrap.querySelectorAll("tbody td")[1]
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
+    input.value = "x"
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | x |\n|  |  |")
+
+    // 重建后的 widget 消费 pending，打开新行首格。pending 的微任务要求
+    // cell.isConnected，widget 挂到 document 后再让微任务跑。
+    const rebuilt = new TableWidget(doc, 0, tableData(doc))
+    const rebuiltWrap = rebuilt.toDOM(view as never)
+    document.body.appendChild(rebuiltWrap)
+    // pending 消费的 startEdit 在微任务里执行，happy-dom 下需一次任务轮转。
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const newRowCells = rebuiltWrap.querySelectorAll("tbody tr")[1].querySelectorAll("td")
+    expect(newRowCells[0].querySelector("input.omd-table-edit")).toBeTruthy()
+    rebuiltWrap.remove()
+  })
+
 })

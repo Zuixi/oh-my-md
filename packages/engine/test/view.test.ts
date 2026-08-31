@@ -717,4 +717,86 @@ describe("view smoke (real EditorView)", () => {
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
+
+  it("final-cell Tab appends one blank row and focuses its first cell", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      const last = await openTableBodyCell(view, 1)
+      last.value = "x"
+      last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+      expect(view.state.doc.toString()).toContain("| 1 | x |\n|  |  |")
+      // 重建后新行首格（tbody 第 2 行的第 1 格 = td index 2）成为编辑焦点
+      expect(await waitForTableEdit(view, 2)).toBeTruthy()
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("Shift-Tab in the first cell commits and opens no input outside the table", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      // 线性网格的首格 = 表头第一格（row 0, col 0）。
+      const table = await waitFor(".omd-table", view)
+      const firstTh = table!.querySelector("th") as HTMLElement
+      firstTh.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      const input = firstTh.querySelector("input.omd-table-edit") as HTMLInputElement
+      expect(input).toBeTruthy()
+      input.value = "z"
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }))
+      expect(view.state.doc.toString()).toContain("| z | b |")
+      await tick()
+      // 边界提交：打开任何新输入框（含回到表尾的环绕）都不会发生。
+      expect(view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("disables delete-row for a single data row and delete-column for a single column", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      await waitFor(".omd-table", view)
+      const delRow = view.dom.querySelector("[data-act='delete-row']") as HTMLButtonElement
+      expect(delRow.disabled).toBe(true)
+      const delCol = view.dom.querySelector("[data-act='delete-col']") as HTMLButtonElement
+      expect(delCol.disabled).toBe(false)
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("highlights the active row and column while editing, and clears on cancel", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      const input = await openTableBodyCell(view, 1)  // row1 col1
+      const tbl = view.dom.querySelector(".omd-table")
+      const tds = tbl!.querySelectorAll("tbody td")
+      expect((tds[1] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
+      expect((tds[1] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
+      expect((tds[0] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
+      expect((tds[0] as HTMLElement).classList.contains("omd-table-col-active")).toBe(false)
+      expect((tds[3] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
+      expect(tbl!.querySelector(".omd-table-row-active")).toBeNull()
+      expect(tbl!.querySelector(".omd-table-col-active")).toBeNull()
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
+  it("renders synthetic ragged cells disabled and input-less", async () => {
+    const doc = "| a | b |\n|---|---|\n| only |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      await waitFor(".omd-table tbody td", view)
+      const missing = view.dom.querySelector(".omd-table tbody tr td:nth-child(2)") as HTMLElement
+      expect(missing).toBeTruthy()
+      expect(missing.classList.contains("omd-table-cell-missing")).toBe(true)
+      expect(missing.getAttribute("aria-disabled")).toBe("true")
+      expect(missing.title).toBe("Missing source cell; add a column or edit Markdown source")
+      expect(missing.querySelector("input")).toBeNull()
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
 })
