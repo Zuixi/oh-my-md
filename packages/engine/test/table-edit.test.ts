@@ -182,6 +182,24 @@ describe("table row transforms", () => {
 |  |  `)
   })
 
+  it("inserts a fully-pipeless row and reparses cleanly", () => {
+    const noOuter = `A | B
+--- | ---
+1 | 2`
+    const { data, text } = tableRecord(noOuter)
+    const changes = insertTableRow(text, data, 1)
+    expect(changes).toEqual([{ from: 21, to: 21, insert: "\n  |  " }])
+    const out = applyChanges(text, changes!)
+    expect(out).toBe(`A | B
+--- | ---
+1 | 2
+  |  `)
+    const model = tableRecord(out).data
+    expect(model.rows).toHaveLength(2)
+    expect(model.rows[0].cells).toHaveLength(2)
+    expect(model.rows[1].cells.every(c => c !== null)).toBe(true)
+  })
+
   it("rejects an out-of-range afterRow", () => {
     const { data, text } = tableRecord(src)
     expect(insertTableRow(text, data, -1)).toBeNull()
@@ -254,6 +272,30 @@ describe("table column transforms", () => {
     expectSortedNonOverlapping(changes!)
     // 新增列的内容是 `  `（两空格），落在一行末尾；用拼接避免源文件行尾空白。
     expect(applyChanges(text, changes!)).toBe(`A | B |` + `  \n--- | --- |---\n1 | 2 |` + `  `)
+  })
+
+  it("inserts a middle column into a pipeless table without adding outer pipes", () => {
+    const noOuter = `A | B
+--- | ---
+1 | 2`
+    const { data, text } = tableRecord(noOuter)
+    const changes = insertTableColumn(text, data, 0)
+    expect(changes).toEqual([
+      { from: 1, to: 4, insert: " |  | " },
+      { from: 9, to: 12, insert: " |---| " },
+      { from: 17, to: 20, insert: " |  | " },
+    ])
+    expectSortedNonOverlapping(changes!)
+    const out = applyChanges(text, changes!)
+    expect(out).toBe(`A |  | B
+--- |---| ---
+1 |  | 2`)
+    // 无外层管道被新增到任何一行；模型仍三列且无 null 槽。
+    expect(out.includes("|  | B|")).toBe(false)
+    const model = tableRecord(out).data
+    expect(model.header.cells).toHaveLength(3)
+    expect(model.rows[0].cells.every(c => c !== null)).toBe(true)
+    expect(model.aligns).toEqual(["", "", ""])
   })
 
   it("inserts a column into a quoted table preserving every prefix", () => {

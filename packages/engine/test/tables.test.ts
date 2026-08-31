@@ -198,6 +198,63 @@ describe("tables", () => {
     expect(doc).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
   })
 
+  it("deletes the clicked data row, not the one below it", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    let doc = src
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    // 点击第一个数据行（tbody 的第一个 td）——行号 1（1-based）。
+    wrap.querySelector("tbody td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
+    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    deleteRow.click()
+    // 移除第一数据行，而不是其下方的第二行。
+    expect(doc).toBe("| a | b |\n|---|---|\n| 3 | 4 |")
+  })
+
+  it("does not delete a data row when the header cell is active", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    let doc = src
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      focus: () => {},
+      posAtCoords: () => 0,
+      posAtDOM: () => 0,
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+        if (spec.changes) {
+          const { from, to, insert } = spec.changes
+          doc = doc.slice(0, from) + insert + doc.slice(to)
+        }
+      },
+    }
+    const widget = new TableWidget(src, 0, tableData(src))
+    const wrap = widget.toDOM(view as never)
+    await Promise.resolve()
+    // 点击表头单元格（行 0）：delete-row 应被守卫为 no-op，不变化任何源码。
+    wrap.querySelector("th")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
+    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    deleteRow.click()
+    expect(doc).toBe(src)
+  })
+
   it("does not restart editing on the detached widget after Tab", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
     let doc = src

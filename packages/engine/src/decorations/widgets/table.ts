@@ -339,7 +339,11 @@ export class TableWidget extends BlockWidget {
     // leave the input mounted — full two-phase toolbar commits land in Task 5.
     const next = act === "insert-row" ? insertTableRow(src, this.table, this.row)
       : act === "insert-col" ? insertTableColumn(src, this.table, this.col)
-      : act === "delete-row" ? deleteTableRow(src, this.table, this.row)
+      // `this.row` 是 1-based（0=表头，1=首数据行），而 deleteTableRow 的
+      // row 是 0-based 数据行索引。映射 active body row 到 this.row - 1；
+      // 表头（this.row === 0）会得到 -1，被 deleteTableRow 的界内校验拒绝，
+      // 从而守卫表头行为为 no-op。
+      : act === "delete-row" ? deleteTableRow(src, this.table, this.row - 1)
       : deleteTableColumn(src, this.table, this.col)
     if (!next) return
     this.editing = null
