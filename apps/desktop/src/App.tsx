@@ -1560,8 +1560,10 @@ export default function App({
       revealFolder(path)
       rememberRecent(path)
       const updated = openSession(lazy, snapshot)
-      if (snapshot.stats) documentScaleRegistry.setBytes(updated.id, snapshot.stats.byteLength)
-      if (tier === "readonly") documentScaleRegistry.setReadOnly(updated.id, true)
+      // 无条件写入：装载可能是一次失败尝试后的重试（resetTabDocument 抛错会
+      // 保留惰性会话），降档重试必须清掉上一轮留下的只读/字节元数据。
+      documentScaleRegistry.setBytes(updated.id, snapshot.stats?.byteLength)
+      documentScaleRegistry.setReadOnly(updated.id, tier === "readonly")
       if (!resetTabDocument(updated, snapshot.contents, snapshot.docText)) {
         // view 尚未创建的窗口期：先落 session 与内容，策略由 ensureViews 兜底。
         commitWorkspace(replaceTabSession(workspaceRef.current, updated))
