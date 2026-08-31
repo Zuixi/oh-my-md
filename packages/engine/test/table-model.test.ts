@@ -50,6 +50,34 @@ describe("tableDataFromNode", () => {
     expect(data.header.cells.map(cell => cell?.source)).toEqual(["A", "B"])
   })
 
+  it("keeps an empty trailing slot source-backed when a row has no outer pipes", () => {
+    const trailingEmpty = `A | B
+--- | ---
+1 |`
+    const { data } = firstTable(trailingEmpty)
+
+    expect(data.rows[0].leadingPipe).toBe(false)
+    expect(data.rows[0].trailingPipe).toBe(false)
+    expect(data.rows[0].cells).toEqual([
+      expect.objectContaining({ source: "1", text: "1" }),
+      expect.objectContaining({ source: "", text: "", from: 19, to: 19 }),
+    ])
+  })
+
+  it("keeps an empty leading slot source-backed when a row has no outer pipes", () => {
+    const leadingEmpty = `A | B
+--- | ---
+| 2`
+    const { data } = firstTable(leadingEmpty)
+
+    expect(data.rows[0].leadingPipe).toBe(false)
+    expect(data.rows[0].trailingPipe).toBe(false)
+    expect(data.rows[0].cells).toEqual([
+      expect.objectContaining({ source: "", text: "", from: 16, to: 16 }),
+      expect.objectContaining({ source: "2", text: "2" }),
+    ])
+  })
+
   it("distinguishes escaped pipes, empty slots, and missing ragged tails", () => {
     const escapedAndRagged = `| a\\|b | c |
 | --- | --- |

@@ -69,11 +69,18 @@ function rowEnvelope(
   }
 }
 
-function sourceRow(row: SyntaxNode, table: SyntaxNode, state: EditorState): TableRowData {
+function sourceRow(row: SyntaxNode, table: SyntaxNode, columnCount: number, state: EditorState): TableRowData {
   const cellNodes = directChildren(row, "TableCell")
   const pipes = directChildren(row, "TableDelimiter")
-  const leadingPipe = pipes.length > 0 && pipes[0].from < (cellNodes[0]?.from ?? row.to)
-  const trailingPipe = pipes.length > 0 && pipes[pipes.length - 1].to >= (cellNodes[cellNodes.length - 1]?.to ?? row.from)
+  const hasOnlyInternalPipes = pipes.length === columnCount - 1
+  const leadingPipe =
+    !hasOnlyInternalPipes &&
+    pipes.length > 0 &&
+    state.doc.sliceString(row.from, pipes[0].from).trim().length === 0
+  const trailingPipe =
+    !hasOnlyInternalPipes &&
+    pipes.length > 0 &&
+    state.doc.sliceString(pipes[pipes.length - 1].to, row.to).trim().length === 0
   const boundaries = [row.from, ...pipes.map(pipe => pipe.to), row.to]
   const segmentEnds = [...pipes.map(pipe => pipe.from), row.to]
   const first = leadingPipe ? 1 : 0
@@ -116,11 +123,11 @@ export function tableDataFromNode(node: SyntaxNode, state: EditorState): TableDa
   const delimiterNode = directChildren(node, "TableDelimiter")[0]
   if (!headerNode || !delimiterNode) return null
 
-  const header = sourceRow(headerNode, node, state)
-  if (header.cells.length === 0) return null
   const delimiter = delimiterRow(delimiterNode, node, state)
+  const header = sourceRow(headerNode, node, delimiter.cells.length, state)
+  if (header.cells.length === 0) return null
   const rows = directChildren(node, "TableRow").map(row => {
-    const data = sourceRow(row, node, state)
+    const data = sourceRow(row, node, header.cells.length, state)
     const cells = [...data.cells]
     while (cells.length < header.cells.length) cells.push(null)
     return { ...data, cells }
