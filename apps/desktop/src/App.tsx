@@ -118,6 +118,7 @@ import {
   type UserSettings,
 } from "./settings"
 import { initLocale, setLocale, useT } from "./i18n"
+import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
@@ -345,8 +346,23 @@ export default function App({
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
   // Spec 05a：拉取式物化——doc 更新只发轻量信号，内容按 250ms 节奏从 view 拉取。
-  const pendingDocTabsRef = useRef(new Set<number>())
-  const docMaterializeTimerRef = useRef<number | null>(null)
+  // 协调器只建一次（每次 App 挂载一个实例），持有 pending set + trailing timer；
+  // 依赖闭包只捕获稳定 ref/setState，重渲染不需要重建它（不要运行时改 delayMs）。
+  const materializerRef = useRef<DocumentMaterializer | null>(null)
+  if (!materializerRef.current) {
+    materializerRef.current = createDocumentMaterializer({
+      delayMs: docMaterializeMs,
+      readViewText: tabId => viewsRef.current.get(tabId)?.state.doc.toString() ?? null,
+      materialize: (tabId, contents) => {
+        syncDoc(contents, tabId)
+        const tab = workspaceRef.current.tabs.find(item => item.id === tabId)
+        if (tab) saveRecovery(tab, contents)
+      },
+      setTimer: (callback, ms) => window.setTimeout(callback, ms),
+      clearTimer: id => window.clearTimeout(id),
+    })
+  }
+  const materializer = materializerRef.current
   // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
   // Set 只记录经菜单/命令面板 source 命令切过模式的 tab —— 编辑器内 ⌘E keymap
   // 由引擎直接 toggle，不经过此写入点。渐进渲染落地后策略不再强制模式
@@ -489,7 +505,7 @@ export default function App({
     services,
     getTab: tabById,
     getContents: tabId => {
-      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      if (materializer.hasPending(tabId)) materializer.flush()
       return docsRef.current.get(tabId) ?? ""
     },
     getSaveStates: () => saveStateRef.current,
@@ -509,7 +525,7 @@ export default function App({
     getTab: tabById,
     getView: tabId => viewsRef.current.get(tabId),
     getContents: tabId => {
-      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      if (materializer.hasPending(tabId)) materializer.flush()
       return docsRef.current.get(tabId) ?? ""
     },
     getNormalization: () => normalizationRef.current,
@@ -626,28 +642,6 @@ export default function App({
     )
   }
 
-  /** Applies an update to the tab it was built for, or drops stale bindings. */
-  /** 把 pending tab 的最新内容从 view 拉进 docsRef/React state，并跟随恢复写节奏。 */
-  function materializePendingDocs() {
-    if (docMaterializeTimerRef.current !== null) {
-      window.clearTimeout(docMaterializeTimerRef.current)
-      docMaterializeTimerRef.current = null
-    }
-    for (const tabId of [...pendingDocTabsRef.current]) {
-      pendingDocTabsRef.current.delete(tabId)
-      const view = viewsRef.current.get(tabId)
-      if (!view) continue
-      const contents = view.state.doc.toString()
-      syncDoc(contents, tabId)
-      const tab = workspaceRef.current.tabs.find(t => t.id === tabId)
-      if (tab) saveRecovery(tab, contents)
-    }
-  }
-
-  function flushPendingDocs() {
-    materializePendingDocs()
-  }
-
   /** 预算与窗口化装饰跟随激活 tab 的安全模式档位（engine 全局状态 ↔ per-tab 判定）。 */
   function applyRenderBudgetFor(tabId: number) {
     const safeMode = safeModeTabsRef.current.has(tabId)
@@ -660,20 +654,12 @@ export default function App({
     const tab = tabById(update.tabId)
     if (!tab || tab.documentId !== update.documentId) return
     if (update.docChanged) {
-      pendingDocTabsRef.current.add(update.tabId)
       // 大纲缓存失效轴：内容变化才 bump 对应 tab 的版本号（选区更新不动大纲）。
       docVersionsRef.current.set(
         update.tabId,
         (docVersionsRef.current.get(update.tabId) ?? 0) + 1,
       )
-      if (docMaterializeMs === 0) {
-        materializePendingDocs()
-      } else if (docMaterializeTimerRef.current === null) {
-        docMaterializeTimerRef.current = window.setTimeout(
-          () => materializePendingDocs(),
-          docMaterializeMs,
-        )
-      }
+      materializer.queue(update.tabId)
     }
     commitNormalization(projectNormalizationNotice(
       normalizationRef.current,
@@ -797,7 +783,7 @@ export default function App({
     docTextsRef.current.delete(nextSession.id)
     applyDocumentScalePolicy(view, nextSession.id)
     // 重载内容即最新：清掉 pending，防止物化用旧 view 内容覆盖（Spec 05a）。
-    pendingDocTabsRef.current.delete(nextSession.id)
+    materializer.discard(nextSession.id)
     syncDoc(contents, nextSession.id)
     return true
   }
@@ -925,7 +911,7 @@ export default function App({
     })()
     return () => {
       mountedRef.current = false
-      if (docMaterializeTimerRef.current !== null) window.clearTimeout(docMaterializeTimerRef.current)
+      materializer.destroy()
       viewRef.current = null
       viewsRef.current.forEach(item => item.destroy())
       viewsRef.current.clear()
@@ -1410,7 +1396,7 @@ export default function App({
   }
 
   async function runOpen(pickPath: () => Promise<string | null>) {
-    flushPendingDocs()
+    materializer.flush()
     const request = ++openRequestRef.current
     const activeId = workspaceRef.current.activeId
     await awaitWithTimeout(
@@ -1543,9 +1529,14 @@ export default function App({
     const current = viewRef.current
     // Spec 05a/05b：离开的 tab 只有 pending 时才需要物化（docChanged 置位、
     // 250ms 内未拉取）；无条件 rope 展平是 50MB tab 的切换悬崖。
-    if (current && pendingDocTabsRef.current.has(sessionRef.current.id)) {
+    if (current && materializer.hasPending(sessionRef.current.id)) {
+      // 直接读 view 落 docsRef，不走 materialize()：切到懒加载 tab 时它会
+      // 提前返回不给新 tab 调 syncDoc，materialize() 的 syncDoc 却按当前
+      // activeId 写 doc state —— 此刻 activeId 还是旧 tab，会短暂把 doc
+      // state 刷成旧内容。这里只需要落 docsRef，不需要 recovery 写或 doc
+      // state 更新（新 tab 的 syncDoc 会在下面或 loadLazyTab 里补上）。
       docsRef.current.set(sessionRef.current.id, current.state.doc.toString())
-      pendingDocTabsRef.current.delete(sessionRef.current.id)
+      materializer.discard(sessionRef.current.id)
     }
     commitWorkspace(focusTab(workspaceRef.current, id))
     const nextView = viewsRef.current.get(id)
@@ -1656,7 +1647,7 @@ export default function App({
       // In-flight saves keep running (the chain is independent of the map), but
       // no later open should await a closed tab's queue promise.
       tabSaveQueuesRef.current.delete(id)
-      pendingDocTabsRef.current.delete(id)
+      materializer.discard(id)
       docBytesRef.current.delete(id)
       docTextsRef.current.delete(id)
       readonlyTabsRef.current.delete(id)
@@ -1671,7 +1662,7 @@ export default function App({
   }
 
   function requestCloseTab(id: number) {
-    flushPendingDocs()
+    materializer.flush()
     // Closing the last file swaps in a fresh untitled scratch (the same swap
     // the delete path uses). A clean untitled lone tab would only be swapped
     // for an identical one — and each swap churns the CodeMirror view — so
@@ -1933,7 +1924,7 @@ export default function App({
   async function deleteTreeEntry(entry: TreeEntry) {
     if (!services.deletePath) return
     // 脏检查前物化：250ms 窗口内的编辑必须被看见，否则跳过确认删文件丢内容（Spec 05a）。
-    flushPendingDocs()
+    materializer.flush()
     const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
     if (
       openTab
