@@ -521,3 +521,77 @@ Open ingest / chunked Text / toggle:
 | `chunk splitter standalone 50MB` | `108.37ms` |
 | `live toggle 10MB (source → live, seed)` | `toggle 10MB tx p95 0.33ms; toggle 10MB pure seedLiveDecorations p95 0.12ms` |
 | `live toggle 20MB (source → live, seed)` | `toggle 20MB tx p95 6.19ms; toggle 20MB pure seedLiveDecorations p95 0.12ms` |
+
+
+## 13. After Evidence and Final Decisions
+
+Recorded from the final targeted integration run at `87c372e` and the completed
+workstream reports.
+
+### After
+
+| Metric | After | Comparison / exact evidence |
+| --- | --- | --- |
+| Desktop main bundle | `dist/assets/index-DQi60M4P.js`: `1,064.15 kB` raw / `356.43 kB` gzip | Baseline raw was `1,226.70 kB`; the reduction was `162.55 kB` (`13.251%`). The 10%-below threshold was `1,104.03 kB`, so the target **passed** by `39.88 kB`. Vite reported 0 build warnings. |
+| App-shell commits during the pre-materialization edit burst | `0` additional App-shell commits | `App.editorStatusRender.test.tsx` captures `before = topBarRender.mock.calls.length`, publishes status, emits a `docChanged` update while `docMaterializeMs: 250` has not fired, and asserts `expect(topBarRender).toHaveBeenCalledTimes(before)` after each operation. |
+| Latest StatusBar cursor / mode | `4:2` / `source` | The same test publishes `{ cursor: "4:2", mode: "source" }` and asserts `screen.getByText("4:2")` and `screen.getByText("source")` before asserting the App-shell count is unchanged. |
+| Live code highlighted-HTML cache | `128 entries / 8 MiB` | `CODE_HTML_CACHE_MAX_ENTRIES = 128`; `CODE_HTML_CACHE_MAX_BYTES = 8 * 1024 * 1024`; retained HTML uses deterministic UTF-16 accounting (`html.length * 2`). |
+| Engine advisory budget warnings | `94` printed `OVER BUDGET` lines (`29` distinct measured values) | Every warning was the pre-existing `documentStats 50k` family over the unchanged `8 ms` budget; observed range `13.42–15.35 ms`, printed-sample average `13.6840 ms`. No typing, live-toggle, or new warning category exceeded budget. |
+| Rust workspace search, 1,000 files × 200 lines | `42.10 ms` | Latest integration command printed `workspace search 1000x200: 42.10ms`; the ignored test also asserted `response.hits.len() == MAX_SEARCH_HITS` and `response.truncated`, preserving the 500-hit cap. The workstream's earlier final local run printed `37.12 ms`; timings are advisory and load-dependent. |
+| Full repository gate | `pnpm verify` passed | Engine: `43` files / `441` tests; desktop: `73` files / `584` tests; Rust: `146` passed / `1` ignored; Vite transformed `4243` modules and built in `4.50s`; the Rust app binary linked successfully. |
+
+The generated bundle graph independently confirms that the live-widget Shiki
+implementation is no longer eager: `dist/index.html` eagerly loads only the main
+JavaScript and CSS, while Shiki core is in the separate `113.60 kB` raw /
+`36.26 kB` gzip `core-BXnl5npm.js` chunk, with the JavaScript engine and GitHub
+themes also emitted as lazy chunks.
+
+### Optional-work decisions
+
+- **Build driver:** no build-selection algorithm or runtime behavior changed.
+  Production `buildDriver.ts` changed only to export the existing
+  `pendingInWindow` and `nearestChunk` helpers so the advisory benchmark could
+  exercise the real path; they were not added to the engine's public
+  `src/index.ts` API. The final `1000×64` benchmark mean was `100.52 ms` per
+  benchmark invocation, whose fixture performs 1,000 measured passes
+  (approximately `0.10052 ms/pass`). This did not demonstrate a material runtime
+  problem, so the spec's optional two-pointer/direct-selection rewrite was not
+  justified.
+- **Quick open:** no production batching change. A temporary ignored fixture
+  measured the existing `list_markdown_files_sync` path over exactly 5,000
+  Markdown files at `23.12 ms`, while preserving the exact 5,000-path result,
+  non-truncated semantics, and sorted output. The fixture was removed after the
+  measurement because it showed no material mutex contention.
+- **Main bundle:** the 10% raw-main target was met: `1,064.15 kB` is `13.251%`
+  below `1,226.70 kB`.
+- **Table widget equality:** no optional production equality optimization was
+  made. Focused equality coverage was retained; there was no evidence requiring
+  a representation or comparison change.
+
+### Deviations and interpretation notes
+
+- The baseline text said the engine benchmark suite passed without budget
+  warnings, but the captured baseline actually contained `92` repeated
+  `documentStats 50k` warnings. The final run contained `94` repeated lines in
+  that same pre-existing family. Acceptance is therefore recorded as **no new
+  warning category or optimization regression**, not zero warning lines.
+- The pre-implementation Rust baseline used a different command and included
+  compilation/test-harness wall time (`real 0m3.542s`), so it is not presented as
+  a numeric speedup against the later deterministic `1000×200` in-test timer.
+- The build-driver workstream made benchmark-only source visibility changes
+  rather than the speculative algorithm rewrite. Quick-open likewise remained
+  unchanged after measurement. These are intentional benchmark-gated outcomes,
+  not missing implementation.
+- The editor-status evidence uses `TopBar` as an App-shell render probe. The
+  exact assertion is zero *additional* probe calls relative to the captured
+  count, rather than an absolute mount-time React commit count.
+
+### Documentation maintenance decision
+
+The stable editor-status boundary is already recorded in
+`apps/desktop/AGENTS.md`, and the bounded cache/lazy single-flight Shiki
+invariants are already recorded in `packages/engine/AGENTS.md`. The visible
+status timing checks are already present in `docs/manual-qa.md`. No newly
+verified recurring trap was found for `docs/memory/known-gotchas.md`, and there
+was no user-visible behavior or setup change requiring README or changelog
+updates.
