@@ -10,7 +10,6 @@ import {
 } from "../renderBudget"
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
-export { createCodeHtmlCache } from "./codeHtmlCache"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
