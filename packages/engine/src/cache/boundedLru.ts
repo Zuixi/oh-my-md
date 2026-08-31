@@ -21,8 +21,8 @@ export class BoundedLru<K, V> {
     if (!Number.isInteger(options.maxEntries) || options.maxEntries <= 0) {
       throw new RangeError("maxEntries must be a positive integer")
     }
-    if (!Number.isInteger(options.maxSize) || options.maxSize <= 0) {
-      throw new RangeError("maxSize must be a positive integer")
+    if (!Number.isFinite(options.maxSize) || options.maxSize <= 0) {
+      throw new RangeError("maxSize must be a positive finite number")
     }
   }
 
