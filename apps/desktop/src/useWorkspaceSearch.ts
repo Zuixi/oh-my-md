@@ -54,7 +54,10 @@ export function useWorkspaceSearch(options: {
         setHits(response.hits)
         setTruncated(response.truncated)
       }).catch(error => {
-        if (requestRef.current === request) reportErrorRef.current(error)
+        if (requestRef.current !== request) return
+        setHits([])
+        setTruncated(false)
+        reportErrorRef.current(error)
       })
     }, debounceMs)
     return () => {

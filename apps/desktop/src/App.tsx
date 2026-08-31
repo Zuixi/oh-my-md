@@ -687,7 +687,12 @@ export default function App({
       documentId,
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
-      onModeChange: isLive => setSourceMode(!isLive),
+      onModeChange: isLive => {
+        const tab = tabById(tabId)
+        if (!tab || tab.documentId !== documentId) return
+        if (workspaceRef.current.activeId !== tabId) return
+        setSourceMode(!isLive)
+      },
       // Stale tab/document/view identities must not publish active status:
       // a background tab's view keeps firing selection/mode updates while
       // hidden, and only the currently active binding may reach the store.

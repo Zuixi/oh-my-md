@@ -94,6 +94,47 @@ describe("editor status render boundary", () => {
     expect(screen.getByText("source")).toBeTruthy()
   })
 
+  it("ignores mode changes from an inactive editor when mirroring the native menu", async () => {
+    const harness = createAppHarness(editor)
+    harness.services.setViewMenuState = vi.fn(async () => undefined)
+    harness.renderApp()
+    const inactiveOptions = harness.editorForTab(1).getOptions()
+
+    const before = harness.allEditors().length
+    fireEvent.keyDown(window, { key: "n", metaKey: true })
+    await waitFor(() => expect(harness.allEditors().length).toBe(before + 1))
+    await harness.requestOpen("/notes/b.md", "second tab")
+    await waitFor(() => expect(harness.services.setViewMenuState).toHaveBeenCalled())
+    vi.mocked(harness.services.setViewMenuState!).mockClear()
+
+    act(() => inactiveOptions.onModeChange?.(false))
+    expect(harness.services.setViewMenuState).not.toHaveBeenCalled()
+
+    act(() => harness.editorForTab(2).getOptions().onModeChange?.(false))
+    await waitFor(() => expect(harness.services.setViewMenuState).toHaveBeenCalledWith(
+      expect.objectContaining({ source: true }),
+    ))
+  })
+
+  it("ignores mode changes from a stale document binding", async () => {
+    const harness = createAppHarness(editor)
+    harness.services.setViewMenuState = vi.fn(async () => undefined)
+    harness.renderApp()
+    const staleOptions = harness.editorForTab(1).getOptions()
+
+    await harness.requestOpen("/notes/a.md", "replaced contents")
+    await waitFor(() => expect(harness.services.setViewMenuState).toHaveBeenCalled())
+    vi.mocked(harness.services.setViewMenuState!).mockClear()
+
+    act(() => staleOptions.onModeChange?.(false))
+    expect(harness.services.setViewMenuState).not.toHaveBeenCalled()
+
+    act(() => harness.editorForTab(1).getOptions().onModeChange?.(false))
+    await waitFor(() => expect(harness.services.setViewMenuState).toHaveBeenCalledWith(
+      expect.objectContaining({ source: true }),
+    ))
+  })
+
   it("ignores a stale onStatusChange captured before the active tab's document identity was bumped", async () => {
     const harness = createAppHarness(editor)
     harness.renderApp()

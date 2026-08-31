@@ -33,6 +33,22 @@ describe("table widget equality", () => {
     }
   })
 
+  it("does not reuse a table widget when a row is added", async () => {
+    const { TableWidget } = await import("../src/decorations/widgets/table")
+    const compact = new TableWidget("| a |", 0, {
+      header: ["a"],
+      rows: [["1"]],
+      aligns: [""],
+    })
+    const expanded = new TableWidget("| a |", 0, {
+      header: ["a"],
+      rows: [["1"], ["2"]],
+      aligns: [""],
+    })
+
+    expect(compact.eq(expanded)).toBe(false)
+  })
+
   it("does not reuse a table widget when its embed context changes", async () => {
     const { TableWidget } = await import("../src/decorations/widgets/table")
     const table = { header: ["a"], rows: [["1"]], aligns: [""] } satisfies TableData
