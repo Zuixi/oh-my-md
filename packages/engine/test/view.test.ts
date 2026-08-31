@@ -37,6 +37,30 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   return null
 }
 
+async function openTableBodyCell(view: EditorView, index: number) {
+  const table = await waitFor(".omd-table", view)
+  expect(table).toBeTruthy()
+  const cell = table!.querySelectorAll("tbody td")[index] as HTMLElement | undefined
+  expect(cell).toBeTruthy()
+  cell!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+  const input = cell!.querySelector("input.omd-table-edit") as HTMLInputElement | null
+  expect(input).toBeTruthy()
+  return input!
+}
+
+async function waitForTableEdit(view: EditorView, bodyCellIndex: number) {
+  const started = Date.now()
+  while (Date.now() - started < 3000) {
+    const inputs = view.dom.querySelectorAll("input.omd-table-edit")
+    const cell = view.dom.querySelectorAll(".omd-table tbody td")[bodyCellIndex]
+    if (inputs.length === 1 && cell?.querySelector("input.omd-table-edit") === inputs[0]) {
+      return inputs[0] as HTMLInputElement
+    }
+    await tick(20)
+  }
+  return null
+}
+
 describe("view smoke (real EditorView)", () => {
   it("keeps angle URL/email autolinks and reference labels visible", async () => {
     const { view, errors } = makeView(
@@ -91,6 +115,73 @@ describe("view smoke (real EditorView)", () => {
     expect(view.dom.querySelector(".omd-code")).toBeTruthy()          // shiki 异步，容器先行
     expect(view.dom.querySelector(".omd-math")).toBeTruthy()
     view.destroy()
+  })
+
+  it("table cell keyboard Tab and Shift-Tab restore focus after real rebuilds", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      const first = await openTableBodyCell(view, 0)
+      first.value = "x"
+      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+
+      expect(view.state.doc.toString()).toContain("| x | 2 |")
+      const second = await waitForTableEdit(view, 1)
+      expect(second).toBeTruthy()
+
+      second!.value = "y"
+      second!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }))
+      expect(view.state.doc.toString()).toContain("| x | y |")
+      expect(await waitForTableEdit(view, 0)).toBeTruthy()
+      expect(errors.map(String)).toEqual([])
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it("table cell keyboard continuation follows the table live position", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    try {
+      expect(await waitFor(".omd-table", view)).toBeTruthy()
+      view.dispatch({ changes: { from: 0, insert: "prefix\n\n" } })
+      const first = await openTableBodyCell(view, 0)
+      first.value = "x"
+      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+
+      expect(view.state.doc.toString()).toContain("prefix\n\n| a | b |")
+      expect(view.state.doc.toString()).toContain("| x | 2 |")
+      expect(await waitForTableEdit(view, 1)).toBeTruthy()
+      expect(errors.map(String)).toEqual([])
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it("table cell keyboard continuation is isolated between editor views", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const first = makeView(doc)
+    const second = makeView(doc)
+    try {
+      const input = await openTableBodyCell(first.view, 0)
+      input.value = "x"
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+      second.view.dispatch({ changes: { from: second.view.state.doc.length, insert: "\n" } })
+
+      expect(await waitForTableEdit(first.view, 1)).toBeTruthy()
+      await tick()
+      expect(second.view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+    } finally {
+      first.view.destroy()
+      second.view.destroy()
+    }
   })
 
   it("clicking a block widget moves the cursor into the block (source edit)", async () => {

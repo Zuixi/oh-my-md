@@ -11,7 +11,13 @@ import {
 import type { TableCellData, TableData, TableRowData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 
-let resumeEdit: { pos: number; row: number; col: number } | null = null
+interface PendingTableEdit {
+  readonly pos: number
+  readonly row: number
+  readonly col: number
+}
+
+const pendingTableEdits = new WeakMap<EditorView, PendingTableEdit>()
 
 type ResolveSrc = (src: string) => string
 
@@ -225,11 +231,15 @@ export class TableWidget extends BlockWidget {
     table.appendChild(tbody)
     el.appendChild(table)
 
-    if (resumeEdit && resumeEdit.pos === this.pos) {
-      const { row, col } = resumeEdit
-      resumeEdit = null
-      const cell = this.cells[row]?.[col]
-      if (cell && this.cellData(row, col)) this.startEdit(cell, row, col)
+    const pending = this.view && pendingTableEdits.get(this.view)
+    if (pending && pending.pos === this.livePos()) {
+      pendingTableEdits.delete(this.view!)
+      const cell = this.cells[pending.row]?.[pending.col]
+      if (cell && this.cellData(pending.row, pending.col)) {
+        queueMicrotask(() => {
+          if (cell.isConnected) this.startEdit(cell, pending.row, pending.col)
+        })
+      }
     }
   }
 
@@ -342,17 +352,22 @@ export class TableWidget extends BlockWidget {
 
   private replace(changes: readonly TableSourceChange[], dest: { row: number; col: number } | null = null) {
     // 权威只读守卫：commitEdit/tool 的所有源码改写都汇入此处。readOnly 是建议性
-    // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 resumeEdit，
+    // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 pending edit，
     // 微任务渲染恢复路径不会误开编辑器）。disabled 按钮只挡用户交互，程序化
     // click 仍可到达 tool()，故此处必须显式拒绝。
     if (changes.length === 0 || !this.view || this.view.state.readOnly) return
     const pos = this.livePos()
-    if (dest) resumeEdit = { pos, row: dest.row, col: dest.col }
+    if (dest) pendingTableEdits.set(this.view, { pos, row: dest.row, col: dest.col })
     const translated = changes.map(change => ({
       from: pos + change.from,
       to: pos + change.to,
       insert: change.insert,
     }))
-    this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
+    try {
+      this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
+    } catch (error) {
+      if (dest) pendingTableEdits.delete(this.view)
+      throw error
+    }
   }
 }

@@ -343,6 +343,39 @@ describe("tables", () => {
     expect(rebuiltWrap.querySelector("input.omd-table-edit")).toBeNull()
   })
 
+  it("keeps pending table keyboard continuation scoped to its EditorView", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    const firstView = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      posAtDOM: () => 0,
+      dispatch: () => {},
+    }
+    const secondView = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      posAtDOM: () => 0,
+      dispatch: () => {},
+    }
+    const first = new TableWidget(src, 0, tableData(src))
+    const firstWrap = first.toDOM(firstView as never)
+    document.body.appendChild(firstWrap)
+    await Promise.resolve()
+    firstWrap.querySelector("td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    firstWrap.querySelector("input.omd-table-edit")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+
+    const unrelated = new TableWidget(src, 0, tableData(src))
+    const unrelatedWrap = unrelated.toDOM(secondView as never)
+    document.body.appendChild(unrelatedWrap)
+    await Promise.resolve()
+
+    expect(unrelatedWrap.querySelector("input.omd-table-edit")).toBeNull()
+    firstWrap.remove()
+    unrelatedWrap.remove()
+  })
+
   it("opens an empty cell with a collapsed caret", async () => {
     const src = "| a |\n|---|\n|   |"
     const widget = new TableWidget(src, 0, tableData(src))
