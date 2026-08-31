@@ -321,6 +321,28 @@ describe("tables", () => {
     expect(wrap.querySelector("input.omd-table-edit")).toBeNull()
   })
 
+  it("does not resume Tab editing on a synthetic ragged cell after rebuild", async () => {
+    const src = "| a | b |\n|---|---|\n| only |"
+    const view = {
+      state: { readOnly: false },
+      requestMeasure: () => {},
+      posAtDOM: () => 0,
+      dispatch: () => {},
+    }
+    const first = new TableWidget(src, 0, tableData(src))
+    const firstWrap = first.toDOM(view as never)
+    await Promise.resolve()
+    firstWrap.querySelector("td")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    firstWrap.querySelector("input.omd-table-edit")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+
+    const rebuilt = new TableWidget(src, 0, tableData(src))
+    const rebuiltWrap = rebuilt.toDOM(view as never)
+    await Promise.resolve()
+    expect(rebuiltWrap.querySelector("input.omd-table-edit")).toBeNull()
+  })
+
   it("opens an empty cell with a collapsed caret", async () => {
     const src = "| a |\n|---|\n|   |"
     const widget = new TableWidget(src, 0, tableData(src))

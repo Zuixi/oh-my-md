@@ -229,7 +229,7 @@ export class TableWidget extends BlockWidget {
       const { row, col } = resumeEdit
       resumeEdit = null
       const cell = this.cells[row]?.[col]
-      if (cell) this.startEdit(cell, row, col)
+      if (cell && this.cellData(row, col)) this.startEdit(cell, row, col)
     }
   }
 
@@ -255,7 +255,8 @@ export class TableWidget extends BlockWidget {
 
   private startEdit(el: HTMLElement, row: number, col: number) {
     // 只读档不开行内编辑器（开了也无法提交 —— replace() 会拒绝 dispatch）。
-    if (this.view?.state.readOnly) return
+    // 防御所有入口（点击与重建后的键盘续编）：合成 ragged cell 没有可写源码范围。
+    if (this.view?.state.readOnly || !this.cellData(row, col)) return
     if (this.editing?.el === el) return
     this.cancelEdit()
     this.row = row
@@ -300,7 +301,8 @@ export class TableWidget extends BlockWidget {
     const change = replaceTableCell(this.src, cell, input.value)
     if (!change) return
     this.editing = null
-    const dest = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
+    const neighbor = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
+    const dest = neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null
     this.replace([change], dest)
   }
 
