@@ -1,16 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
-import { BlockWidget } from "../src/decorations/blockWidget"
 import type { TableData } from "../src/decorations/widgets/table"
 
+// TableWidget's base imports the live decoration field, which is irrelevant to equality tests.
 vi.mock("../src/decorations/build", () => ({
   livePreviewField: {},
 }))
 
 describe("table widget equality", () => {
-  it("loads the block widget base first", () => {
-    expect(BlockWidget).toBeTruthy()
-  })
-
   it("distinguishes every table DOM input", async () => {
     const { tableEqualityKey } = await import("../src/decorations/widgets/table")
     expect(tableEqualityKey({ header: ["a"], rows: [["1"]], aligns: [""] }))
@@ -28,11 +24,29 @@ describe("table widget equality", () => {
     const left = new TableWidget("| a |", 0, table)
     const right = new TableWidget("| a |", 10, table)
     try {
+      stringifySpy.mockClear()
       expect(left.eq(right)).toBe(true)
       expect(left.eq(right)).toBe(true)
-      expect(stringifySpy).toHaveBeenCalledTimes(2)
+      expect(stringifySpy).not.toHaveBeenCalled()
     } finally {
       stringifySpy.mockRestore()
     }
+  })
+
+  it("does not reuse a table widget when its embed context changes", async () => {
+    const { TableWidget } = await import("../src/decorations/widgets/table")
+    const table = { header: ["a"], rows: [["1"]], aligns: [""] } satisfies TableData
+    const root = new TableWidget("| a |", 0, table, {
+      quoteDepth: 0,
+      listDepth: 0,
+      quoteInList: false,
+    })
+    const quoted = new TableWidget("| a |", 0, table, {
+      quoteDepth: 1,
+      listDepth: 0,
+      quoteInList: false,
+    })
+
+    expect(root.eq(quoted)).toBe(false)
   })
 })
