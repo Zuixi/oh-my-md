@@ -4,7 +4,8 @@ import { Decoration } from "@codemirror/view"
 import { cursorInside, nearCursor, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
-import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"
+import { TableWidget } from "./widgets/table"
+import { tableDataFromNode } from "../tables/model"
 import { imageResolver } from "./widgets/image"
 import { CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
@@ -249,43 +250,6 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
   })
 }
 
-function directCells(row: SyntaxNode, state: EditorState) {
-  const cells: string[] = []
-  for (let child = row.firstChild; child; child = child.nextSibling) {
-    if (child.name !== "TableCell") continue
-    const source = state.doc.sliceString(child.from, child.to)
-    cells.push(source
-      .replace(/\\\|/g, "|")
-      .trim())
-  }
-  return cells
-}
-
-function tableData(node: SyntaxNode, state: EditorState): TableData | null {
-  const header = node.getChild("TableHeader")
-  if (!header) return null
-  const rows: string[][] = []
-  let delimiter = ""
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "TableRow") rows.push(directCells(child, state))
-    else if (child.name === "TableDelimiter") {
-      delimiter = state.doc.sliceString(child.from, child.to)
-    }
-  }
-  const aligns = delimiter
-    .trim()
-    .replace(/^\||\|$/g, "")
-    .split("|")
-    .map<TableAlignment>(cell => {
-      const marker = cell.trim()
-      if (/^:-/.test(marker) && /-:$/.test(marker)) return "center"
-      if (/-:$/.test(marker)) return "right"
-      if (/^:-/.test(marker)) return "left"
-      return ""
-    })
-  return { header: directCells(header, state), rows, aligns }
-}
-
 export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
   switch (node.name) {
     case "ListMark": { styleListMark(node, state, out); break }
@@ -321,7 +285,7 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
     }
     case "Table": {
       if (blockSelected(state, node.from, node.to)) return false
-      const table = tableData(node.node, state)
+      const table = tableDataFromNode(node.node, state)
       if (!table) return false
       out.push({
         from: node.from, to: node.to, tag: "widget:block:table",

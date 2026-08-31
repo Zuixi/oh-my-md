@@ -7,19 +7,34 @@ import {
   insertTableRow,
   replaceTableCell,
 } from "../../tables/edit"
+import type { TableCellData, TableData, TableRowData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 
 let resumeEdit: { pos: number; row: number; col: number } | null = null
 
-export type TableAlignment = "left" | "center" | "right" | ""
+type ResolveSrc = (src: string) => string
 
-export interface TableData {
-  header: string[]
-  rows: string[][]
-  aligns: TableAlignment[]
+type LegacyTableData = {
+  readonly header: readonly string[]
+  readonly rows: readonly (readonly string[])[]
+  readonly aligns: TableData["aligns"]
 }
 
-type ResolveSrc = (src: string) => string
+function legacyRow(cells: readonly string[]): TableRowData {
+  const data: TableCellData[] = cells.map(text => ({ text, source: text, from: 0, to: text.length }))
+  return { from: 0, to: 0, lineFrom: 0, lineTo: 0, prefix: "", leadingPipe: true, trailingPipe: true, cells: data }
+}
+
+function normalizeTableData(table: TableData | LegacyTableData): TableData {
+  if (!Array.isArray(table.header)) return table as TableData
+  const legacy = table as LegacyTableData
+  return {
+    header: legacyRow(legacy.header),
+    delimiter: legacyRow(legacy.aligns.map(() => "---")),
+    rows: legacy.rows.map(legacyRow),
+    aligns: legacy.aligns,
+  }
+}
 
 function renderCellContainer(
   parent: HTMLElement,
@@ -102,6 +117,7 @@ export function renderTableCellContent(parent: HTMLElement, text: string, resolv
 }
 
 export class TableWidget extends BlockWidget {
+  readonly table: TableData
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
   private row = 0
@@ -112,11 +128,12 @@ export class TableWidget extends BlockWidget {
   constructor(
     src: string,
     pos: number,
-    readonly table: TableData,
+    table: TableData | LegacyTableData,
     embed?: BlockEmbed,
     readonly resolveSrc?: ResolveSrc,
   ) {
     super(src, pos, embed)
+    this.table = normalizeTableData(table)
   }
 
   eq(other: TableWidget) {
@@ -178,9 +195,9 @@ export class TableWidget extends BlockWidget {
     const thead = document.createElement("thead")
     const hr = document.createElement("tr")
     const head: HTMLElement[] = []
-    for (const [i, c] of this.table.header.entries()) {
+    for (const [i, c] of this.table.header.cells.entries()) {
       const th = document.createElement("th")
-      renderTableCellContent(th, c, this.resolveSrc)
+      renderTableCellContent(th, c?.text ?? "", this.resolveSrc)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
       this.bindCell(th, 0, i)
       head.push(th)
@@ -193,9 +210,9 @@ export class TableWidget extends BlockWidget {
     for (const [r, row] of this.table.rows.entries()) {
       const tr = document.createElement("tr")
       const line: HTMLElement[] = []
-      for (let i = 0; i < this.table.header.length; i++) {
+      for (let i = 0; i < this.table.header.cells.length; i++) {
         const td = document.createElement("td")
-        renderTableCellContent(td, row[i] ?? "", this.resolveSrc)
+        renderTableCellContent(td, row.cells[i]?.text ?? "", this.resolveSrc)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
         this.bindCell(td, r + 1, i)
         line.push(td)
@@ -216,7 +233,7 @@ export class TableWidget extends BlockWidget {
   }
 
   private cellSource(row: number, col: number) {
-    return row === 0 ? (this.table.header[col] ?? "") : (this.table.rows[row - 1]?.[col] ?? "")
+    return row === 0 ? (this.table.header.cells[col]?.text ?? "") : (this.table.rows[row - 1]?.cells[col]?.text ?? "")
   }
 
   private bindCell(el: HTMLElement, row: number, col: number) {
@@ -282,7 +299,7 @@ export class TableWidget extends BlockWidget {
   }
 
   private neighbor(row: number, col: number, dir: 1 | -1) {
-    const cols = this.table.header.length
+    const cols = this.table.header.cells.length
     const rows = this.table.rows.length + 1
     const i = row * cols + col + dir
     if (i < 0 || i >= rows * cols) return null
