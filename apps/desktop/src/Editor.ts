@@ -49,6 +49,7 @@ export interface CreateEditorOptions {
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
   onOpenMarkdownHref?: (href: string) => void
+  onOpenExternalHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
   /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
@@ -74,6 +75,7 @@ export function makeImageResolver(
 }
 
 const markdownHrefHandler = Facet.define<(href: string) => void>()
+const externalHrefHandler = Facet.define<(href: string) => void>()
 const lastFootnoteJump = new WeakMap<EditorView, { id: string; from: number }>()
 
 function activateFootnote(view: EditorView, pos: number): boolean {
@@ -109,18 +111,18 @@ export function activateLink(view: EditorView, event: MouseEvent): boolean {
   }
   if (!onLink) return false
 
-  const targetLink = linkAt(view.state, pos)
-  if (!targetLink) return false
+  const href = linkAt(view.state, pos)?.href ?? onLink.getAttribute("href")
+  if (!href) return false
 
   event.preventDefault()
-  if (targetLink.href.startsWith("#")) {
-    const heading = headingPositionForAnchor(view.state, targetLink.href)
+  if (href.startsWith("#")) {
+    const heading = headingPositionForAnchor(view.state, href)
     if (heading !== null) view.dispatch({ selection: { anchor: heading }, scrollIntoView: true })
     return true
   }
-  const classified = classifyLink(targetLink.href)
+  const classified = classifyLink(href)
   if (classified.kind === "external") {
-    window.open(classified.href, "_blank", "noopener,noreferrer")
+    view.state.facet(externalHrefHandler)[0]?.(classified.href)
   } else if (classified.kind === "markdown") {
     view.state.facet(markdownHrefHandler)[0]?.(classified.href)
   }
@@ -183,6 +185,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
         defaultLivePreview: options.defaultLivePreview,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
+      options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],
       typewriterExtension(),
       imagePasteHandler({
         getDocPath: options.getDocPath,

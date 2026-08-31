@@ -711,6 +711,7 @@ export default function App({
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
       onModeChange: isLive => setSourceMode(!isLive),
+      onOpenExternalHref: href => { void services.openExternal?.(href) },
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
