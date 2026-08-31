@@ -446,6 +446,35 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("reports cursor and mode without adding document text to update payloads", () => {
+    const onDocumentUpdate = vi.fn()
+    const onStatusChange = vi.fn()
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(onDocumentUpdate, "# Title\nbody"),
+      onStatusChange,
+    })
+
+    onStatusChange.mockClear()
+    view.dispatch({ selection: { anchor: 9 } })
+
+    expect(onDocumentUpdate).not.toHaveBeenCalled()
+    expect(onStatusChange).toHaveBeenLastCalledWith({ cursor: "2:2", mode: "live" })
+    view.destroy()
+  })
+
+  it("deduplicates unchanged status snapshots", () => {
+    const onStatusChange = vi.fn()
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), "body"),
+      onStatusChange,
+    })
+
+    onStatusChange.mockClear()
+    view.dispatch({ annotations: [] })
+    expect(onStatusChange).not.toHaveBeenCalled()
+    view.destroy()
+  })
+
   it("does nothing when the clipboard is empty", async () => {
     const readText = vi.fn(() => Promise.resolve(""))
     Object.defineProperty(window.navigator, "clipboard", {
