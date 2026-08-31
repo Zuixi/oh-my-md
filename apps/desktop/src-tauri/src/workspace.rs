@@ -542,6 +542,7 @@ pub(crate) fn search_markdown_sync(
 
     let results = Mutex::new(Vec::new());
     let truncated = AtomicBool::new(false);
+    let synchronization_failed = AtomicBool::new(false);
 
     walker.run(|| {
         Box::new(|entry| {
@@ -565,38 +566,42 @@ pub(crate) fn search_markdown_sync(
                 Ok(text) => text,
                 Err(_) => return ignore::WalkState::Continue,
             };
-            let mut hits = results.lock().unwrap();
-            if hits.len() >= MAX_SEARCH_HITS {
-                truncated.store(true, Ordering::Relaxed);
-                return ignore::WalkState::Quit;
+
+            // One extra local hit proves truncation without retaining an
+            // unbounded file result. Line scanning remains outside the mutex.
+            let local = collect_file_hits(path, content, &matcher, MAX_SEARCH_HITS + 1);
+            if local.is_empty() {
+                return ignore::WalkState::Continue;
             }
-            for (index, line) in content.lines().enumerate() {
-                if hits.len() >= MAX_SEARCH_HITS {
-                    truncated.store(true, Ordering::Relaxed);
-                    return ignore::WalkState::Quit;
+
+            match results.lock() {
+                Ok(mut shared) => {
+                    shared.extend(local);
+                    shared.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+                    if shared.len() > MAX_SEARCH_HITS {
+                        shared.truncate(MAX_SEARCH_HITS);
+                        truncated.store(true, Ordering::Release);
+                    }
                 }
-                if let Some(m) = matcher.find(line) {
-                    let (text, start, end) = truncate_line(line, m.start(), m.end());
-                    hits.push(SearchHit {
-                        path: path.to_string_lossy().into_owned(),
-                        line: index + 1,
-                        text,
-                        start,
-                        end,
-                    });
+                Err(_) => {
+                    synchronization_failed.store(true, Ordering::Release);
+                    return ignore::WalkState::Quit;
                 }
             }
             ignore::WalkState::Continue
         })
     });
 
-    let mut hits = results.into_inner().unwrap();
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    let capped = hits.len() >= MAX_SEARCH_HITS;
-    hits.truncate(MAX_SEARCH_HITS);
+    if synchronization_failed.load(Ordering::Acquire) {
+        return Err("workspace search result lock poisoned".into());
+    }
+
+    let hits = results
+        .into_inner()
+        .map_err(|_| "workspace search result lock poisoned".to_string())?;
     Ok(SearchResponse {
         hits,
-        truncated: truncated.load(Ordering::Relaxed) || capped,
+        truncated: truncated.load(Ordering::Acquire),
     })
 }
 
@@ -704,6 +709,32 @@ fn is_markdown(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn collect_file_hits(
+    path: &Path,
+    content: &str,
+    matcher: &regex::Regex,
+    max_hits: usize,
+) -> Vec<SearchHit> {
+    let mut hits = Vec::with_capacity(max_hits.min(16));
+    let display_path = path.to_string_lossy().into_owned();
+    for (index, line) in content.lines().enumerate() {
+        if hits.len() >= max_hits {
+            break;
+        }
+        if let Some(found) = matcher.find(line) {
+            let (text, start, end) = truncate_line(line, found.start(), found.end());
+            hits.push(SearchHit {
+                path: display_path.clone(),
+                line: index + 1,
+                text,
+                start,
+                end,
+            });
+        }
+    }
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,6 +799,32 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "advisory workspace search benchmark"]
+    fn workspace_search_parallelism_benchmark() {
+        let root = tmp("search-parallelism-benchmark");
+        reset_dir(&root);
+        let content = std::iter::repeat_n("benchmark line", 199)
+            .chain(std::iter::once("needle"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..1_000 {
+            fs::write(root.join(format!("f{index:04}.md")), &content).unwrap();
+        }
+
+        let started = std::time::Instant::now();
+        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "workspace search 1000x200: {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        assert!(response.truncated);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn search_matches_case_insensitive_by_default() {
         let root = tmp("search-case");
         reset_dir(&root);
@@ -811,6 +868,58 @@ mod tests {
         let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
         assert!(response.truncated);
         assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn capped_search_retains_the_same_first_paths_regardless_of_worker_completion_order() {
+        let root = tmp("search-deterministic-cap");
+        reset_dir(&root);
+        let slow_prefix = std::iter::repeat_n("no match here", 2_000)
+            .chain(std::iter::once("needle"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..600 {
+            let content = if index < 100 { &slow_prefix } else { "needle" };
+            fs::write(root.join(format!("f{index:04}.md")), content).unwrap();
+        }
+
+        for _ in 0..5 {
+            let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+            assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+            assert!(response.truncated);
+            assert!(response.hits[0].path.ends_with("f0000.md"));
+            assert_eq!(response.hits[0].line, 2_001);
+            assert!(response.hits[499].path.ends_with("f0499.md"));
+            assert_eq!(response.hits[499].line, 1);
+            assert!(response.hits.iter().all(|hit| {
+                let name = Path::new(&hit.path).file_name().unwrap().to_string_lossy();
+                name.as_ref() <= "f0499.md"
+            }));
+        }
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn parallel_search_never_exceeds_the_cap_with_many_hits_per_file() {
+        let root = tmp("search-parallel-cap");
+        reset_dir(&root);
+        let content = std::iter::repeat("needle")
+            .take(40)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 0..64 {
+            fs::write(root.join(format!("f{index:02}.md")), &content).unwrap();
+        }
+
+        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
+        assert!(response.truncated);
+        assert!(response.hits.windows(2).all(|pair| {
+            pair[0].path < pair[1].path
+                || (pair[0].path == pair[1].path && pair[0].line <= pair[1].line)
+        }));
         fs::remove_dir_all(root).ok();
     }
 
@@ -1200,5 +1309,34 @@ mod tests {
         fs::remove_dir_all(config).ok();
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(outside).ok();
+    }
+
+    #[test]
+    fn collect_file_hits_stops_at_the_local_limit() {
+        let matcher = build_matcher("needle", false).unwrap();
+        let hits = collect_file_hits(
+            Path::new("/notes/a.md"),
+            "needle\nneedle\nneedle\n",
+            &matcher,
+            2,
+        );
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].line, 1);
+        assert_eq!(hits[1].line, 2);
+    }
+
+    #[test]
+    fn collect_file_hits_preserves_utf16_offsets_and_truncated_text() {
+        let matcher = build_matcher("needle", false).unwrap();
+        let content = format!("🦀 {} needle", "a".repeat(500));
+        let hits = collect_file_hits(Path::new("/notes/a.md"), &content, &matcher, 10);
+        let hit = &hits[0];
+        let selected: Vec<u16> = hit
+            .text
+            .encode_utf16()
+            .skip(hit.start)
+            .take(hit.end - hit.start)
+            .collect();
+        assert_eq!(selected, "needle".encode_utf16().collect::<Vec<_>>());
     }
 }

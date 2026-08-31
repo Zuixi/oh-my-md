@@ -258,6 +258,7 @@ export const en: Record<string, string> = {
   "error.renameFailed": "Rename failed",
   "error.deleteFailed": "Delete failed",
   "error.revealFailed": "Could not reveal the file in the file manager",
+  "error.searchFailed": "Search failed",
   "error.invalidPath": "That path is not valid.",
   "error.notUtf8": "Only UTF-8 Markdown files are supported.",
   "error.emptyName": "Names cannot be empty or contain '/' or '..'.",

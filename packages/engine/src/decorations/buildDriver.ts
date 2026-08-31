@@ -88,7 +88,7 @@ function expandedRegions(view: EditorView, margin: number): ClosedRange[] {
 
 // pending 与窗口区域的交集（闭区间裁剪）：安全模式下驱动只构建窗口内的 pending
 // 部分，窗口外的留在 pending 待滚动进入（稳态，不构成调度理由）。
-function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): ClosedRange[] {
+export function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): ClosedRange[] {
   const clipped: ClosedRange[] = []
   for (const range of pending) {
     for (const region of window) {
@@ -130,7 +130,7 @@ function rangeGap(a: ClosedRange, b: ClosedRange): number {
 // pending 有序、互不相交（build.ts 映射后 mergeRanges 归一化保证），并列取序最
 // 小者、端点并列取 from 端，行为确定。点区间（from === to，整段删除的塌缩残留）
 // 是合法构建目标，永不跳过。
-function nearestChunk(pending: ClosedRange[], regions: ClosedRange[]): ClosedRange {
+export function nearestChunk(pending: ClosedRange[], regions: ClosedRange[]): ClosedRange {
   let index = 0
   let best = Infinity
   for (let i = 0; i < pending.length; i++) {
