@@ -570,21 +570,13 @@ pub(crate) fn search_markdown_sync(
                 truncated.store(true, Ordering::Relaxed);
                 return ignore::WalkState::Quit;
             }
-            for (index, line) in content.lines().enumerate() {
-                if hits.len() >= MAX_SEARCH_HITS {
-                    truncated.store(true, Ordering::Relaxed);
-                    return ignore::WalkState::Quit;
-                }
-                if let Some(m) = matcher.find(line) {
-                    let (text, start, end) = truncate_line(line, m.start(), m.end());
-                    hits.push(SearchHit {
-                        path: path.to_string_lossy().into_owned(),
-                        line: index + 1,
-                        text,
-                        start,
-                        end,
-                    });
-                }
+            let remaining = MAX_SEARCH_HITS - hits.len();
+            let file_hits = collect_file_hits(path, content, &matcher, remaining);
+            let capped = file_hits.len() >= remaining;
+            hits.extend(file_hits);
+            if capped {
+                truncated.store(true, Ordering::Relaxed);
+                return ignore::WalkState::Quit;
             }
             ignore::WalkState::Continue
         })
@@ -702,6 +694,32 @@ fn is_markdown(name: &str) -> bool {
         .next()
         .map(|ext| MARKDOWN_EXT.contains(&ext.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+fn collect_file_hits(
+    path: &Path,
+    content: &str,
+    matcher: &regex::Regex,
+    max_hits: usize,
+) -> Vec<SearchHit> {
+    let mut hits = Vec::with_capacity(max_hits.min(16));
+    let display_path = path.to_string_lossy().into_owned();
+    for (index, line) in content.lines().enumerate() {
+        if hits.len() >= max_hits {
+            break;
+        }
+        if let Some(found) = matcher.find(line) {
+            let (text, start, end) = truncate_line(line, found.start(), found.end());
+            hits.push(SearchHit {
+                path: display_path.clone(),
+                line: index + 1,
+                text,
+                start,
+                end,
+            });
+        }
+    }
+    hits
 }
 
 #[cfg(test)]
@@ -1200,5 +1218,34 @@ mod tests {
         fs::remove_dir_all(config).ok();
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(outside).ok();
+    }
+
+    #[test]
+    fn collect_file_hits_stops_at_the_local_limit() {
+        let matcher = build_matcher("needle", false).unwrap();
+        let hits = collect_file_hits(
+            Path::new("/notes/a.md"),
+            "needle\nneedle\nneedle\n",
+            &matcher,
+            2,
+        );
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].line, 1);
+        assert_eq!(hits[1].line, 2);
+    }
+
+    #[test]
+    fn collect_file_hits_preserves_utf16_offsets_and_truncated_text() {
+        let matcher = build_matcher("needle", false).unwrap();
+        let content = format!("🦀 {} needle", "a".repeat(500));
+        let hits = collect_file_hits(Path::new("/notes/a.md"), &content, &matcher, 10);
+        let hit = &hits[0];
+        let selected: Vec<u16> = hit
+            .text
+            .encode_utf16()
+            .skip(hit.start)
+            .take(hit.end - hit.start)
+            .collect();
+        assert_eq!(selected, "needle".encode_utf16().collect::<Vec<_>>());
     }
 }
