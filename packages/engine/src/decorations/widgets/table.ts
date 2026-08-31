@@ -333,13 +333,17 @@ export class TableWidget extends BlockWidget {
       const committed = cell ? replaceTableCell(src, cell, input.value) : null
       if (committed) src = src.slice(0, committed.from) + committed.insert + src.slice(committed.to)
     }
-    const next = act === "insert-row" ? insertTableRow(src, this.row)
-      : act === "insert-col" ? insertTableColumn(src, this.col)
-      : act === "delete-row" ? deleteTableRow(src, this.row)
-      : deleteTableColumn(src, this.col)
+    // Task 4A: structural ops consume the table substring + Lezer model and
+    // return table-relative changes; replace() translates them via livePos().
+    // Dangling open-cell commits against stale offsets are rejected (null) and
+    // leave the input mounted — full two-phase toolbar commits land in Task 5.
+    const next = act === "insert-row" ? insertTableRow(src, this.table, this.row)
+      : act === "insert-col" ? insertTableColumn(src, this.table, this.col)
+      : act === "delete-row" ? deleteTableRow(src, this.table, this.row)
+      : deleteTableColumn(src, this.table, this.col)
     if (!next) return
     this.editing = null
-    this.replace([{ from: 0, to: this.src.length, insert: next }])
+    this.replace(next)
   }
 
   private livePos() {

@@ -207,10 +207,14 @@ describe("tables", () => {
       focus: () => {},
       posAtCoords: () => 0,
       posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
         if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
+          // 结构操作返回多条 table-relative change；像 CodeMirror 一样按
+          // 位置降序应用，避免先应用低位置改动使后续偏移失效。
+          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+          for (const change of [...list].sort((a, b) => b.from - a.from)) {
+            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
+          }
         }
       },
     }
