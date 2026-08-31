@@ -333,6 +333,54 @@ describe("useWorkspaceSearch", () => {
     }
   })
 
+  it("preserves hits reference on relevance-losing transitions when hits are already empty", async () => {
+    // Mutation evidence — why reference identity and not render count:
+    //   setHits([]) always enqueues a new array reference. React cannot perform an
+    //   eager-state bailout ([] !== [] by Object.is) and must enqueue a re-render.
+    //   During that render React does discover the array is logically equal, but it
+    //   has already committed the new reference — so result.current.hits is a
+    //   *different* object from the one produced by the previous render.
+    //   setHits(prev => prev.length === 0 ? prev : []) returns the *same* reference
+    //   when hits is already empty; React's Object.is check passes, the render is
+    //   abandoned before commit, and result.current.hits stays the same object.
+    //   Children subscribed to the hits value (e.g. SearchPanel via App) are spared a
+    //   render on every close/empty-query transition.
+    vi.useFakeTimers()
+    try {
+      const search = vi.fn().mockResolvedValue({ hits: [], truncated: false } satisfies SearchResponse)
+      const { result } = renderHook(() => useWorkspaceSearch({
+        folder: "/notes",
+        search,
+        reportError: vi.fn(),
+        debounceMs: 200,
+      }))
+
+      // Open and let the search resolve so hits settles to an empty array from
+      // the search response.  This gives us a concrete reference to track.
+      act(() => {
+        result.current.setOpen(true)
+        result.current.setQuery("a")
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(200)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(result.current.hits).toEqual([])
+      const hitsRef = result.current.hits   // capture reference
+
+      // Close → guard branch fires → setHits(…) called with hits already empty.
+      act(() => { result.current.setOpen(false) })
+
+      // The reference must be identical (same array object), not just equal in value.
+      // With unconditional setHits([]) this assertion fails: a fresh [] was committed.
+      // With the bailout it passes: the previous reference was preserved.
+      expect(result.current.hits).toBe(hitsRef)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("stops applying a result or error after unmount", async () => {
     vi.useFakeTimers()
     try {
