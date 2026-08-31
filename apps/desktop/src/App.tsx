@@ -2195,10 +2195,7 @@ export default function App({
   // 行数走 CM rope / snapshot，禁止对全文 split（Spec 05b）。
   let activeLines = 0
   try { activeLines = viewRef.current?.state.doc.lines ?? 0 } catch { activeLines = 0 }
-  const activeBytes = documentScaleRegistry.getBytes(workspace.activeId)
-  const safeModeActive = activeLines > SAFE_MODE_LINES
-    || (activeBytes !== undefined && activeBytes > SAFE_MODE_BYTES)
-    || documentScaleRegistry.isReadOnly(workspace.activeId)
+  const safeModeActive = documentScaleRegistry.evaluate(workspace.activeId, activeLines).safeMode
   const stats = useMemo(() => {
     if (safeModeActive && statsRequested === 0) return null
     return documentStats(deferredDoc)

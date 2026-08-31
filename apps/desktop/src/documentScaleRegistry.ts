@@ -27,9 +27,12 @@ export interface DocumentScaleRegistry {
   takeText(tabId: number): Text | undefined
   isReadOnly(tabId: number): boolean
   isSafeMode(tabId: number): boolean
-  /** Read-only accessor for the byte axis, e.g. for callers that must
-   * recompute a classification live (without mutating the cached set). */
-  getBytes(tabId: number): number | undefined
+  /** Pure read of what the classification *would* be for the given live line
+   * count, from current bytes/read-only state. Does not mutate the cached
+   * safe-mode set — callers that need a render-time gate (e.g. reacting to
+   * the document crossing the line threshold mid-typing) use this instead of
+   * `classify`, which would otherwise fire cache writes on every render. */
+  evaluate(tabId: number, lines: number): DocumentScaleClassification
   /** Recomputes safe mode from current bytes/read-only state plus the given
    * line count, and updates the cached safe-mode set accordingly. */
   classify(tabId: number, lines: number): DocumentScaleClassification
@@ -55,15 +58,20 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     return safeModeTabs.has(tabId)
   }
 
-  function classify(tabId: number, lines: number): DocumentScaleClassification {
+  function evaluate(tabId: number, lines: number): DocumentScaleClassification {
     const bytes = bytesByTab.get(tabId)
     const readOnly = isReadOnly(tabId)
     const safeMode = lines > deps.safeModeLines
       || (bytes !== undefined && bytes > deps.safeModeBytes)
       || readOnly
-    if (safeMode) safeModeTabs.add(tabId)
-    else safeModeTabs.delete(tabId)
     return { safeMode, readOnly }
+  }
+
+  function classify(tabId: number, lines: number): DocumentScaleClassification {
+    const result = evaluate(tabId, lines)
+    if (result.safeMode) safeModeTabs.add(tabId)
+    else safeModeTabs.delete(tabId)
+    return result
   }
 
   return {
@@ -85,7 +93,7 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     },
     isReadOnly,
     isSafeMode,
-    getBytes: tabId => bytesByTab.get(tabId),
+    evaluate,
     classify,
     applyRenderPolicy(tabId) {
       const safeMode = isSafeMode(tabId)
