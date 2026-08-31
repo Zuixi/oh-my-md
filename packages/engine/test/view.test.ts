@@ -617,6 +617,27 @@ describe("view smoke (real EditorView)", () => {
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
+  it("merges an open cell edit with an insert-column into one doc-changing transaction", async () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+    const { view, errors, count } = makeInteractView(doc)
+    try {
+      const input = await openTableBodyCell(view, 0)
+      input.value = "9"
+      const before = count()
+      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-col']") as HTMLElement
+      expect(btn).toBeTruthy()
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.click()
+      await tick()
+      // 合并为单一 doc 变更事务；单元格新值与新插入的列一次落盘。
+      expect(count() - before).toBe(1)
+      const out = view.state.doc.toString()
+      expect(out).toContain("| a |  | b |")
+      expect(out).toContain("| 9 |  | 2 |")
+      expect(errors.map(String)).toEqual([])
+    } finally { view.destroy() }
+  })
+
 
   it("two-phase delete-current-row completes against the rebuilt model", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"

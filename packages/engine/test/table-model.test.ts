@@ -39,6 +39,20 @@ describe("tableDataFromNode", () => {
     expect(data.aligns).toEqual(["", "right"])
   })
 
+  it("extracts cells and aligns from short delimiter markers Lezer already accepts", () => {
+    const short = `| A | B |
+| - | -- |
+| 1 | 2 |`
+    const { data } = firstTable(short)
+
+    expect(data.delimiter.cells.map(cell => cell && [cell.source, cell.from, cell.to])).toEqual([
+      ["-", 12, 13],
+      ["--", 16, 18],
+    ])
+    expect(data.aligns).toEqual(["", ""])
+    expect(data.rows[0].cells.map(cell => cell?.source)).toEqual(["1", "2"])
+  })
+
   it("preserves rows without outer pipes", () => {
     const noOuterPipes = `A | B
 --- | ---

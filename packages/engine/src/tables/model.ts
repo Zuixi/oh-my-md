@@ -119,7 +119,7 @@ function delimiterRow(row: SyntaxNode, table: SyntaxNode, state: EditorState): T
   const leadingPipe = /^\s*\|/.test(source)
   const trailingPipe = /\|\s*$/.test(source)
   const cells: TableCellData[] = []
-  const marker = /:?-{3,}:?/g
+  const marker = /:?-{1,}:?/g
   for (let match = marker.exec(source); match; match = marker.exec(source)) {
     const from = row.from + match.index
     cells.push({ source: match[0], text: match[0], from: from - table.from, to: from + match[0].length - table.from })
