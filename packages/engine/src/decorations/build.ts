@@ -29,6 +29,17 @@ function sortDecoSpecs(specs: DecoSpec[]): DecoSpec[] {
   return [...specs].sort((a, b) => a.from - b.from || a.to - b.to || a.tag.localeCompare(b.tag))
 }
 
+// 空行密度折叠不得进入逐字块（代码/数学）：这些块内部的空行参与行网格
+// （编辑态代码块的行号容器、缩进代码的行高一致性），半高折叠会压扁成错行。
+const VERBATIM_BLOCK_NODES = new Set(["FencedCode", "CodeBlock", "MathBlock"])
+
+function insideVerbatimBlock(state: EditorState, pos: number): boolean {
+  for (let node = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent!) {
+    if (VERBATIM_BLOCK_NODES.has(node.name)) return true
+  }
+  return false
+}
+
 export function collectDecorationSpecs(state: EditorState, from: number, to: number): DecoSpec[] {
   const out: DecoSpec[] = []
   syntaxTree(state).iterate({
@@ -48,7 +59,8 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
   // 非行对齐的调用边界由覆盖该行的那次调用负责，避免同一点装饰重复。
   for (let pos = from; pos <= to; ) {
     const line = state.doc.lineAt(pos)
-    if (line.from >= from && line.text.trim() === "" && !nearCursor(state, line.from, line.to)) {
+    if (line.from >= from && line.text.trim() === "" && !nearCursor(state, line.from, line.to) &&
+        !insideVerbatimBlock(state, line.from)) {
       out.push({
         from: line.from, to: line.from, tag: "line:omd-empty",
         deco: Decoration.line({ class: "omd-empty" }),
