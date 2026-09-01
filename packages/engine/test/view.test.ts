@@ -109,18 +109,18 @@ describe("view smoke (real EditorView)", () => {
   })
 
   it("enters opaque block source from its current decoration range", async () => {
-    const doc = "intro\n\n$$\nx^2\n$$\n\ntail"
+    // 数学块已改为点击弹源码编辑框（见 mathPopup.test.ts），这里用表格块验证
+    // “单击进入源码且定位取自装饰现范围”：posAtCoords 被 mock 到文档末尾也不受影响。
+    const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
-    const block = view.dom.querySelector(".omd-math") as HTMLElement
+    const block = view.dom.querySelector(".omd-table") as HTMLElement
     expect(block).toBeTruthy()
-    expect(view.posAtDOM(block, 0)).toBe(doc.indexOf("$$"))
-    expect(view.posAtDOM(block, -1)).toBe(doc.indexOf("$$"))
     vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
 
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
-    expect(view.state.selection.main.head).toBe(doc.indexOf("$$"))
+    expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
