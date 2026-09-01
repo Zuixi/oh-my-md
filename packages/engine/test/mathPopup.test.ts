@@ -89,6 +89,23 @@ describe("math block popup editor", () => {
     view.destroy()
   })
 
+  it("three length-changing keystrokes in a row never corrupt the document", async () => {
+    const { view, errors } = makeView(DOC)
+    await tick()
+    clickBlock(view)
+    const ta = view.dom.querySelector<HTMLTextAreaElement>(".omd-math-editor")!
+    // 回写后重建使 eq 比较 src 漂移，旧实例的 this.pos/this.src 已失效：
+    // 每次都必须从实时文档解析块范围，否则第二次起会替换错区间。
+    for (const tex of ["x+yz", "x+yzw", "x+yzwv"]) {
+      ta.value = tex
+      ta.dispatchEvent(new Event("input", { bubbles: true }))
+      await tick()
+      expect(view.state.doc.toString()).toBe(`$$\n${tex}\n$$\n\ntail`)
+    }
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("typing re-renders the KaTeX preview inside the same widget DOM", async () => {
     const { view, errors } = makeView(DOC)
     await tick()

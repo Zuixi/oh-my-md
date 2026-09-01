@@ -1,4 +1,6 @@
 import { EditorView, WidgetType } from "@codemirror/view"
+import { syntaxTree } from "@codemirror/language"
+import type { SyntaxNode } from "@lezer/common"
 import { BlockWidget } from "../blockWidget"
 import { blockWidgetRange } from "../blockSelectionOverlay"
 
@@ -115,14 +117,23 @@ export class MathBlockWidget extends BlockWidget {
 
   private applyDraft(view: EditorView, wrap: HTMLElement, tex: string) {
     if (view.state.readOnly) return
-    // 从文档实时取块文本：wrap 监听器属于创建它的旧实例，其 this.src 可能过期；
-    // blockWidgetRange 注册的旧实例仍有效，取回范围后按文档现值重建。
-    const range = blockWidgetRange(this, view, wrap)
-    const src = range ? view.state.sliceDoc(range.from, range.to) : this.src
+    // wrap 的 input 监听器属于创建它的旧实例：回写触发重建后，livePreviewField
+    // 持有的是新实例，旧实例的 this.pos/this.src 已漂移。必须从实时文档解析块范围，
+    // 绝不能用构造期偏移量兜底。
+    const range = this.liveRange(view, wrap) ?? blockWidgetRange(this, view, wrap)
+    if (!range) return   // 解析不到实时范围就不猜，宁可丢一次回写也不破坏文档
+    const src = view.state.sliceDoc(range.from, range.to)
     const next = rebuildMathSrc(src, tex)
     if (next === src) return
-    const from = range?.from ?? this.pos
-    view.dispatch({ changes: { from, to: from + src.length, insert: next } })
+    view.dispatch({ changes: { from: range.from, to: range.to, insert: next } })
+  }
+
+  private liveRange(view: EditorView, wrap: HTMLElement): { from: number; to: number } | null {
+    let pos: number
+    try { pos = view.posAtDOM(wrap) } catch { return null }
+    let node: SyntaxNode | null = syntaxTree(view.state).resolve(pos, 1)
+    while (node && node.name !== "MathBlock") node = node.parent
+    return node ? { from: node.from, to: node.to } : null
   }
 
   protected renderPlaceholder(el: HTMLElement) {
