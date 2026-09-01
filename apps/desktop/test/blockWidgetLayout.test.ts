@@ -79,4 +79,34 @@ describe("block widget layout", () => {
     ).join("\n")
     expect(active).toMatch(/background(?:-color)?\s*:\s*var\(--omd-code-bg\)/)
   })
+
+  it("gives the header tools breathing room and keeps copy hover-only", () => {
+    const tools = declarationBlocks(".editor-host .omd-code-tools").join("\n")
+    expect(tools).toMatch(/\bgap\s*:\s*[4-9]px\s*;/)
+    const copy = declarationBlocks(".editor-host .omd-code-copy").join("\n")
+    expect(copy).toMatch(/\bopacity\s*:\s*0\s*;/)
+    expect(copy).toMatch(/\btransition\s*:[^;]*opacity/)
+    // hover 显现 + 键盘可达；copied 态保持可见（否则 check 图标立即消失）
+    expect(declarationBlocks(".editor-host .omd-code-header:hover .omd-code-copy")).toHaveLength(1)
+    expect(declarationBlocks(".editor-host .omd-code-copy:focus-visible")).toHaveLength(1)
+    const copied = declarationBlocks(".editor-host .omd-code-copy.omd-code-copied").join("\n")
+    expect(copied).toMatch(/\bopacity\s*:\s*1\s*;/)
+  })
+
+  it("rounds and elevates the code container without layout margins", () => {
+    const code = declarationBlocks(".editor-host .omd-code").join("\n")
+    expect(code).toMatch(/\bborder-radius\s*:\s*1[0-9]px\s*;/)
+    expect(code).toMatch(/\bbox-shadow\s*:/)
+    // 块 widget 铁律：垂直 margin 不进 CM 高度图（阴影/圆角不占布局，安全）
+    expect(code).not.toMatch(/\bmargin(?:-top|-bottom)?\s*:/)
+    const header = declarationBlocks(".editor-host .omd-code-header").join("\n")
+    expect(header).toMatch(/border-radius\s*:\s*1[0-9]px\s+1[0-9]px\s+0\s+0\s*;/)
+  })
+
+  it("thins the code block scrollbar", () => {
+    const bar = declarationBlocks(".editor-host .omd-code pre::-webkit-scrollbar").join("\n")
+    expect(bar).toMatch(/\bheight\s*:\s*8px\s*;/)
+    const thumb = declarationBlocks(".editor-host .omd-code pre::-webkit-scrollbar-thumb").join("\n")
+    expect(thumb).toMatch(/\bborder-radius\s*:/)
+  })
 })

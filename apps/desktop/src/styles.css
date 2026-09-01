@@ -357,10 +357,19 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 0; background: transparent;
 }
 .editor-host .omd-code pre {
-  margin: 0; padding: 6px 12px 6px 10px; border-radius: 0;
+  margin: 0; padding: 6px 12px 10px 10px; border-radius: 0 0 12px 12px;
   font-family: var(--omd-font-family, ui-monospace, monospace);
   font-size: 0.9em; line-height: 1.45; overflow-x: auto; background: transparent;
+  /* 细滚动条：WKWebView 走 webkit 伪元素，Firefox 语义属性兜底 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--omd-border) transparent;
 }
+.editor-host .omd-code pre::-webkit-scrollbar { height: 8px; }
+.editor-host .omd-code pre::-webkit-scrollbar-thumb {
+  background: var(--omd-border);
+  border-radius: 4px;
+}
+.editor-host .omd-code pre::-webkit-scrollbar-track { background: transparent; }
 .editor-host .omd-code pre code {
   display: flex;
   flex-direction: column;
@@ -368,10 +377,12 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-code {
   border: 1px solid var(--omd-border);
-  border-radius: 6px;
+  border-radius: 12px;
   background: var(--omd-code-block-bg);
   padding: 0;
   overflow: visible;
+  /* 阴影/圆角不占布局（块 widget 铁律：垂直 margin 会漂出 CM 高度图） */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 .editor-host .omd-code-header {
   display: flex;
@@ -379,6 +390,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--omd-border);
+  border-radius: 12px 12px 0 0;
   background: var(--omd-chrome);
 }
 .editor-host .omd-code-title {
@@ -395,7 +407,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-code-tools {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   flex-shrink: 0;
   margin-left: auto;
   padding: 2px;
@@ -479,10 +491,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: 14px;   /* 图标为 1em：钉住原手绘 SVG 的 14px 视觉尺寸 */
   padding: 2px 6px;
   border-radius: 4px;
+  /* 默认隐藏、hover/focus 显现（header 本体常驻，见布局守护测试） */
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 .editor-host .omd-code-copy svg { display: block; }
+.editor-host .omd-code-header:hover .omd-code-copy { opacity: 1; }
+.editor-host .omd-code-copy:focus-visible { opacity: 1; }
 .editor-host .omd-code-copy:hover { color: var(--omd-fg); background: var(--omd-code-bg); }
-.editor-host .omd-code-copy.omd-code-copied { color: var(--omd-link); }
+.editor-host .omd-code-copy.omd-code-copied { color: var(--omd-link); opacity: 1; }
 .editor-host .omd-code-body { padding: 0; }
 .editor-host .omd-code-lines {
   counter-reset: omd-code-line;
