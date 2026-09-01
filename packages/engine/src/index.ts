@@ -1,6 +1,7 @@
 import { markdownLanguageSupport } from "./parse/markdown"
 import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
+import { codeSyntaxHighlighting } from "./highlight/codeHighlight"
 import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 import { renderBudgetFlush } from "./decorations/renderBudget"
 import { orderedNormalizationState } from "./lists/ordered"
@@ -15,6 +16,7 @@ export const LARGE_DOC_LINES = 30000
 export const SAFE_MODE_LINES = 50000
 
 export { collectOutline, type OutlineItem } from "./outline"
+export { codeHighlightStyle } from "./highlight/codeHighlight"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
 export { EXPORT_BODY_CSS } from "./export/styles"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
@@ -110,6 +112,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
     livePreviewCompartment.of(live ? livePreviewExt() : []),
+    codeSyntaxHighlighting(),
     // Replace the default field so create() starts false; keep the same
     // exported `isLivePreview` field for readers (setLivePreview / editorStatus).
     isLivePreview.init(() => live),

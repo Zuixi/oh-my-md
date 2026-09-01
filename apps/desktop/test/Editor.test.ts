@@ -21,6 +21,10 @@ import {
 } from "../src/Editor"
 import { NUB_PX, tightSelectionMarkers } from "../src/tightSelection"
 import { pastePlainText } from "../src/pastePlainText"
+import { isMacOS } from "../src/platform"
+
+/** 打开链接的意图修饰键：macOS ⌘，其它 Ctrl（macOS 的 Ctrl+Click 是右键）。 */
+const openClickModifiers = (): MouseEventInit => (isMacOS() ? { metaKey: true } : { ctrlKey: true })
 
 const TAB_ID = 7
 const DOCUMENT_ID = 11
@@ -150,7 +154,28 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  it("follows same-document anchor links inside the editor", () => {
+  it("plain left-click on a link falls through to caret placement (no navigation)", () => {
+    const onOpenMarkdownHref = vi.fn()
+    const onOpenExternalHref = vi.fn()
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn(), "[n](https://example.com)"), onOpenMarkdownHref, onOpenExternalHref },
+    )
+    const link = view.dom.querySelector(".omd-link")
+    expect(link).not.toBeNull()
+    vi.spyOn(view, "posAtCoords").mockReturnValue(1)
+    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    Object.defineProperty(event, "target", { value: link })
+
+    // Typora 语义：普通左键=编辑（光标落点由 CM 原生 mousedown 完成，引擎
+    // cursorInside 展开被点击的链接）；只有 ⌘/Ctrl+左键才导航。
+    expect(activateLink(view, event)).toBe(false)
+    expect(onOpenExternalHref).not.toHaveBeenCalled()
+    expect(onOpenMarkdownHref).not.toHaveBeenCalled()
+    view.destroy()
+  })
+
+  it("follows same-document anchor links on an open-intent click", () => {
     const view = createEditor(
       document.createElement("div"),
       editorOptions(vi.fn(), "# Guide\n\n[Back](#guide)"),
@@ -158,7 +183,7 @@ describe("desktop editor lifecycle", () => {
     const link = view.dom.querySelector(".omd-link")
     expect(link).not.toBeNull()
     vi.spyOn(view, "posAtCoords").mockReturnValue(10)
-    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ...openClickModifiers() })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)
@@ -176,7 +201,7 @@ describe("desktop editor lifecycle", () => {
     const link = view.dom.querySelector(".omd-link")
     expect(link).not.toBeNull()
     vi.spyOn(view, "posAtCoords").mockReturnValue(1)
-    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ...openClickModifiers() })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)
@@ -186,7 +211,7 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  it("opens a Ctrl-clicked https link through the desktop host", () => {
+  it("opens an open-intent-clicked https link through the desktop host", () => {
     const onOpenMarkdownHref = vi.fn()
     const onOpenExternalHref = vi.fn()
     const open = vi.spyOn(window, "open").mockReturnValue(null)
@@ -199,7 +224,7 @@ describe("desktop editor lifecycle", () => {
     const link = view.dom.querySelector(".omd-link")
     expect(link).not.toBeNull()
     vi.spyOn(view, "posAtCoords").mockReturnValue(1)
-    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ...openClickModifiers() })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)
@@ -210,7 +235,7 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  it("routes a Ctrl-clicked table-cell link through the desktop host", () => {
+  it("routes an open-intent-clicked table-cell link through the desktop host", () => {
     const onOpenExternalHref = vi.fn()
     const view = createEditor(
       document.createElement("div"),
@@ -221,7 +246,7 @@ describe("desktop editor lifecycle", () => {
     link.href = "https://example.com"
     view.dom.appendChild(link)
     vi.spyOn(view, "posAtCoords").mockReturnValue(0)
-    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ...openClickModifiers() })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)

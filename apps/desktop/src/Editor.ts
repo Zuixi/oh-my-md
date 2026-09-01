@@ -17,6 +17,7 @@ import {
 import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
 import { tightSelection } from "./tightSelection"
+import { isMacOS } from "./platform"
 import { CONTENT_MAX_WIDTH } from "./constants"
 import { sameEditorStatus, type EditorStatus } from "./editorStatus"
 import { t } from "./i18n"
@@ -105,6 +106,11 @@ export function activateLink(view: EditorView, event: MouseEvent): boolean {
   const onFootnote = el?.closest(".omd-footnote, .omd-footnote-def")
   const onLink = el?.closest(".omd-link")
   if (!onFootnote && !onLink) return false
+  // Typora 语义（support.typora.io/Links）：普通左键=编辑（光标由 CM 原生
+  // mousedown 放置，引擎 cursorInside 展开被点击的链接）；只有打开意图的
+  // 修饰键点击才导航。macOS 的 Ctrl+Click 是右键（合成上下文菜单），打开
+  // 意图在 darwin 上只认 ⌘；Windows/Linux 认 Ctrl。
+  const openIntent = isMacOS() ? event.metaKey : event.ctrlKey
   const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
   if (pos === null) return false
 
@@ -112,7 +118,7 @@ export function activateLink(view: EditorView, event: MouseEvent): boolean {
     event.preventDefault()
     return true
   }
-  if (!onLink) return false
+  if (!onLink || !openIntent) return false
 
   const href = linkAt(view.state, pos)?.href ?? onLink.getAttribute("href")
   if (!href) return false

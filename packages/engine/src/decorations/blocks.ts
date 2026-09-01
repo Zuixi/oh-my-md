@@ -7,7 +7,7 @@ import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget } from "./widgets/table"
 import { tableDataFromNode } from "../tables/model"
 import { imageResolver } from "./widgets/image"
-import { CodeWidget } from "./widgets/code"
+import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
@@ -119,6 +119,61 @@ function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoS
   }
 }
 
+// 编辑态代码块装饰：开头围栏行替换为 CodeChromeWidget（标题/语言可提交），
+// 内容行加行号与容器类（首/末行负责圆角收边），尾围栏行整行折叠（Setext 式
+// 跨行块替换，含换行）。光标落在任一围栏行上时该围栏保持裸文本可编辑 ——
+// 否则光标会被藏进不可见区域。
+function styleEditingCodeblock(
+  node: SyntaxNodeRef,
+  state: EditorState,
+  out: DecoSpec[],
+  langToken: string,
+  title: string,
+) {
+  const doc = state.doc
+  const sel = state.selection.main
+  const overlaps = (from: number, to: number) => sel.from <= to && sel.to >= from
+  const openLine = doc.lineAt(node.from)
+  const closeLine = doc.lineAt(node.to)
+  const singleFence = openLine.number === closeLine.number
+
+  if (!singleFence && !overlaps(openLine.from, openLine.to)) {
+    out.push({
+      from: openLine.from, to: openLine.to, tag: "widget:code-chrome",
+      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title) }),
+    })
+  }
+  for (let number = openLine.number + 1; number <= closeLine.number - 1; number++) {
+    const line = doc.line(number)
+    out.push({
+      from: line.from, to: line.from, tag: "line:omd-codeblock",
+      deco: Decoration.line({ class: "omd-codeblock" }),
+    })
+    out.push({
+      from: line.from, to: line.from, tag: "line:omd-codeblock-num",
+      deco: Decoration.line({ class: "omd-codeblock-num" }),
+    })
+    if (number === openLine.number + 1) {
+      out.push({
+        from: line.from, to: line.from, tag: "line:omd-codeblock-num-first",
+        deco: Decoration.line({ class: "omd-codeblock-num-first" }),
+      })
+    }
+    if (number === closeLine.number - 1) {
+      out.push({
+        from: line.from, to: line.from, tag: "line:omd-codeblock-num-last",
+        deco: Decoration.line({ class: "omd-codeblock-num-last" }),
+      })
+    }
+  }
+  if (!singleFence && !overlaps(closeLine.from, closeLine.to)) {
+    out.push({
+      from: closeLine.from, to: Math.min(doc.length, closeLine.to + 1),
+      tag: "replace:CloseFence", deco: Decoration.replace({ block: true }),
+    })
+  }
+}
+
 function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   if (cursorInside(state, node.from, node.to)) return
   out.push({
@@ -158,7 +213,14 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     return false
   }
   if (blockSelected(state, node.from, node.to)) {
-    styleCodeblockLines(node, state, out)
+    // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器
+    // 样式、尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。
+    // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
+    if (langToken && langToken !== "mermaid") {
+      styleEditingCodeblock(node, state, out, langToken, title)
+    } else {
+      styleCodeblockLines(node, state, out)
+    }
     return true
   }
   out.push({
