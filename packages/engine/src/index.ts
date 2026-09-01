@@ -64,9 +64,11 @@ export {
 export {
   deleteTableColumn,
   deleteTableRow,
+  escapeTableCellValue,
   insertTableColumn,
   insertTableRow,
   replaceTableCell,
+  type TableSourceChange,
 } from "./tables/edit"
 export {
   convertHtmlToMarkdown,
