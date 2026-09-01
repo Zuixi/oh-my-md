@@ -94,7 +94,19 @@ export abstract class BlockWidget extends WidgetType {
     const editBtn = document.createElement("button")
     editBtn.className = "omd-block-edit"
     editBtn.textContent = "✎"
+    editBtn.title = "View source"
+    editBtn.setAttribute("aria-label", "View source")
     editBtn.tabIndex = -1
+    // ✎ 是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap），wrap 点击不进
+    // 源码的块（表格：enterSourceOnClick=false）仍能经它进入源码编辑。
+    editBtn.addEventListener("mousedown", e => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pos = this.clickPos(view, e, wrap)
+      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
+      view.focus()
+    })
     wrap.appendChild(editBtn)
 
     const body = document.createElement("div")

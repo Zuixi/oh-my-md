@@ -145,6 +145,11 @@ export class TableWidget extends BlockWidget {
       || event.type === "click"
   }
 
+  // wrap（padding/边框/工具栏空隙等非单元格表面）点击不注入光标：单元格就地
+  // 编辑是主入口，误触 wrap 整表翻源码就是表格闪烁。显式源码入口只剩 ✎ 按钮
+  //（blockWidget 基类自带处理器）与键盘 ↑/↓（blockMotionKeymap 有意进源码）。
+  protected enterSourceOnClick(): boolean { return false }
+
   protected get cssClass() { return "omd-table" }
 
   protected renderInto(el: HTMLElement) {

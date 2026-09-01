@@ -99,34 +99,36 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("clicking a block widget moves the cursor into the block (source edit)", async () => {
-    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n")
-    await tick()
-    const block = view.dom.querySelector(".omd-block") as HTMLElement
-    expect(block).toBeTruthy()
-    // happy-dom 无 layout，posAtCoords 返回 null，fallback 到 posAtDOM(wrap) = 0。
-    // 真实浏览器中 posAtCoords 会用鼠标坐标精确定位。
-    block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
-    expect(view.state.selection.main.head).toBe(0)
-    await tick()
-    expect(view.dom.querySelector(".omd-block")).toBeNull()  // widget 已卸载，回到源码
-    expect(errors.map(String)).toEqual([])
-    view.destroy()
-  })
-
-  it("enters opaque block source from its current decoration range", async () => {
-    // 数学块已改为点击弹源码编辑框（见 mathPopup.test.ts），这里用表格块验证
-    // “单击进入源码且定位取自装饰现范围”：posAtCoords 被 mock 到文档末尾也不受影响。
+  it("clicking a table's non-cell surface keeps it rendered (no source flash)", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
     const block = view.dom.querySelector(".omd-table") as HTMLElement
     expect(block).toBeTruthy()
-    vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
+    const headBefore = view.state.selection.main.head
 
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()   // wrap 点击不再注入光标
+    expect(view.state.selection.main.head).toBe(headBefore)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("clicking a block widget's edit button moves the cursor into the block", async () => {
+    const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const btn = view.dom.querySelector(".omd-table .omd-block-edit") as HTMLElement
+    expect(btn).toBeTruthy()
+    // posAtCoords 被 mock 到文档末尾也不受影响：定位取自装饰现范围（identity-first）。
+    vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
+
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+
     expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
+    await tick()
+    expect(view.dom.querySelector(".omd-table")).toBeNull()   // widget 卸载，进入源码
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
