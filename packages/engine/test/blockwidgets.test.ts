@@ -91,6 +91,16 @@ describe("block widget pipeline", () => {
     expect(t).not.toContain("widget:block:code")
   })
 
+  it("unmounts a mermaid widget when the cursor is inside the block", () => {
+    const doc = "intro\n\n```mermaid\ngraph TD; A-->B\n```\n"
+    const state = makeState(doc)
+    // 光标落在 mermaid 内容行（"graph..." 从 18 起）
+    const on = state.update({ selection: { anchor: 20 } }).state
+    const t = collectDecorationSpecs(on, 0, doc.length).map(d => d.tag)
+    expect(t).not.toContain("widget:block:mermaid")
+    expect(t).toContain("line:omd-codeblock")
+  })
+
   it("image becomes inline widget off-cursor, resolves src via facet", () => {
     const doc = "intro\n\n![alt](assets/pic.png)"
     const state = makeState(doc, [imageResolverTestFacet])

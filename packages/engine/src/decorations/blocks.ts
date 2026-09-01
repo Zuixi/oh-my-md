@@ -140,7 +140,10 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     return true
   }
 
-  if (langToken === "mermaid") {
+  // mermaid 与 lang-code 同一编辑模型：光标进入块 → 卸载成源码行。✎/wrap 点击、
+  // ↑/↓ 进块派发的光标都依赖 blockSelected 门控触发卸载；缺门控时光标会落入被
+  // replace 隐藏的源码区（✎ 点击"无效"、打字盲改）。
+  if (langToken === "mermaid" && !blockSelected(state, node.from, node.to)) {
     out.push({
       from: node.from, to: node.to, tag: "widget:block:mermaid",
       deco: Decoration.replace({ widget: new MermaidWidget(src, node.from, embed), block: true }),
