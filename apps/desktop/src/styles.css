@@ -472,8 +472,10 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: 0.85em;
   line-height: inherit;
 }
-.editor-host .omd-math { overflow-x: auto; padding: 4px 0; }
-.editor-host .omd-inline-math { padding: 0 2px; }
+.editor-host .omd-math { overflow-x: auto; padding: 4px 0; cursor: pointer; }
+.editor-host .omd-block.omd-math:hover { background: var(--omd-code-bg); border-radius: 6px; }
+.editor-host .omd-inline-math { padding: 0 2px; cursor: pointer; border-radius: 4px; }
+.editor-host .omd-inline-math:hover { background: var(--omd-code-bg); }
 .editor-host .omd-image { max-width: 100%; border-radius: 4px; }
 .editor-host .omd-image-broken {
   font-size: 0.85em; color: var(--omd-error-fg); background: var(--omd-error-bg);
