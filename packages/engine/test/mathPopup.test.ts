@@ -45,7 +45,9 @@ async function waitForTex(view: EditorView, tex: string, timeout = 3000) {
 function clickBlock(view: EditorView) {
   const block = view.dom.querySelector(".omd-math") as HTMLElement
   expect(block).toBeTruthy()
-  block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })
+  block.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
   return block
 }
 
