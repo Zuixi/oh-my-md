@@ -1,7 +1,7 @@
 # Table Editing Reliability Design
 
-**Date:** 2026-08-31  
-**Status:** Approved direction from the table implementation review  
+**Date:** 2026-08-31
+**Status:** Approved direction from the table implementation review
 **Supersedes:** The whole-table rewrite architecture in [`2026-08-16-15-table-editing-design.md`](./2026-08-16-15-table-editing-design.md)
 
 ## Goal
