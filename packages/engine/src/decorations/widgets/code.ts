@@ -10,6 +10,7 @@ import {
 } from "../renderBudget"
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
+import { icon } from "../icons"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
@@ -48,34 +49,6 @@ function clickedLineIndex(target: EventTarget | null): number {
   let index = 0
   for (let sibling = line.previousElementSibling; sibling; sibling = sibling.previousElementSibling) index++
   return index
-}
-
-function copyIcon(): SVGSVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-  svg.setAttribute("viewBox", "0 0 16 16")
-  svg.setAttribute("width", "14")
-  svg.setAttribute("height", "14")
-  svg.setAttribute("aria-hidden", "true")
-  const rear = document.createElementNS("http://www.w3.org/2000/svg", "rect")
-  rear.setAttribute("x", "2")
-  rear.setAttribute("y", "2")
-  rear.setAttribute("width", "8")
-  rear.setAttribute("height", "9")
-  rear.setAttribute("rx", "1.2")
-  rear.setAttribute("fill", "none")
-  rear.setAttribute("stroke", "currentColor")
-  rear.setAttribute("stroke-width", "1.4")
-  const front = document.createElementNS("http://www.w3.org/2000/svg", "rect")
-  front.setAttribute("x", "5")
-  front.setAttribute("y", "5")
-  front.setAttribute("width", "8")
-  front.setAttribute("height", "9")
-  front.setAttribute("rx", "1.2")
-  front.setAttribute("fill", "none")
-  front.setAttribute("stroke", "currentColor")
-  front.setAttribute("stroke-width", "1.4")
-  svg.append(rear, front)
-  return svg
 }
 
 export class CodeWidget extends BlockWidget {
@@ -198,7 +171,7 @@ export class CodeWidget extends BlockWidget {
     copyBtn.className = "omd-code-copy"
     copyBtn.title = "Copy"
     copyBtn.setAttribute("aria-label", "Copy")
-    copyBtn.appendChild(copyIcon())
+    copyBtn.appendChild(icon("copy"))
     copyBtn.addEventListener("click", e => {
       e.preventDefault()
       e.stopPropagation()
@@ -248,16 +221,16 @@ export class CodeWidget extends BlockWidget {
   }
 
   private copy(btn: HTMLButtonElement) {
-    const mark = (ok: boolean) => {
+    const apply = (ok: boolean) => {
       btn.classList.toggle("omd-code-copied", ok)
       btn.title = ok ? "Copied" : "Copy"
       btn.setAttribute("aria-label", ok ? "Copied" : "Copy")
+      btn.replaceChildren(icon(ok ? "check" : "copy"))
+    }
+    const mark = (ok: boolean) => {
+      apply(ok)
       if (this.copyReset) clearTimeout(this.copyReset)
-      this.copyReset = setTimeout(() => {
-        btn.classList.remove("omd-code-copied")
-        btn.title = "Copy"
-        btn.setAttribute("aria-label", "Copy")
-      }, COPY_RESET_MS)
+      this.copyReset = setTimeout(() => apply(false), COPY_RESET_MS)
     }
     const write = navigator.clipboard?.writeText(this.src)
     if (!write) {
@@ -306,7 +279,10 @@ export class CodeWidget extends BlockWidget {
   private renderError(el: HTMLElement, err: unknown, view: EditorView) {
     if (!this.isActive(el)) return
     el.classList.add("omd-block-error")
-    el.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
+    el.replaceChildren(
+      icon("triangle-alert"),
+      document.createTextNode(` ${err instanceof Error ? err.message : err}\n\n${this.src}`),
+    )
     view.requestMeasure()
     if (typeof view.dispatch === "function") {
       const pos = blockWidgetRange(this, view, this.wrap!)?.from ?? this.pos

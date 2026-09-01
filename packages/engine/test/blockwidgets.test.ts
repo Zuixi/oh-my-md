@@ -165,6 +165,33 @@ describe("block widget pipeline", () => {
     dom.remove()
   })
 
+  it("renders the block source toggle as an svg code icon, not a text glyph", () => {
+    const view = { requestMeasure: () => {} } as never
+    const probe = new ProbeWidget("x", 0).toDOM(view)
+    const editBtn = probe.querySelector(".omd-block-edit") as HTMLElement
+    expect(editBtn.querySelector("svg.omd-icon")).toBeTruthy()
+    expect(editBtn.textContent).toBe("")            // ✎ 文本字形退役
+    expect(editBtn.getAttribute("aria-label")).toBe("View source")
+    probe.remove()
+  })
+
+  it("renders the table toolbar with svg icons and semantic labels", async () => {
+    const view = { requestMeasure: () => {} } as never
+    const table: TableData = { header: ["a"], rows: [["1"]], aligns: [""] }
+    const dom = new TableWidget("| a |\n|---|\n| 1 |", 0, table).toDOM(view)
+    await new Promise(resolve => setTimeout(resolve, 0))   // renderInto 走微任务
+    const buttons = [...dom.querySelectorAll(".omd-table-toolbar button")] as HTMLElement[]
+    expect(buttons).toHaveLength(4)
+    for (const btn of buttons) {
+      expect(btn.querySelector("svg.omd-icon")).toBeTruthy()
+      expect(btn.textContent).toBe("")
+    }
+    expect(buttons.map(btn => btn.getAttribute("aria-label"))).toEqual([
+      "Insert row below", "Insert column right", "Delete row", "Delete column",
+    ])
+    dom.remove()
+  })
+
   it("installs async block placeholders before the first layout measure", () => {
     const view = { requestMeasure: () => {} } as never
     const math = new MathBlockWidget("$$\nx^2\n$$", 0).toDOM(view)
@@ -272,7 +299,8 @@ describe("block widget pipeline", () => {
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     widget.destroy(dom)
     await new Promise(resolve => setTimeout(resolve, 600))
-    expect(dom.querySelector("svg")).toBeNull()
+    // 编辑按钮自带 svg.omd-icon，这里只断言 mermaid 渲染输出未写入
+    expect(dom.querySelector("svg.omd-mermaid-svg")).toBeNull()
     expect(dom.querySelector(".omd-block-body")?.textContent).toBe("graph TD; A-->B")
   }, 2000)
 })

@@ -8,6 +8,7 @@ import {
   replaceTableCell,
 } from "../../tables/edit"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
+import { icon, type IconName } from "../icons"
 
 let resumeEdit: { pos: number; row: number; col: number } | null = null
 
@@ -155,20 +156,21 @@ export class TableWidget extends BlockWidget {
   protected renderInto(el: HTMLElement) {
     // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
     // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
-    const readonly = this.view?.state.readOnly ?? false
+    const readonly = this.view?.state?.readOnly ?? false
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
-    for (const [act, label, title] of [
-      ["insert-row", "+row", "Insert row below"],
-      ["insert-col", "+col", "Insert column right"],
-      ["delete-row", "−row", "Delete row"],
-      ["delete-col", "−col", "Delete column"],
-    ] as const) {
+    for (const [act, iconName, title] of [
+      ["insert-row", "row-insert-bottom", "Insert row below"],
+      ["insert-col", "column-insert-right", "Insert column right"],
+      ["delete-row", "row-remove", "Delete row"],
+      ["delete-col", "column-remove", "Delete column"],
+    ] as const satisfies readonly [string, IconName, string][]) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act
-      btn.textContent = label
+      btn.appendChild(icon(iconName))
       btn.title = title
+      btn.setAttribute("aria-label", title)
       btn.tabIndex = -1
       btn.disabled = readonly
       btn.addEventListener("mousedown", e => {

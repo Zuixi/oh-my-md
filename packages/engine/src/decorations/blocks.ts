@@ -1,7 +1,7 @@
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
-import { cursorInside, nearCursor, type DecoSpec } from "./types"
+import { cursorInside, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, type TableAlignment, type TableData } from "./widgets/table"

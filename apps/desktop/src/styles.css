@@ -241,6 +241,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border: none; background: transparent; color: var(--omd-muted); cursor: pointer;
   font-size: 12px; opacity: 0; transition: opacity 0.15s;
 }
+/* 内联 SVG 图标（engine decorations/icons.ts）：1em 跟随宿主 font-size，
+   currentColor 描边自动适配主题；基线对齐用于错误块等文本流场景。 */
+.editor-host svg.omd-icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: none;
+}
 .editor-host .omd-block:hover .omd-block-edit { opacity: 1; }
 .editor-host .omd-block-error {
   font-family: ui-monospace, monospace; font-size: 0.85em;
@@ -442,6 +449,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-muted);
   cursor: pointer;
   line-height: 1;
+  font-size: 14px;   /* 图标为 1em：钉住原手绘 SVG 的 14px 视觉尺寸 */
   padding: 2px 6px;
   border-radius: 4px;
 }
