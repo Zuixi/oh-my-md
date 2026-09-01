@@ -467,6 +467,79 @@ describe("lazy session restore (Spec 05b)", () => {
     expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
     expect(safeModeRenderingEnabled()).toBe(true)
   })
+
+  it("clears read-only state when a failed lazy load retries at a lower tier", async () => {
+    // 惰性 tab 的首次装载在 resetTabDocument 抛错时保持惰性（会话回滚），档位
+    // 元数据却已写入：重试若只在 readonly 档写 setReadOnly，降档重试会留下过期
+    // 只读标记，文档看着正常却不可编辑。写入必须无条件。
+    const harness = createAppHarness(editor)
+    harness.seedFile("/small.md", "small")
+    harness.seedFile("/lazy.md", "lazy body")
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/small.md", "/lazy.md"],
+      activePath: "/small.md",
+    }))
+    let lazyIsHuge = true
+    harness.services.statDocument = vi.fn(async (path: string) => ({
+      kind: "existing" as const,
+      requestedPath: path,
+      sizeBytes: path === "/lazy.md" && lazyIsHuge ? OPEN_READONLY_THRESHOLD_BYTES + 1 : 5,
+    }))
+    harness.services.confirmReadonlyOpen = vi.fn(() => true)
+    harness.renderApp()
+    await waitFor(() => expect(harness.editorForTab(1).getOptions().doc).toBe("small"))
+
+    harness.failNextReset(new Error("reset failed"))
+    harness.activateTab(2)
+    await waitFor(() => expect(harness.services.reportError).toHaveBeenCalled())
+
+    lazyIsHuge = false
+    harness.activateTab(1)
+    harness.activateTab(2)
+    await waitFor(() => expect(harness.editorForTab(2).getOptions().doc).toBe("lazy body"))
+    expect(harness.editorForTab(2).getOptions().readOnly).toBe(false)
+  })
+
+  it("clears stale byte metadata when a lazy retry reports no stats", async () => {
+    // 同理字节数：重试快照没有 stats 时必须清掉旧值，否则过期的大档字节数
+    // 会把普通文档钉在安全模式（窗口化装饰 + 渲染预算）。
+    const harness = createAppHarness(editor)
+    harness.seedFile("/small.md", "small")
+    let lazyStats: { byteLength: number; lineCount: number } | undefined = {
+      byteLength: SAFE_MODE_BYTES + 1,
+      lineCount: 1,
+    }
+    const readSmall = harness.services.readDocument
+    harness.services.readDocument = vi.fn(async (path: string) => {
+      if (path !== "/lazy.md") return readSmall(path)
+      return {
+        kind: "existing" as const,
+        requestedPath: "/lazy.md",
+        contents: "lazy body",
+        version: versionFor("/lazy.md", "lazy body"),
+        ...(lazyStats ? { stats: lazyStats } : {}),
+      }
+    })
+    harness.services.getSessionState = vi.fn(async () => ({
+      folder: null,
+      openPaths: ["/small.md", "/lazy.md"],
+      activePath: "/small.md",
+    }))
+    harness.renderApp()
+    await waitFor(() => expect(harness.editorForTab(1).getOptions().doc).toBe("small"))
+
+    harness.failNextReset(new Error("reset failed"))
+    harness.activateTab(2)
+    await waitFor(() => expect(harness.services.reportError).toHaveBeenCalled())
+
+    lazyStats = undefined
+    harness.activateTab(1)
+    harness.activateTab(2)
+    await waitFor(() => expect(harness.editorForTab(2).getOptions().doc).toBe("lazy body"))
+    expect(safeModeRenderingEnabled()).toBe(false)
+    expect(blockRenderBudget()).toBe(Infinity)
+  })
 })
 
 function bigDoc(lines: number): string {

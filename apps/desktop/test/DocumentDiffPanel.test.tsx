@@ -5,6 +5,7 @@ import { DocumentDiffPanel } from "../src/DocumentDiffPanel"
 import { createFileSession } from "../src/session"
 import { StatusBar } from "../src/StatusBar"
 import { TopBar } from "../src/TopBar"
+import { createEditorStatusStore } from "../src/editorStatusStore"
 
 const version = { resolvedPath: "/notes/a.md", fingerprint: "v1:aa" } as const
 
@@ -66,9 +67,8 @@ describe("StatusBar save status", () => {
   it("shows the save status as its own node", () => {
     render(
       <StatusBar
+        statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
         stats={{ words: 0, chars: 0 }}
-        cursor="1:1"
-        mode="live"
         normalizationReviewRequired={false}
         saveStatus="conflict"
       />,
@@ -79,9 +79,8 @@ describe("StatusBar save status", () => {
   it("shows CJK-aware word and char counts", () => {
     render(
       <StatusBar
+        statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
         stats={{ words: 4, chars: 4 }}
-        cursor="1:1"
-        mode="live"
         normalizationReviewRequired={false}
         saveStatus="idle"
       />,

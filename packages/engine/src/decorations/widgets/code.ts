@@ -1,10 +1,10 @@
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
-import { createHighlighterCore, type HighlighterCore } from "shiki/core"
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../../shiki/languages"
+import { getCodeHighlighter } from "../../shiki/codeHighlighter"
 import { createCodeLangPicker } from "./codeLangPicker"
 import { replaceFenceInfo } from "../../fenceInfo"
 import { EditorView } from "@codemirror/view"
+import { createCodeHtmlCache } from "./codeHtmlCache"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "../renderBudget"
@@ -16,20 +16,7 @@ const DEFAULT_TITLE_PLACEHOLDER = "Code block"
 const COPY_RESET_MS = 1500
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
-let highlighterPromise: Promise<HighlighterCore> | null = null
-const htmlCache = new Map<string, string>()
-
-function getHighlighter(): Promise<HighlighterCore> {
-  return highlighterPromise ??= Promise.all([
-    import("shiki/themes/github-light.mjs"),
-    import("shiki/themes/github-dark.mjs"),
-  ]).then(([light, dark]) =>
-    createHighlighterCore({
-      themes: [light.default, dark.default],
-      langs: [],
-      engine: createJavaScriptRegexEngine(),
-    }))
-}
+const htmlCache = createCodeHtmlCache()
 
 export interface CodeWidgetOptions {
   src: string
@@ -245,13 +232,14 @@ export class CodeWidget extends BlockWidget {
       const lang = resolveCodeLanguage(this.lang)
       if (!lang) return
       const cacheKey = `${lang}:${this.src}`
-      if (htmlCache.has(cacheKey)) {
-        if (this.isActive(el)) el.innerHTML = htmlCache.get(cacheKey)!
+      const cached = htmlCache.get(cacheKey)
+      if (cached !== undefined) {
+        if (this.isActive(el)) el.innerHTML = cached
         return
       }
       await new Promise(r => setTimeout(r, RENDER_DEBOUNCE_MS))
       if (!this.isActive(el)) return
-      const hl = await getHighlighter()
+      const hl = await getCodeHighlighter()
       if (!this.isActive(el)) return
       if (!hl.getLoadedLanguages().includes(lang)) {
         const grammar = await LANGUAGE_LOADERS[lang]()

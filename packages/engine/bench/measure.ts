@@ -14,6 +14,7 @@ import {
 import { setLivePreview } from "../src/modes/livePreview"
 import { documentStats } from "../src/stats"
 import { LIVE_PRUNE_MARGIN_CHARS, LIVE_WINDOW_CHARS } from "../src/safeModeRendering"
+import { nearestChunk, pendingInWindow } from "../src/decorations/buildDriver"
 
 export const TYPING_P95_BUDGET_MS = 16
 export const STATS_BUDGET_MS = 8
@@ -25,6 +26,13 @@ export const TOGGLE_SEED_BUDGET_MS = 100
 export interface TypingLatency { p50Ms: number; p95Ms: number; samples: number }
 
 export interface LiveToggleLatency { toggleP95Ms: number; seedP95Ms: number; samples: number }
+
+function ranges(count: number, width: number, gap: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const from = index * (width + gap)
+    return { from, to: from + width - 1 }
+  })
+}
 
 function percentile(sorted: number[], p: number): number {
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)
@@ -105,6 +113,21 @@ export function measureStatsMs(doc: string): number {
   const t0 = performance.now()
   documentStats(doc)
   return performance.now() - t0
+}
+
+export function measureFragmentedRangeSelection(options: {
+  pendingCount: number
+  regionCount: number
+  iterations: number
+}): number {
+  const pending = ranges(options.pendingCount, 32, 32)
+  const regions = ranges(options.regionCount, 16, 1000)
+  const started = performance.now()
+  for (let i = 0; i < options.iterations; i++) {
+    const targets = pendingInWindow(pending, regions)
+    if (targets.length > 0) nearestChunk(targets, regions)
+  }
+  return (performance.now() - started) / options.iterations
 }
 
 /** ⌘E 切 Live 的模式切换悬崖（本计划 Task 1 的动机场景）：source 稳态（挂 view、

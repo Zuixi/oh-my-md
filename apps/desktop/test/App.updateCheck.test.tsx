@@ -56,6 +56,17 @@ function openPaletteAndRun(query: string) {
 }
 
 describe("update check wiring", () => {
+  it("routes editor external links through the desktop opener", () => {
+    const harness = createAppHarness(editor)
+    const openExternal = vi.fn(async () => undefined)
+    harness.services.openExternal = openExternal
+
+    harness.renderApp()
+    harness.editorForTab(1).getOptions().onOpenExternalHref?.("https://example.com")
+
+    expect(openExternal).toHaveBeenCalledWith("https://example.com")
+  })
+
   it("shows a dismissible banner when a manual check finds an update", async () => {
     const harness = createAppHarness(editor)
     harness.services.checkForUpdates = vi.fn(async () => ({

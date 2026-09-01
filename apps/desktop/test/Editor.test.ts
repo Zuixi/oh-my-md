@@ -186,23 +186,46 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
-  it("opens https links with window.open", () => {
+  it("opens a Ctrl-clicked https link through the desktop host", () => {
     const onOpenMarkdownHref = vi.fn()
+    const onOpenExternalHref = vi.fn()
     const open = vi.spyOn(window, "open").mockReturnValue(null)
-    const view = createEditor(
-      document.createElement("div"),
-      { ...editorOptions(vi.fn(), "[n](https://example.com)"), onOpenMarkdownHref },
-    )
+    const options: CreateEditorOptions = {
+      ...editorOptions(vi.fn(), "[n](https://example.com)"),
+      onOpenMarkdownHref,
+      onOpenExternalHref,
+    }
+    const view = createEditor(document.createElement("div"), options)
     const link = view.dom.querySelector(".omd-link")
     expect(link).not.toBeNull()
     vi.spyOn(view, "posAtCoords").mockReturnValue(1)
-    const event = new MouseEvent("click", { bubbles: true, button: 0 })
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
     Object.defineProperty(event, "target", { value: link })
 
     expect(activateLink(view, event)).toBe(true)
-    expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer")
+    expect(onOpenExternalHref).toHaveBeenCalledWith("https://example.com")
     expect(onOpenMarkdownHref).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
     open.mockRestore()
+    view.destroy()
+  })
+
+  it("routes a Ctrl-clicked table-cell link through the desktop host", () => {
+    const onOpenExternalHref = vi.fn()
+    const view = createEditor(
+      document.createElement("div"),
+      { ...editorOptions(vi.fn()), onOpenExternalHref },
+    )
+    const link = document.createElement("a")
+    link.className = "omd-link"
+    link.href = "https://example.com"
+    view.dom.appendChild(link)
+    vi.spyOn(view, "posAtCoords").mockReturnValue(0)
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true })
+    Object.defineProperty(event, "target", { value: link })
+
+    expect(activateLink(view, event)).toBe(true)
+    expect(onOpenExternalHref).toHaveBeenCalledWith("https://example.com")
     view.destroy()
   })
 
@@ -304,6 +327,22 @@ describe("desktop editor lifecycle", () => {
     )
     expect(view.lineWrapping).toBe(true)
     view.destroy()
+  })
+
+  it("keeps half a viewport of trailing scroll space without changing horizontal padding", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/Editor.ts"), "utf8")
+    expect(source).toContain('padding: "16px 24px max(16px, 50vh)"')
+    expect(source).toContain('margin: "0 auto"')
+  })
+
+  it("uses the selected editor font for inline and source-style code", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
+    for (const selector of [".omd-inline-code", ".omd-codeblock"]) {
+      const escaped = selector.replace(".", "\\.")
+      expect(styles).toMatch(new RegExp(
+        `${escaped}[^}]*font-family\\s*:\\s*var\\(--omd-font-family,\\s*ui-monospace,\\s*monospace\\)`,
+      ))
+    }
   })
 
   it("keeps the active-line decoration for focus mode while painting no background of its own", () => {
@@ -443,6 +482,35 @@ describe("desktop editor lifecycle", () => {
     view.dispatch({ selection: { anchor: 5 } })
     await pastePlainText(view)
     expect(view.state.doc.toString()).toBe("hello**bold**")
+    view.destroy()
+  })
+
+  it("reports cursor and mode without adding document text to update payloads", () => {
+    const onDocumentUpdate = vi.fn()
+    const onStatusChange = vi.fn()
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(onDocumentUpdate, "# Title\nbody"),
+      onStatusChange,
+    })
+
+    onStatusChange.mockClear()
+    view.dispatch({ selection: { anchor: 9 } })
+
+    expect(onDocumentUpdate).not.toHaveBeenCalled()
+    expect(onStatusChange).toHaveBeenLastCalledWith({ cursor: "2:2", mode: "live" })
+    view.destroy()
+  })
+
+  it("deduplicates unchanged status snapshots", () => {
+    const onStatusChange = vi.fn()
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), "body"),
+      onStatusChange,
+    })
+
+    onStatusChange.mockClear()
+    view.dispatch({ annotations: [] })
+    expect(onStatusChange).not.toHaveBeenCalled()
     view.destroy()
   })
 

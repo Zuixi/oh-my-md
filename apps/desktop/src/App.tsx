@@ -5,6 +5,8 @@ import {
 } from "./Editor"
 import { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
+import { createEditorStatusStore } from "./editorStatusStore"
+import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
   applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
@@ -96,7 +98,8 @@ import {
 import { CommandPalette } from "./CommandPalette"
 import { QuickOpenModal } from "./QuickOpenModal"
 import { VersionHistoryModal } from "./VersionHistoryModal"
-import { SearchPanel, type SearchHit } from "./SearchPanel"
+import { SearchPanel } from "./SearchPanel"
+import { useWorkspaceSearch } from "./useWorkspaceSearch"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import {
   toggleBold,
@@ -117,6 +120,7 @@ import {
   type UserSettings,
 } from "./settings"
 import { initLocale, setLocale, useT } from "./i18n"
+import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
@@ -285,6 +289,9 @@ export default function App({
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
   const viewRef = useRef<EditorView | null>(null)
   const viewsRef = useRef(new Map<number, EditorView>())
+  // Task 3：状态栏订阅这个外部 store，与 App 渲染树解耦——光标/模式逐键更新
+  // 不再经 App state，避免每键触发整棵应用重渲染。每次 App 挂载仅建一个实例。
+  const [editorStatusStore] = useState(createEditorStatusStore)
   const workspaceRef = useRef<Workspace>(createWorkspace())
   const [workspace, setWorkspace] = useState(workspaceRef.current)
   const sessionRef = useRef<EditorSession>(activeSession(workspaceRef.current))
@@ -341,30 +348,39 @@ export default function App({
   const [typewriter, setTypewriter] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
   // Spec 05a：拉取式物化——doc 更新只发轻量信号，内容按 250ms 节奏从 view 拉取。
-  const pendingDocTabsRef = useRef(new Set<number>())
-  const docMaterializeTimerRef = useRef<number | null>(null)
-  // 每键（仅 docChanged，纯选区更新在 reportEditorUpdate 已早退）触发一次 O(UI) 重渲染：
-  // 状态栏光标列号在渲染期读 viewRef（editorStatus），需要每键刷新才能与 05a 前行为一致。
-  // stats/find 均不在此渲染路径上（memo/防抖），不会引入 O(doc)。
-  const [, setDocVersion] = useState(0)
-  // Spec 05：安全模式。choice 只存内存（本会话），不写 localStorage、不进 session 持久化。
-  // Set 只记录经菜单/命令面板 source 命令切过模式的 tab —— 编辑器内 ⌘E keymap
-  // 由引擎直接 toggle，不经过此写入点。渐进渲染落地后策略不再强制模式
-  // （safeModeTabsRef 的预算/窗口化与模式正交），此集合暂不驱动任何行为，
-  // 保留以免丢失「本会话用户切过模式」这一信号。
-  const safeModeChoiceRef = useRef(new Set<number>())
-  // 处于安全模式渲染预算下的 tab。预算是 engine 全局状态而安全模式是 per-tab 的，
-  // 激活切换时按此集重应用（useEffect on activeId 兜住 focusTab/会话恢复等全部路径）。
-  const safeModeTabsRef = useRef(new Set<number>())
-  // Spec 05b：每个 tab 的精确 UTF-8 字节数（read_document stats）。行数阈值对
-  // 长行文件有盲区，字节数补上第二根轴；策略在 applyDocumentScalePolicy 读取。
-  const docBytesRef = useRef(new Map<number, number>())
-  // Task 10：LARGE 档流式打开组装出的 Text，view 尚未创建的窗口期（新 tab /
-  // 惰性 tab 首激活）暂存于此，ensureViews 建 view 时消费即删 —— 只在「打开完成
-  // → effect 建 view」的一拍内存活，不留常驻大对象副本。
-  const docTextsRef = useRef(new Map<number, Text>())
-  // HUGE（只读实时预览）档的 tab；editorOptions 与档位策略按此装配。
-  const readonlyTabsRef = useRef(new Set<number>())
+  // 协调器只建一次（每次 App 挂载一个实例），持有 pending set + trailing timer；
+  // 依赖闭包只捕获稳定 ref/setState，重渲染不需要重建它（不要运行时改 delayMs）。
+  const materializerRef = useRef<DocumentMaterializer | null>(null)
+  if (!materializerRef.current) {
+    materializerRef.current = createDocumentMaterializer({
+      delayMs: docMaterializeMs,
+      readViewText: tabId => viewsRef.current.get(tabId)?.state.doc.toString() ?? null,
+      materialize: (tabId, contents) => {
+        syncDoc(contents, tabId)
+        const tab = workspaceRef.current.tabs.find(item => item.id === tabId)
+        if (tab) saveRecovery(tab, contents)
+      },
+      setTimer: (callback, ms) => window.setTimeout(callback, ms),
+      clearTimer: id => window.clearTimeout(id),
+    })
+  }
+  const materializer = materializerRef.current
+  // Spec 05/05b：文档档位（安全模式集合、字节数、只读标记、流式打开暂存 Text）
+  // 的单一持有者，取代原先四个并行的 ref（safeModeTabsRef / docBytesRef /
+  // docTextsRef / readonlyTabsRef）。预算/窗口化是 engine 进程级全局而安全模式
+  // 是 per-tab 的，激活切换时经 registry.applyRenderPolicy 重应用（useEffect on
+  // activeId 兜住 focusTab/会话恢复等全部路径）。
+  const documentScaleRegistryRef = useRef<DocumentScaleRegistry | null>(null)
+  if (!documentScaleRegistryRef.current) {
+    documentScaleRegistryRef.current = createDocumentScaleRegistry({
+      safeModeLines: SAFE_MODE_LINES,
+      safeModeBytes: SAFE_MODE_BYTES,
+      renderBudgetLines: SAFE_MODE_RENDER_BUDGET_LINES,
+      setRenderBudget: setBlockRenderBudget,
+      setSafeModeRendering,
+    })
+  }
+  const documentScaleRegistry = documentScaleRegistryRef.current
   // LARGE 档流式打开的进度（overlay 百分比）。
   const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
   // LARGE 档确认本会话只需一次；HUGE（只读）每次都问。
@@ -387,14 +403,14 @@ export default function App({
     entries: SnapshotEntry[]
     loading: boolean
   }>({ open: false, path: null, entries: [], loading: false })
-  const [searchOpen, setSearchOpen] = useState(false)
-  const searchOpenRef = useRef(searchOpen)
-  searchOpenRef.current = searchOpen
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchHits, setSearchHits] = useState<SearchHit[]>([])
-  const [searchTruncated, setSearchTruncated] = useState(false)
-  const [searchCase, setSearchCase] = useState(false)
-  const searchRequestRef = useRef(0)
+  const search = useWorkspaceSearch({
+    folder: workspace.folder,
+    search: services.searchMarkdown,
+    reportError: error => services.reportError(errorMessage(t("error.searchFailed"), error)),
+    debounceMs: SEARCH_DEBOUNCE_MS,
+  })
+  const searchOpenRef = useRef(search.open)
+  searchOpenRef.current = search.open
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState("")
   const [findReplace, setFindReplace] = useState("")
@@ -489,7 +505,7 @@ export default function App({
     services,
     getTab: tabById,
     getContents: tabId => {
-      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      if (materializer.hasPending(tabId)) materializer.flush()
       return docsRef.current.get(tabId) ?? ""
     },
     getSaveStates: () => saveStateRef.current,
@@ -509,7 +525,7 @@ export default function App({
     getTab: tabById,
     getView: tabId => viewsRef.current.get(tabId),
     getContents: tabId => {
-      if (pendingDocTabsRef.current.has(tabId)) materializePendingDocs()
+      if (materializer.hasPending(tabId)) materializer.flush()
       return docsRef.current.get(tabId) ?? ""
     },
     getNormalization: () => normalizationRef.current,
@@ -626,55 +642,16 @@ export default function App({
     )
   }
 
-  /** Applies an update to the tab it was built for, or drops stale bindings. */
-  /** 把 pending tab 的最新内容从 view 拉进 docsRef/React state，并跟随恢复写节奏。 */
-  function materializePendingDocs() {
-    if (docMaterializeTimerRef.current !== null) {
-      window.clearTimeout(docMaterializeTimerRef.current)
-      docMaterializeTimerRef.current = null
-    }
-    for (const tabId of [...pendingDocTabsRef.current]) {
-      pendingDocTabsRef.current.delete(tabId)
-      const view = viewsRef.current.get(tabId)
-      if (!view) continue
-      const contents = view.state.doc.toString()
-      syncDoc(contents, tabId)
-      const tab = workspaceRef.current.tabs.find(t => t.id === tabId)
-      if (tab) saveRecovery(tab, contents)
-    }
-  }
-
-  function flushPendingDocs() {
-    materializePendingDocs()
-  }
-
-  /** 预算与窗口化装饰跟随激活 tab 的安全模式档位（engine 全局状态 ↔ per-tab 判定）。 */
-  function applyRenderBudgetFor(tabId: number) {
-    const safeMode = safeModeTabsRef.current.has(tabId)
-    setBlockRenderBudget(safeMode ? SAFE_MODE_RENDER_BUDGET_LINES : Infinity)
-    // 安全模式同时启用 over-scale 窗口化装饰：只构建/保留视口附近，滚动按需重建
-    setSafeModeRendering(safeMode)
-  }
-
   function handleDocumentUpdate(update: EditorDocumentUpdate) {
     const tab = tabById(update.tabId)
     if (!tab || tab.documentId !== update.documentId) return
     if (update.docChanged) {
-      pendingDocTabsRef.current.add(update.tabId)
       // 大纲缓存失效轴：内容变化才 bump 对应 tab 的版本号（选区更新不动大纲）。
       docVersionsRef.current.set(
         update.tabId,
         (docVersionsRef.current.get(update.tabId) ?? 0) + 1,
       )
-      if (docMaterializeMs === 0) {
-        materializePendingDocs()
-      } else if (docMaterializeTimerRef.current === null) {
-        docMaterializeTimerRef.current = window.setTimeout(
-          () => materializePendingDocs(),
-          docMaterializeMs,
-        )
-      }
-      setDocVersion(v => v + 1)
+      materializer.queue(update.tabId)
     }
     commitNormalization(projectNormalizationNotice(
       normalizationRef.current,
@@ -702,7 +679,7 @@ export default function App({
   ): CreateEditorOptions {
     // HUGE 只读档：readOnly 挡编辑；渐进渲染（视口优先装饰 + idle 排空）落地后，
     // 大文档开箱即 Live 不再冻结，无需强制源码模式或裁剪语言扩展。
-    const readOnly = readonlyTabsRef.current.has(tabId)
+    const readOnly = documentScaleRegistry.isReadOnly(tabId)
     return {
       // Task 10：流式打开带 Text 时直传（免整串切行）；否则回退字符串路径。
       doc: docText ?? contents,
@@ -710,7 +687,22 @@ export default function App({
       documentId,
       ...imageInsertOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
-      onModeChange: isLive => setSourceMode(!isLive),
+      onModeChange: isLive => {
+        const tab = tabById(tabId)
+        if (!tab || tab.documentId !== documentId) return
+        if (workspaceRef.current.activeId !== tabId) return
+        setSourceMode(!isLive)
+      },
+      // Stale tab/document/view identities must not publish active status:
+      // a background tab's view keeps firing selection/mode updates while
+      // hidden, and only the currently active binding may reach the store.
+      onStatusChange: status => {
+        const tab = tabById(tabId)
+        if (!tab || tab.documentId !== documentId) return
+        if (workspaceRef.current.activeId !== tabId) return
+        editorStatusStore.publish(status)
+      },
+      onOpenExternalHref: href => { void services.openExternal?.(href) },
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
         if (!current) {
@@ -739,21 +731,11 @@ export default function App({
    */
   function applyDocumentScalePolicy(view: EditorView, tabId: number) {
     const lines = view.state.doc.lines
-    const bytes = docBytesRef.current.get(tabId)
-    const readonly = readonlyTabsRef.current.has(tabId)
-    // 行数与字节双轴：长行文件（多 MB 但 <50k 行）靠字节轴兜住（Spec 05b）。
-    const safeMode = lines > SAFE_MODE_LINES
-      || (bytes !== undefined && bytes > SAFE_MODE_BYTES)
-      || readonly
-    if (safeMode) {
-      safeModeTabsRef.current.add(tabId)
-    } else {
-      safeModeTabsRef.current.delete(tabId)
-    }
+    const { safeMode, readOnly: readonly } = documentScaleRegistry.classify(tabId, lines)
     // 全局只跟随激活 tab：restore 主 tab 复用 tabs[0] 的 id，activeId 全程不变，
     // 惰性空 view 在此应用全局后 [activeId] effect 不会纠正 —— 激活的 over-scale
     // tab 会丢窗口化/预算（I-1）。非激活 tab 只标记，切换由 effect 重应用。
-    if (tabId === workspaceRef.current.activeId) applyRenderBudgetFor(tabId)
+    if (tabId === workspaceRef.current.activeId) documentScaleRegistry.applyRenderPolicy(tabId)
     setLargeDocNotice(
       readonly
         ? { sessionId: tabId, lines, safeMode: true, readonly: true }
@@ -786,10 +768,10 @@ export default function App({
       throw error
     }
     // view 已存在并直接消费了入参 Text：清掉可能残留的 ensureViews 暂存（作废）。
-    docTextsRef.current.delete(nextSession.id)
+    documentScaleRegistry.takeText(nextSession.id)
     applyDocumentScalePolicy(view, nextSession.id)
     // 重载内容即最新：清掉 pending，防止物化用旧 view 内容覆盖（Spec 05a）。
-    pendingDocTabsRef.current.delete(nextSession.id)
+    materializer.discard(nextSession.id)
     syncDoc(contents, nextSession.id)
     return true
   }
@@ -802,10 +784,11 @@ export default function App({
   //   1. 缓存命中（tabId + 文档版本一致）—— setOutline 复用，零重算，这是
   //      大文件 tab 反复切换的主要成本来源（collectOutline 同步全树遍历）。
   //   2. 未命中且非 over-scale —— 同步首算并写缓存（普通文档便宜，维持原行为）。
-  //   3. 未命中且 over-scale（safeModeTabsRef）—— 先给旧缓存/空大纲让激活立即
-  //      返回，idle 回调（requestIdleCallback，宿主缺失退化为 setTimeout(0)）
-  //      补算落缓存；回调执行前自检代际令牌/激活 tab/版本号，任一漂移即丢弃，
-  //      杜绝把过期或他 tab 的大纲写进当前 tab 的缓存（串数据）。
+  //   3. 未命中且 over-scale（documentScaleRegistry 的安全模式集合）—— 先给旧
+  //      缓存/空大纲让激活立即返回，idle 回调（requestIdleCallback，宿主缺失
+  //      退化为 setTimeout(0)）补算落缓存；回调执行前自检代际令牌/激活 tab/
+  //      版本号，任一漂移即丢弃，杜绝把过期或他 tab 的大纲写进当前 tab 的缓存
+  //      （串数据）。
   function refreshChrome(view: EditorView | null) {
     const tabId = workspaceRef.current.activeId
     const version = docVersionsRef.current.get(tabId) ?? 0
@@ -820,7 +803,7 @@ export default function App({
       setOutline([])
       return
     }
-    if (!safeModeTabsRef.current.has(tabId)) {
+    if (!documentScaleRegistry.isSafeMode(tabId)) {
       const outline = documentOutline(view)
       outlineCacheRef.current.set(tabId, { version, outline })
       setOutline(outline)
@@ -850,10 +833,9 @@ export default function App({
           docsRef.current.get(tab.id) ?? "",
           tab.id,
           tab.documentId,
-          docTextsRef.current.get(tab.id),
+          documentScaleRegistry.takeText(tab.id),
         ),
       )
-      docTextsRef.current.delete(tab.id)
       viewsRef.current.set(tab.id, view)
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
       applyDocumentScalePolicy(view, tab.id)
@@ -861,7 +843,7 @@ export default function App({
     // 不变量（I-1）：ensureViews 结束时进程级预算/窗口化必须与激活 tab 的档位
     // 一致。循环可能只为非激活 tab 建 view（如会话恢复的惰性占位），策略在非
     // 激活 tab 上不碰全局 —— 此处按激活 tab 幂等重应用，钉死最终状态。
-    applyRenderBudgetFor(workspaceRef.current.activeId)
+    documentScaleRegistry.applyRenderPolicy(workspaceRef.current.activeId)
     jumpPending()
     focusPendingEditor()
   }
@@ -917,7 +899,7 @@ export default function App({
     })()
     return () => {
       mountedRef.current = false
-      if (docMaterializeTimerRef.current !== null) window.clearTimeout(docMaterializeTimerRef.current)
+      materializer.destroy()
       viewRef.current = null
       viewsRef.current.forEach(item => item.destroy())
       viewsRef.current.clear()
@@ -932,7 +914,7 @@ export default function App({
   // 预算重应用兜住所有激活路径（activateTab、会话恢复 focusTab 等）；effect 在 DOM
   // 提交后、CM 视口重测量前运行，widget 渲染前预算已就位。
   useEffect(() => {
-    applyRenderBudgetFor(workspace.activeId)
+    documentScaleRegistry.applyRenderPolicy(workspace.activeId)
   }, [workspace.activeId])
 
   useEffect(() => {
@@ -1022,7 +1004,7 @@ export default function App({
     // 只读档永不写回（纵深防御）：即便未来出现新的变异路径把 buffer 弄脏，
     // autosave 也不得把变化持久化到用户的 ≥50MiB HUGE 文件。
     if (!autosaveMs || !activeFilePath || !dirty
-      || readonlyTabsRef.current.has(session.id)) return
+      || documentScaleRegistry.isReadOnly(session.id)) return
     const saveState = tabSaveState(saveStateRef.current, session.id)
     if (!canAutosave({
       tabId: session.id,
@@ -1056,11 +1038,11 @@ export default function App({
   useEffect(() => {
     // Skip the whole poll while Search replaces the tree: the scan is pure
     // waste and its results are not rendered.
-    if (!watchMs || !workspace.folder || !services.listDir || searchOpen) return
+    if (!watchMs || !workspace.folder || !services.listDir || search.open) return
     const listDir = services.listDir
     const timer = window.setInterval(() => { void refreshTree(listDir) }, watchMs)
     return () => window.clearInterval(timer)
-  }, [watchMs, workspace.folder, services, searchOpen])
+  }, [watchMs, workspace.folder, services, search.open])
 
   useEffect(() => {
     if (!watchMs) return
@@ -1209,7 +1191,7 @@ export default function App({
             await services.allowDocumentAssets(path)
             const updated = openSession(workspaceRef.current.tabs[0], snapshot)
             docsRef.current.set(updated.id, snapshot.contents)
-            if (snapshot.stats) docBytesRef.current.set(updated.id, snapshot.stats.byteLength)
+            if (snapshot.stats) documentScaleRegistry.setBytes(updated.id, snapshot.stats.byteLength)
             if (!resetTabDocument(updated, snapshot.contents)) {
               commitWorkspace(replaceTabSession(workspaceRef.current, updated))
             }
@@ -1368,9 +1350,9 @@ export default function App({
       if (inNewTab) {
         const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
         docsRef.current.set(tab.id, contents)
-        if (docText) docTextsRef.current.set(tab.id, docText)
-        if (byteLength !== undefined) docBytesRef.current.set(tab.id, byteLength)
-        if (tier === "readonly") readonlyTabsRef.current.add(tab.id)
+        if (docText) documentScaleRegistry.stashText(tab.id, docText)
+        documentScaleRegistry.setBytes(tab.id, byteLength)
+        documentScaleRegistry.setReadOnly(tab.id, tier === "readonly")
         commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
         commitWorkspace(addTab(workspaceRef.current, tab))
         syncDoc(contents, tab.id)
@@ -1378,10 +1360,8 @@ export default function App({
         return
       }
       // 替换当前 tab：档位与字节数随新文档重置，避免沿用旧档残留。
-      if (byteLength !== undefined) docBytesRef.current.set(sessionRef.current.id, byteLength)
-      else docBytesRef.current.delete(sessionRef.current.id)
-      if (tier === "readonly") readonlyTabsRef.current.add(sessionRef.current.id)
-      else readonlyTabsRef.current.delete(sessionRef.current.id)
+      documentScaleRegistry.setBytes(sessionRef.current.id, byteLength)
+      documentScaleRegistry.setReadOnly(sessionRef.current.id, tier === "readonly")
       if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents, docText)) return
       void services.clearRecovery?.(recoveryKey(sessionRef.current))
     } finally {
@@ -1402,7 +1382,7 @@ export default function App({
   }
 
   async function runOpen(pickPath: () => Promise<string | null>) {
-    flushPendingDocs()
+    materializer.flush()
     const request = ++openRequestRef.current
     const activeId = workspaceRef.current.activeId
     await awaitWithTimeout(
@@ -1535,9 +1515,14 @@ export default function App({
     const current = viewRef.current
     // Spec 05a/05b：离开的 tab 只有 pending 时才需要物化（docChanged 置位、
     // 250ms 内未拉取）；无条件 rope 展平是 50MB tab 的切换悬崖。
-    if (current && pendingDocTabsRef.current.has(sessionRef.current.id)) {
+    if (current && materializer.hasPending(sessionRef.current.id)) {
+      // 直接读 view 落 docsRef，不走 materialize()：切到懒加载 tab 时它会
+      // 提前返回不给新 tab 调 syncDoc，materialize() 的 syncDoc 却按当前
+      // activeId 写 doc state —— 此刻 activeId 还是旧 tab，会短暂把 doc
+      // state 刷成旧内容。这里只需要落 docsRef，不需要 recovery 写或 doc
+      // state 更新（新 tab 的 syncDoc 会在下面或 loadLazyTab 里补上）。
       docsRef.current.set(sessionRef.current.id, current.state.doc.toString())
-      pendingDocTabsRef.current.delete(sessionRef.current.id)
+      materializer.discard(sessionRef.current.id)
     }
     commitWorkspace(focusTab(workspaceRef.current, id))
     const nextView = viewsRef.current.get(id)
@@ -1581,13 +1566,15 @@ export default function App({
       revealFolder(path)
       rememberRecent(path)
       const updated = openSession(lazy, snapshot)
-      if (snapshot.stats) docBytesRef.current.set(updated.id, snapshot.stats.byteLength)
-      if (tier === "readonly") readonlyTabsRef.current.add(updated.id)
+      // 无条件写入：装载可能是一次失败尝试后的重试（resetTabDocument 抛错会
+      // 保留惰性会话），降档重试必须清掉上一轮留下的只读/字节元数据。
+      documentScaleRegistry.setBytes(updated.id, snapshot.stats?.byteLength)
+      documentScaleRegistry.setReadOnly(updated.id, tier === "readonly")
       if (!resetTabDocument(updated, snapshot.contents, snapshot.docText)) {
         // view 尚未创建的窗口期：先落 session 与内容，策略由 ensureViews 兜底。
         commitWorkspace(replaceTabSession(workspaceRef.current, updated))
         docsRef.current.set(updated.id, snapshot.contents)
-        if (snapshot.docText) docTextsRef.current.set(updated.id, snapshot.docText)
+        if (snapshot.docText) documentScaleRegistry.stashText(updated.id, snapshot.docText)
         syncDoc(snapshot.contents, updated.id)
       }
     } catch (error) {
@@ -1639,8 +1626,6 @@ export default function App({
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
       commitSaveState(removeTabSaveState(saveStateRef.current, id))
       recoveryWriterRef.current.forget(id)
-      safeModeChoiceRef.current.delete(id)
-      safeModeTabsRef.current.delete(id)
       docsRef.current.delete(id)
       // 大纲缓存随 tab 一起销毁（版本号 + 缓存条目），防 id 复用时串数据/泄漏。
       docVersionsRef.current.delete(id)
@@ -1648,10 +1633,8 @@ export default function App({
       // In-flight saves keep running (the chain is independent of the map), but
       // no later open should await a closed tab's queue promise.
       tabSaveQueuesRef.current.delete(id)
-      pendingDocTabsRef.current.delete(id)
-      docBytesRef.current.delete(id)
-      docTextsRef.current.delete(id)
-      readonlyTabsRef.current.delete(id)
+      materializer.discard(id)
+      documentScaleRegistry.remove(id)
       viewsRef.current.get(id)?.destroy()
       viewsRef.current.delete(id)
     }
@@ -1663,7 +1646,7 @@ export default function App({
   }
 
   function requestCloseTab(id: number) {
-    flushPendingDocs()
+    materializer.flush()
     // Closing the last file swaps in a fresh untitled scratch (the same swap
     // the delete path uses). A clean untitled lone tab would only be swapped
     // for an identical one — and each swap churns the CodeMirror view — so
@@ -1851,7 +1834,7 @@ export default function App({
     const active = sessionRef.current
     if (!view) return
     // 只读档（HUGE）不可变：不弹文件选择器（imagePaste 侧 state.readOnly 兜底再拦）。
-    if (readonlyTabsRef.current.has(active.id)) return
+    if (documentScaleRegistry.isReadOnly(active.id)) return
     void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
   }
 
@@ -1925,7 +1908,7 @@ export default function App({
   async function deleteTreeEntry(entry: TreeEntry) {
     if (!services.deletePath) return
     // 脏检查前物化：250ms 窗口内的编辑必须被看见，否则跳过确认删文件丢内容（Spec 05a）。
-    flushPendingDocs()
+    materializer.flush()
     const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
     if (
       openTab
@@ -1973,7 +1956,6 @@ export default function App({
       const view = viewRef.current
       if (!view) return
       try {
-        safeModeChoiceRef.current.add(workspaceRef.current.activeId)
         view.dispatch(applyToggle(view.state))
       } catch { /* mock views */ }
     } },
@@ -2004,7 +1986,7 @@ export default function App({
       setFindOpen(true)
       setReplaceOpen(false)
     } },
-    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => setSearchOpen(true) },
+    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => search.setOpen(true) },
 { id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
@@ -2062,8 +2044,12 @@ export default function App({
   // Mirror the active tab's editor mode into React so the native View menu
   // checkbox can reflect it. The active view is read, not tracked per tab.
   useEffect(() => {
-    setSourceMode(editorStatus(viewRef.current).mode === "source")
-  }, [workspace.activeId])
+    const status = editorStatus(viewRef.current)
+    setSourceMode(status.mode === "source")
+    // Activating a tab does not fire the editor's update listener, so the
+    // store must be re-published here to reflect the newly active view.
+    editorStatusStore.publish(status)
+  }, [workspace.activeId, editorStatusStore])
 
   // Push view-mode state to the native menu checkboxes. The menu item click
   // itself flows back through the same commands and settles here.
@@ -2164,7 +2150,7 @@ export default function App({
   cancelOpeningRef.current = cancelOpening
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
-    paletteOpen || quickOpenState.open || searchOpen || settingsOpen || aboutOpen
+    paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -2208,23 +2194,6 @@ export default function App({
     return () => window.removeEventListener("keydown", handler)
   }, [])
 
-  useEffect(() => {
-    if (!searchOpen || !workspace.folder || !searchQuery || !services.searchMarkdown) return
-    const request = ++searchRequestRef.current
-    const timer = window.setTimeout(() => {
-      void services.searchMarkdown?.(workspace.folder!, searchQuery, searchCase)
-        .then(response => {
-          if (searchRequestRef.current === request) {
-            setSearchHits(response.hits)
-            setSearchTruncated(response.truncated)
-          }
-        })
-        .catch(() => { /* stale or failed search; ignore */ })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [searchOpen, searchQuery, searchCase, workspace.folder, services])
-
-  const { cursor, mode } = editorStatus(viewRef.current)
   const [deferredDoc, setDeferredDoc] = useState(doc)
   useEffect(() => {
     const timer = window.setTimeout(() => setDeferredDoc(doc), STATS_DEBOUNCE_MS)
@@ -2234,10 +2203,7 @@ export default function App({
   // 行数走 CM rope / snapshot，禁止对全文 split（Spec 05b）。
   let activeLines = 0
   try { activeLines = viewRef.current?.state.doc.lines ?? 0 } catch { activeLines = 0 }
-  const activeBytes = docBytesRef.current.get(workspace.activeId)
-  const safeModeActive = activeLines > SAFE_MODE_LINES
-    || (activeBytes !== undefined && activeBytes > SAFE_MODE_BYTES)
-    || readonlyTabsRef.current.has(workspace.activeId)
+  const safeModeActive = documentScaleRegistry.evaluate(workspace.activeId, activeLines).safeMode
   const stats = useMemo(() => {
     if (safeModeActive && statsRequested === 0) return null
     return documentStats(deferredDoc)
@@ -2331,15 +2297,15 @@ export default function App({
           aria-hidden={!sidebarOpen}
           inert={!sidebarOpen}
         >
-          {searchOpen ? (
+          {search.open ? (
             <SearchPanel
-              query={searchQuery}
-              hits={searchHits}
-              truncated={searchTruncated}
-              caseSensitive={searchCase}
-              onQuery={setSearchQuery}
-              onCaseSensitive={setSearchCase}
-              onClose={() => setSearchOpen(false)}
+              query={search.query}
+              hits={search.hits}
+              truncated={search.truncated}
+              caseSensitive={search.caseSensitive}
+              onQuery={search.setQuery}
+              onCaseSensitive={search.setCaseSensitive}
+              onClose={() => search.setOpen(false)}
               onOpen={hit => {
                 pendingJumpRef.current = hit.line
                 void openPath(hit.path, true)
@@ -2352,7 +2318,7 @@ export default function App({
               activePath={activeFilePath}
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
-              onSearch={() => setSearchOpen(true)}
+              onSearch={() => search.setOpen(true)}
               onNewFile={dir => void createTreeFile(dir)}
               onNewFolder={dir => void createTreeFolder(dir)}
               onRename={entry => void renameTreeEntry(entry)}
@@ -2543,9 +2509,8 @@ export default function App({
         </div>
       </div>
       <StatusBar
+        statusStore={editorStatusStore}
         stats={stats}
-        cursor={cursor}
-        mode={mode}
         normalizationReviewRequired={bannerKind === "normalization"}
         saveStatus={saveStatusLabel(activeSaveState)}
         onRequestStats={safeModeActive ? () => setStatsRequested(n => n + 1) : undefined}

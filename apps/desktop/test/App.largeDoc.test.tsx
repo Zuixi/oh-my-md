@@ -105,8 +105,8 @@ describe("large document safe mode", () => {
   })
 
   it("never touches mode when re-applying the policy, even after an explicit switch", async () => {
-    // 真 EditorState 使 palette 的 source 命令能读 isLivePreview 并记录用户选择
-    // （safeModeChoiceRef）；dispatch 仍是 mock，用于断言策略完全不切模式。
+    // 真 EditorState 使 palette 的 source 命令能读 isLivePreview 并切换模式；
+    // dispatch 仍是 mock，用于断言策略完全不切模式。
     // reset 忠实同步 doc，因为 applyDocumentScalePolicy 从 view.state.doc.lines 读行数。
     const fakeView = {
       state: EditorState.create({ doc: "", extensions: [isLivePreview] }),

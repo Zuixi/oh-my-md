@@ -18,6 +18,7 @@ import { imagePasteHandler } from "./imagePaste"
 import { typewriterExtension } from "./typewriter"
 import { tightSelection } from "./tightSelection"
 import { CONTENT_MAX_WIDTH } from "./constants"
+import { sameEditorStatus, type EditorStatus } from "./editorStatus"
 import { t } from "./i18n"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
@@ -49,14 +50,17 @@ export interface CreateEditorOptions {
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
   onOpenMarkdownHref?: (href: string) => void
+  onOpenExternalHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
   /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
   readOnly?: boolean
   /** Construct already in Source (no live decorations at create time). */
   defaultLivePreview?: boolean
-  /** Notified when the live/source field flips, so the host can mirror it. */
+  /** Notified when the live/source mode flips, so the host can mirror it. */
   onModeChange?: (isLive: boolean) => void
+  /** Notified on every update with a lightweight cursor/mode snapshot. */
+  onStatusChange?: (status: EditorStatus) => void
 }
 
 export function makeImageResolver(
@@ -74,6 +78,7 @@ export function makeImageResolver(
 }
 
 const markdownHrefHandler = Facet.define<(href: string) => void>()
+const externalHrefHandler = Facet.define<(href: string) => void>()
 const lastFootnoteJump = new WeakMap<EditorView, { id: string; from: number }>()
 
 function activateFootnote(view: EditorView, pos: number): boolean {
@@ -109,18 +114,18 @@ export function activateLink(view: EditorView, event: MouseEvent): boolean {
   }
   if (!onLink) return false
 
-  const targetLink = linkAt(view.state, pos)
-  if (!targetLink) return false
+  const href = linkAt(view.state, pos)?.href ?? onLink.getAttribute("href")
+  if (!href) return false
 
   event.preventDefault()
-  if (targetLink.href.startsWith("#")) {
-    const heading = headingPositionForAnchor(view.state, targetLink.href)
+  if (href.startsWith("#")) {
+    const heading = headingPositionForAnchor(view.state, href)
     if (heading !== null) view.dispatch({ selection: { anchor: heading }, scrollIntoView: true })
     return true
   }
-  const classified = classifyLink(targetLink.href)
+  const classified = classifyLink(href)
   if (classified.kind === "external") {
-    window.open(classified.href, "_blank", "noopener,noreferrer")
+    view.state.facet(externalHrefHandler)[0]?.(classified.href)
   } else if (classified.kind === "markdown") {
     view.state.facet(markdownHrefHandler)[0]?.(classified.href)
   }
@@ -154,6 +159,17 @@ function reportModeChange(options: CreateEditorOptions, update: ViewUpdate): voi
   if (before !== after) options.onModeChange(after)
 }
 
+function createStatusReporter(options: CreateEditorOptions) {
+  let previous: EditorStatus | null = null
+  return (view: EditorView) => {
+    if (!options.onStatusChange) return
+    const next = editorStatus(view)
+    if (previous && sameEditorStatus(previous, next)) return
+    previous = next
+    options.onStatusChange(next)
+  }
+}
+
 const spellcheckCompartment = new Compartment()
 
 function spellcheckAttr(on: boolean) {
@@ -164,7 +180,10 @@ export function setEditorSpellcheck(view: EditorView, on: boolean): void {
   view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckAttr(on)) })
 }
 
-function createEditorState(options: CreateEditorOptions): EditorState {
+function createEditorState(
+  options: CreateEditorOptions,
+  reportStatus: (view: EditorView) => void,
+): EditorState {
   return EditorState.create({
     doc: options.doc,
     extensions: [
@@ -183,6 +202,7 @@ function createEditorState(options: CreateEditorOptions): EditorState {
         defaultLivePreview: options.defaultLivePreview,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
+      options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],
       typewriterExtension(),
       imagePasteHandler({
         getDocPath: options.getDocPath,
@@ -195,12 +215,13 @@ function createEditorState(options: CreateEditorOptions): EditorState {
       EditorView.updateListener.of((update) => {
         reportEditorUpdate(options, update)
         reportModeChange(options, update)
+        reportStatus(update.view)
       }),
       EditorView.theme({
         "&": { height: "100%", fontSize: "15px" },
         ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
         ".cm-content": {
-          padding: "16px 24px",
+          padding: "16px 24px max(16px, 50vh)",
           maxWidth: `var(--omd-content-width, ${CONTENT_MAX_WIDTH}px)`,
           margin: "0 auto",
         },
@@ -213,16 +234,18 @@ export function createEditor(
   parent: HTMLElement,
   options: CreateEditorOptions,
 ): EditorView {
-  return new EditorView({
-    state: createEditorState(options),
+  const reportStatus = createStatusReporter(options)
+  const view = new EditorView({
+    state: createEditorState(options, reportStatus),
     parent,
   })
+  reportStatus(view)
+  return view
 }
 
-export interface EditorStatus {
-  readonly cursor: string
-  readonly mode: "live" | "source"
-}
+/** The status snapshot type lives in `editorStatus.ts` with its equality; re-exported
+ * here because the editor is where hosts pick it up (`CreateEditorOptions.onStatusChange`). */
+export type { EditorStatus }
 
 const NO_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
 
@@ -254,5 +277,7 @@ export function resetEditorDocument(
   options: CreateEditorOptions,
 ): void {
   lastFootnoteJump.delete(view)
-  view.setState(createEditorState(options))
+  const reportStatus = createStatusReporter(options)
+  view.setState(createEditorState(options, reportStatus))
+  reportStatus(view)
 }

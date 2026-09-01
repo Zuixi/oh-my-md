@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { NormalizationBanner } from "../src/NormalizationBanner"
 import { StatusBar } from "../src/StatusBar"
+import { createEditorStatusStore } from "../src/editorStatusStore"
 
 describe("NormalizationBanner", () => {
   it("announces count and exposes both actions", () => {
@@ -82,14 +83,16 @@ describe("NormalizationBanner", () => {
 
 describe("StatusBar normalization review", () => {
   it("shows the review notice as its own text node", () => {
-    render(<StatusBar stats={{ words: 0, chars: 0 }} cursor="1:1" mode="live"
+    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+      stats={{ words: 0, chars: 0 }}
       normalizationReviewRequired saveStatus="idle" />)
     const review = screen.getByText("Normalization review required")
     expect(review.textContent).toBe("Normalization review required")
   })
 
   it("omits the review notice when no review is required", () => {
-    render(<StatusBar stats={{ words: 0, chars: 0 }} cursor="1:1" mode="live"
+    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+      stats={{ words: 0, chars: 0 }}
       normalizationReviewRequired={false} saveStatus="idle" />)
     expect(screen.queryByText("Normalization review required")).toBeNull()
   })
