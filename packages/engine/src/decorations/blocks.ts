@@ -15,12 +15,14 @@ import { parseFenceInfo } from "../fenceInfo"
 const MAX_QUOTE_DEPTH = 4
 const MAX_LIST_DEPTH = 4
 
-// Folds a line-leading syntax mark ('[^id]:') plus its trailing space,
-// unless the cursor is on that line.
+// Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
+// caret is inside the mark itself — same span granularity as the inline reveal
+// (cursorInside), not line-based: editing the definition content keeps the label
+// folded; clicking into the label reveals it for editing.
 function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   const line = state.doc.lineAt(node.from)
   const end = Math.min(node.to + 1, line.to)
-  if (!nearCursor(state, node.from, end))
+  if (!cursorInside(state, node.from, end))
     out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
 }
 

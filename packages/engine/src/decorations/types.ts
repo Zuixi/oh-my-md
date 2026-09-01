@@ -6,9 +6,13 @@ export interface DecoSpec { from: number; to: number; tag: string; deco: Decorat
 // 分工模型（路线 A，对齐 Typora）：装饰性标记（成对强调 `**`、标题 `#`、列表符）
 // 永不因光标进入而展开 —— 点击/移动光标只是定位，行宽不抖动。标记的增删改走
 // format/commands.ts 的切换命令，或在折叠边界 Backspace 整体删除原子区。
-// nearCursor 仅保留给“唯一编辑入口就是源码本身”的语法（链接 URL、图片 src、
-// 行内公式、脚注引用/定义）：光标落在其行上仍会展开。
-// 行级判定避免字符边界的 off-by-one（如光标在 0 位也合法地算在 `# ` 标记行上）。
+// “唯一编辑入口就是源码本身”的语法（链接、图片、行内公式、脚注引用/定义）用
+// cursorInside 做**节点级**展开：光标进入该语法自身的 span 才展开，落在同一行
+// 的其它文本上不展开 —— 行级展开曾是点击闪烁的根源（软换行下一段=一行，点段
+// 落任意文本都会把整段链接裸奔成 [text](url)）。且必须在节点整体级判定一次，
+// 逐子节点判定会产出 `[text](` 半展开残缺态（光标在文字里时不在 URL span 内）。
+// nearCursor 仅剩一个合法用途：空行密度（build.ts）—— 那里的判定单位本来就是
+// “行”（光标自己的空行保持全高）。
 export function nearCursor(state: EditorState, from: number, to: number) {
   const sel = state.selection.main
   if (!sel.empty) return false

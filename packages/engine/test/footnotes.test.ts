@@ -26,10 +26,17 @@ describe("footnotes", () => {
     expect(t).toContain("replace:FootnoteMark")
   })
 
-  it("does not fold the definition label on the cursor's line", () => {
+  it("folds the definition label while the caret edits the definition content", () => {
     const doc = "text[^1]\n\n[^1]: note"
     const defFrom = doc.indexOf("[^1]:")
-    expect(specs(doc, doc.length).some(s => s.tag === "replace:FootnoteMark" && s.from === defFrom)).toBe(false)
+    // 光标在 "note" 上：标签 [^1]: 在同行但 span 外 → 折叠（行级展开已废除）
+    expect(specs(doc, doc.length).some(s => s.tag === "replace:FootnoteMark" && s.from === defFrom)).toBe(true)
+  })
+
+  it("reveals the definition label when the caret is inside it", () => {
+    const doc = "text[^1]\n\n[^1]: note"
+    const defFrom = doc.indexOf("[^1]:")
+    expect(specs(doc, defFrom + 2).some(s => s.tag === "replace:FootnoteMark" && s.from === defFrom)).toBe(false)
   })
 
   it("does not treat plain [text] as a footnote reference", () => {
@@ -45,9 +52,10 @@ describe("footnotes", () => {
     expect(t).toContain("line:omd-footnote-def")
   })
 
-  it("keeps reference brackets visible on the cursor's line", () => {
+  it("folds reference brackets when the caret is outside them on their line", () => {
     const doc = "text[^1]\n\n[^1]: note"
-    expect(tags(doc, 0).filter(x => x === "replace:FootnoteMark")).toHaveLength(1)
+    // 光标在行首 "t|ext"：引用 [^1] 折叠（2 段），定义标签折叠（1 段）
+    expect(tags(doc, 0).filter(x => x === "replace:FootnoteMark")).toHaveLength(3)
   })
 
   it("absorbs 4-space-indented continuation lines into the definition", () => {
