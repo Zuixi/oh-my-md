@@ -121,4 +121,14 @@ describe("block widget layout", () => {
     expect(chrome).toMatch(/width:\s*100%/)
     expect(chrome).not.toMatch(/\bmargin/)
   })
+
+  it("declares both-theme palettes for the editing-state code highlight", () => {
+    for (const theme of ['light', 'dark']) {
+      const block = STYLES_CSS.match(new RegExp(`html\\[data-theme="${theme}"\\]\\s*\\{([\\s\\S]*?)\\}`, ""))
+      expect(block, theme).toBeTruthy()
+      for (const token of ["keyword", "string", "comment", "function"]) {
+        expect(block![1], `${theme}:${token}`).toMatch(new RegExp(`--omd-syn-${token}:\\s*#`))
+      }
+    }
+  })
 })

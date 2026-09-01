@@ -1,7 +1,8 @@
+import { preloadMarkdownCodeLanguages } from "../src/parse/codeLanguages"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import { type ChangeDesc, EditorState, StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
@@ -96,6 +97,10 @@ function liveState(
   parent.remove()
   return state
 }
+
+// 嵌套代码语言懒加载会让冷启动状态的树快照不确定（对拍的两边可能看到
+// 不同的片段复用结果）。预热单例描述与 forceParsing 同属确定性 setup。
+beforeAll(() => preloadMarkdownCodeLanguages())
 
 describe("incremental live decorations", () => {
   it("rebuilds only syntax-safe regions for a selection move", () => {

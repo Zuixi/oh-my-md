@@ -7,10 +7,12 @@ import { FrontMatter } from "./frontMatter"
 import { Highlight } from "./highlight"
 import { Math } from "./math"
 import { Rise } from "./rise"
+import { markdownCodeLanguages } from "./codeLanguages"
 import { BareAutolink } from "./autolink"
 
 export function markdownLanguageSupport() {
   return markdown({
+    codeLanguages: markdownCodeLanguages(),
     extensions: [
       { parseInline: [BareAutolink] },
       GFM,

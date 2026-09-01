@@ -18,6 +18,17 @@ html[data-theme="light"] {
   --omd-error-fg: #aa0000;
   --omd-error-border: #f0c0c0;
   --omd-chrome: #f7f7f7;
+  /* 编辑态代码原生高亮（engine highlight/codeHighlight.ts，CSS 变量双主题） */
+  --omd-syn-keyword: #cf222e;
+  --omd-syn-string: #0a3069;
+  --omd-syn-number: #0550ae;
+  --omd-syn-comment: #6e7781;
+  --omd-syn-function: #8250df;
+  --omd-syn-definition: #953800;
+  --omd-syn-type: #953800;
+  --omd-syn-tag: #116329;
+  --omd-syn-attribute: #0550ae;
+  --omd-syn-punctuation: #24292f;
   --omd-panel-bg: #ffffff;
   --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks (see the
@@ -46,6 +57,16 @@ html[data-theme="dark"] {
   --omd-error-fg: #ff8a8a;
   --omd-error-border: #7c4040;
   --omd-chrome: #161616;
+  --omd-syn-keyword: #ff7b72;
+  --omd-syn-string: #a5d6ff;
+  --omd-syn-number: #79c0ff;
+  --omd-syn-comment: #8b949e;
+  --omd-syn-function: #d2a8ff;
+  --omd-syn-definition: #ffa657;
+  --omd-syn-type: #ffa657;
+  --omd-syn-tag: #7ee787;
+  --omd-syn-attribute: #79c0ff;
+  --omd-syn-punctuation: #c9d1d9;
   --omd-panel-bg: #252526;
   --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks; CM's
