@@ -1060,10 +1060,13 @@ describe("fixture snapshots", () => {
         "line:omd-empty@191-191",
         "line:omd-empty@203-203",
         "line:omd-li-1@204-204",
+        "replace:ListMark@204-205",
         "widget:checkbox@206-209",
         "line:omd-li-1@225-225",
+        "replace:ListMark@225-226",
         "widget:checkbox@227-230",
         "line:omd-li-1@247-247",
+        "replace:ListMark@247-248",
         "widget:checkbox@249-252",
         "line:omd-empty@280-280",
       ]

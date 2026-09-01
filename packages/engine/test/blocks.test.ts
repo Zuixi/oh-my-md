@@ -249,10 +249,15 @@ describe("block syntax", () => {
     expect(t).not.toContain("widget:checkbox")
   })
 
-  it("does not bullet task list items (checkbox owns the mark)", () => {
-    const t = tags("- [x] done")
-    expect(t).toContain("widget:checkbox")
-    expect(t).not.toContain("replace:ListMark")
+  it("folds list mark before task markers", () => {
+    const doc = "- [x] done\n- [ ] todo"
+    const state = makeState(doc)
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    const replaceMarks = specs.filter(s => s.tag === "replace:ListMark")
+    const checkboxes = specs.filter(s => s.tag === "widget:checkbox")
+    expect(replaceMarks).toHaveLength(2)
+    expect(checkboxes).toHaveLength(2)
+    assertNoReplaceOverlap(replaceRanges(doc, 0))
   })
 
   it("keeps the bullet mark folded when the cursor is on it", () => {
