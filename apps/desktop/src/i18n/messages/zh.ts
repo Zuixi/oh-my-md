@@ -253,6 +253,7 @@ export const zh: Record<string, string> = {
   "error.export.desktopOnly": "PDF 与图片导出目前仅在 macOS 桌面应用可用",
   "error.openFailed": "打开失败",
   "error.folderListingFailed": "文件夹列出失败",
+  "error.workspaceFolderMissing": "上次的工作区文件夹已不可用，已新建草稿",
   "error.createFileFailed": "创建文件失败",
   "error.createFolderFailed": "创建文件夹失败",
   "error.renameFailed": "重命名失败",

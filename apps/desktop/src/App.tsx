@@ -585,13 +585,30 @@ export default function App({
       : `${trimmed}.${MARKDOWN_FILE_EXTENSION}`
   }
 
+  /** 列举错误签名（路径 → 上次已上报的错误文案）。通知语义：状态变化才打扰——
+   *  同一路径的相同错误只报一次，列举成功清除签名，新错误形态仍会上报。 */
+  const treeErrorSignaturesRef = useRef(new Map<string, string>())
+
+  function reportTreeError(path: string, error: unknown) {
+    const message = errorMessage(t("error.folderListingFailed"), error)
+    const signatures = treeErrorSignaturesRef.current
+    if (signatures.get(path) === message) return
+    signatures.set(path, message)
+    services.reportError(message)
+  }
+
+  function clearTreeError(path: string) {
+    treeErrorSignaturesRef.current.delete(path)
+  }
+
   async function refreshTreePath(path: string): Promise<void> {
     if (!services.listDir) return
     try {
       const entries = await services.listDir(path)
+      clearTreeError(path)
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      services.reportError(errorMessage(t("error.folderListingFailed"), error))
+      reportTreeError(path, error)
     }
   }
 
@@ -1028,9 +1045,12 @@ export default function App({
     const listDir = services.listDir
     commitTree(emptyFileTree())
     void listDir(folder).then(entries => {
-      if (!cancelled) commitTree(setChildren(emptyFileTree(), folder, entries))
+      if (!cancelled) {
+        clearTreeError(folder)
+        commitTree(setChildren(emptyFileTree(), folder, entries))
+      }
     }).catch(error => {
-      if (!cancelled) services.reportError(errorMessage(t("error.folderListingFailed"), error))
+      if (!cancelled) reportTreeError(folder, error)
     })
     return () => { cancelled = true }
   }, [workspace.folder, services])
@@ -1161,6 +1181,17 @@ export default function App({
       if (!state || (!state.folder && state.openPaths.length === 0)) return false
 
       if (state.folder) {
+        // 恢复的路径可能已被移动/删除（或换机恢复）：先用真实列举验证再采纳。
+        // 失效会话整体丢弃并提示一次——绝不带着死路径进入工作区，让后续每次
+        // 交互都重复报同一个错。
+        if (services.listDir) {
+          try {
+            await services.listDir(state.folder)
+          } catch {
+            services.reportError(t("error.workspaceFolderMissing"))
+            return false
+          }
+        }
         commitWorkspace(openFolder(workspaceRef.current, state.folder))
         void services.allowWorkspaceDir?.(state.folder)
       }
@@ -1714,9 +1745,10 @@ export default function App({
       // The user may have collapsed the directory while the listing was in
       // flight; caching it would only produce a useless model update.
       if (!treeModelRef.current.expanded.has(path)) return
+      clearTreeError(path)
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      services.reportError(errorMessage(t("error.folderListingFailed"), error))
+      reportTreeError(path, error)
     } finally {
       pendingListDirsRef.current.delete(path)
     }
@@ -1844,7 +1876,7 @@ export default function App({
     try {
       defaultName = await nextUntitledMarkdownName(dir)
     } catch (error) {
-      services.reportError(errorMessage(t("error.folderListingFailed"), error))
+      reportTreeError(dir, error)
       return
     }
     const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)

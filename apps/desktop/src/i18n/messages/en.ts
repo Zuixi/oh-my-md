@@ -253,6 +253,7 @@ export const en: Record<string, string> = {
   "error.export.desktopOnly": "PDF and image export are only available in the macOS desktop app",
   "error.openFailed": "Open failed",
   "error.folderListingFailed": "Folder listing failed",
+  "error.workspaceFolderMissing": "Last workspace folder is no longer available; started a new draft",
   "error.createFileFailed": "Create file failed",
   "error.createFolderFailed": "Create folder failed",
   "error.renameFailed": "Rename failed",
