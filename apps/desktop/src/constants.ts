@@ -28,7 +28,7 @@ export const ASSETS_DIR_NAME = "assets"
 export const RELEASES_URL = "https://github.com/Zuixi/open-md/releases"
 
 /** Editor content max width in px; must match `--omd-content-width` in styles.css. */
-export const CONTENT_MAX_WIDTH = 780
+export const CONTENT_MAX_WIDTH = 900
 
 /** localStorage keys used by the desktop host. */
 export const STORAGE_KEY_SIDEBAR_OPEN = "omd-sidebar-open"

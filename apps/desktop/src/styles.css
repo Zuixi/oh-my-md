@@ -19,7 +19,7 @@ html[data-theme="light"] {
   --omd-error-border: #f0c0c0;
   --omd-chrome: #f7f7f7;
   --omd-panel-bg: #ffffff;
-  --omd-content-width: 780px;
+  --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks (see the
      override rules below; CM's own base colors #d7d4f0/#233 are never used). */
   --omd-selection-bg: rgba(215, 212, 240, 0.55);
@@ -47,7 +47,7 @@ html[data-theme="dark"] {
   --omd-error-border: #7c4040;
   --omd-chrome: #161616;
   --omd-panel-bg: #252526;
-  --omd-content-width: 780px;
+  --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks; CM's
      base theme dark colors (#222/#233) would only apply if a theme extension
      set {dark: true}, which nothing in the app does. */

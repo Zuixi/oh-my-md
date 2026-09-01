@@ -329,6 +329,12 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("keeps half a viewport of trailing scroll space without changing horizontal padding", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/Editor.ts"), "utf8")
+    expect(source).toContain('padding: "16px 24px max(16px, 50vh)"')
+    expect(source).toContain('margin: "0 auto"')
+  })
+
   it("keeps the active-line decoration for focus mode while painting no background of its own", () => {
     // Focus mode dims every line *except* `.cm-activeLine`, so the decoration
     // has to stay mounted even though nothing paints it. Deleting
