@@ -504,6 +504,41 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-code-lines {
   counter-reset: omd-code-line;
 }
+
+/* 编辑态代码块（光标在块内，blocks.ts styleEditingCodeblock）：chrome 常驻在
+   开头围栏行、内容行拼出与渲染态一致的圆角容器、CSS counter 行号。行内一律
+   无 margin（行高属于 CM 布局）。 */
+.editor-host .cm-line .omd-code-header {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--omd-border);
+  border-bottom: 1px solid var(--omd-border);
+  border-radius: 12px 12px 0 0;
+}
+.editor-host .cm-line.omd-codeblock-num {
+  position: relative;
+  padding-left: 3.2em;
+  background: var(--omd-code-block-bg);
+  border-left: 1px solid var(--omd-border);
+  border-right: 1px solid var(--omd-border);
+  counter-increment: omd-code-line;
+}
+.editor-host .cm-line.omd-codeblock-num::before {
+  content: counter(omd-code-line);
+  position: absolute;
+  left: 0.8em;
+  width: 1.6em;
+  text-align: right;
+  color: var(--omd-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.editor-host .cm-line.omd-codeblock-num-first { counter-reset: omd-code-line; }
+.editor-host .cm-line.omd-codeblock-num-last {
+  border-bottom: 1px solid var(--omd-border);
+  border-radius: 0 0 12px 12px;
+}
 .editor-host .omd-code-lines .line {
   display: block;
   position: relative;

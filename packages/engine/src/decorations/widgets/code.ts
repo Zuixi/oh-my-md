@@ -3,7 +3,8 @@ import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../..
 import { getCodeHighlighter } from "../../shiki/codeHighlighter"
 import { createCodeLangPicker } from "./codeLangPicker"
 import { replaceFenceInfo } from "../../fenceInfo"
-import { EditorView } from "@codemirror/view"
+import { EditorView, WidgetType } from "@codemirror/view"
+import { syntaxTree } from "@codemirror/language"
 import { createCodeHtmlCache } from "./codeHtmlCache"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
@@ -21,6 +22,97 @@ const CLICK_DRIFT_PX = 4
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 const htmlCache = createCodeHtmlCache()
+
+export interface CodeChromeOptions {
+  readonly title: string
+  readonly lang: string
+  /** 提交 fence info（title/lang）；header 元素随行传出供调用方反查文档范围。 */
+  readonly onCommitInfo: (title: string, lang: string | null, header: HTMLElement) => void
+  readonly onPickerDestroy?: (destroy: () => void) => void
+}
+
+/** 标题输入 + 语言选择器（CodeWidget 的渲染态 header 与编辑态 CodeChromeWidget
+ * 共用）。不含 Copy —— 编辑态内容是原生 CM 文本，可直接选择复制。 */
+export function buildCodeChromeControls(view: EditorView, opts: CodeChromeOptions): HTMLElement {
+  const header = document.createElement("div")
+  header.className = "omd-code-header"
+  header.addEventListener("mousedown", e => e.stopPropagation())
+
+  const titleInput = document.createElement("input")
+  titleInput.type = "text"
+  titleInput.className = "omd-code-title"
+  titleInput.placeholder = DEFAULT_TITLE_PLACEHOLDER
+  titleInput.value = opts.title
+  titleInput.spellcheck = false
+  titleInput.addEventListener("change", () => opts.onCommitInfo(titleInput.value, null, header))
+  header.appendChild(titleInput)
+
+  const tools = document.createElement("div")
+  tools.className = "omd-code-tools"
+
+  const resolved = resolveCodeLanguage(opts.lang)
+  const current = resolved ?? opts.lang.trim().toLowerCase()
+  const langPicker = createCodeLangPicker({
+    value: current || opts.lang.trim(),
+    languages: supportedLanguages(),
+    disabled: view.state?.readOnly,
+    onSelect: lang => opts.onCommitInfo(titleInput.value, lang, header),
+  })
+  opts.onPickerDestroy?.(langPicker.destroy)
+  tools.appendChild(langPicker.root)
+  header.appendChild(tools)
+
+  if (view.state?.readOnly) titleInput.disabled = true
+  return header
+}
+
+/** 编辑态（光标在块内）常驻在开头围栏行上的 chrome widget：标题/语言仍可提交
+ * （fence info 写入走 posAtDOM 解析出的当前 FencedCode 范围），代码内容是原生
+ * CM 行 —— 与 b9dec44 拆掉的 widget 内 contenteditable 完全无关。 */
+export class CodeChromeWidget extends WidgetType {
+  constructor(
+    readonly lang: string,
+    readonly title: string,
+    private readonly onPickerDestroy?: (destroy: () => void) => void,
+  ) { super() }
+
+  eq(other: CodeChromeWidget) {
+    return this.lang === other.lang && this.title === other.title
+  }
+
+  toDOM(view: EditorView) {
+    return buildCodeChromeControls(view, {
+      title: this.title,
+      lang: this.lang,
+      onCommitInfo: (title, lang, header) => commitChromeInfo(view, header, title, lang, this.lang),
+      onPickerDestroy: this.onPickerDestroy,
+    })
+  }
+
+  override ignoreEvent(event: Event) {
+    if (event.type === "mousedown" || event.type === "dblclick") return true
+    if (event.target instanceof Element && event.target.closest(".omd-code-lang-picker")) return true
+    return false
+  }
+
+  override destroy() {
+    this.onPickerDestroy?.(() => {})
+  }
+}
+
+/** fence info 提交：从 header DOM 反查当前 FencedCode 节点范围（posAtDOM 实时
+ * 定位，前缀插入后不漂移），replaceFenceInfo 产出事务由调用方 dispatch。 */
+function commitChromeInfo(view: EditorView, header: HTMLElement, title: string, lang: string | null, currentLang: string) {
+  if (view.state.readOnly) return
+  let pos: number
+  try { pos = view.posAtDOM(header) } catch { return }
+  let node = syntaxTree(view.state).resolveInner(pos, 1)
+  while (node && node.name !== "FencedCode") node = node.parent!
+  if (!node) return
+  const label = title.trim() === DEFAULT_TITLE_PLACEHOLDER ? "" : title.trim()
+  const spec = replaceFenceInfo(view.state, node.from, lang ?? currentLang, label)
+  if (spec) view.dispatch(spec)
+}
 
 export interface CodeWidgetOptions {
   src: string
@@ -139,32 +231,12 @@ export class CodeWidget extends BlockWidget {
   }
 
   private buildHeader(view: EditorView): HTMLElement {
-    const header = document.createElement("div")
-    header.className = "omd-code-header"
-    header.addEventListener("mousedown", e => e.stopPropagation())
-
-    const titleInput = document.createElement("input")
-    titleInput.type = "text"
-    titleInput.className = "omd-code-title"
-    titleInput.placeholder = DEFAULT_TITLE_PLACEHOLDER
-    titleInput.value = this.title
-    titleInput.spellcheck = false
-    titleInput.addEventListener("change", () => this.commitInfo(titleInput.value, null))
-    header.appendChild(titleInput)
-
-    const tools = document.createElement("div")
-    tools.className = "omd-code-tools"
-
-    const resolved = resolveCodeLanguage(this.lang)
-    const current = resolved ?? this.lang.trim().toLowerCase()
-    const langPicker = createCodeLangPicker({
-      value: current || this.lang.trim(),
-      languages: supportedLanguages(),
-      disabled: view.state?.readOnly,
-      onSelect: lang => this.commitInfo(titleInput.value, lang),
+    const header = buildCodeChromeControls(view, {
+      title: this.title,
+      lang: this.lang,
+      onCommitInfo: (title, lang) => this.commitInfo(title, lang),
+      onPickerDestroy: destroy => { this.langPickerDestroy = destroy },
     })
-    this.langPickerDestroy = langPicker.destroy
-    tools.appendChild(langPicker.root)
 
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"
@@ -177,10 +249,7 @@ export class CodeWidget extends BlockWidget {
       e.stopPropagation()
       this.copy(copyBtn)
     })
-    tools.appendChild(copyBtn)
-    header.appendChild(tools)
-
-    if (view.state?.readOnly) titleInput.disabled = true
+    header.querySelector(".omd-code-tools")?.appendChild(copyBtn)
     return header
   }
 
