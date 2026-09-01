@@ -232,7 +232,15 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
       deco: Decoration.replace({}),
     })
   }
-  if (node.node.parent?.getChild("Task")) return
+  if (node.node.parent?.getChild("Task")) {
+    out.push({
+      from: node.from,
+      to: node.to,
+      tag: "replace:ListMark",
+      deco: Decoration.replace({}),
+    })
+    return
+  }
 
   const text = state.doc.sliceString(node.from, node.to)
   if (/^\d/.test(text)) {
