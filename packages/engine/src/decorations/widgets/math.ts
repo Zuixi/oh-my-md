@@ -75,6 +75,11 @@ export class MathBlockWidget extends BlockWidget {
 
   protected enterSourceOnClick() { return false }
 
+  protected nativePointerInteraction(event: MouseEvent) {
+    return event.target instanceof Element
+      && event.target.closest(".omd-math-popup") !== null
+  }
+
   override ignoreEvent(event: Event) {
     return super.ignoreEvent(event)
       || event.type === "keydown" || event.type === "keyup"
