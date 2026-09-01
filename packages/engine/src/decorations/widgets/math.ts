@@ -27,29 +27,35 @@ async function renderMath(
 export class MathBlockWidget extends BlockWidget {
   protected get cssClass() { return "omd-math" }
 
-  // 身份稳定契约：编辑期逐键回写改变 src，eq 忽略 src、由 updateDOM 原地
-  // 同步预览，DOM/popup/焦点全部复用。RangeSet 只对位置匹配的装饰调 eq，
-  // 不会跨块误复用。
+  private resizeObs?: ResizeObserver
+
   eq(other: MathBlockWidget) {
-    // instanceof 护栏：findWrap 的 eq() 兜底跨实例扫描时，忽略 src 的 eq 不得
-    // 跨 widget 类型误配（否则数学 wrap 会与同 embed 的其它块类型互相认领）。
+    // CM reuse contract: pass-0 uses eq and reuses DOM WITHOUT calling updateDOM.
+    // updateDOM only runs when eq FAILS. So eq must compare src — returning true
+    // for changed content would reuse the stale DOM and skip the preview refresh.
     return other instanceof MathBlockWidget
+      && this.src === other.src
       && this.embed.quoteDepth === other.embed.quoteDepth
       && this.embed.listDepth === other.embed.listDepth
       && this.embed.quoteInList === other.embed.quoteInList
   }
 
+  // pass 1 的原地刷新路径（仅当 eq 失败才会到这里）：同步草稿框 + 重渲预览。
+  // 无焦点护栏：Undo/Redo 或弹窗打开期间的外部编辑也要把草稿同步回文档现值；
+  // 正常输入时回写使 mathTexOf(this.src) 等于输入值，同步是 no-op，不跳光标。
   updateDOM(dom: HTMLElement, view: EditorView, _from: MathBlockWidget): boolean {
     const body = dom.querySelector<HTMLElement>(".omd-block-body")
     if (!body) return false
-    // popup 打开但焦点不在输入框时，外部改动把草稿同步到最新（自己的回写不触发，
-    // 因为输入中的值与新文档一致）。
     const ta = dom.querySelector<HTMLTextAreaElement>(".omd-math-editor")
-    if (ta && dom.ownerDocument.activeElement !== ta && ta.value !== mathTexOf(this.src)) {
-      ta.value = mathTexOf(this.src)
-    }
+    if (ta && ta.value !== mathTexOf(this.src)) ta.value = mathTexOf(this.src)
     this.schedulePreview(dom, body, view)
     return true
+  }
+
+  override destroy(dom?: HTMLElement) {
+    this.resizeObs?.disconnect()
+    this.resizeObs = undefined
+    super.destroy(dom)
   }
 
   private schedulePreview(dom: HTMLElement, body: HTMLElement, view: EditorView) {
@@ -88,14 +94,21 @@ export class MathBlockWidget extends BlockWidget {
     popup.appendChild(ta)
     wrap.appendChild(popup)
     ta.addEventListener("input", () => this.applyDraft(view, wrap, ta.value))
+    const close = () => {
+      this.resizeObs?.disconnect()
+      this.resizeObs = undefined
+      popup.remove()
+    }
     ta.addEventListener("keydown", e => {
-      if (e.key === "Escape") { e.preventDefault(); popup.remove(); view.focus() }
+      if (e.key === "Escape") { e.preventDefault(); close(); view.focus() }
     })
     ta.addEventListener("blur", e => {
       if (e.relatedTarget instanceof Node && popup.contains(e.relatedTarget)) return
-      popup.remove()
+      close()
     })
-    new ResizeObserver(() => view.requestMeasure()).observe(popup)
+    this.resizeObs?.disconnect()
+    this.resizeObs = new ResizeObserver(() => view.requestMeasure())
+    this.resizeObs.observe(popup)
     ta.focus()
     view.requestMeasure()
   }

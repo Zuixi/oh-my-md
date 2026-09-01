@@ -32,6 +32,16 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   return null
 }
 
+async function waitForTex(view: EditorView, tex: string, timeout = 3000) {
+  const started = Date.now()
+  while (Date.now() - started < timeout) {
+    const ann = view.dom.querySelector(".omd-math .omd-block-body annotation")
+    if (ann && ann.textContent === tex) return ann
+    await tick(20)
+  }
+  return null
+}
+
 function clickBlock(view: EditorView) {
   const block = view.dom.querySelector(".omd-math") as HTMLElement
   expect(block).toBeTruthy()
@@ -79,6 +89,25 @@ describe("math block popup editor", () => {
     view.destroy()
   })
 
+  it("typing re-renders the KaTeX preview inside the same widget DOM", async () => {
+    const { view, errors } = makeView(DOC)
+    await tick()
+    const block = clickBlock(view)
+    expect(await waitForTex(view, "x+y")).toBeTruthy()   // 首次挂载的渲染
+    const ta = view.dom.querySelector<HTMLTextAreaElement>(".omd-math-editor")!
+    const body = block.querySelector(".omd-block-body") as HTMLElement
+    const first = body.innerHTML
+
+    ta.value = "x+z"
+    ta.dispatchEvent(new Event("input", { bubbles: true }))
+    // 预览必须随回写更新：eq 比较 src，pass 1 走 updateDOM 原地重渲
+    expect(await waitForTex(view, "x+z")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-math")).toBe(block)   // 仍是同一节点
+    expect(body.innerHTML).not.toBe(first)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("removes the popup on Escape", async () => {
     const { view, errors } = makeView(DOC)
     await tick()
@@ -116,6 +145,8 @@ describe("math block popup editor", () => {
     undo(view)
     await tick()
     expect(view.state.doc.toString()).toContain("$$\nx+y\n$$")
+    // Undo 是外部改动：updateDOM 必须把草稿框同步回文档现值
+    expect(view.dom.querySelector<HTMLTextAreaElement>(".omd-math-editor")!.value).toBe("x+y")
     expect(view.dom.querySelector(".omd-math")).toBeTruthy()
     expect(errors.map(String)).toEqual([])
     view.destroy()
