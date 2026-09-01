@@ -268,7 +268,9 @@ describe("progressive live decoration build", () => {
     // 树未覆盖的 pending 区间构建不出 specs，但 pending 扣除照常进行。
     // 不挂真实视图 —— happy-dom 无布局，万行级文档的 view 挂载是纯 DOM 开销，
     // 与 drainPendingLiveBuild 相同的切片循环用 state.update 即可驱动。
-    const doc = boldDoc(12000)   // ≈ 350k 字符，pending > 单片上限，需至少两片
+    const doc = "x".repeat(LIVE_SEED_RADIUS_CHARS + 2 * LIVE_BUILD_CHUNK_CHARS)
+    // 单长行保留「seed 后 pending > 两个 chunk」的边界条件，同时避免把本测试
+    // 变成 12,000 行 Markdown 的同步解析基准（共享 CI runner 上会撞 20s timeout）。
     let state: EditorState = EditorState.create({ doc, extensions: editorExtensions() })
     let chunks = 0
     const sizes: number[] = []
