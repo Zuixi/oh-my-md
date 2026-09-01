@@ -71,8 +71,12 @@ popup.
   stripped, trimmed for display).
 - `input` → rebuild block source preserving delimiter shape (multiline
   `$$\n...\n$$` if the original contained a newline, else single-line
-  `$$...$$`) → dispatch replacement of the whole block range. Live position
-  comes from `blockWidgetRange`/`posAtDOM`, falling back to `this.pos`.
+  `$$...$$`) → dispatch replacement of the whole block range. The range is
+  resolved from the live document — the enclosing `MathBlock` syntax node at
+  `posAtDOM(wrap)`, with `blockWidgetRange` as secondary fallback — and
+  **never** from constructor offsets. If no live range resolves, the
+  write-back is dropped (bounded, self-healing on the next keystroke)
+  rather than guessed.
 - Preview rendering is coalesced with `requestAnimationFrame`: at most one
   KaTeX render per frame during fast typing.
 - `Escape` closes the popup and returns focus to the editor. `blur` (focus
