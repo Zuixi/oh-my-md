@@ -19,7 +19,7 @@ html[data-theme="light"] {
   --omd-error-border: #f0c0c0;
   --omd-chrome: #f7f7f7;
   --omd-panel-bg: #ffffff;
-  --omd-content-width: 780px;
+  --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks (see the
      override rules below; CM's own base colors #d7d4f0/#233 are never used). */
   --omd-selection-bg: rgba(215, 212, 240, 0.55);
@@ -47,7 +47,7 @@ html[data-theme="dark"] {
   --omd-error-border: #7c4040;
   --omd-chrome: #161616;
   --omd-panel-bg: #252526;
-  --omd-content-width: 780px;
+  --omd-content-width: 900px;
   /* Drives the CM selection layer and native ::selection fallbacks; CM's
      base theme dark colors (#222/#233) would only apply if a theme extension
      set {dark: true}, which nothing in the app does. */
@@ -109,7 +109,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-footnote-def { font-size: 0.9em; color: var(--omd-quote); }
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
 .editor-host .omd-u { text-decoration: underline; }
-.editor-host .omd-inline-code { font-family: ui-monospace, monospace; background: var(--omd-code-bg); }
+.editor-host .omd-inline-code { font-family: var(--omd-font-family, ui-monospace, monospace); background: var(--omd-code-bg); }
 .editor-host .omd-blockquote,
 .editor-host .omd-blockquote-1,
 .editor-host .omd-blockquote-2,
@@ -202,13 +202,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   background: var(--omd-code-bg); border: 1px solid var(--omd-border);
 }
 .editor-host .omd-front-matter-src {
-  color: var(--omd-muted); font-family: ui-monospace, monospace; font-size: 0.9em;
+  color: var(--omd-muted); font-family: var(--omd-font-family, ui-monospace, monospace); font-size: 0.9em;
 }
 .editor-host .omd-checkbox { margin-right: 0.4em; }
 .editor-host .omd-bullet { color: var(--omd-link); }
 .editor-host .omd-list-mark { color: var(--omd-link); }
 .editor-host .omd-ordered-mark { color: var(--omd-link); }
-.editor-host .omd-codeblock { font-family: ui-monospace, monospace; background-color: var(--omd-code-bg); }
+.editor-host .omd-codeblock { font-family: var(--omd-font-family, ui-monospace, monospace); background-color: var(--omd-code-bg); }
 /* Nested list hanging indent: padding shifts the whole line, negative
    text-indent pulls the first line back so wrapped lines align to the text. */
 .editor-host .omd-li-1 { --omd-li-pad: 1.2em; --omd-li-hang: -1.2em; }
@@ -250,7 +250,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-block:hover .omd-block-edit { opacity: 1; }
 .editor-host .omd-block-error {
-  font-family: ui-monospace, monospace; font-size: 0.85em;
+  font-family: var(--omd-font-family, ui-monospace, monospace); font-size: 0.85em;
   background: var(--omd-error-bg); border: 1px solid var(--omd-error-border); border-radius: 4px;
   padding: 8px; white-space: pre-wrap; color: var(--omd-error-fg);
 }
@@ -259,7 +259,9 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 4px 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 0.85em/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.6;
+  font-family: var(--omd-font-family, ui-monospace, monospace);
   color: var(--omd-muted);
 }
 .editor-host .omd-table {
@@ -294,7 +296,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-fg);
 }
 .editor-host .omd-table th code, .editor-host .omd-table td code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--omd-font-family, ui-monospace, monospace);
   font-size: 0.88em;
   background: var(--omd-code-bg);
   padding: 2px 5px;
@@ -322,6 +324,29 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-radius: 4px; background: var(--omd-chrome); color: var(--omd-muted);
   cursor: pointer;
 }
+/* Active row/column highlight while a cell editor is open: background-only so
+   cell geometry never changes. The edited intersection honors both classes. */
+.editor-host .omd-table :is(td, th).omd-table-row-active {
+  background: color-mix(in srgb, var(--omd-link) 8%, transparent);
+}
+.editor-host .omd-table :is(td, th).omd-table-col-active {
+  background: color-mix(in srgb, var(--omd-link) 5%, transparent);
+}
+.editor-host .omd-table :is(td, th).omd-table-row-active.omd-table-col-active {
+  background: color-mix(in srgb, var(--omd-link) 14%, transparent);
+}
+/* Synthetic ragged cells (no source slot) read as inert placeholders. */
+.editor-host .omd-table td.omd-table-cell-missing {
+  color: var(--omd-muted);
+  background: color-mix(in srgb, var(--omd-chrome) 60%, transparent);
+  opacity: 0.65;
+}
+/* Unavailable structural actions: keep layout, communicate inertness. */
+.editor-host .omd-table-toolbar button:disabled {
+  color: var(--omd-muted);
+  opacity: 0.45;
+  cursor: default;
+}
 .editor-host .omd-table-edit {
   /* width:100% contributes the input's default 20ch intrinsic width to an
      auto-layout table and makes the column jump on click. This equivalent
@@ -333,11 +358,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 6px 12px 6px 10px; border-radius: 0;
+  font-family: var(--omd-font-family, ui-monospace, monospace);
   font-size: 0.9em; line-height: 1.45; overflow-x: auto; background: transparent;
 }
 .editor-host .omd-code pre code {
   display: flex;
   flex-direction: column;
+  font-family: var(--omd-font-family, ui-monospace, monospace);
 }
 .editor-host .omd-code {
   border: 1px solid var(--omd-border);
@@ -1588,7 +1615,7 @@ html[data-theme="dark"] {
 }
 .editor-host .omd-math-editor {
   width: 100%; min-height: 4em; resize: vertical;
-  font-family: ui-monospace, monospace; font-size: 0.9em;
+  font-family: var(--omd-font-family, ui-monospace, monospace); font-size: 0.9em;
   background: transparent; color: inherit;
   border: none; outline: none;
 }

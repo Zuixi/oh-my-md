@@ -6,7 +6,8 @@ import { BlockWidget } from "../src/decorations/blockWidget"
 import { CheckboxWidget } from "../src/decorations/widgets"
 import { ImageWidget, imageResolver } from "../src/decorations/widgets/image"
 import { CodeWidget } from "../src/decorations/widgets/code"
-import { TableWidget, type TableData } from "../src/decorations/widgets/table"
+import { TableWidget } from "../src/decorations/widgets/table"
+import type { TableData, TableRowData } from "../src/tables/model"
 import { MermaidWidget } from "../src/decorations/widgets/mermaid"
 import { MathBlockWidget } from "../src/decorations/widgets/math"
 
@@ -114,7 +115,12 @@ describe("block widget pipeline", () => {
   })
 
   it("widget equality includes every DOM behavior input", () => {
-    const table: TableData = { header: ["a"], rows: [["1"]], aligns: [""] }
+    const row = (source: string): TableRowData => ({
+      from: 0, to: source.length, lineFrom: 0, lineTo: source.length,
+      prefix: "", leadingPipe: true, trailingPipe: true,
+      cells: [{ source, text: source, from: 0, to: source.length }],
+    })
+    const table: TableData = { header: row("a"), delimiter: row("---"), rows: [row("1")], aligns: [""] }
     // pos 已从 BlockWidget.eq 移除：src 相同时 DOM 可复用，click handler 用 posAtCoords 实时定位
     expect(new ProbeWidget("same", 1).eq(new ProbeWidget("same", 2))).toBe(true)   // 新行为
     expect(new ProbeWidget("a", 0).eq(new ProbeWidget("b", 0))).toBe(false)        // src 不同则不相等
@@ -124,7 +130,7 @@ describe("block widget pipeline", () => {
     expect(new CodeWidget({ src: "x = 1", pos: 0, lang: "js", title: "" })
       .eq(new CodeWidget({ src: "x = 1", pos: 0, lang: "ts", title: "" }))).toBe(false)
     expect(new TableWidget("| a |\n|---|\n| 1 |", 0, table)
-      .eq(new TableWidget("| a |\n|---|\n| 1 |", 0, { ...table, header: ["b"] }))).toBe(false)
+      .eq(new TableWidget("| a |\n|---|\n| 1 |", 0, { ...table, header: row("b") }))).toBe(false)
   })
 
   it("does not write an async fallback into detached DOM", async () => {
@@ -177,7 +183,12 @@ describe("block widget pipeline", () => {
 
   it("renders the table toolbar with svg icons and semantic labels", async () => {
     const view = { requestMeasure: () => {} } as never
-    const table: TableData = { header: ["a"], rows: [["1"]], aligns: [""] }
+    const row = (source: string): TableRowData => ({
+      from: 0, to: source.length, lineFrom: 0, lineTo: source.length,
+      prefix: "", leadingPipe: true, trailingPipe: true,
+      cells: [{ source, text: source, from: 0, to: source.length }],
+    })
+    const table: TableData = { header: row("a"), delimiter: row("---"), rows: [row("1")], aligns: [""] }
     const dom = new TableWidget("| a |\n|---|\n| 1 |", 0, table).toDOM(view)
     await new Promise(resolve => setTimeout(resolve, 0))   // renderInto 走微任务
     const buttons = [...dom.querySelectorAll(".omd-table-toolbar button")] as HTMLElement[]

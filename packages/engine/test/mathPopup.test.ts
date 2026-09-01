@@ -65,6 +65,53 @@ describe("math block popup editor", () => {
     view.destroy()
   })
 
+  it("leaves textarea mousedown native so the mouse can place the caret", async () => {
+    const { view, errors } = makeView(DOC)
+    await tick()
+    clickBlock(view)
+    const ta = view.dom.querySelector<HTMLTextAreaElement>(".omd-math-editor")!
+    const event = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    })
+
+    ta.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(view.dom.querySelector(".omd-math-popup")).toBeTruthy()
+    expect(document.activeElement).toBe(ta)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("refocuses the same popup when its rendered preview is clicked again", async () => {
+    const { view, errors } = makeView(DOC)
+    await tick()
+    clickBlock(view)
+    const popup = view.dom.querySelector<HTMLElement>(".omd-math-popup")!
+    const ta = popup.querySelector<HTMLTextAreaElement>(".omd-math-editor")!
+    const focusTarget = document.createElement("button")
+    popup.appendChild(focusTarget)
+    focusTarget.focus()
+    expect(document.activeElement).toBe(focusTarget)
+    expect(view.dom.querySelector(".omd-math-popup")).toBe(popup)
+
+    const preview = view.dom.querySelector<HTMLElement>(".omd-math .omd-block-body")!
+    const event = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    })
+    preview.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(view.dom.querySelector(".omd-math-popup")).toBe(popup)
+    expect(document.activeElement).toBe(ta)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
   it("typing writes through to the document and keeps the same widget and popup DOM", async () => {
     const { view, errors } = makeView(DOC)
     await tick()
