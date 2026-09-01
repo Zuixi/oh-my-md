@@ -90,11 +90,15 @@ export function ConflictSaveRegion(props: ConflictSaveRegionProps) {
 
   if (!showBanner && !diffPanel) return null
 
+  const bannerText = showBanner && conflictModel
+    ? (props.bannerKind === "saveFailed" ? conflictModel.messageKey : t(conflictModel.messageKey))
+    : ""
+
   return (
     <>
       {showBanner && conflictModel ? (
         <SaveConflictBanner
-          message={t(conflictModel.messageKey)}
+          message={bannerText}
           actions={conflictModel.actions.map(id => ({
             id,
             label: t(CONFLICT_ACTION_LABELS[id]),
