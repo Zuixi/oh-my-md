@@ -81,6 +81,7 @@ export abstract class BlockWidget extends WidgetType {
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       if (!this.enterSourceOnClick()) {
+        e.preventDefault()
         this.onWrapClick(view, wrap)
         return
       }
