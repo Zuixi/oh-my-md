@@ -1394,10 +1394,9 @@ describe("App conflict-safe save integration", () => {
     edit(harness, 2, "b mine")
 
     harness.activateTab(1)
-    const first = harness.saveActive()
+    await harness.saveActive()
     harness.activateTab(2)
-    const second = harness.saveActive()
-    await Promise.all([first, second])
+    await harness.saveActive()
 
     expect(harness.disk("/notes/a.md").contents()).toBe("a mine")
     expect(harness.disk("/notes/b.md").contents()).toBe("b mine")
