@@ -773,3 +773,13 @@ Related traps in the same generator:
 - `nsis-sidebar.bmp` bakes the version string from `tauri.conf.json`; rerun `scripts/generate-installer-images.sh` after `pnpm release:version` or the wizard shows a stale version.
 
 Regenerate from `apps/desktop/app-icon.png` with `scripts/generate-installer-images.sh` after changing the master icon. `installerIcon` stays the `.ico` for the exe/setup file icon only — it is not the wizard header bitmap.
+
+## CM keymap tests under happy-dom: `Mod` means Ctrl, not Cmd
+
+happy-dom reports `navigator.platform` as `"X11; Darwin arm64"` — it does not contain "Mac", so `@codemirror/keymap`'s platform detection resolves `Mod` to **Ctrl** in the test environment even when the host is macOS. Tests that dispatch keymap-bound keys (e.g. popup inner-editor `Mod-z` undo in `packages/engine/test/mathPopup.test.ts`) must mirror the detection instead of hardcoding `metaKey`:
+
+```ts
+const mod = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true }
+```
+
+Real WKWebView (macOS) and WebView2 (Windows) report proper platforms, so runtime bindings are unaffected — this is test-only. Symptom of getting it wrong: the dispatched key does nothing and the keymap "silently" never matches.

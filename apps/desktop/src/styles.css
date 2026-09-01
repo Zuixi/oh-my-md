@@ -1680,15 +1680,39 @@ html[data-theme="dark"] {
   opacity: 0.6;
 }
 
-/* Math block popup editor (engine emits omd-math-popup/omd-math-editor) */
+/* Math block popup editor (engine emits omd-math-popup hosting an inner CodeMirror) */
 .editor-host .omd-math-popup {
   margin-top: 6px; padding: 6px;
-  border: 1px solid var(--omd-border); border-radius: 6px;
-  background: var(--omd-code-bg);
+  border: 1px solid var(--omd-border); border-radius: 10px;
+  background: var(--omd-panel-bg);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.14);
+  /* 只动 transform/opacity：合成器动画不影响布局，不与 CM 高度测量竞争 */
+  animation: omd-math-pop-in 0.16s ease-out;
+}
+@keyframes omd-math-pop-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-host .omd-math-popup { animation: none; }
 }
 .editor-host .omd-math-editor {
-  width: 100%; min-height: 4em; resize: vertical;
-  font-family: var(--omd-font-family, ui-monospace, monospace); font-size: 0.9em;
-  background: transparent; color: inherit;
-  border: none; outline: none;
+  /* 跟随用户选择的编辑器字体（settings 字体选择器写 --omd-font-family） */
+  font-family: var(--omd-font-family, ui-monospace, monospace);
 }
+.editor-host .omd-math-popup .cm-editor {
+  max-height: 12em;   /* 内容少时随内容长高，超过上限出滚动条 */
+  border-radius: 6px;
+  background: var(--omd-code-bg);
+  font-size: 0.9em;
+}
+.editor-host .omd-math-popup .cm-editor.cm-focused { outline: none; }
+.editor-host .omd-math-popup .cm-scroller {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--omd-border) transparent;
+}
+.editor-host .omd-math-popup .cm-scroller::-webkit-scrollbar { height: 8px; width: 8px; }
+.editor-host .omd-math-popup .cm-scroller::-webkit-scrollbar-thumb {
+  background: var(--omd-border); border-radius: 4px;
+}
+.editor-host .omd-math-popup .cm-scroller::-webkit-scrollbar-track { background: transparent; }

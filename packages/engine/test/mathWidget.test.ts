@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import type { EditorView } from "@codemirror/view"
-import { MathBlockWidget, mathTexOf, rebuildMathSrc } from "../src/decorations/widgets/math"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
+import { MathBlockWidget, mathEditorTexOf, mathTexOf, rebuildMathSrc } from "../src/decorations/widgets/math"
 
 // MathBlockWidget's base imports the live decoration field, which is irrelevant to these tests.
 vi.mock("../src/decorations/build", () => ({
@@ -21,6 +22,16 @@ describe("math source helpers", () => {
     expect(rebuildMathSrc("$$\na\n$$", "b\nc")).toBe("$$\nb\nc\n$$")
     // 单行形态收到多行草稿时保留单行包裹（Lezer 仍解析为 MathBlock）
     expect(rebuildMathSrc("$$a$$", "b\nc")).toBe("$$b\nc$$")
+  })
+
+  it("mathEditorTexOf is the exact inverse of rebuildMathSrc (editor round-trip)", () => {
+    // Tab/缩进产生的前后空白必须往返一致：mathTexOf 的 trim 会吞掉它们，
+    // 同步路径用它会把内层刚输入的内容回滚（Tab 插入首例）。
+    for (const tex of ["x+y", "  x+y", "x+y  ", "\\frac{a}{b} % c", "a\n b"]) {
+      expect(mathEditorTexOf(rebuildMathSrc("$$\nx\n$$", tex))).toBe(tex)
+      expect(mathEditorTexOf(rebuildMathSrc("$$x$$", tex))).toBe(tex)
+    }
+    expect(mathEditorTexOf("$$ x $$")).toBe(" x ")   // 单行围栏内空白原样保留
   })
 })
 
@@ -43,7 +54,7 @@ describe("MathBlockWidget widget-reuse contract", () => {
     expect(a.eq(duck)).toBe(false)
   })
 
-  it("updateDOM syncs the textarea even while focused and re-renders the preview", async () => {
+  it("updateDOM syncs the inner editor even while focused and re-renders the preview", async () => {
     const w = new MathBlockWidget("$$\nnew\n$$", 0)
     const wrap = document.createElement("div")
     wrap.className = "omd-block omd-math"
@@ -51,21 +62,23 @@ describe("MathBlockWidget widget-reuse contract", () => {
     body.className = "omd-block-body"
     const popup = document.createElement("div")
     popup.className = "omd-math-popup"
-    const ta = document.createElement("textarea")
-    ta.className = "omd-math-editor"
-    ta.value = "stale"
-    popup.appendChild(ta)
+    const host = document.createElement("div")
+    host.className = "omd-math-editor"
+    popup.appendChild(host)
     wrap.appendChild(body)
     wrap.appendChild(popup)
     document.body.appendChild(wrap)
-    ta.focus()   // 焦点在输入框内也必须同步（Undo/Redo、外部编辑场景）
+    const inner = new EditorView({ parent: host, state: EditorState.create({ doc: "stale" }) })
+    ;(popup as typeof popup & { __omdMathPopupView?: EditorView }).__omdMathPopupView = inner
+    inner.focus()   // 焦点在编辑器内也必须同步（Undo/Redo、外部编辑场景）
 
     const view = { requestMeasure: () => {} } as unknown as EditorView
     expect(w.updateDOM(wrap, view, w)).toBe(true)
-    expect(ta.value).toBe("new")
+    expect(inner.state.doc.toString()).toBe("new")
 
     await tick()   // rAF + async KaTeX render
     expect(body.querySelector("annotation")?.textContent).toBe("new")
     wrap.remove()
+    inner.destroy()
   })
 })
