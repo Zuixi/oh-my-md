@@ -1,7 +1,7 @@
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
-import { cursorInside, nearCursor, type DecoSpec } from "./types"
+import { cursorInside, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget } from "./widgets/table"
@@ -16,12 +16,14 @@ import { parseFenceInfo } from "../fenceInfo"
 const MAX_QUOTE_DEPTH = 4
 const MAX_LIST_DEPTH = 4
 
-// Folds a line-leading syntax mark ('[^id]:') plus its trailing space,
-// unless the cursor is on that line.
+// Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
+// caret is inside the mark itself — same span granularity as the inline reveal
+// (cursorInside), not line-based: editing the definition content keeps the label
+// folded; clicking into the label reveals it for editing.
 function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   const line = state.doc.lineAt(node.from)
   const end = Math.min(node.to + 1, line.to)
-  if (!nearCursor(state, node.from, end))
+  if (!cursorInside(state, node.from, end))
     out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
 }
 
@@ -141,7 +143,10 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     return true
   }
 
-  if (langToken === "mermaid") {
+  // mermaid 与 lang-code 同一编辑模型：光标进入块 → 卸载成源码行。✎/wrap 点击、
+  // ↑/↓ 进块派发的光标都依赖 blockSelected 门控触发卸载；缺门控时光标会落入被
+  // replace 隐藏的源码区（✎ 点击"无效"、打字盲改）。
+  if (langToken === "mermaid" && !blockSelected(state, node.from, node.to)) {
     out.push({
       from: node.from, to: node.to, tag: "widget:block:mermaid",
       deco: Decoration.replace({ widget: new MermaidWidget(src, node.from, embed), block: true }),

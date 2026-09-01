@@ -304,7 +304,9 @@ describe("fixture snapshots", () => {
   it("footnote.md", () => {
     expect(specsFor("footnote.md")).toMatchInlineSnapshot(`
       [
+        "replace:FootnoteMark@20-22",
         "mark:omd-footnote@20-24",
+        "replace:FootnoteMark@23-24",
         "line:omd-empty@52-52",
         "replace:FootnoteMark@70-72",
         "mark:omd-footnote@70-79",
@@ -981,6 +983,7 @@ describe("fixture snapshots", () => {
   it("math.md", () => {
     expect(specsFor("math.md")).toMatchInlineSnapshot(`
       [
+        "widget:inline-math@12-20",
         "line:omd-empty@36-36",
         "line:omd-empty@61-61",
         "widget:block:math@62-81",
@@ -996,7 +999,13 @@ describe("fixture snapshots", () => {
   it("links.md", () => {
     expect(specsFor("links.md")).toMatchInlineSnapshot(`
       [
+        "replace:LinkMark@18-19",
         "mark:omd-link@18-64",
+        "replace:LinkMark@26-27",
+        "replace:LinkMark@27-28",
+        "replace:URL@28-47",
+        "replace:LinkTitle@47-63",
+        "replace:LinkMark@63-64",
         "line:omd-empty@66-66",
         "replace:LinkMark@98-99",
         "mark:omd-link@98-106",

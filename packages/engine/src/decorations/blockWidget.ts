@@ -5,6 +5,7 @@ import {
 } from "./renderBudget"
 import { blockWidgetRange, registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
 import { measureBlockWidget } from "./widgetMeasure"
+import { icon } from "./icons"
 
 export interface BlockEmbed {
   quoteDepth: number
@@ -95,8 +96,22 @@ export abstract class BlockWidget extends WidgetType {
 
     const editBtn = document.createElement("button")
     editBtn.className = "omd-block-edit"
-    editBtn.textContent = "✎"
+    // 语义反转：`</>`（code 图标）= 显式看源码；铅笔保留给未来的“就地编辑”
+    // 入口（math popup 模式），避免再出现“铅笔=翻源码”的方向歧义。
+    editBtn.appendChild(icon("code"))
+    editBtn.title = "View source"
+    editBtn.setAttribute("aria-label", "View source")
     editBtn.tabIndex = -1
+    // `</>` 按钮是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap），wrap
+    // 点击不进源码的块（表格：enterSourceOnClick=false）仍能经它进入源码编辑。
+    editBtn.addEventListener("mousedown", e => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pos = this.clickPos(view, e, wrap)
+      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
+      view.focus()
+    })
     wrap.appendChild(editBtn)
 
     const body = document.createElement("div")
@@ -118,7 +133,10 @@ export abstract class BlockWidget extends WidgetType {
       .catch(err => {
         if (!this.isActive(body)) return
         body.classList.add("omd-block-error")
-        body.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
+        body.replaceChildren(
+          icon("triangle-alert"),
+          document.createTextNode(` ${err instanceof Error ? err.message : err}\n\n${this.src}`),
+        )
         view.requestMeasure()
         if (typeof view.dispatch === "function") {
           const pos = blockWidgetRange(this, view, wrap)?.from ?? this.pos

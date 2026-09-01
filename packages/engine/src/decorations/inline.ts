@@ -1,7 +1,7 @@
-import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
+import type { SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
-import { cursorInside, nearCursor, type DecoSpec } from "./types"
+import { cursorInside, type DecoSpec } from "./types"
 import { EntityWidget, EmojiWidget } from "./widgets"
 import { InlineMathWidget } from "./widgets/math"
 import { imageResolver, ImageWidget } from "./widgets/image"
@@ -12,13 +12,6 @@ const HEADING_CLASS: Record<string, string> = {
   ATXHeading1: "omd-h1", ATXHeading2: "omd-h2", ATXHeading3: "omd-h3",
   ATXHeading4: "omd-h4", ATXHeading5: "omd-h5", ATXHeading6: "omd-h6",
   SetextHeading1: "omd-h1", SetextHeading2: "omd-h2",
-}
-
-function hasAncestor(node: SyntaxNode, name: string): boolean {
-  for (let parent = node.parent; parent; parent = parent.parent) {
-    if (parent.name === name) return true
-  }
-  return false
 }
 
 function childMarks(node: SyntaxNodeRef, name: string): { from: number; to: number }[] {
@@ -39,31 +32,30 @@ function foldPair(node: SyntaxNodeRef, out: DecoSpec[], markName: string, markCl
   out.push({ from: node.from, to: node.to, tag: `mark:${markClass}`, deco: Decoration.mark({ class: markClass }) })
 }
 
-// 仅供“源码本身是唯一编辑入口”的语法使用（链接/图片/行内公式/脚注引用）：
-// 非引号内按行展开，引号内要求光标精确进入 —— 见 types.ts 的分工说明。
-function markActive(state: EditorState, from: number, to: number, inQuote: boolean) {
-  return inQuote ? cursorInside(state, from, to) : nearCursor(state, from, to)
-}
-
+// 展开/折叠的粒度必须是**语法节点整体**，绝不能逐子节点判定：光标在链接文字里时
+// 在 LinkMark span 内但不在 URL span 内，逐子判定会产出 `[text](` 半展开残缺态。
+// 链接 URL/图片 src/行内公式/脚注 id 的源码没有其它编辑入口，展开是刻意的；
+// 粒度对齐 Typora/Obsidian：光标进入 span 才展开，落在同一行的其它文本上不展开
+//（行级展开会让软换行段落里任意点击把整段链接裸奔成 [text](url)，即点击闪烁）。
 function foldLink(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
-  const inQuote = hasAncestor(node.node, "Blockquote")
-  const marks = childMarks(node, "LinkMark")
-  for (const m of marks)
-    if (!markActive(state, m.from, m.to, inQuote))
+  const active = cursorInside(state, node.from, node.to)
+  if (!active) {
+    for (const m of childMarks(node, "LinkMark"))
       out.push({ from: m.from, to: m.to, tag: "replace:LinkMark", deco: Decoration.replace({}) })
-  const c = node.node.cursor()
-  if (c.firstChild()) do {
-    if (node.name !== "Link") continue
-    if (c.name === "URL" && !markActive(state, c.from, c.to, inQuote))
-      out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: Decoration.replace({}) })
-    // 标题（含引号）与其前的 URL 之间的分隔空白是裸文本，需一并吞掉，否则漏出到预览。
-    if (c.name === "LinkTitle" && !markActive(state, c.from, c.to, inQuote)) {
-      const line = state.doc.lineAt(c.from)
-      let from = c.from
-      while (from > line.from && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--
-      out.push({ from, to: c.to, tag: "replace:LinkTitle", deco: Decoration.replace({}) })
-    }
-  } while (c.nextSibling())
+    const c = node.node.cursor()
+    if (c.firstChild()) do {
+      if (node.name !== "Link") continue
+      if (c.name === "URL")
+        out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: Decoration.replace({}) })
+      // 标题（含引号）与其前的 URL 之间的分隔空白是裸文本，需一并吞掉，否则漏出到预览。
+      if (c.name === "LinkTitle") {
+        const line = state.doc.lineAt(c.from)
+        let from = c.from
+        while (from > line.from && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--
+        out.push({ from, to: c.to, tag: "replace:LinkTitle", deco: Decoration.replace({}) })
+      }
+    } while (c.nextSibling())
+  }
   out.push({ from: node.from, to: node.to, tag: "mark:omd-link", deco: Decoration.mark({ class: "omd-link" }) })
 }
 
@@ -111,8 +103,9 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
   }
 
   switch (node.name) {
-    // 链接/图片/行内公式/脚注引用保留“光标落行展开”：其源码（URL、src、tex、id）
-    // 没有其它编辑入口，展开是刻意的（见 types.ts 的分工说明）。
+    // 链接/图片/行内公式/脚注引用保留“光标进入 span 展开”（cursorInside，节点级）：
+    // 其源码（URL、src、tex、id）没有其它编辑入口，展开是刻意的，但粒度是光标
+    // 进入该语法自身，不是落行 —— 见 foldLink 注释与 types.ts 的分工说明。
     case "StrongEmphasis": return foldPair(node, out, "EmphasisMark", "omd-strong")
     case "Emphasis":       return foldPair(node, out, "EmphasisMark", "omd-em")
     case "Strikethrough":  return foldPair(node, out, "StrikethroughMark", "omd-del")
@@ -124,8 +117,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Link":
     case "Autolink":       return foldLink(node, state, out)
     case "Image": {
-      const inQuote = hasAncestor(node.node, "Blockquote")
-      if (markActive(state, node.from, node.to, inQuote)) return
+      if (cursorInside(state, node.from, node.to)) return
       const urlNode = node.node.getChild("URL")
       if (!urlNode) return
       const src = state.doc.sliceString(urlNode.from, urlNode.to)
@@ -142,8 +134,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       return
     }
     case "InlineMath": {
-      const inQuote = hasAncestor(node.node, "Blockquote")
-      if (markActive(state, node.from, node.to, inQuote)) return
+      if (cursorInside(state, node.from, node.to)) return
       // 剥掉两侧 $，内容为 node.from+1 .. node.to-1
       const tex = state.doc.sliceString(node.from + 1, node.to - 1)
       out.push({
@@ -175,8 +166,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       return
     }
     case "FootnoteReference": {
-      const inQuote = hasAncestor(node.node, "Blockquote")
-      if (!markActive(state, node.from, node.to, inQuote)) {
+      if (!cursorInside(state, node.from, node.to)) {
         out.push({ from: node.from, to: node.from + 2, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
         out.push({ from: node.to - 1, to: node.to, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
       }

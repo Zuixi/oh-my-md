@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { EditorView } from "@codemirror/view"
-import { EditorState } from "@codemirror/state"
+import { EditorState, type Extension } from "@codemirror/state"
 import {
   editorExtensions,
   getPendingOrderedListNormalization,
@@ -10,7 +10,7 @@ import { livePreviewField } from "../src/decorations/build"
 
 // View 级冒烟：纯函数 spec 测试测不到 "Block decorations may not be specified
 // via plugins" 这类运行时崩溃（M2 事故的盲区），这里实例化真实 EditorView 守门。
-function makeView(doc: string, anchor = doc.length) {
+function makeView(doc: string, anchor = doc.length, extraExtensions: Extension[] = []) {
   const parent = document.createElement("div")
   document.body.appendChild(parent)
   const errors: unknown[] = []
@@ -18,11 +18,17 @@ function makeView(doc: string, anchor = doc.length) {
     state: EditorState.create({
       doc,
       selection: { anchor },   // 默认光标放文末，块处于渲染态
-      extensions: [editorExtensions(), EditorView.exceptionSink.of(e => { errors.push(e) })],
+      extensions: [...extraExtensions, editorExtensions(), EditorView.exceptionSink.of(e => { errors.push(e) })],
     }),
     parent,
   })
   return { view, errors }
+}
+
+// 模拟浏览器 click = mousedown + mouseup 后派发的 click（同坐标 = 无拖动）
+function click(el: Element, x = 10, y = 10) {
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: x, clientY: y }))
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: x, clientY: y }))
 }
 
 const tick = (ms = 100) => new Promise(r => setTimeout(r, ms))
@@ -184,48 +190,81 @@ describe("view smoke (real EditorView)", () => {
     }
   })
 
-  it("clicking a block widget moves the cursor into the block (source edit)", async () => {
-    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n")
+  // 表格 wrap 点击已改为保持渲染（见下方 non-cell surface 测试）；基类的
+  // “wrap 点击进源码”路径仍服务 hr/front-matter/mermaid，这里用 hr 守门。
+  it("clicking an hr block widget moves the cursor into the block (source edit)", async () => {
+    const doc = "intro\n\n***\n\ntail"
+    const { view, errors } = makeView(doc)
     await tick()
     const block = view.dom.querySelector(".omd-block") as HTMLElement
     expect(block).toBeTruthy()
-    // happy-dom 无 layout，posAtCoords 返回 null，fallback 到 posAtDOM(wrap) = 0。
-    // 真实浏览器中 posAtCoords 会用鼠标坐标精确定位。
-    block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
-    expect(view.state.selection.main.head).toBe(0)
+    // happy-dom 无 layout，posAtCoords 返回 null，fallback 到 posAtDOM(wrap)。
+    block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    expect(view.state.selection.main.head).toBe(doc.indexOf("***"))
     await tick()
     expect(view.dom.querySelector(".omd-block")).toBeNull()  // widget 已卸载，回到源码
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
 
-  it("enters opaque block source from its current decoration range", async () => {
-    // 数学块已改为点击弹源码编辑框（见 mathPopup.test.ts），这里用表格块验证
-    // “单击进入源码且定位取自装饰现范围”：posAtCoords 被 mock 到文档末尾也不受影响。
+  it("clicking a table's non-cell surface keeps it rendered (no source flash)", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
     const block = view.dom.querySelector(".omd-table") as HTMLElement
     expect(block).toBeTruthy()
-    vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
+    const headBefore = view.state.selection.main.head
 
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
-    expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()   // wrap 点击不再注入光标
+    expect(view.state.selection.main.head).toBe(headBefore)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
 
-  it("keeps a rendered code block mounted when clicking inside it (Typora live copy)", async () => {
+  it("clicking a block widget's edit button moves the cursor into the block", async () => {
+    const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const btn = view.dom.querySelector(".omd-table .omd-block-edit") as HTMLElement
+    expect(btn).toBeTruthy()
+    // posAtCoords 被 mock 到文档末尾也不受影响：定位取自装饰现范围（identity-first）。
+    vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
+
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+
+    expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
+    await tick()
+    expect(view.dom.querySelector(".omd-table")).toBeNull()   // widget 卸载，进入源码
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("clicking a code block body enters source at the clicked line", async () => {
+    const doc = "before\n\n```powershell\nfirst\nsecond\nthird\n```\n\nafter"
+    const { view, errors } = makeView(doc)
+    const headBefore = view.state.selection.main.head
+    const rows = await waitFor(".omd-code .line", view, 3000)
+      .then(() => [...(view.dom.querySelectorAll(".omd-code .line") as NodeListOf<HTMLElement>)])
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+    click(rows[1])   // 点击第二个内容行 "second"
+    await tick()
+    expect(view.dom.querySelector(".omd-code")).toBeNull()   // widget 卸载，进入源码
+    expect(view.state.selection.main.head).toBe(doc.indexOf("second"))
+    expect(view.state.selection.main.head).not.toBe(headBefore)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("dragging inside a code block keeps it mounted (native text select)", async () => {
     const doc = "before\n\n```powershell\nfirst\nsecond\nthird\n```\n\nafter"
     const { view, errors } = makeView(doc)
     const headBefore = view.state.selection.main.head
     const row = await waitFor(".omd-code .line", view, 3000)
     expect(row).toBeTruthy()
-    ;(row as HTMLElement).dispatchEvent(new MouseEvent("mousedown", {
-      bubbles: true,
-      button: 0,
-    }))
+    row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    row!.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 80, clientY: 60 }))
     await tick()
     expect(view.dom.querySelector(".omd-code")).toBeTruthy()
     expect(view.state.selection.main.head).toBe(headBefore)
@@ -233,19 +272,47 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("keeps identical block widgets mounted when clicking either one", async () => {
+  it("clicking the code header chrome does not enter source", async () => {
+    const doc = "before\n\n```powershell\nfirst\n```\n\nafter"
+    const { view, errors } = makeView(doc)
+    const headBefore = view.state.selection.main.head
+    const header = await waitFor(".omd-code-header", view, 3000)
+    expect(header).toBeTruthy()
+    click(header!)
+    await tick()
+    expect(view.dom.querySelector(".omd-code")).toBeTruthy()
+    expect(view.state.selection.main.head).toBe(headBefore)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("clicking a code block body in a read-only view keeps it rendered", async () => {
+    const doc = "before\n\n```powershell\nfirst\n```\n\nafter"
+    const { view, errors } = makeView(doc, doc.length, [EditorState.readOnly.of(true)])
+    const headBefore = view.state.selection.main.head
+    const row = await waitFor(".omd-code .line", view, 3000)
+    expect(row).toBeTruthy()
+    click(row!)
+    await tick()
+    expect(view.dom.querySelector(".omd-code")).toBeTruthy()
+    expect(view.state.selection.main.head).toBe(headBefore)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("clicking either of two identical code blocks enters its own range", async () => {
     const block = "```js\nsame()\n```"
     const doc = `${block}\n\nmiddle\n\n${block}\n\ntail`
     const { view, errors } = makeView(doc)
-    await tick()
+    const row = await waitFor(".omd-code .line", view, 3000)
+    expect(row).toBeTruthy()
     const widgets = view.dom.querySelectorAll(".omd-code")
     expect(widgets).toHaveLength(2)
-    const headBefore = view.state.selection.main.head
 
-    widgets[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    click(widgets[1])
 
-    expect(view.state.selection.main.head).toBe(headBefore)
-    expect(view.dom.querySelectorAll(".omd-code")).toHaveLength(2)
+    expect(view.state.selection.main.head).toBe(doc.lastIndexOf("same()"))
+    expect(view.dom.querySelectorAll(".omd-code")).toHaveLength(1)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

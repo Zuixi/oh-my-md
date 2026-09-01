@@ -40,10 +40,53 @@ describe("inline marks", () => {
     expect(t).toContain("mark:omd-link")
   })
 
-  it("does not fold URL when cursor is on the same line", () => {
+  it("does not fold URL when cursor is inside the link span", () => {
     const doc = "[text](http://x.com)"
     const urlInside = doc.indexOf("http") + 2
     expect(tagsAt(doc, urlInside)).not.toContain("replace:URL")
+  })
+
+  it("keeps a link folded when the caret is on the same line but outside the link", () => {
+    // 行级展开是点击闪烁的根源：软换行下一段=一行，点段落任意文本都会把整段
+    // 链接展开成 [text](url)。Typora/Obsidian 语义：光标进入链接 span 才展开。
+    const doc = "plain [text](http://x.com) tail"
+    const t = tagsAt(doc, 2)   // "pl|ain" —— 同行、链接 span 外
+    expect(t.filter(x => x === "replace:LinkMark")).toHaveLength(4)
+    expect(t).toContain("replace:URL")
+  })
+
+  it("keeps a link folded when the caret sits just past the closing paren", () => {
+    const doc = "[text](http://x.com) tail"
+    const t = tagsAt(doc, doc.indexOf(" tail") + 2)
+    expect(t.filter(x => x === "replace:LinkMark")).toHaveLength(4)
+    expect(t).toContain("replace:URL")
+  })
+
+  it("reveals the whole link syntax when the caret is inside the link text", () => {
+    const doc = "plain [text](http://x.com) tail"
+    const t = tagsAt(doc, doc.indexOf("text") + 1)
+    expect(t.filter(x => x === "replace:LinkMark")).toHaveLength(0)
+    expect(t).not.toContain("replace:URL")
+    expect(t).toContain("mark:omd-link")
+  })
+
+  it("keeps the image widget mounted when the caret shares the line outside it", () => {
+    const doc = "see ![alt](a.png) here"
+    const t = tagsAt(doc, 1)   // "s|ee"
+    expect(t).toContain("widget:image")
+  })
+
+  it("keeps a footnote reference folded when the caret is outside it on the same line", () => {
+    const doc = "text[^1] more"
+    const t = tagsAt(doc, 2)
+    expect(t.filter(x => x === "replace:FootnoteMark")).toHaveLength(2)
+  })
+
+  it("reveals a footnote reference when the caret is inside it", () => {
+    const doc = "text[^1] more"
+    const t = tagsAt(doc, doc.indexOf("1"))
+    expect(t.filter(x => x === "replace:FootnoteMark")).toHaveLength(0)
+    expect(t).toContain("mark:omd-footnote")
   })
 
   it("folds the quoted link title with its separator space when the cursor is away", () => {

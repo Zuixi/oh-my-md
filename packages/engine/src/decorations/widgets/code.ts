@@ -10,10 +10,14 @@ import {
 } from "../renderBudget"
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
+import { icon } from "../icons"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
 const COPY_RESET_MS = 1500
+// 判定“点击”与“拖动选择”的位移阈值（px）：click 事件在拖动后也会触发，
+// 超过阈值视为拖选文本（保持渲染、走浏览器原生选择），不进入源码。
+const CLICK_DRIFT_PX = 4
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 const htmlCache = createCodeHtmlCache()
@@ -36,32 +40,15 @@ function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
   return classes.join(" ")
 }
 
-function copyIcon(): SVGSVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-  svg.setAttribute("viewBox", "0 0 16 16")
-  svg.setAttribute("width", "14")
-  svg.setAttribute("height", "14")
-  svg.setAttribute("aria-hidden", "true")
-  const rear = document.createElementNS("http://www.w3.org/2000/svg", "rect")
-  rear.setAttribute("x", "2")
-  rear.setAttribute("y", "2")
-  rear.setAttribute("width", "8")
-  rear.setAttribute("height", "9")
-  rear.setAttribute("rx", "1.2")
-  rear.setAttribute("fill", "none")
-  rear.setAttribute("stroke", "currentColor")
-  rear.setAttribute("stroke-width", "1.4")
-  const front = document.createElementNS("http://www.w3.org/2000/svg", "rect")
-  front.setAttribute("x", "5")
-  front.setAttribute("y", "5")
-  front.setAttribute("width", "8")
-  front.setAttribute("height", "9")
-  front.setAttribute("rx", "1.2")
-  front.setAttribute("fill", "none")
-  front.setAttribute("stroke", "currentColor")
-  front.setAttribute("stroke-width", "1.4")
-  svg.append(rear, front)
-  return svg
+// Shiki 行 span（pre>code>span.line*）与源码内容行 1:1：点击落在第 N 个 line
+// span 上即第 N 内容行。占位 <pre>（Shiki/缓存未就绪）无结构可依，回到首行。
+function clickedLineIndex(target: EventTarget | null): number {
+  if (!(target instanceof Element)) return 0
+  const line = target.closest("span.line")
+  if (!line?.parentElement) return 0
+  let index = 0
+  for (let sibling = line.previousElementSibling; sibling; sibling = sibling.previousElementSibling) index++
+  return index
 }
 
 export class CodeWidget extends BlockWidget {
@@ -98,6 +85,36 @@ export class CodeWidget extends BlockWidget {
     const body = document.createElement("div")
     body.className = "omd-block-body omd-code-body omd-code-lines"
     wrap.appendChild(body)
+
+    // 点击代码体进入源码编辑（Typora 模型）：光标落到被点击的内容行，块随
+    // blockSelected 卸载成带样式的原生源码行。在 click（而非 mousedown）上派发，
+    // 拖选复制不被打断；header chrome（标题/语言/复制）不触发。捕获阶段记录
+    // mousedown，避免 header 自己的 stopPropagation 留下过期坐标。
+    let down: { x: number; y: number } | null = null
+    wrap.addEventListener("mousedown", e => {
+      down = e.button === 0 && !(e.target instanceof Element && e.target.closest(".omd-code-header"))
+        ? { x: e.clientX, y: e.clientY }
+        : null
+    }, true)
+    wrap.addEventListener("click", e => {
+      const start = down
+      down = null
+      if (!start) return
+      if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) > CLICK_DRIFT_PX) return
+      if (e.target instanceof Element && e.target.closest(".omd-code-header")) return
+      if (view.state.readOnly) return
+      e.preventDefault()
+      e.stopPropagation()
+      const range = blockWidgetRange(this, view, wrap)
+      if (!range) return
+      const fenceLine = view.state.doc.lineAt(range.from)
+      const target = Math.min(
+        fenceLine.number + 1 + clickedLineIndex(e.target),
+        view.state.doc.lines,
+      )
+      view.dispatch({ selection: { anchor: view.state.doc.line(target).from }, scrollIntoView: true })
+      view.focus()
+    })
 
     this.renderPlaceholder(body)
     const start = () => Promise.resolve()
@@ -154,7 +171,7 @@ export class CodeWidget extends BlockWidget {
     copyBtn.className = "omd-code-copy"
     copyBtn.title = "Copy"
     copyBtn.setAttribute("aria-label", "Copy")
-    copyBtn.appendChild(copyIcon())
+    copyBtn.appendChild(icon("copy"))
     copyBtn.addEventListener("click", e => {
       e.preventDefault()
       e.stopPropagation()
@@ -204,16 +221,16 @@ export class CodeWidget extends BlockWidget {
   }
 
   private copy(btn: HTMLButtonElement) {
-    const mark = (ok: boolean) => {
+    const apply = (ok: boolean) => {
       btn.classList.toggle("omd-code-copied", ok)
       btn.title = ok ? "Copied" : "Copy"
       btn.setAttribute("aria-label", ok ? "Copied" : "Copy")
+      btn.replaceChildren(icon(ok ? "check" : "copy"))
+    }
+    const mark = (ok: boolean) => {
+      apply(ok)
       if (this.copyReset) clearTimeout(this.copyReset)
-      this.copyReset = setTimeout(() => {
-        btn.classList.remove("omd-code-copied")
-        btn.title = "Copy"
-        btn.setAttribute("aria-label", "Copy")
-      }, COPY_RESET_MS)
+      this.copyReset = setTimeout(() => apply(false), COPY_RESET_MS)
     }
     const write = navigator.clipboard?.writeText(this.src)
     if (!write) {
@@ -262,7 +279,10 @@ export class CodeWidget extends BlockWidget {
   private renderError(el: HTMLElement, err: unknown, view: EditorView) {
     if (!this.isActive(el)) return
     el.classList.add("omd-block-error")
-    el.textContent = `⚠ ${err instanceof Error ? err.message : err}\n\n${this.src}`
+    el.replaceChildren(
+      icon("triangle-alert"),
+      document.createTextNode(` ${err instanceof Error ? err.message : err}\n\n${this.src}`),
+    )
     view.requestMeasure()
     if (typeof view.dispatch === "function") {
       const pos = blockWidgetRange(this, view, this.wrap!)?.from ?? this.pos

@@ -92,6 +92,16 @@ describe("block widget pipeline", () => {
     expect(t).not.toContain("widget:block:code")
   })
 
+  it("unmounts a mermaid widget when the cursor is inside the block", () => {
+    const doc = "intro\n\n```mermaid\ngraph TD; A-->B\n```\n"
+    const state = makeState(doc)
+    // 光标落在 mermaid 内容行（"graph..." 从 18 起）
+    const on = state.update({ selection: { anchor: 20 } }).state
+    const t = collectDecorationSpecs(on, 0, doc.length).map(d => d.tag)
+    expect(t).not.toContain("widget:block:mermaid")
+    expect(t).toContain("line:omd-codeblock")
+  })
+
   it("image becomes inline widget off-cursor, resolves src via facet", () => {
     const doc = "intro\n\n![alt](assets/pic.png)"
     const state = makeState(doc, [imageResolverTestFacet])
@@ -158,6 +168,38 @@ describe("block widget pipeline", () => {
     expect(dom.querySelector(".omd-block-body pre")?.textContent).toBe("line 1\nline 2")
     expect(dom.querySelector(".omd-code-copy svg")).toBeTruthy()
     expect(dom.querySelector(".omd-code-copy")?.getAttribute("aria-label")).toBe("Copy")
+    dom.remove()
+  })
+
+  it("renders the block source toggle as an svg code icon, not a text glyph", () => {
+    const view = { requestMeasure: () => {} } as never
+    const probe = new ProbeWidget("x", 0).toDOM(view)
+    const editBtn = probe.querySelector(".omd-block-edit") as HTMLElement
+    expect(editBtn.querySelector("svg.omd-icon")).toBeTruthy()
+    expect(editBtn.textContent).toBe("")            // ✎ 文本字形退役
+    expect(editBtn.getAttribute("aria-label")).toBe("View source")
+    probe.remove()
+  })
+
+  it("renders the table toolbar with svg icons and semantic labels", async () => {
+    const view = { requestMeasure: () => {} } as never
+    const row = (source: string): TableRowData => ({
+      from: 0, to: source.length, lineFrom: 0, lineTo: source.length,
+      prefix: "", leadingPipe: true, trailingPipe: true,
+      cells: [{ source, text: source, from: 0, to: source.length }],
+    })
+    const table: TableData = { header: row("a"), delimiter: row("---"), rows: [row("1")], aligns: [""] }
+    const dom = new TableWidget("| a |\n|---|\n| 1 |", 0, table).toDOM(view)
+    await new Promise(resolve => setTimeout(resolve, 0))   // renderInto 走微任务
+    const buttons = [...dom.querySelectorAll(".omd-table-toolbar button")] as HTMLElement[]
+    expect(buttons).toHaveLength(4)
+    for (const btn of buttons) {
+      expect(btn.querySelector("svg.omd-icon")).toBeTruthy()
+      expect(btn.textContent).toBe("")
+    }
+    expect(buttons.map(btn => btn.getAttribute("aria-label"))).toEqual([
+      "Insert row below", "Insert column right", "Delete row", "Delete column",
+    ])
     dom.remove()
   })
 
@@ -268,7 +310,8 @@ describe("block widget pipeline", () => {
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     widget.destroy(dom)
     await new Promise(resolve => setTimeout(resolve, 600))
-    expect(dom.querySelector("svg")).toBeNull()
+    // 编辑按钮自带 svg.omd-icon，这里只断言 mermaid 渲染输出未写入
+    expect(dom.querySelector("svg.omd-mermaid-svg")).toBeNull()
     expect(dom.querySelector(".omd-block-body")?.textContent).toBe("graph TD; A-->B")
   }, 2000)
 })

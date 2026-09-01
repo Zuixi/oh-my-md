@@ -10,6 +10,7 @@ import {
 } from "../../tables/edit"
 import type { TableData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
+import { icon, type IconName } from "../icons"
 
 interface PendingTableEdit {
   readonly pos: number
@@ -169,29 +170,35 @@ export class TableWidget extends BlockWidget {
       || event.type === "click"
   }
 
+  // wrap（padding/边框/工具栏空隙等非单元格表面）点击不注入光标：单元格就地
+  // 编辑是主入口，误触 wrap 整表翻源码就是表格闪烁。显式源码入口只剩 `</>`
+  // 按钮（blockWidget 基类自带处理器）与键盘 ↑/↓（blockMotionKeymap 有意进源码）。
+  protected enterSourceOnClick(): boolean { return false }
+
   protected get cssClass() { return "omd-table" }
 
   protected renderInto(el: HTMLElement) {
     // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
     // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
-    const readonly = this.view?.state.readOnly ?? false
+    const readonly = this.view?.state?.readOnly ?? false
     // 仅剩一行/一列时结构性删除无效：工具栏按当前模型禁用对应按钮，
     // 用户在编辑状态下点 disabled 控件不会落入「先提交、后 no-op」路径。
     const canDeleteRow = this.table.rows.length > 1
     const canDeleteCol = this.table.header.cells.length > 1
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
-    for (const [act, label, title] of [
-      ["insert-row", "+row", "Insert row below"],
-      ["insert-col", "+col", "Insert column right"],
-      ["delete-row", "−row", "Delete row"],
-      ["delete-col", "−col", "Delete column"],
-    ] as const) {
+    for (const [act, iconName, title] of [
+      ["insert-row", "row-insert-bottom", "Insert row below"],
+      ["insert-col", "column-insert-right", "Insert column right"],
+      ["delete-row", "row-remove", "Delete row"],
+      ["delete-col", "column-remove", "Delete column"],
+    ] as const satisfies readonly [string, IconName, string][]) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act
-      btn.textContent = label
+      btn.appendChild(icon(iconName))
       btn.title = title
+      btn.setAttribute("aria-label", title)
       btn.tabIndex = -1
       btn.disabled = readonly
         || (act === "delete-row" && !canDeleteRow)
