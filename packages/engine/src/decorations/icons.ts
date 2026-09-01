@@ -1,7 +1,7 @@
 // 引擎内联 SVG 图标：path 数据常量化，零运行时依赖、无文件/网络加载，
 // 框架无关（不 import lucide-react）。尺寸用 1em —— 跟随宿主 CSS 的
 // font-size，替换原文本字形（✎/⚠/+row）时无需改任何尺寸规则。
-// 来源与许可：Lucide v1.38.0（ISC）+ Tabler Icons v3.x（MIT），
+// 来源与许可：Lucide v1.38.0（ISC）+ Tabler Icons v3.46.0（MIT），
 // 完整声明见仓库根 THIRD_PARTY_NOTICES.md。升级时按常量注释里的图标名
 // 回官方包重取 path 数据。
 
@@ -31,7 +31,7 @@ const LUCIDE: Partial<Record<IconName, string>> = {
     + '<path d="M12 9v4"/><path d="M12 17h.01"/>',
 }
 
-/** Tabler Icons outline（MIT）: row/column insert/remove —— Lucide 无此组图标 */
+/** Tabler Icons v3.46.0 outline（MIT）: row/column insert/remove —— Lucide 无此组图标 */
 const TABLER: Partial<Record<IconName, string>> = {
   "row-insert-bottom":
     '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>'
