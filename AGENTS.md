@@ -98,6 +98,7 @@ pnpm release:changelog
 - Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
 - Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.
 - Dangerous shell commands are blocked by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Cursor currently ignores hook `permission: ask`, so the guard returns `deny`. Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh). To run a blocked command, execute it yourself in the integrated terminal (human terminals do not trigger hooks).
+- **并发会话在各自 worktree 作业**：同一仓库可能有多个 agent/人工会话并行。功能分支的工作必须在自己的 worktree 里做（`git worktree add .worktrees/<name> -b <branch> origin/main`，参照现有 `.worktrees/` 先例），主 checkout 留给用户当前分支。绝不在主 checkout 里切换分支、stash 或还原他人未提交的改动 —— 2026-09-01 两次实际碰撞（分支被并发切换导致提交落错基底；他人 WIP 混入工作区使测试失败）都源于此。
 - Never spawn CPU-saturating processes on the dev machine — busy loops (`while :; do :; done`), fork bombs, `stress`/`stress-ng`, or any load-generation script — for any reason, including "verifying flaky tests under load". Make such tests deterministic by construction instead; load-sensitive checks are the user's to run.
 - 平台分支只经 `apps/desktop/src/platform.ts`（TS）或 `cfg!(target_os = …)`（Rust），不得散落 UA/平台字符串比较；未知平台按 macOS 处理。
 - Git hooks live in [`.githooks/`](./.githooks/). `pnpm install` sets `core.hooksPath` via the root `prepare` script.
