@@ -90,8 +90,9 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
     )
   })
 
-  it("content max width matches styles.css --omd-content-width", () => {
-    expect(STYLES_CSS).toContain(`--omd-content-width: ${CONTENT_MAX_WIDTH}px`)
+  it("uses the approved 900px readable column width", () => {
+    expect(CONTENT_MAX_WIDTH).toBe(900)
+    expect(STYLES_CSS.match(/--omd-content-width:\s*900px;/g)).toHaveLength(2)
   })
 
   it("sidebar default width matches styles.css --omd-sidebar-width fallback", () => {

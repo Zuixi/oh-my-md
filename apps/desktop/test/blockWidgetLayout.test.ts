@@ -11,6 +11,12 @@ function declarationBlocks(selector: string): string[] {
   return matches.map(match => match[1])
 }
 
+function expectSelectedFont(selector: string) {
+  expect(declarationBlocks(selector).join("\n")).toMatch(
+    /font-family\s*:\s*var\(--omd-font-family,\s*ui-monospace,\s*monospace\)\s*;/,
+  )
+}
+
 describe("block widget layout", () => {
   it("keeps vertical spacing inside CodeMirror's measured block DOM", () => {
     const blockSelectors = [
@@ -45,6 +51,12 @@ describe("block widget layout", () => {
     // the assigned cell without contributing the input's default 20ch width.
     expect(editor).toMatch(/(?:^|[;{])\s*width\s*:\s*0\s*;/m)
     expect(editor).toMatch(/\bmin-width\s*:\s*100%\s*;/)
+  })
+
+  it("uses the selected editor font in rendered code and the math popup", () => {
+    expectSelectedFont(".editor-host .omd-code pre")
+    expectSelectedFont(".editor-host .omd-code pre code")
+    expectSelectedFont(".editor-host .omd-math-editor")
   })
 
   it("collapses Shiki newline text nodes so rendered line boxes match source lines", () => {
