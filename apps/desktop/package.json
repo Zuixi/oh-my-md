@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "test": "tsc -p tsconfig.test.json && vitest run",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/commands": "^6.7.1",
@@ -26,6 +27,7 @@
     "react-toastify": "^11.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",

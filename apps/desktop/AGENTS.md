@@ -176,6 +176,12 @@ Do not silently overwrite in-memory content after a failed read/write. Preserve 
 
 ## Verification
 
+- `pnpm --filter @omd/desktop test:e2e` runs Playwright layout invariants in a real
+  Chromium (`e2e/harness.html` mounts the real `Editor.ts` + `styles.css`, no React App,
+  no Tauri). Run it for any change touching rendered appearance or editor geometry;
+  it is the only automated net for zero-height rows, container seams, and collapsed
+  blank lines. Extend `apps/desktop/e2e/` whenever a new visual bug class ships a fix.
+
 For TypeScript/React/CSS changes:
 
 ```sh

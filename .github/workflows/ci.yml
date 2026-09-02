@@ -48,7 +48,9 @@ jobs:
               - "packages/engine/**"
               - "apps/desktop/src/**"
               - "apps/desktop/test/**"
-              # top-level files only (package.json, tsconfig, vite.config, index.html)
+              - "apps/desktop/e2e/**"
+              # top-level files only (package.json, tsconfig, vite.config, index.html,
+              # playwright.config.ts)
               - "apps/desktop/*"
             rust:
               - "apps/desktop/src-tauri/**"
@@ -82,6 +84,22 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
       - run: pnpm --filter @omd/desktop test
       - run: pnpm --filter @omd/desktop build
+
+  # Real-browser layout invariants (Playwright + Chromium). The visual class of
+  # regressions this catches (zero-height rows, container seams, collapsed blank
+  # lines) is invisible to happy-dom, which has no layout engine. Assertions are
+  # relative geometry (ratios/gaps), not pixel snapshots, so runner fonts don't matter.
+  e2e:
+    name: E2E layout (Playwright)
+    needs: changes
+    if: ${{ needs.changes.outputs.desktop == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm --filter @omd/desktop exec playwright install chromium --with-deps
+      - run: pnpm --filter @omd/desktop test:e2e
 
   # Merged former `rust` and `link` jobs: they shared the same setup (toolchain,
   # Linux system deps, rust cache, pnpm install, frontend build), and cargo test
