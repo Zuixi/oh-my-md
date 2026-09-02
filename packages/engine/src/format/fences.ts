@@ -29,8 +29,16 @@ function unclosedFenceLine(state: EditorState) {
     if (!node.parent) return null
     node = node.parent
   }
-  if (!node || node.from !== line.from || node.to > line.to) return null
-  if (node.getChild("CodeText")) return null
+  if (!node || node.from !== line.from) return null
+  // 未闭合 ⇔ FencedCode 只有一个 CodeMark（开头）。不能用“节点不越过本行”
+  // 判定：CommonMark 把未闭合围栏吞到文档末尾，文档中间输入 ```cpp 时下方
+  // 文字全在节点内，旧守卫会永远拦截（用户只能裸敲源码）。闭合后下方文字
+  // 自动回到块后成为普通段落；完整块的围栏行（两个 CodeMark）照旧不劫持。
+  let markCount = 0
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "CodeMark") markCount++
+  }
+  if (markCount !== 1) return null
   for (let parent = node.parent; parent; parent = parent.parent) {
     if (parent.name === "Blockquote" || parent.name === "ListItem") return null
   }

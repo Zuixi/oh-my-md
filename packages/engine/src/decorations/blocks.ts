@@ -134,20 +134,27 @@ function styleEditingCodeblock(
   const sel = state.selection.main
   const overlaps = (from: number, to: number) => sel.from <= to && sel.to >= from
   const openLine = doc.lineAt(node.from)
-  const closeLine = doc.lineAt(node.to)
-  const singleFence = openLine.number === closeLine.number
+  // 尾围栏用真实闭合 CodeMark 定位：未闭合围栏吞到文档末尾（CommonMark），
+  // 拿 node.to 所在行当尾围栏会把最后一行代码整行折叠吞掉。
+  let closeMark: SyntaxNode | null = null
+  for (let child = node.node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "CodeMark" && child.from > openLine.to) closeMark = child
+  }
+  const closeLine = closeMark ? doc.lineAt(closeMark.from) : null
+  const firstContent = openLine.number + 1
+  const lastContent = closeLine ? closeLine.number - 1 : doc.lineAt(node.to).number
 
   // 头部必须 block 替换：行内替换只换文字，围栏行仍保留正文行高的 strut，
   // 在头部与首行内容之间漏出一条无背景空带（用户实测的“断档”）。block 替换
   // 让 builder 把 widget 独立成行框（行高 = widget 高度）。范围不含换行 ——
   // 含换行会吞掉下一行的行装饰（CM 把 to 边界归入替换块，首行行号丢失）。
-  if (!singleFence && !overlaps(openLine.from, openLine.to)) {
+  if ((closeLine || firstContent <= lastContent) && !overlaps(openLine.from, openLine.to)) {
     out.push({
       from: openLine.from, to: openLine.to, tag: "widget:block:code-chrome",
       deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title), block: true }),
     })
   }
-  for (let number = openLine.number + 1; number <= closeLine.number - 1; number++) {
+  for (let number = firstContent; number <= lastContent; number++) {
     const line = doc.line(number)
     out.push({
       from: line.from, to: line.from, tag: "line:omd-codeblock",
@@ -157,20 +164,20 @@ function styleEditingCodeblock(
       from: line.from, to: line.from, tag: "line:omd-codeblock-num",
       deco: Decoration.line({ class: "omd-codeblock-num" }),
     })
-    if (number === openLine.number + 1) {
+    if (number === firstContent) {
       out.push({
         from: line.from, to: line.from, tag: "line:omd-codeblock-num-first",
         deco: Decoration.line({ class: "omd-codeblock-num-first" }),
       })
     }
-    if (number === closeLine.number - 1) {
+    if (number === lastContent) {
       out.push({
         from: line.from, to: line.from, tag: "line:omd-codeblock-num-last",
         deco: Decoration.line({ class: "omd-codeblock-num-last" }),
       })
     }
   }
-  if (!singleFence && !overlaps(closeLine.from, closeLine.to)) {
+  if (closeLine && !overlaps(closeLine.from, closeLine.to)) {
     out.push({
       from: closeLine.from, to: Math.min(doc.length, closeLine.to + 1),
       tag: "replace:CloseFence", deco: Decoration.replace({ block: true }),
