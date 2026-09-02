@@ -14,7 +14,7 @@
 | --------------------------------------------------------------- | -------------------------------------------- |
 | Architecture / product decisions                                | `superpowers/specs/`                         |
 | Implementation steps / task breakdown                            | `superpowers/plans/`                         |
-| Reusable rendering, test, or integration traps                   | `memory/known-gotchas.md`                    |
+| Known traps (index) and the per-domain `gotchas-*.md` deep files  | `memory/known-gotchas.md`                    |
 | Pre-release manual verification matrix                          | `manual-qa.md`                               |
 | User-visible shortcuts / operations                             | `guides/`                                    |
 | Local competitor / benchmark notes                              | `competitors/`                               |
@@ -28,7 +28,7 @@ Still not sure? Read the directory map below.
 | ----------------------------- | -------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------- |
 | `superpowers/specs/`          | Approved architecture / product decisions          | A design decision needs a documented home          | A feature is designed and approved                    |
 | `superpowers/plans/`          | Dated implementation plans with task breakdown     | Executing an approved feature (multi-step)         | A spec is approved; before coding                     |
-| `memory/known-gotchas.md`     | Verified, reusable cross-layer traps               | Symptoms match a known trap                        | You discover a trap that is reusable, not one-off     |
+| `memory/known-gotchas.md`     | One-line trap index; deep entries in `gotchas-engine/desktop/rust.md` | Symptoms match a known trap               | You discover a trap that is reusable, not one-off     |
 | `manual-qa.md`                | Release verification checklist                     | Before a release / interaction-sensitive change    | User-visible behavior or the release matrix changes   |
 | `guides/`                     | User-facing documentation                          | Explaining behavior to users                       | User-visible operations change                        |
 | `competitors/`                | Local competitor analysis                          | Benchmarking a feature against an existing product | Analyzing a new product or topic                      |
