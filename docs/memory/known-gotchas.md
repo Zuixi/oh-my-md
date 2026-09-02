@@ -63,6 +63,15 @@ Defense, in `packages/engine/test/view.test.ts` (keep it alive and growing):
 
 Any new widget type must get a smoke case there before the task is considered done.
 
+## Block replace semantics: newline-inclusive ranges eat the next line's line decorations
+
+Replacing a whole line with a widget has two non-obvious traps (both verified against `@codemirror/view`'s line builder):
+
+1. **Inline replace (`block` unset) leaves the line's strut.** It replaces only the text; the CM line box keeps the prose line-height alongside the widget, leaking a background-less band. This was the code-block "断档": the editing-state chrome header showed a gap between header and first content line.
+2. **Block replace that includes the trailing newline swallows the next line's `line` decorations.** With a newline-inclusive range `[line.from, line.to+1]`, CM attaches the position at `to` (the next line's start) to the replaced block, so `line:` classes on the following line silently vanish from the DOM. Range-inclusive filters on spec lists have the same off-by-one at `to`.
+
+Correct form for "this line becomes a widget": `Decoration.replace({widget, block: true})` over the line's text `[line.from, line.to]` — the builder gives the widget its own line box (height = widget height, no strut) and the next line keeps its classes. The CloseFence collapse (`replace:CloseFence`, no widget) is the opposite case: it must stay newline-inclusive to remove the line entirely.
+
 ## atomicRanges: only inline replacements — never block widgets
 
 The `atomicRanges` facet makes ranges un-enterable for cursor motion and deletion. Two rules govern what belongs there:

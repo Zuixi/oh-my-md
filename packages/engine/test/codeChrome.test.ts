@@ -15,8 +15,9 @@ describe("editing-state code chrome (fence-line widget)", () => {
   it("caret inside renders the chrome widget over the opening fence and collapses the closing fence", () => {
     const specs = specsAt(CARET)
     const tags = specs.map(s => s.tag)
-    // 头部 widget 替换开头围栏行内容
-    const chrome = specs.find(s => s.tag === "widget:code-chrome")
+    // 头部 widget block 替换开头围栏文字（不含换行）——行内替换会残留正文
+    // 行高 strut 在头部与首行之间漏出无背景空带；含换行会吞掉首行行装饰
+    const chrome = specs.find(s => s.tag === "widget:block:code-chrome")
     expect(chrome).toBeTruthy()
     expect(chrome!.from).toBe(doc.indexOf("```js"))
     expect(chrome!.to).toBe(doc.indexOf("```js") + "```js hi".length)
@@ -39,7 +40,7 @@ describe("editing-state code chrome (fence-line widget)", () => {
 
   it("caret on the opening fence line shows the raw fence instead of chrome", () => {
     const specs = specsAt(doc.indexOf("```js") + 2)
-    expect(specs.find(s => s.tag === "widget:code-chrome")).toBeUndefined()
+    expect(specs.find(s => s.tag === "widget:block:code-chrome")).toBeUndefined()
   })
 
   it("mermaid editing state stays plain (no code chrome)", () => {
@@ -47,7 +48,7 @@ describe("editing-state code chrome (fence-line widget)", () => {
     let state = makeState(mdoc)
     state = state.update({ selection: { anchor: mdoc.indexOf("graph") + 2 } }).state
     const specs = collectDecorationSpecs(state, 0, mdoc.length)
-    expect(specs.find(s => s.tag === "widget:code-chrome")).toBeUndefined()
+    expect(specs.find(s => s.tag === "widget:block:code-chrome")).toBeUndefined()
     expect(specs.find(s => s.tag === "replace:CloseFence")).toBeUndefined()
   })
 })
@@ -74,6 +75,8 @@ describe("editing-state code chrome (view)", () => {
       const header = view.dom.querySelector(".omd-code-header") as HTMLElement
       expect(header).toBeTruthy()
       expect(view.dom.querySelector(".omd-code-title")).toBeTruthy()
+      // 头部 block 替换不得吞掉首个内容行的行号/容器类（“断档”回归的另一面）
+      expect(view.dom.querySelector(".cm-line.omd-codeblock-num")).toBeTruthy()
       // 围栏标记不可见（开头被 chrome 替换、结尾被折叠）
       expect(view.dom.textContent).not.toContain("```")
 

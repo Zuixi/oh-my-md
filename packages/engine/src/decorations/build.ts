@@ -68,13 +68,16 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
     }
     pos = line.to + 1
   }
-  // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃
+  // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃。
+  // 覆盖判定含换行块替换的边界：点装饰落在 b.to 上属于「替换后的下一行」（行装饰
+  // 挂在行首），不得丢弃 —— 头部 chrome 块替换的 to 恰是首个内容行的行首。
+  const coveredByBlock = (s: DecoSpec) =>
+    blockWidgets.some(b => s.from >= b.from && s.to <= b.to && s.from < b.to)
   const scoped = out.filter(s => s.from <= to && s.to >= from)
   const blockWidgets = scoped.filter(s => s.tag.startsWith("widget:block:"))
   if (!blockWidgets.length) return sortDecoSpecs(scoped)
   return sortDecoSpecs(scoped.filter(s =>
-    s.tag.startsWith("widget:block:") ||
-    !blockWidgets.some(b => s.from >= b.from && s.to <= b.to)))
+    s.tag.startsWith("widget:block:") || !coveredByBlock(s)))
 }
 
 // 原子区间只收“行中”的内联 replace 类装饰（折叠的语法标记 + 内联 widget，如 checkbox）。
