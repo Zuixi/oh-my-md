@@ -31,9 +31,13 @@ html[data-theme="light"] {
   --omd-syn-punctuation: #24292f;
   --omd-panel-bg: #ffffff;
   --omd-content-width: 900px;
-  /* Drives the CM selection layer and native ::selection fallbacks (see the
-     override rules below; CM's own base colors #d7d4f0/#233 are never used). */
-  --omd-selection-bg: rgba(215, 212, 240, 0.55);
+  /* Caret and selection tokens (consumed by the override rules below; CM's
+     own base colors #d7d4f0/#233 are never used). Selection colors are opaque
+     on purpose: translucent ones double-paint darker where bands overlap.
+     Contrast floors are guarded by test/selectionTheme.test.ts. */
+  --omd-cursor: #1a1a1a;
+  --omd-selection-bg: #d7d4f0;
+  --omd-selection-bg-unfocused: #d9d9d9;
   /* Blank-line density (Typora-style): non-caret blank lines render at this
      line-height instead of the full 1.7 body height. Must stay a unitless
      number (multiplies the font size like any line-height). */
@@ -69,10 +73,13 @@ html[data-theme="dark"] {
   --omd-syn-punctuation: #c9d1d9;
   --omd-panel-bg: #252526;
   --omd-content-width: 900px;
-  /* Drives the CM selection layer and native ::selection fallbacks; CM's
-     base theme dark colors (#222/#233) would only apply if a theme extension
+  /* Same tokens as light (see its comment). Selection values follow the
+     VS Code Dark+ family (#264f78 focused / #3a3d41 inactive); CM's base
+     theme dark colors (#222/#233) would only apply if a theme extension
      set {dark: true}, which nothing in the app does. */
-  --omd-selection-bg: rgba(34, 51, 51, 0.55);
+  --omd-cursor: #ffffff;
+  --omd-selection-bg: #264f78;
+  --omd-selection-bg-unfocused: #3a3d41;
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
    fall back to inherited/initial values, so unthemed tokens stay correct. */
@@ -92,15 +99,18 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   line-height: var(--omd-line-height, 1.6);
   color: var(--omd-fg);
 }
-/* Selection colors follow --omd-selection-bg, not CM's internal dark flag:
-   no theme extension ever sets {dark: true}, so CM's base theme would paint
-   light lavender (#d7d4f0) behind dark-mode text. The focused-chain selector
-   outranks the base theme's focused rule (6 class selectors vs 5); the plain
-   one covers the unfocused layer (#d9d9d9/#222). Guarded by
-   test/selectionTheme.test.ts. */
-.editor-host .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
-.editor-host .cm-selectionLayer .cm-selectionBackground {
+/* Selection colors follow --omd-selection-bg / --omd-selection-bg-unfocused,
+   not CM's internal dark flag: no theme extension ever sets {dark: true}, so
+   CM's base theme would paint light lavender (#d7d4f0) behind dark-mode text.
+   The focused-chain selector outranks the base theme's focused rule (6 class
+   selectors vs 5); the plain one covers the unfocused layer and must stay a
+   separate rule — one shared block would pin both states to a single token.
+   Guarded by test/selectionTheme.test.ts. */
+.editor-host .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
   background-color: var(--omd-selection-bg);
+}
+.editor-host .cm-selectionLayer .cm-selectionBackground {
+  background-color: var(--omd-selection-bg-unfocused);
 }
 /* tightSelection suppresses native ::selection inside .cm-line (its layer is
    the only painter there), but block-widget DOM (tables, code blocks) sits
@@ -113,6 +123,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .cm-editor .cm-content :focus ::selection,
 .editor-host .cm-editor .cm-content :focus::selection {
   background-color: var(--omd-selection-bg) !important;
+}
+/* The caret is tightSelection's overlay — border-left boxes inside
+   .cm-cursorLayer — while .cm-content/.cm-line keep caret-color transparent
+   (hideNativeSelection). The base theme hardcodes a 1.2px black border; its
+   &dark #ddd variant never applies (no {dark: true} theme), so dark mode must
+   restyle it or the caret vanishes on #1e1e1e. 2px with a matching -1px
+   margin keeps the bar centered on the caret position (base: 1.2px/-0.6px).
+   Unfocused editors keep the base theme's hidden caret, matching VS Code /
+   Typora. */
+.editor-host .cm-editor .cm-cursor,
+.editor-host .cm-editor .cm-dropCursor {
+  border-left: 2px solid var(--omd-cursor);
+  margin-left: -1px;
+}
+/* Native carets tightSelection cannot draw: focusable editors nested in
+   .cm-content (the math popup's CodeMirror, the code-title input). The
+   vendored rule restores caret-color: initial on :focus (browser auto →
+   near-invisible in dark mode); route them through the same token. These
+   editors draw native carets today — if one ever adopts overlay cursors,
+   exclude its .cm-content here or the caret will double-paint. */
+.editor-host .cm-editor .cm-content :focus {
+  caret-color: var(--omd-cursor) !important;
 }
 .editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
@@ -254,7 +286,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--omd-selection-bg, rgba(215, 212, 240, 0.55));
+  background: var(--omd-selection-bg, #d7d4f0);
   pointer-events: none;
 }
 .editor-host .omd-block-edit {

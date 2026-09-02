@@ -54,6 +54,7 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 
 **Appearance**
 - Light and dark themes with matching code themes, plus custom CSS
+- Custom CSS themes the editor through public tokens — override `--omd-bg`, `--omd-fg`, `--omd-link`, `--omd-cursor`, `--omd-selection-bg`, `--omd-selection-bg-unfocused`, or the `--omd-syn-*` syntax palette on `html[data-theme="dark"|"light"]`
 
 ## Performance
 

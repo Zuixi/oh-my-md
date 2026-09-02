@@ -799,3 +799,14 @@ const mod = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? { metaKey: true }
 ```
 
 Real WKWebView (macOS) and WebView2 (Windows) report proper platforms, so runtime bindings are unaffected — this is test-only. Symptom of getting it wrong: the dispatched key does nothing and the keymap "silently" never matches.
+
+## CM base-theme `&dark` variants never apply — theme via CSS variables
+
+No extension in the app ever passes `{dark: true}` to `EditorView.theme`, so every `&dark` rule in CodeMirror's built-in base theme is dead here: the caret stays `1.2px solid black`, the focused selection would be light `#d7d4f0`. On dark backgrounds this made the caret and selections invisible — the pre-fix dark selection token composited to 1.13:1 on `#1e1e1e` (spotted 2026-09-02).
+
+This is deliberate architecture, not an oversight: all editor chrome colors flow through `html[data-theme]` CSS variables in `apps/desktop/src/styles.css` (the same tokens the "Load Custom CSS" feature overrides), and stylesheet rules outrank the base theme by selector specificity. Never fix dark mode by re-enabling the dark facet or adding a theme Compartment — that forks the color source and breaks single-token user theming.
+
+- The caret is the vendored tightSelection overlay (`.cm-cursor` border-left boxes), not the native caret; `.cm-content`/`.cm-line` keep `caret-color: transparent` by design. Width/color overrides live in styles.css beside the selection rules.
+- Focused vs unfocused selections are two separate rules: the 6-class focused chain must outrank CM's base 5-class focused rule; the plain 3-class rule carries the unfocused token.
+- Nested editors inside `.cm-content` (the math popup's CodeMirror, the code-title input) draw **native** carets; the `caret-color: var(--omd-cursor) !important` rule on `.cm-content :focus` must keep `!important` to beat tightSelection's own `!important` restore. If a nested editor ever adopts overlay cursors, exclude its `.cm-content` there or carets double-paint.
+- `apps/desktop/test/selectionTheme.test.ts` pins both the selector structure and WCAG contrast floors (computed with colord, alpha composited over `--omd-bg`) — update it together with any token change.
