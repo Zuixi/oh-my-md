@@ -60,6 +60,7 @@ scripts/build.sh
 scripts/test.sh
 pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
+pnpm --filter @omd/desktop test:e2e
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 pnpm release:version <x.y.z>
 pnpm release:changelog
