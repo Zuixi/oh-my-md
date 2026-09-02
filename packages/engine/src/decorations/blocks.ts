@@ -119,9 +119,9 @@ function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoS
   }
 }
 
-// 编辑态代码块装饰：开头围栏行替换为 CodeChromeWidget（标题/语言可提交），
-// 内容行加行号与容器类（首/末行负责圆角收边），尾围栏行整行折叠（Setext 式
-// 跨行块替换，含换行）。光标落在任一围栏行上时该围栏保持裸文本可编辑 ——
+// 编辑态代码块装饰：开头围栏行整行替换为 CodeChromeWidget（标题/语言可提交），
+// 内容行加行号与容器类（首/末行负责圆角收边），两个围栏行都是 Setext 式跨行
+// 块替换（含换行）。光标落在任一围栏行上时该围栏保持裸文本可编辑 ——
 // 否则光标会被藏进不可见区域。
 function styleEditingCodeblock(
   node: SyntaxNodeRef,
@@ -137,10 +137,14 @@ function styleEditingCodeblock(
   const closeLine = doc.lineAt(node.to)
   const singleFence = openLine.number === closeLine.number
 
+  // 头部必须 block 替换：行内替换只换文字，围栏行仍保留正文行高的 strut，
+  // 在头部与首行内容之间漏出一条无背景空带（用户实测的“断档”）。block 替换
+  // 让 builder 把 widget 独立成行框（行高 = widget 高度）。范围不含换行 ——
+  // 含换行会吞掉下一行的行装饰（CM 把 to 边界归入替换块，首行行号丢失）。
   if (!singleFence && !overlaps(openLine.from, openLine.to)) {
     out.push({
-      from: openLine.from, to: openLine.to, tag: "widget:code-chrome",
-      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title) }),
+      from: openLine.from, to: openLine.to, tag: "widget:block:code-chrome",
+      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title), block: true }),
     })
   }
   for (let number = openLine.number + 1; number <= closeLine.number - 1; number++) {
