@@ -12,7 +12,7 @@
 | Markdown parsing, decorations, live/source mode, block widgets, engine tests | `[packages/engine/AGENTS.md](./packages/engine/AGENTS.md)`                                                       |
 | React lifecycle, editor hosting, styles, shortcuts, image paste, Tauri IPC   | `[apps/desktop/AGENTS.md](./apps/desktop/AGENTS.md)`                                                             |
 | Product scope or architecture decisions                                      | `[docs/superpowers/specs/2026-08-10-oh-my-md-design.md](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md)` |
-| Known rendering, testing, or integration traps                               | `[docs/memory/known-gotchas.md](./docs/memory/known-gotchas.md)`                                                 |
+| Known traps                                                              | [`docs/memory/known-gotchas.md`](./docs/memory/known-gotchas.md) (one-line index → read the matching `gotchas-engine/desktop/rust.md` in full before non-trivial domain work) |
 | Windows installer branding (NSIS/WiX bitmaps, bundling visuals)              | `[docs/memory/known-gotchas.md](./docs/memory/known-gotchas.md)` installer section + `[scripts/generate_installer_images.py](./scripts/generate_installer_images.py)` |
 | Finding or writing a doc (spec, plan, QA, guide, competitor note)            | `[docs/AGENTS.md](./docs/AGENTS.md)`                                                                            |
 | A bug spanning domains                                                       | Read this file, then every affected domain guide                                                                 |
@@ -112,7 +112,7 @@ pnpm release:changelog
 Before finishing a task, check whether these need updates:
 
 - [ ] Root or domain `AGENTS.md` — Did routing, ownership, constraints, or recurring pitfalls change?
-- [ ] `docs/memory/known-gotchas.md` — Did you discover a reusable trap or invalidate an existing one?
+- [ ] `docs/memory/known-gotchas.md` (index) + the matching `gotchas-*.md` — Did you discover a reusable trap or invalidate an existing one?
 - [ ] Product spec or implementation plan — Did an approved architecture or milestone decision change?
 - [ ] `docs/manual-qa.md` — Did user-visible interaction behavior or the release verification matrix change?
 - [ ] README or changelog — Did public setup or user-visible behavior change?
