@@ -74,6 +74,10 @@ describe("block widget layout", () => {
   })
 
   it("keeps the code-block line background on the caret line", () => {
+    // 空行契约（engine blockwidgets.test.ts 同名契约）：Shiki 空行 span 无子
+    // 节点，display:block 高度为 0 —— 必须有 :empty::after 撑行框的规则存在。
+    const blank = declarationBlocks(".editor-host .omd-code-lines .line:empty::after").join("\n")
+    expect(blank).toMatch(/content\s*:\s*["']\\?200B["']/)
     const active = declarationBlocks(
       ".editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine",
     ).join("\n")
