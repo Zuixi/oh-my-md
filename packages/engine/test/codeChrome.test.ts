@@ -43,6 +43,28 @@ describe("editing-state code chrome (fence-line widget)", () => {
     expect(specs.find(s => s.tag === "widget:block:code-chrome")).toBeUndefined()
   })
 
+  // 未闭合围栏（如删除了尾 ```）：内容延伸到文档末尾，不得把最后一行当
+  // 尾围栏折叠吞掉 —— 尾围栏必须由真实闭合 CodeMark 定位。
+  it("unterminated fence numbers every content line and never collapses the last line", () => {
+    const doc = "```cpp\nint a\nint b"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.indexOf("int a") + 2 } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    expect(specs.find(s => s.tag === "widget:block:code-chrome")).toBeTruthy()
+    expect(specs.filter(s => s.tag === "line:omd-codeblock-num").length).toBe(2)
+    expect(specs.find(s => s.tag === "replace:CloseFence")).toBeUndefined()
+    expect(specs.some(s => s.tag === "line:omd-codeblock-num-last" && s.from === doc.indexOf("int b"))).toBe(true)
+  })
+
+  it("unterminated fence keeps the caret line visible when it is the last line", () => {
+    const doc = "```cpp\nint a\nint b"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: doc.indexOf("int b") + 2 } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    expect(specs.some(s => s.tag === "line:omd-codeblock-num" && s.from === doc.indexOf("int b"))).toBe(true)
+    expect(specs.find(s => s.tag === "replace:CloseFence")).toBeUndefined()
+  })
+
   it("mermaid editing state stays plain (no code chrome)", () => {
     const mdoc = "intro\n\n```mermaid\ngraph TD; A-->B\n```\n\ntail"
     let state = makeState(mdoc)
@@ -56,8 +78,39 @@ describe("editing-state code chrome (fence-line widget)", () => {
 import { EditorView } from "@codemirror/view"
 import { EditorState } from "@codemirror/state"
 import { editorExtensions } from "../src/index"
+import { continueFence } from "../src/format/fences"
 
 describe("editing-state code chrome (view)", () => {
+  // 用户主流程：文档中间输入 ```cpp 回车 → 立即落在渲染好的编辑态代码块内。
+  it("Enter on a mid-document ```lang line completes the fence into the rendered editing state", async () => {
+    const doc = "intro\n\n```cpp\n\noutro text"
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        selection: { anchor: doc.indexOf("```cpp") + 6 },
+        extensions: [editorExtensions(), EditorView.exceptionSink.of(() => {})],
+      }),
+      parent,
+    })
+    try {
+      expect(continueFence(view)).toBe(true)
+      await new Promise(r => setTimeout(r, 100))
+      // 块已成形：chrome 头部在场、围栏文本不可见、光标在首个内容行
+      expect(view.dom.querySelector(".omd-code-header")).toBeTruthy()
+      expect(view.dom.querySelector(".cm-line.omd-codeblock-num")).toBeTruthy()
+      expect(view.dom.textContent).not.toContain("```")
+      expect(view.state.selection.main.head).toBe(doc.indexOf("```cpp") + 7)
+      // 下方文字保留在块后
+      expect(view.state.doc.toString()).toBe("intro\n\n```cpp\n\n```\n\noutro text")
+      expect(view.dom.textContent).toContain("outro text")
+    } finally {
+      view.destroy()
+      parent.remove()
+    }
+  })
+
   it("keeps the chrome mounted while typing and commits fence info from it", async () => {
     const doc = "intro\n\n```js hi\nlet x = 1\n```\n\ntail"
     const parent = document.createElement("div")

@@ -63,7 +63,14 @@ Defense, in `packages/engine/test/view.test.ts` (keep it alive and growing):
 
 Any new widget type must get a smoke case there before the task is considered done.
 
-## Block replace semantics: newline-inclusive ranges eat the next line's line decorations
+## Unclosed fences run to document end — never infer the close fence from `node.to`
+
+CommonMark: an unterminated ```/~~~ fence swallows every following line into the FencedCode node. Two consumers got this wrong before:
+
+1. **Enter completion** (`format/fences.ts`) must decide "unterminated" by counting CodeMark children (exactly one = no closing fence) — never by `node.to > line.to`, which is false for every mid-document fence (the node always reaches EOF), so completion silently never fired mid-document and users typed raw source.
+2. **Editing-state decorations** (`blocks.ts styleEditingCodeblock`) must locate the closing fence via the real closing CodeMark child. Using `lineAt(node.to)` treats the last content line as the close fence and collapses (hides) it.
+
+
 
 Replacing a whole line with a widget has two non-obvious traps (both verified against `@codemirror/view`'s line builder):
 

@@ -66,4 +66,20 @@ describe("continueFence (Enter completes an unclosed fence)", () => {
     const state = makeState("```cpp").update({ selection: { anchor: 0, head: 6 } }).state
     expect(continueFenceSpec(state)).toBeNull()
   })
+
+  // CommonMark 把未闭合围栏吞到文档末尾：文档中间输入 ```cpp 时下方文字全在
+  // 节点内，旧守卫（node.to 不得越过本行）因此永远拦截 —— 修复后按“只有一个
+  // CodeMark（无闭合）”精确判定，中间也立即闭合成空块，下方文字留在块后。
+  it("completes mid-document with text below, keeping the text after the block", () => {
+    const doc = "intro\n\n```cpp\n\noutro text"
+    const r = apply(doc, doc.indexOf("```cpp") + 6)
+    expect(r.fired).toBe(true)
+    expect(r.doc).toBe("intro\n\n```cpp\n\n```\n\noutro text")
+    expect(r.caret).toBe(doc.indexOf("```cpp") + 7)
+  })
+
+  it("refuses when the caret is on a content line of an unclosed fence", () => {
+    const doc = "```cpp\nint x"
+    expect(apply(doc, doc.length).fired).toBe(false)
+  })
 })
