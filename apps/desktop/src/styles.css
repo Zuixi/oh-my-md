@@ -598,6 +598,12 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding-left: 2.5em;
   line-height: 1.45;
 }
+/* Shiki 空行是 <span class="line"></span>：display:block 的空元素高度为 0，
+   空行整行消失。零宽空格撑出行框（line-height 生效），行号 ::before 也随之
+   归位。漂移守护：blockWidgetLayout.test.ts 断言本规则存在。 */
+.editor-host .omd-code-lines .line:empty::after {
+  content: "\200B";
+}
 .editor-host .omd-code-lines .line::before {
   counter-increment: omd-code-line;
   content: counter(omd-code-line);

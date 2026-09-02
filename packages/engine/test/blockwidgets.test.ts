@@ -240,6 +240,24 @@ describe("block widget pipeline", () => {
     await new Promise(resolve => setTimeout(resolve, 400))
     expect(dom.querySelector(".omd-block-body")?.innerHTML).toContain("--shiki-dark")
     dom.remove()
+  })
+
+  // 空行契约：Shiki 对空行输出 <span class="line"></span>（无任何子节点）。
+  // display:block 的空元素高度为 0 —— 空行会整行消失（用户实测"渲染时空行被
+  // 取消"）。CSS 侧必须给 .line:empty 提供行框（::after 零宽空格），桌面
+  // blockWidgetLayout 漂移测试守护该规则。
+  it("keeps blank lines as empty .line spans the CSS must prop open", async () => {
+    const widget = new CodeWidget({
+      src: "const a = 1\n\nconst b = 2", pos: 0, lang: "js", title: "",
+    })
+    const dom = widget.toDOM({ requestMeasure: () => {} } as never)
+    document.body.appendChild(dom)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    const lines = [...dom.querySelectorAll(".omd-code-lines .line")]
+    expect(lines.length).toBe(3)
+    expect(lines[1].childElementCount).toBe(0)
+    expect(lines[1].textContent).toBe("")
+    dom.remove()
   }, 2000)
 
   it("does not move the editor selection when clicking a rendered code row", () => {
