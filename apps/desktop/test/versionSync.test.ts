@@ -6,12 +6,10 @@ import { describe, expect, it } from "vitest"
  * Drift guard for the version values that must stay in sync. The single
  * source of truth is `src-tauri/tauri.conf.json` `version`; the root
  * `package.json`, the desktop `package.json`, `src-tauri/Cargo.toml`, and
- * the local `omd` package in `Cargo.lock` must all match it. The first public
- * release is fixed at 0.0.1; `scripts/sync-version.sh` keeps these locations
- * aligned for later releases.
+ * the local `omd` package in `Cargo.lock` must all match it.
+ * `scripts/sync-version.sh` keeps these locations aligned for releases.
  */
 
-const RELEASE_VERSION = "0.0.1"
 const ROOT_PACKAGE = resolve(process.cwd(), "..", "..", "package.json")
 const DESKTOP_PACKAGE = resolve(process.cwd(), "package.json")
 const CARGO_TOML = resolve(process.cwd(), "src-tauri", "Cargo.toml")
@@ -56,18 +54,16 @@ describe("version single-source sync", () => {
     "tauri.conf.json": jsonVersion(TAURI_CONF),
   }
 
-  it("pins every release version location to 0.0.1", () => {
-    for (const [label, value] of Object.entries(versions)) {
-      expect(value, `${label} must identify the first public release`).toBe(RELEASE_VERSION)
-    }
-  })
-
-  it("all version locations agree with tauri.conf.json", () => {
+  it("all five version locations agree with tauri.conf.json", () => {
     for (const [label, value] of Object.entries(versions)) {
       expect(value, `${label} version differs from tauri.conf.json`).toBe(
         versions["tauri.conf.json"],
       )
     }
+  })
+
+  it("tauri.conf.json is a strict semver source of truth", () => {
+    expect(versions["tauri.conf.json"]).toMatch(/^\d+\.\d+\.\d+$/)
   })
 
   it("scripts/sync-version.sh exists", () => {
