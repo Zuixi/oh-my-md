@@ -25,7 +25,7 @@ export const MARKDOWN_EXTENSIONS: readonly string[] = [
 export const ASSETS_DIR_NAME = "assets"
 
 /** GitHub Releases page used by update notifications; matches the release CI target repo. */
-export const RELEASES_URL = "https://github.com/Zuixi/open-md/releases"
+export const RELEASES_URL = "https://github.com/Zuixi/oh-my-md/releases/latest"
 
 /** Editor content max width in px; must match `--omd-content-width` in styles.css. */
 export const CONTENT_MAX_WIDTH = 900

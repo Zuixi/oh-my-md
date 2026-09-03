@@ -83,10 +83,9 @@ export const en: Record<string, string> = {
   "quickOpen.truncated": "File list truncated",
   "quickOpen.noFolder": "Open a folder to use Quick Open",
 
-  "update.available": "Version {version} is available.",
-  "update.view": "View Release",
+  "update.unavailable": "Automatic updates are not available yet; download the latest release.",
+  "update.download": "Download",
   "update.dismiss": "Later",
-  "update.upToDate": "You are up to date.",
 
   "search.title": "Search",
   "search.aria.close": "Close search",
