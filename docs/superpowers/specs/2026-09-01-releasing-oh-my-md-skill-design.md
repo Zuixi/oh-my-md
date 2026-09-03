@@ -77,7 +77,7 @@ Before modifying files, the agent verifies:
 - `origin/main` exists and local `main` is synchronized with it.
 - `gh auth status` succeeds.
 - `.github/workflows/release.yml` exists.
-- The requested version is greater than the current `tauri.conf.json` version.
+- The requested version exactly equals the already-prepared synchronized `tauri.conf.json` version; a lower or different version is rejected.
 - The four version-bearing files currently agree.
 - Neither local nor remote contains `vX.Y.Z`.
 - GitHub has no Release for `vX.Y.Z`.
@@ -93,6 +93,8 @@ pnpm release:version X.Y.Z
 pnpm release:changelog
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
+
+Because the requested version must already equal the synchronized source version, the version command is idempotent; it validates rather than increments the prepared target.
 
 It then verifies:
 
@@ -207,7 +209,7 @@ The following are hard stops:
 - Dirty or untracked working tree
 - Branch other than `main`
 - Divergence from `origin/main`
-- Invalid, equal, lower, existing, or reused version
+- Invalid, lower, different, existing, or reused version
 - Failed version synchronization
 - Failed changelog generation
 - Failed `pnpm verify`

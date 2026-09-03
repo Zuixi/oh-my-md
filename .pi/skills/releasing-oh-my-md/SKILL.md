@@ -31,7 +31,7 @@ Then inspect local, remote, and GitHub state. There are only two valid starting 
   - `HEAD` is exactly one commit ahead of local `origin/main`, local `origin/main` equals `refs/heads/main` from `git ls-remote origin`, and there is no divergence;
   - the exact `HEAD` subject is `chore: prepare v$VERSION release`;
   - all four version files equal `VERSION`;
-  - `git diff-tree --no-commit-id --name-only -r HEAD` contains only reviewed release paths: `package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `CHANGELOG.md`, and optionally `apps/desktop/src-tauri/Cargo.lock`.
+  - `git diff-tree --no-commit-id --name-only -r HEAD` contains only reviewed release paths: version files and `CHANGELOG.md`; optionally `apps/desktop/src-tauri/Cargo.lock`; and, only when release-readiness preparation was already committed before invoking the skill, `README.md`, `README-zh.md`, `CONTRIBUTING.md`, `docs/manual-qa.md`, `.github/workflows/release.yml`, and focused release contract tests under `apps/desktop/test/`. No application source, broad test changes, generated assets, or unrelated docs are allowed.
 
 Any mixture or failed continuation check is a hard stop. In particular, never treat an arbitrary commit/tag as prepared state. For a valid continuation, record the peeled commit SHA, skip release-file preparation and local commit/tag creation, and go to the verification gate. Evidence from an earlier invocation is stale: rerun `pnpm verify` on this exact clean tagged commit before accepting push confirmation.
 
@@ -41,10 +41,10 @@ Before changing files, require all of these mode-specific checks:
 
 - Local `HEAD` equals both `refs/heads/main` from `git ls-remote origin` and local `origin/main`.
 - The versions in `package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, and `apps/desktop/src-tauri/tauri.conf.json` agree.
-- `VERSION` is strictly greater than that current version by numeric semver comparison.
+- `VERSION` exactly equals the current synchronized source version. A lower or different target is a hard stop: release preparation must be reviewed and committed before invoking this skill; the skill never rewrites an already-prepared version.
 - `git rev-parse -q --verify "refs/tags/$TAG"` finds nothing; `git ls-remote --exit-code --tags origin "refs/tags/$TAG"` finds nothing; `gh release view "$TAG"` finds no Release.
 
-An invalid/equal/lower/used version, dirty tree, wrong branch, divergence, auth failure, disagreement, or missing workflow is a **hard stop**. Report evidence and affected paths. Never auto-stash, clean, reset, discard, commit, switch branches, delete/move tags, or otherwise repair state. A pushed version is consumed; source or workflow changes require a greater version. Only an unchanged tagged commit with a transient runner failure may be manually rerun.
+An invalid/lower/different/used version, dirty tree, wrong branch, divergence, auth failure, disagreement, or missing workflow is a **hard stop**. Report evidence and affected paths. Never auto-stash, clean, reset, discard, commit, switch branches, delete/move tags, or otherwise repair state. A pushed version is consumed; source or workflow changes require a greater version. Only an unchanged tagged commit with a transient runner failure may be manually rerun.
 
 ## 4. Prepare existing release files (new preparation only)
 
@@ -56,7 +56,7 @@ pnpm release:changelog
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-Then inspect `git status --short` and `git diff`. Require all four version-bearing files to contain `VERSION`, `Cargo.lock` to record the local `omd` version when applicable, `CHANGELOG.md` to contain the release, and user-facing README files not to claim an obsolete hard-coded version. If a command fails or unexpected files change, stop and report modified paths; do not repair or absorb them.
+The version command is expected to be idempotent because `VERSION` already equals the synchronized source version. Then inspect `git status --short` and `git diff`. Require all four version-bearing files and the local `omd` package in `Cargo.lock` to contain `VERSION`, `CHANGELOG.md` to contain the release, and user-facing README files not to claim another app version. If a command fails or unexpected files change, stop and report modified paths; do not repair or absorb them.
 
 ## 5. Verification gate
 
@@ -70,7 +70,7 @@ For a continuation, first recheck that the tree is clean and `HEAD` still equals
 
 ## 6. Local commit and annotated tag (new preparation only)
 
-Review the final diff. Stage each reviewed release path explicitly, for example `git add package.json apps/desktop/package.json apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/tauri.conf.json CHANGELOG.md`, adding `apps/desktop/src-tauri/Cargo.lock` only if reviewed and changed. Never use `git add .`, `git add -A`, globs, or wildcard staging. Stop if any unstaged or untracked change is unexpected.
+Review the final diff. Stage each changed release path explicitly, for example `git add package.json apps/desktop/package.json apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/tauri.conf.json CHANGELOG.md`, adding `apps/desktop/src-tauri/Cargo.lock` only if reviewed and changed. Never use `git add .`, `git add -A`, globs, or wildcard staging. README/QA/CONTRIBUTING, workflow, and focused release-test paths are allowed in a prepared continuation commit only when they were reviewed release-readiness work committed before invoking the skill; do not absorb them as incidental dirty-tree changes. Stop if any unstaged or untracked change is unexpected.
 
 Inspect `git diff --cached`, then run:
 

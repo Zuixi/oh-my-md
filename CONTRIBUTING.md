@@ -52,9 +52,9 @@ Commits follow `<type>: <why>` with types `feat | fix | refactor | docs | test |
 
 ## Releasing (maintainers)
 
-- The single source of version truth is `version` in `apps/desktop/src-tauri/tauri.conf.json`. Bump with `pnpm release:version <x.y.z>` (syncs conf / `Cargo.toml` / both `package.json` files), then generate the changelog with `pnpm release:changelog` (requires a local [git-cliff](https://git-cliff.ch/)).
+- The single source of version truth is `version` in `apps/desktop/src-tauri/tauri.conf.json`; the first public release is already synchronized at `0.0.1` across both `package.json` files, `Cargo.toml`, and the local `omd` entry in `Cargo.lock`. For later releases, `pnpm release:version <x.y.z>` synchronizes the source declarations. Generate release notes with `pnpm release:changelog` (requires a local [git-cliff](https://git-cliff.ch/)).
 - Local packaged build: `pnpm --filter @omd/desktop tauri build`; the generated package format depends on the host platform.
-- Pushing a matching `v<x.y.z>` tag builds the macOS, Windows, and Linux packages and creates a Draft in GitHub Releases. Review the complete package set and `SHA256SUMS.txt` in that Draft, then publish it manually when it is ready. A manual workflow run builds downloadable workflow artifacts but does not create a GitHub Release.
+- Pushing an unused matching `v<x.y.z>` tag builds an unsigned macOS Universal DMG, Windows x64 NSIS/MSI installers, and Linux x64 AppImage/deb packages, then creates one Draft in GitHub Releases. Review every package and `SHA256SUMS.txt`, complete the packaging checklist in `docs/manual-qa.md`, and publish the Draft manually. A manual workflow run builds downloadable workflow artifacts but does not create a GitHub Release. Releases are immutable: never reuse or move a tag.
 
 ## Updating docs
 

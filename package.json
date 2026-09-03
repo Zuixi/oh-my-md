@@ -1,7 +1,7 @@
 {
   "name": "oh-my-md",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "pnpm --filter @omd/desktop tauri dev",

@@ -127,7 +127,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 富文本粘贴：从浏览器复制含格式内容（标题/加粗/链接/列表/表格）粘贴 → 转为 Markdown 插入（turndown+GFM：表格管道语法、删除线 `~~`、代码围栏），光标落在粘贴内容末尾（含覆盖选区粘贴、右键菜单粘贴、编辑菜单"粘贴为纯文本"同样落末尾）；VS Code 复制代码粘贴 → 围栏代码块；纯文本复制粘贴行为与旧版一致（text/plain 等价时走默认通道）；截图粘贴仍走图片通道（引擎粘贴钩子在图片 flavor 时让位）；右键后不粘贴、移动光标再 ⌘V → 插入在当前光标处而非旧右键位置
 - [ ] front matter：文档顶部 `---`…`---` 块折叠为 "YAML front matter" chip（title 显示行数），点击进入源码编辑；⌘E 切源码模式全显；正文中的 `---` 分隔线不受影响；注意首行 `---` 且无闭合的行为变化：整块按 front matter 源码显示（不再当分隔线）；字数统计不含 front matter；front matter 内的 `#` 行不出现在大纲
 - [ ] 版本历史：已保存文件每次保存成功后自动生成快照（`~/Library/Application Support/md.ohmy.desktop/snapshots/`，每文件保留最近 20 份）；File 菜单/命令面板「Version History…」列出时间+大小；"恢复"在新未命名标签打开快照内容且原文件不动（恢复后活动标签切换为快照标签，此时再开历史会提示无文件——切回原标签即可）；"Clear History" 清空后显示空态；未保存的 untitled 标签触发历史命令出现提示不弹层
-- [ ] 应用菜单「检查更新…」无更新时状态区出现"已是最新版本"；无网络时静默失败不打断编辑；更新横幅（版本号 + 查看发布页 + 以后再说）需 release CI 产出 `latest.json` 后才能端到端验证（13-B 解锁项）；启动后台检查 8s 延迟、失败无提示
+- [ ] 应用启动时不自动检查更新；应用菜单「检查更新…」显示非模态手动下载提示，点击后打开 `https://github.com/Zuixi/oh-my-md/releases/latest`；关闭提示不影响编辑
 - [ ] 应用菜单「关于 oh-my-md」弹窗版本号与 `tauri.conf.json` 一致（`pnpm release:version` 单源同步，versionSync 测试守护）；设置/会话/恢复数据位于 `~/Library/Application Support/md.ohmy.desktop/`（首次启动自动从旧 temp 目录迁移，不再受系统清理影响）
 - [ ] 打开深层子目录的 .md（FileTree 点开或搜索面板点结果）会逐级自动展开祖先目录并滚动到该文件；千级文件的目录展开后滚动无卡顿、无空白行（树行虚拟化）
 - [ ] 文件树/大纲中的长文件名、长标题单行显示，超出侧栏宽度时末尾省略号截断，悬停显示完整名称（title 提示）；拖拽调宽或改变窗口大小后截断位置实时跟随，不再多行换行遮挡相邻行
@@ -285,16 +285,21 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - 自动化已通过：`pnpm test`、`pnpm --filter @omd/desktop test`、`pnpm --filter @omd/desktop build`、`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`、`git diff --check`。具体用例数以当次命令输出为准。
 - 交互式 M2 QA：本环境未执行 `pnpm dev` GUI 清单，上方交互项保持未勾选。
 
-## 发布与升级（13-A/13-B 烟测）
+## 发布打包 QA
 
-> 需要 `tauri build` 产物或真实 Release 的项目标注了前提；Apple 公证链路（B2/B3）解锁后补充。
+> 当前发布为未签名安装包，不包含自动更新。Tag 流水线创建 Draft Release，最终发布只能由人工完成。
 
-- [ ] `pnpm release:version 0.2.0` 后四处版本号更新，`rg '"0\.1\.0"' package.json apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json` 无残留，`rg '^version = "0\.1\.0"' apps/desktop/src-tauri/Cargo.toml` 无残留（验证后还原改动）。
-- [ ] 菜单「导出诊断信息…」：保存 zip；zip 含版本与日志文件、不含任何文档正文。
-- [ ] 断网状态下启动 App：8s 后无任何更新提示，编辑不受影响；「检查更新…」显示已是最新或静默，无未处理错误弹窗。
-- [ ] （需打包产物）双击 `.md` / Finder 拖入 Dock 图标打开文件；再次启动聚焦既有窗口。
-- [ ] （需 B3 Release）旧版本内「检查更新…」提示新版本 → 升级成功；`latest.json` 可访问。
-- [ ] （需 B2 公证）干净 Mac 安装无 Gatekeeper 拦截，`spctl -a -vv` 通过。
+- [ ] 四处源码版本与 `Cargo.lock` 本地 `omd` 包均为 `0.0.1`；`pnpm --filter @omd/desktop exec vitest run test/versionSync.test.ts` 通过。
+- [ ] `v0.0.1` tag 对应的 Release workflow 成功，且只创建一个 Draft Release；人工发布前不显示为公开 Release。
+- [ ] Draft 资产完整：macOS Universal `.dmg`、Windows x64 `-setup.exe` 与 `.msi`、Linux x64 `.AppImage` 与 `.deb`、`SHA256SUMS.txt`。
+- [ ] 下载全部资产并按 `SHA256SUMS.txt` 校验；文件名、架构与 README 下载表一致。
+- [ ] macOS Apple Silicon 与 Intel（可用时）分别挂载 DMG、拖入 Applications 并启动；记录 Gatekeeper 提示，使用“隐私与安全性 → 仍要打开”或 Finder Control-click →“打开”，不得全局关闭 Gatekeeper。
+- [ ] Windows 分别安装 NSIS `-setup.exe` 与 MSI 并启动；记录 SmartScreen 提示，确认来源后使用“更多信息 → 仍要运行”，不得全局关闭 SmartScreen。
+- [ ] Linux：`chmod +x oh-my-md_*.AppImage && ./oh-my-md_*.AppImage` 可启动；`sudo apt install ./oh-my-md_*.deb` 可安装并启动。
+- [ ] 三个平台均完成：新建 Markdown、编辑、保存、退出重启后重开；HTML 导出可用。macOS 额外验证 PDF/PNG；Windows/Linux 确认 PDF/PNG 入口不可见。
+- [ ] 菜单“检查更新…”仅显示手动下载提示并打开最新 Release 页面；启动后不自动联网检查，也不下载或安装更新。
+- [ ] README / README-zh 的 unsigned 警告、安装说明与实际系统提示一致。
+- [ ] 人工检查 Draft 标题、说明、完整资产与校验和后再点击 **Publish release**；自动化或 agent 不得发布。
 
 ## 性能（Spec 05）
 
