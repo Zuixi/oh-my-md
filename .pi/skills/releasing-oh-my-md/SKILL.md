@@ -11,13 +11,22 @@ A release is immutable: **one version = one tag = one commit = one package-hash 
 
 Require exactly one argument matching `^[0-9]+\.[0-9]+\.[0-9]+$`. Do not infer or increment it. Otherwise print `/skill:releasing-oh-my-md X.Y.Z` and stop. Set `VERSION=X.Y.Z` and `TAG=vX.Y.Z` only after validation.
 
-## 2. Detect new preparation or local continuation
+## 2. Shared preflight and mode detection
 
-Immediately after argument validation, inspect local, remote, and GitHub state. There are only two valid starting states:
+Immediately after argument validation, gather fresh evidence and require all of these before selecting a mode:
+
+- `git remote get-url origin` identifies `Zuixi/oh-my-md`.
+- `git branch --show-current` is `main`.
+- `git status --porcelain` is empty, including untracked files.
+- `gh auth status` succeeds.
+- `.github/workflows/release.yml` exists.
+
+A wrong origin or branch, dirty tree, auth failure, or missing workflow is a **hard stop**. Report evidence and affected paths. Never auto-stash, clean, reset, discard, commit, switch branches, or otherwise repair state.
+
+Then inspect local, remote, and GitHub state. There are only two valid starting states:
 
 - **New preparation:** local `refs/tags/$TAG` does not exist. Continue through the normal preflight below, which must also reject an existing remote tag or GitHub Release.
 - **Prepared local continuation:** a local **annotated** `TAG` exists, while the remote tag and GitHub Release do not. Accept this state only if all of these fresh checks pass:
-  - the tree is clean, including untracked files, and the branch is `main`;
   - `HEAD` equals the tag's peeled commit (`refs/tags/$TAG^{}`);
   - `HEAD` is exactly one commit ahead of local `origin/main`, local `origin/main` equals `refs/heads/main` from `git ls-remote origin`, and there is no divergence;
   - the exact `HEAD` subject is `chore: prepare v$VERSION release`;
@@ -28,13 +37,9 @@ Any mixture or failed continuation check is a hard stop. In particular, never tr
 
 ## 3. Read-only preflight for a new preparation
 
-Before changing files, gather fresh evidence and require all of these:
+Before changing files, require all of these mode-specific checks:
 
-- `git remote get-url origin` identifies `Zuixi/oh-my-md`.
-- `git branch --show-current` is `main`.
-- `git status --porcelain` is empty, including untracked files.
 - Local `HEAD` equals both `refs/heads/main` from `git ls-remote origin` and local `origin/main`.
-- `gh auth status` succeeds and `.github/workflows/release.yml` exists.
 - The versions in `package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, and `apps/desktop/src-tauri/tauri.conf.json` agree.
 - `VERSION` is strictly greater than that current version by numeric semver comparison.
 - `git rev-parse -q --verify "refs/tags/$TAG"` finds nothing; `git ls-remote --exit-code --tags origin "refs/tags/$TAG"` finds nothing; `gh release view "$TAG"` finds no Release.
