@@ -6,6 +6,10 @@ const WORKFLOW = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "workflows", "release.yml"),
   "utf8",
 )
+const SETUP_RUST_ACTION = readFileSync(
+  resolve(process.cwd(), "..", "..", ".github", "actions", "setup-rust", "action.yml"),
+  "utf8",
+)
 
 function jobBlock(name: string, nextName?: string): string {
   const start = WORKFLOW.indexOf(`  ${name}:\n`)
@@ -70,6 +74,10 @@ describe("release workflow", () => {
     expect(publish).toContain("if: github.event_name == 'push'")
 
     expect(WORKFLOW.match(/softprops\/action-gh-release@/g)).toHaveLength(1)
+  })
+
+  it("installs the Linux dependency needed to render SVG app icons", () => {
+    expect(SETUP_RUST_ACTION).toContain("librsvg2-dev")
   })
 
   it("does not produce or publish auto-update metadata", () => {
