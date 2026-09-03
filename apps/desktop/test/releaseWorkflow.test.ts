@@ -39,7 +39,8 @@ describe("release workflow", () => {
     expect(macos).toContain("actions/upload-artifact@")
     expect(macos).toContain("**/*.dmg")
 
-    expect(windows).toContain("runs-on: windows-latest")
+    expect(windows).toContain("runs-on: windows-2022")
+    expect(windows).not.toContain("runs-on: windows-latest")
     expect(windows).toMatch(/--bundles nsis,wix/)
     expect(windows).toContain("actions/upload-artifact@")
     expect(windows).toContain("**/*.msi")

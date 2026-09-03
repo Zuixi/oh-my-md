@@ -44,7 +44,7 @@ jobs:
 
   windows:
     name: Windows x64 installers
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Enable long paths
