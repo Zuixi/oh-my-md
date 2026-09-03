@@ -73,6 +73,20 @@ describe("Tauri frontend security configuration", () => {
     expect(csp).toContain("connect-src ipc: http://ipc.localhost ws:")
   })
 
+  it("does not configure updater behavior or build updater artifacts", () => {
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      bundle: { createUpdaterArtifacts?: boolean }
+      plugins?: Record<string, unknown>
+    }
+    const capability = readJson("../src-tauri/capabilities/default.json") as {
+      permissions: string[]
+    }
+
+    expect(config.plugins?.updater).toBeUndefined()
+    expect(config.bundle.createUpdaterArtifacts).toBeUndefined()
+    expect(capability.permissions).not.toContain("updater:default")
+  })
+
   it("does not grant a permanent wildcard asset protocol scope", () => {
     const config = readJson("../src-tauri/tauri.conf.json") as {
       app: {

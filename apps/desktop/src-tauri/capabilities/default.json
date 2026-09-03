@@ -7,7 +7,6 @@
     "core:default",
     "opener:default",
     "dialog:allow-open",
-    "dialog:allow-save",
-    "updater:default"
+    "dialog:allow-save"
   ]
 }

@@ -1,103 +1,155 @@
-name: Release (Windows)
+name: Release
 
-# Builds installable Windows packages (.msi via WiX and a .exe installer via
-# NSIS) on a GitHub Windows runner and attaches them to a GitHub Release.
-#
-# Tauri 2 cannot be cross-compiled to Windows from macOS because it links the
-# Windows WebView2 runtime and VC++ toolchain, so the only reliable way to ship
-# Windows binaries from this macOS-first repo is to build on windows-latest.
-#
-# Trigger: push a tag like `v0.1.0`, or run manually from the Actions tab
-# (manual runs only upload workflow artifacts, not a release).
+# Tag pushes build all three platforms and create one human-reviewed Draft
+# Release. Manual runs exercise the same builders but stop at workflow artifacts.
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  macos:
+    name: macOS Universal DMG
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate tag matches Tauri version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          test "${{ github.ref_name }}" = "v${version}" || {
+            echo "Tag ${{ github.ref_name }} does not match Tauri version v${version}" >&2
+            exit 1
+          }
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.87.0
+      - name: Install macOS Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: ./.github/actions/setup-pnpm
+      - name: Build Universal DMG
+        run: pnpm --filter @omd/desktop tauri build --target universal-apple-darwin --bundles dmg
+      - name: Upload macOS package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-package
+          path: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+          if-no-files-found: error
+
   windows:
-    name: Windows installer
-    runs-on: windows-latest
+    name: Windows x64 installers
+    runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Enable long paths
         run: git config --global core.longpaths true
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+      - name: Validate tag matches Tauri version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          test "${{ github.ref_name }}" = "v${version}" || {
+            echo "Tag ${{ github.ref_name }} does not match Tauri version v${version}" >&2
+            exit 1
+          }
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: 1.87.0
-
-      # Also runs `pnpm install --frozen-lockfile` (version from packageManager).
       - uses: ./.github/actions/setup-pnpm
-
-      # `pnpm tauri build` runs the configured `beforeBuildCommand` (pnpm build)
-      # and then bundles the .msi and .exe installers for the runner arch.
-      - name: Build Windows installers
-        run: pnpm --filter @omd/desktop tauri build
-
-      # Optional Authenticode signing. Runs only when a PFX certificate is
-      # provided via repository secrets; with no secret it is skipped so the
-      # pipeline still produces unsigned installers. Decode the base64 PFX,
-      # then sign each installer with signtool (SHA256 + RFC3161 timestamp so
-      # the signature survives cert expiry).
-      #
-      # To enable later: add secrets WIN_SIGN_PFX_BASE64 (base64 of the .pfx)
-      # and WIN_SIGN_PFX_PASSWORD in the repo settings. Cloud-HSM signing
-      # (e.g. SSL.com eSigner, DigiCert KeyLocker) would replace this step with
-      # that provider's CLI/REST signer instead of a local PFX + signtool.
-      - name: Sign Windows installers (optional)
-        # `secrets` is not in the documented context set for a step `if`;
-        # mirror the secret into env and test that instead.
-        if: env.WIN_SIGN_PFX_BASE64 != ''
-        env:
-          WIN_SIGN_PFX_BASE64: ${{ secrets.WIN_SIGN_PFX_BASE64 }}
-          WIN_SIGN_PFX_PASSWORD: ${{ secrets.WIN_SIGN_PFX_PASSWORD }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pfx = Join-Path $env:RUNNER_TEMP "omd-sign.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WIN_SIGN_PFX_BASE64))
-          $signtool = (Get-ChildItem "C:\Program Files*\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
-          if (-not $signtool) { throw "signtool.exe not found on the runner" }
-          $ts = "http://timestamp.digicert.com"
-          $files = Get-ChildItem -Path "apps/desktop/src-tauri/target/release/bundle" -Recurse -Include *.msi, *-setup.exe
-          if ($files.Count -eq 0) { throw "no installer artifacts found to sign" }
-          foreach ($file in $files) {
-            & $signtool sign /f $pfx /p $env:WIN_SIGN_PFX_PASSWORD /fd SHA256 /tr $ts /td SHA256 $file.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($file.FullName)" }
-          }
-
-      - name: Upload bundle artifact
+      - name: Build x64 NSIS and WiX installers
+        run: pnpm --filter @omd/desktop tauri build --bundles nsis,wix
+      - name: Upload Windows packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-installers
+          name: windows-packages
           path: |
             apps/desktop/src-tauri/target/release/bundle/**/*.msi
             apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
           if-no-files-found: error
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+  linux:
+    name: Linux x64 packages
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate tag matches Tauri version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          test "${{ github.ref_name }}" = "v${version}" || {
+            echo "Tag ${{ github.ref_name }} does not match Tauri version v${version}" >&2
+            exit 1
+          }
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.87.0
+      - uses: ./.github/actions/setup-pnpm
+      - name: Build x64 deb and AppImage packages
+        run: pnpm --filter @omd/desktop tauri build --bundles deb,appimage
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-packages
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    name: Assemble Draft Release
+    if: github.event_name == 'push'
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: downloaded
+          merge-multiple: true
+      - name: Validate and stage complete package set
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage'; do
+            mapfile -d '' matches < <(find downloaded -type f -name "$pattern" -print0)
+            test "${#matches[@]}" -gt 0 || {
+              echo "Missing required release package: $pattern" >&2
+              exit 1
+            }
+            for package in "${matches[@]}"; do
+              name="$(basename "$package")"
+              test ! -e "release-assets/$name" || {
+                echo "Duplicate release package filename: $name" >&2
+                exit 1
+              }
+              cp "$package" "release-assets/$name"
+            done
+          done
+      - name: Create deterministic checksums
+        working-directory: release-assets
+        shell: bash
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+      - name: Create Draft Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           draft: true
           name: "oh-my-md ${{ github.ref_name }}"
           body: |
-            Windows installers:
+            ## Unsigned preview packages
 
-            - `oh-my-md_*_x64_en-US.msi` — system-level / MSI installer
-            - `oh-my-md_*_x64-setup.exe` — NSIS setup wizard
-
-            If the package is unsigned, SmartScreen may block the first launch;
-            click "Run anyway" to continue (automatic signing can be enabled via
-            repository secrets).
-          files: |
-            apps/desktop/src-tauri/target/release/bundle/**/*.msi
-            apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
+            These macOS, Windows, and Linux packages are unsigned. macOS
+            Gatekeeper, Windows SmartScreen, or Linux desktop security may warn
+            before first launch. Verify downloads against `SHA256SUMS.txt`.
+          files: release-assets/*
           fail_on_unmatched_files: true

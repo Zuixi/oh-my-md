@@ -1,9 +1,11 @@
 <div align="center">
   <img src="docs/images/logo.png" width="110" alt="oh-my-md app icon" />
 
-# oh-my-md
+# oh-my-md — Fast Open-Source Markdown Editor
 
-**A free, open-source Markdown editor with true live preview — built to stay fast on documents with hundreds of thousands of lines.**
+**A free Markdown editor with true live preview, built to stay fast on documents with hundreds of thousands of lines.**
+
+[**Download the latest release →**](https://github.com/Zuixi/oh-my-md/releases/latest)
 
 [English](./README.md) · [简体中文](./README-zh.md)
 
@@ -50,7 +52,8 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 - Conflict-safe saving, external-change detection, crash and session recovery
 
 **Export**
-- HTML, PDF, and PNG output that matches the live preview exactly — formulas, code, and diagrams included
+- **HTML export works on macOS, Windows, and Linux.**
+- **PDF and PNG export are currently macOS-only.** All formats preserve formulas, highlighted code, tables, and diagrams from the live preview.
 
 **Appearance**
 - Light and dark themes with matching code themes, plus custom CSS
@@ -62,7 +65,7 @@ One promise: **you should never split a document up because of the editor.**
 
 - Keystroke latency stays far inside the 16 ms frame budget on every document we benchmark — **2 ms (p95, source mode) even on a 20 MB / 750k-line file**
 - `⌘E` mode switching builds only a seed around the cursor — **sub-millisecond, independent of document size**
-- Documents past 50k lines enter a *safe mode* (source view by default, viewport-windowed live rendering, remembered for the session) so editing stays responsive — you can still toggle live preview any time
+- Large documents use viewport-windowed live rendering so editing stays responsive
 
 | Document | Typing p95 (live / source) | Main-thread open |
 | --- | --- | --- |
@@ -74,13 +77,44 @@ One promise: **you should never split a document up because of the editor.**
 
 Figures come from the built-in advisory benchmark on an M-series machine — run `pnpm --filter @omd/engine bench` and see for yourself.
 
-## Installation
+## Download
 
-oh-my-md is at **v0.1.0** and supports **macOS, Windows, and Linux**.
+[**Download the latest oh-my-md release from GitHub Releases →**](https://github.com/Zuixi/oh-my-md/releases/latest)
 
-**Download** — builds will appear on the [Releases](https://github.com/Zuixi/oh-my-md/releases) page as soon as release automation is finalized. Until then, building from source takes about five minutes.
+| Platform | Download | Notes |
+| --- | --- | --- |
+| macOS | Universal `.dmg` | One package for Apple Silicon and Intel Macs |
+| Windows x64 | `-setup.exe` **(recommended)** or `.msi` | NSIS installer is the easiest choice; MSI is provided for managed installs |
+| Linux x64 | `.AppImage` or `.deb` | AppImage is portable; deb is for Debian/Ubuntu-based systems |
 
-**Build from source** — you need [pnpm](https://pnpm.io/) (or Corepack) and a [Rust toolchain](https://rustup.rs/). Platform-specific: macOS requires Xcode Command Line Tools (`xcode-select --install`), Linux needs `libwebkit2gtk` and friends (see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)), and Windows needs Microsoft Visual Studio C++ Build Tools.
+### Unsigned package warning
+
+The first release is **not code-signed**. Download only from this repository's GitHub Releases page and, when possible, verify the published `SHA256SUMS.txt`. Never disable Gatekeeper or SmartScreen globally.
+
+**macOS (Gatekeeper):** open the `.dmg`, drag oh-my-md to Applications, then try to open it. If macOS blocks it, open **System Settings → Privacy & Security**, verify the blocked app is oh-my-md, and choose **Open Anyway**. Alternatively, Control-click the app in Finder and choose **Open**. Do not use commands that globally disable Gatekeeper.
+
+**Windows (SmartScreen):** if Microsoft Defender SmartScreen appears, confirm the app name and that the installer came from this GitHub repository, choose **More info**, then **Run anyway**. Do not turn SmartScreen off system-wide.
+
+### Linux
+
+For the AppImage:
+
+```sh
+chmod +x oh-my-md_*.AppImage
+./oh-my-md_*.AppImage
+```
+
+For Debian/Ubuntu:
+
+```sh
+sudo apt install ./oh-my-md_*.deb
+```
+
+If your system reports missing WebKit or desktop libraries, install the distribution packages listed in the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux).
+
+## Build from source
+
+You need [pnpm](https://pnpm.io/) (or Corepack), a [Rust toolchain](https://rustup.rs/), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. macOS requires Xcode Command Line Tools, Linux requires WebKitGTK development libraries, and Windows requires Microsoft Visual Studio C++ Build Tools.
 
 ```sh
 git clone https://github.com/Zuixi/oh-my-md.git
@@ -89,15 +123,16 @@ pnpm install
 pnpm dev        # launches the app
 ```
 
-For a packaged `.app` / `.dmg`: `pnpm --filter @omd/desktop tauri build`.
+Create a native package for the current host with `pnpm --filter @omd/desktop tauri build`.
 
 ## Keyboard shortcuts
 
-Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and every command is reachable from the command palette (`⇧⌘P`) — nothing to memorize. See the [full shortcut reference](./docs/guides/keyboard-shortcuts.md).
+Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and every command is reachable from the command palette (`⇧⌘P`) — nothing to memorize. See the [full shortcut reference](./docs/guides/keyboard-shortcuts.md). Windows and Linux use the corresponding Ctrl-based shortcuts.
 
 ## Roadmap
 
-- [ ] Signed, auto-updating releases
+- [ ] Signed packages for macOS and Windows
+- [ ] Automatic updates after signed release infrastructure is available
 - [ ] Block-level AI actions (polish / continue / translate) via OpenAI-compatible APIs and local Ollama
 - [ ] Plugin architecture — foundations already reserved in the design
 
@@ -105,7 +140,7 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 
 - **Is it really free?** Yes. Apache-2.0, no account, no feature gates.
 - **Where does my data live?** In plain `.md` files on your disk — nothing is uploaded, ever.
-- **Windows or Linux?** All three platforms are supported.
+- **Windows or Linux?** All three platforms are supported; see the platform package table above.
 - **Will it open my existing notes?** If they are Markdown, yes — CommonMark + GFM plus common extras such as `==highlight==`, footnotes, KaTeX math, and Mermaid.
 - **What about AI?** Designed but not shipped yet — see the [roadmap](#roadmap).
 

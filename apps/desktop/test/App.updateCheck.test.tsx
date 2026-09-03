@@ -1,8 +1,7 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
-import { RELEASES_URL } from "../src/constants"
 import { createAppHarness, resetMountedApps } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
@@ -67,55 +66,44 @@ describe("update check wiring", () => {
     expect(openExternal).toHaveBeenCalledWith("https://example.com")
   })
 
-  it("shows a dismissible banner when a manual check finds an update", async () => {
+  it("shows the unavailable notice when Check for Updates is run manually", () => {
     const harness = createAppHarness(editor)
-    harness.services.checkForUpdates = vi.fn(async () => ({
-      version: "9.9.9",
-      currentVersion: "0.1.0",
-    }))
+    const legacyCheck = vi.fn(async () => null)
+    Object.assign(harness.services, { checkForUpdates: legacyCheck })
+
+    harness.renderApp()
+    openPaletteAndRun("check")
+
+    const notice = document.querySelector(".update-banner-message")
+    expect(notice?.textContent).toContain("Automatic updates are not available yet")
+    expect(notice?.textContent).toContain("download the latest release")
+    expect(legacyCheck).not.toHaveBeenCalled()
+  })
+
+  it("opens the latest GitHub release from Download", () => {
+    const harness = createAppHarness(editor)
     const openExternal = vi.fn(async () => undefined)
     harness.services.openExternal = openExternal
 
     harness.renderApp()
     openPaletteAndRun("check")
+    fireEvent.click(screen.getByRole("button", { name: "Download" }))
 
-    await waitFor(() => {
-      expect(document.querySelector(".update-banner-message")?.textContent).toContain("9.9.9")
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: "View Release" }))
-    expect(openExternal).toHaveBeenCalledWith(RELEASES_URL)
-    await waitFor(() => {
-      expect(document.querySelector(".update-banner")).toBeNull()
-    })
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/Zuixi/oh-my-md/releases/latest")
   })
 
-  it("reports up to date when no update is available and never opens the banner", async () => {
+  it("does not perform a background startup update check", async () => {
     const harness = createAppHarness(editor)
-    harness.services.checkForUpdates = vi.fn(async () => null)
-
-    harness.renderApp()
-    openPaletteAndRun("check")
-
-    await waitFor(() => {
-      expect(document.querySelector(".save-transient-status")?.textContent).toContain("up to date")
-    })
-    expect(document.querySelector(".update-banner")).toBeNull()
-  })
-
-  it("stays silent when the background startup check has no update", async () => {
-    const harness = createAppHarness(editor)
-    const checkForUpdates = vi.fn(async () => null)
-    harness.services.checkForUpdates = checkForUpdates
+    const legacyCheck = vi.fn(async () => null)
+    Object.assign(harness.services, { checkForUpdates: legacyCheck })
 
     vi.useFakeTimers()
     harness.renderApp()
     await act(async () => {
-      vi.advanceTimersByTime(8500)
+      vi.advanceTimersByTime(60_000)
     })
 
-    expect(checkForUpdates).toHaveBeenCalled()
+    expect(legacyCheck).not.toHaveBeenCalled()
     expect(document.querySelector(".update-banner")).toBeNull()
-    expect(document.querySelector(".save-transient-status")).toBeNull()
   })
 })

@@ -83,10 +83,9 @@ export const zh: Record<string, string> = {
   "quickOpen.truncated": "文件过多，列表已截断",
   "quickOpen.noFolder": "先打开文件夹再使用快速打开",
 
-  "update.available": "新版本 {version} 可用。",
-  "update.view": "查看发布页",
+  "update.unavailable": "暂不支持自动更新；请下载最新版本。",
+  "update.download": "下载",
   "update.dismiss": "以后再说",
-  "update.upToDate": "已是最新版本。",
 
   "search.title": "搜索",
   "search.aria.close": "关闭搜索",

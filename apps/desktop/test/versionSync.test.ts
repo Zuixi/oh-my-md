@@ -5,14 +5,15 @@ import { describe, expect, it } from "vitest"
 /**
  * Drift guard for the version values that must stay in sync. The single
  * source of truth is `src-tauri/tauri.conf.json` `version`; the root
- * `package.json`, the desktop `package.json`, and `src-tauri/Cargo.toml`
- * must all match it. `scripts/sync-version.sh` is the mechanism that keeps
- * them aligned.
+ * `package.json`, the desktop `package.json`, `src-tauri/Cargo.toml`, and
+ * the local `omd` package in `Cargo.lock` must all match it.
+ * `scripts/sync-version.sh` keeps these locations aligned for releases.
  */
 
 const ROOT_PACKAGE = resolve(process.cwd(), "..", "..", "package.json")
 const DESKTOP_PACKAGE = resolve(process.cwd(), "package.json")
 const CARGO_TOML = resolve(process.cwd(), "src-tauri", "Cargo.toml")
+const CARGO_LOCK = resolve(process.cwd(), "src-tauri", "Cargo.lock")
 const TAURI_CONF = resolve(process.cwd(), "src-tauri", "tauri.conf.json")
 const SYNC_SCRIPT = resolve(process.cwd(), "..", "..", "scripts", "sync-version.sh")
 
@@ -25,6 +26,13 @@ function cargoVersion(path: string): string {
   const source = readFileSync(path, "utf8")
   const match = /^version\s*=\s*"([^"]+)"/m.exec(source)
   if (!match) throw new Error(`missing version in ${path}`)
+  return match[1]
+}
+
+function localCargoLockVersion(path: string): string {
+  const source = readFileSync(path, "utf8")
+  const match = /\[\[package\]\]\nname = "omd"\nversion = "([^"]+)"/.exec(source)
+  if (!match) throw new Error(`missing local omd package version in ${path}`)
   return match[1]
 }
 
@@ -42,20 +50,19 @@ describe("version single-source sync", () => {
     "root package.json": jsonVersion(ROOT_PACKAGE),
     "desktop package.json": jsonVersion(DESKTOP_PACKAGE),
     "Cargo.toml": cargoVersion(CARGO_TOML),
+    "Cargo.lock local omd": localCargoLockVersion(CARGO_LOCK),
     "tauri.conf.json": jsonVersion(TAURI_CONF),
   }
 
-  it("all four version locations agree", () => {
-    const values = Object.values(versions)
+  it("all five version locations agree with tauri.conf.json", () => {
     for (const [label, value] of Object.entries(versions)) {
       expect(value, `${label} version differs from tauri.conf.json`).toBe(
         versions["tauri.conf.json"],
       )
     }
-    expect(new Set(values).size).toBe(1)
   })
 
-  it("tauri.conf.json is the non-empty source of truth", () => {
+  it("tauri.conf.json is a strict semver source of truth", () => {
     expect(versions["tauri.conf.json"]).toMatch(/^\d+\.\d+\.\d+$/)
   })
 

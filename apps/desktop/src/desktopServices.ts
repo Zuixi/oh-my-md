@@ -128,11 +128,6 @@ export interface RecoveryRecord {
   label: string
 }
 
-export interface UpdateCheck {
-  readonly version: string
-  readonly currentVersion: string
-}
-
 export interface ViewMenuState {
   readonly source: boolean
   readonly sidebar: boolean
@@ -216,7 +211,6 @@ export interface DesktopServices {
   watchPaths?: (paths: string[]) => Promise<void>
   takePendingOpenFiles?: () => Promise<string[]>
   openExternal?: (url: string) => Promise<void>
-  checkForUpdates?: () => Promise<UpdateCheck | null>
 }
 
 function isDocumentErrorCode(code: string): code is DocumentErrorCode {
@@ -435,16 +429,6 @@ export const defaultServices: DesktopServices = {
       await invoke("session_flush_ack")
     } catch {
       // Rust bounds the wait anyway; never stall the quit on a lost ack.
-    }
-  },
-  checkForUpdates: async () => {
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater")
-      const update = await check()
-      if (!update) return null
-      return { version: update.version, currentVersion: update.currentVersion }
-    } catch {
-      return null
     }
   },
   reportError: message => { toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },

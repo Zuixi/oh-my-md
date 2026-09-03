@@ -161,9 +161,6 @@ const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
 const SESSION_SAVE_DEBOUNCE_MS = 1000
 
-/** Startup update check delay: late enough to stay off the launch path. */
-const UPDATE_CHECK_DELAY_MS = 8000
-
 /** Shallow directory listing equality; a mismatch means disk changed. */
 function sameEntries(
   a: readonly TreeEntry[] | undefined,
@@ -325,7 +322,7 @@ export default function App({
     transientStatusTimerRef,
     id => { transientStatusTimerRef.current = id },
   )
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [showUpdateNotice, setShowUpdateNotice] = useState(false)
   const openingRef = useRef(false)
   const mountedRef = useRef(false)
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
@@ -1455,15 +1452,8 @@ export default function App({
     return openPath(nextPath, activeHasContent)
   }
 
-  async function checkForUpdatesNow(manual: boolean) {
-    if (!services.checkForUpdates) return
-    const update = await services.checkForUpdates()
-    if (!mountedRef.current) return
-    if (update) {
-      setUpdateVersion(update.version)
-    } else if (manual) {
-      showTransientStatus(t("update.upToDate"))
-    }
+  function showUpdateDownloadNotice() {
+    setShowUpdateNotice(true)
   }
 
   async function openQuickOpen() {
@@ -2023,7 +2013,7 @@ export default function App({
     { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
-    { id: "check-updates", label: t("cmd.label.check-updates"), run: () => void checkForUpdatesNow(true) },
+    { id: "check-updates", label: t("cmd.label.check-updates"), run: showUpdateDownloadNotice },
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
     { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
@@ -2064,13 +2054,6 @@ export default function App({
       })
       if (markdown) void openExternalRef.current(markdown)
     })
-  }, [services])
-
-  // Background update check after launch settles; failures stay silent.
-  useEffect(() => {
-    if (!services.checkForUpdates) return
-    const timer = window.setTimeout(() => { void checkForUpdatesNow(false) }, UPDATE_CHECK_DELAY_MS)
-    return () => window.clearTimeout(timer)
   }, [services])
 
   // Mirror the active tab's editor mode into React so the native View menu
@@ -2473,14 +2456,10 @@ export default function App({
           {skippedMarkersMessage ? (
             <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
           ) : null}
-          {updateVersion ? (
+          {showUpdateNotice ? (
             <UpdateBanner
-              version={updateVersion}
-              onView={() => {
-                setUpdateVersion(null)
-                void services.openExternal?.(RELEASES_URL)
-              }}
-              onDismiss={() => setUpdateVersion(null)}
+              onDownload={() => { void services.openExternal?.(RELEASES_URL) }}
+              onDismiss={() => setShowUpdateNotice(false)}
             />
           ) : null}
           {largeDocNotice && largeDocNotice.sessionId === workspace.activeId ? (
