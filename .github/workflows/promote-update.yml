@@ -29,6 +29,8 @@ jobs:
   promote:
     runs-on: ubuntu-22.04
     environment: stable-updates
+    env:
+      VERSION: ${{ inputs.version }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$VERSION"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "version must be strict semver MAJOR.MINOR.PATCH, got '$version'" >&2
             exit 1
@@ -47,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$VERSION"
           tag="v$version"
           release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,draft,prerelease,url)"
           release_tag="$(node -e "const r = JSON.parse(process.argv[1]); process.stdout.write(r.tagName)" "$release")"
@@ -63,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          gh release download "v${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --dir release-assets \
             --pattern 'latest.json' \
             --pattern '*.app.tar.gz' \
             --pattern '*.app.tar.gz.sig' \
@@ -151,21 +153,26 @@ jobs:
           # First promotion has no deployed site; fetch failures are expected.
           fetch "updates/stable/latest.json" || true
           fetch "updates/stable/status.json" || true
-          # Reconstruct the full history chain from the status record so the
-          # site copy preserves every previously promoted version.
-          version="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(s.version || '') } catch { process.stdout.write('') }")"
-          while [ -n "$version" ]; do
-            fetch "updates/stable/history/$version.json" || break
-            version="$(node -e "try { const h = JSON.parse(require('fs').readFileSync('current-site/updates/stable/history/$version.json', 'utf8')); process.stdout.write(h.previousVersion || '') } catch { process.stdout.write('') }")"
-          done
+          # Fetch every indexed history entry from the deterministic versions
+          # inventory (an immutable index of every promoted version), not just
+          # the rollback chain, so the copied site preserves history even after
+          # a withdrawal keeps the withdrawn version indexed.
+          inventory="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(Array.isArray(s.versions) ? s.versions.join('\n') : '') } catch { process.stdout.write('') }")"
+          while IFS= read -r version; do
+            [ -n "$version" ] || continue
+            if ! fetch "updates/stable/history/$version.json"; then
+              echo "indexed history entry $version is unavailable at the public endpoint" >&2
+              exit 1
+            fi
+          done <<< "$inventory"
       - name: Validate candidate manifest
         shell: bash
         run: |
           set -euo pipefail
           node scripts/update-manifest.mjs validate \
             --manifest release-assets/latest.json \
-            --version "${{ inputs.version }}" \
-            --tag "v${{ inputs.version }}" \
+            --version "$VERSION" \
+            --tag "v$VERSION" \
             --assets release-assets
       - name: Promote stable manifest
         shell: bash
@@ -174,7 +181,7 @@ jobs:
           node scripts/update-manifest.mjs promote \
             --candidate release-assets/latest.json \
             --current-site current-site \
-            --release-url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v${{ inputs.version }}" \
+            --release-url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
             --workflow-run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --output-site site
       - name: Configure GitHub Pages

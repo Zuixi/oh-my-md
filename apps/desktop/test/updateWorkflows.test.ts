@@ -18,6 +18,34 @@ const WORKFLOWS: ReadonlyArray<readonly [string, string]> = [
   ["withdraw-update.yml", WITHDRAW],
 ]
 
+// Step-level `run: |` shell bodies. Contract tests assert what may never be
+// interpolated into them (no user-controllable inputs expression), so a
+// workflow edit that reintroduces `${{ inputs.* }}` into a shell body fails.
+function stepRunBlocks(workflow: string): readonly string[] {
+  const lines = workflow.split("\n")
+  const blocks: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const match = /^(\s*)run: \|$/.exec(lines[i] ?? "")
+    if (match === null) {
+      i += 1
+      continue
+    }
+    const indent = (match[1] ?? "").length
+    const body: string[] = []
+    i += 1
+    while (i < lines.length) {
+      const line = lines[i] ?? ""
+      const leading = /^[ \t]*/.exec(line)?.[0].length ?? 0
+      if (line.trim() !== "" && leading <= indent) break
+      body.push(line)
+      i += 1
+    }
+    blocks.push(body.join("\n"))
+  }
+  return blocks
+}
+
 function groupOf(workflow: string): string | undefined {
   return /^concurrency:\n  group: (.+)$/m.exec(workflow)?.[1]
 }
@@ -95,6 +123,50 @@ describe("stable update workflows", () => {
   })
 })
 
+describe("stable update workflows input safety", () => {
+  it("passes the version input to steps only through a job-level environment variable", () => {
+    expect(PROMOTE).toMatch(/\n\s*VERSION: \${{ inputs\.version }}/)
+    expect(PROMOTE).toContain('version="$VERSION"')
+    expect(PROMOTE).toContain('gh release view "$tag"')
+    expect(PROMOTE).toContain('gh release download "v$VERSION"')
+    expect(PROMOTE).toContain('--version "$VERSION"')
+    expect(PROMOTE).toContain('--tag "v$VERSION"')
+    expect(PROMOTE).toContain('releases/tag/v$VERSION"')
+  })
+
+  it("never interpolates the version input into any shell body (injection-shaped input rule)", () => {
+    const INJECTION_SHAPED = '0.1.1"; touch /tmp/pwned; echo "'
+    const mutatedPromote = PROMOTE.split("${{ inputs.version }}").join(INJECTION_SHAPED)
+    for (const [, workflow] of WORKFLOWS) {
+      for (const block of stepRunBlocks(workflow)) {
+        expect(block).not.toContain("inputs.version")
+        expect(block).not.toContain("${{ inputs.version }}")
+      }
+    }
+    // Substituting an injection-shaped value for every inputs expression (e.g.
+    // the env assignment) must never reach a shell body, because run blocks
+    // contain no `${{ inputs.version }}` reference at all.
+    for (const block of stepRunBlocks(mutatedPromote)) {
+      expect(block).not.toContain(INJECTION_SHAPED)
+      expect(block).not.toContain("touch /tmp/pwned")
+    }
+  })
+
+  it("fetches every indexed history entry from the status versions inventory", () => {
+    for (const [, workflow] of WORKFLOWS) {
+      expect(workflow).toContain("current-site/updates/stable/history")
+      expect(workflow).toContain("updates/stable/status.json")
+      expect(workflow).toContain("s.versions")
+      expect(workflow).toContain('"updates/stable/history/$version.json"')
+    }
+    // The deployed tree is reconstructed from the immutable versions index, not
+    // by walking the previous-version chain (which would miss a withdrawn
+    // version's history entry).
+    expect(PROMOTE).not.toMatch(/previousVersion/)
+    expect(WITHDRAW).not.toMatch(/previousVersion/)
+  })
+})
+
 describe("promote-update workflow", () => {
   it("verifies a public non-Draft, non-prerelease Release at the exact tag before downloading", () => {
     expect(PROMOTE).toContain("gh release view")
@@ -141,13 +213,6 @@ describe("promote-update workflow", () => {
     expect(PROMOTE).toContain("--workflow-run")
     expect(PROMOTE).toContain("--output-site site")
     expect(PROMOTE).toContain("actions/runs/$GITHUB_RUN_ID")
-    expect(PROMOTE).toContain("releases/tag/v${{ inputs.version }}")
-  })
-
-  it("reconstructs the currently deployed stable site from the public endpoint", () => {
-    expect(PROMOTE).toContain("current-site/updates/stable/history")
-    expect(PROMOTE).toContain("updates/stable/status.json")
-    expect(PROMOTE).toContain("previousVersion")
   })
 })
 

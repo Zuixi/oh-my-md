@@ -379,6 +379,7 @@ type SiteStatus = {
   promotedAt: string
   releaseUrl: string
   manifestSha256: string
+  versions: string[]
   workflowRun?: string
   previousVersion?: string
 }
@@ -455,6 +456,7 @@ describe("update-manifest stable promotion", () => {
       releaseUrl: `${RELEASE_TAG_BASE}/v0.1.1`,
       manifestSha256: sha256OfFile(join(outputSite, "updates/stable/latest.json")),
       workflowRun: PROMOTION_RUN,
+      versions: ["0.1.1"],
     })
     const history = readSiteJson(outputSite, "updates/stable/history/0.1.1.json") as Manifest & {
       previousVersion?: string
@@ -510,6 +512,7 @@ describe("update-manifest stable promotion", () => {
     expect(status.version).toBe("0.1.1")
     expect(status.workflowRun).toBe(PROMOTION_RUN)
     expect(status.previousVersion).toBe("0.1.0")
+    expect(status.versions).toEqual(["0.1.0", "0.1.1"])
     const history011 = readSiteJson(site011, "updates/stable/history/0.1.1.json") as { previousVersion?: string; workflowRun?: string }
     expect(history011.previousVersion).toBe("0.1.0")
     expect(history011.workflowRun).toBe(PROMOTION_RUN)
@@ -615,6 +618,50 @@ describe("update-manifest stable promotion", () => {
     expectFailure(result2, "current stable")
     expect(existsSync(out2)).toBe(false)
   })
+
+  it("tracks a deterministic ordered versions inventory across increasing promotions", () => {
+    const empty = join(tempFixture(), "empty")
+    const inv010 = join(tempFixture(), "inv-010")
+    expect(promoteVersion("0.1.0", empty, inv010).result.status).toBe(0)
+    expect((readSiteJson(inv010, "updates/stable/status.json") as SiteStatus).versions).toEqual(["0.1.0"])
+
+    const inv011 = join(tempFixture(), "inv-011")
+    expect(promoteVersion("0.1.1", inv010, inv011).result.status).toBe(0)
+    expect((readSiteJson(inv011, "updates/stable/status.json") as SiteStatus).versions).toEqual(["0.1.0", "0.1.1"])
+
+    const inv012 = join(tempFixture(), "inv-012")
+    expect(promoteVersion("0.1.2", inv011, inv012).result.status).toBe(0)
+    expect((readSiteJson(inv012, "updates/stable/status.json") as SiteStatus).versions).toEqual(["0.1.0", "0.1.1", "0.1.2"])
+    for (const version of ["0.1.0", "0.1.1", "0.1.2"]) {
+      expect(existsSync(join(inv012, "updates/stable/history", `${version}.json`))).toBe(true)
+    }
+  })
+
+  it("hard-stops when the current status.json.versions inventory is missing or invalid", () => {
+    const { manifestPath } = makeCandidate("0.1.1")
+
+    const noInventory = join(tempFixture(), "no-inventory")
+    mkdirSync(join(noInventory, "updates/stable"), { recursive: true })
+    writeFileSync(join(noInventory, "updates/stable/latest.json"), JSON.stringify(candidateManifest("0.1.0"), null, 2))
+    writeJsonFile(join(noInventory, "updates/stable/status.json"), { channel: "stable", version: "0.1.0" })
+    const out1 = join(tempFixture(), "out1")
+    const result1 = runCli(promoteArgs(manifestPath, noInventory, out1, "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result1, "versions")
+    expect(existsSync(out1)).toBe(false)
+
+    const badInventory = join(tempFixture(), "bad-inventory")
+    mkdirSync(join(badInventory, "updates/stable"), { recursive: true })
+    writeFileSync(join(badInventory, "updates/stable/latest.json"), JSON.stringify(candidateManifest("0.1.0"), null, 2))
+    writeJsonFile(join(badInventory, "updates/stable/status.json"), {
+      channel: "stable",
+      version: "0.1.0",
+      versions: ["0.1.0", "junk"],
+    })
+    const out2 = join(tempFixture(), "out2")
+    const result2 = runCli(promoteArgs(manifestPath, badInventory, out2, "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result2, "versions")
+    expect(existsSync(out2)).toBe(false)
+  })
 })
 
 describe("update-manifest stable withdrawal", () => {
@@ -638,6 +685,7 @@ describe("update-manifest stable withdrawal", () => {
       releaseUrl: `${RELEASE_TAG_BASE}/v0.1.1`,
       manifestSha256: sha256OfFile(join(withdrawn1, "updates/stable/latest.json")),
       previousVersion: "0.1.0",
+      versions: ["0.1.0", "0.1.1", "0.1.2"],
     })
     for (const version of ["0.1.0", "0.1.1", "0.1.2"]) {
       expect(existsSync(join(withdrawn1, "updates/stable/history", `${version}.json`))).toBe(true)
@@ -650,6 +698,7 @@ describe("update-manifest stable withdrawal", () => {
     const status2 = readSiteJson(withdrawn2, "updates/stable/status.json") as SiteStatus
     expect(status2.version).toBe("0.1.0")
     expect(status2.previousVersion).toBeUndefined()
+    expect(status2.versions).toEqual(["0.1.0", "0.1.1", "0.1.2"])
 
     const withdrawn3 = join(tempFixture(), "w3")
     const result3 = runCli(["withdraw", "--current-site", withdrawn2, "--output-site", withdrawn3], { env: PROMOTION_ENV })
@@ -672,7 +721,7 @@ describe("update-manifest stable withdrawal", () => {
   it("hard-stops when previousVersion is missing from status", () => {
     const site = join(tempFixture(), "site")
     mkdirSync(join(site, "updates/stable"), { recursive: true })
-    writeJsonFile(join(site, "updates/stable/status.json"), { channel: "stable", version: "0.1.0" })
+    writeJsonFile(join(site, "updates/stable/status.json"), { channel: "stable", version: "0.1.0", versions: ["0.1.0"] })
 
     const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
     expectFailure(result, "previousVersion")
@@ -685,6 +734,7 @@ describe("update-manifest stable withdrawal", () => {
       channel: "stable",
       version: "0.1.1",
       previousVersion: "0.1.0",
+      versions: ["0.1.0", "0.1.1"],
     })
 
     const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
@@ -698,6 +748,7 @@ describe("update-manifest stable withdrawal", () => {
       channel: "stable",
       version: "0.1.1",
       previousVersion: "0.1.0",
+      versions: ["0.1.0", "0.1.1"],
     })
     writeJsonFile(join(site, "updates/stable/history/0.1.0.json"), {
       version: "0.1.0",
@@ -707,5 +758,73 @@ describe("update-manifest stable withdrawal", () => {
 
     const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
     expectFailure(result, "invalid")
+  })
+
+  it("retains the full ordered versions inventory and history through two withdrawals", () => {
+    const empty = join(tempFixture(), "empty")
+    const r010 = join(tempFixture(), "r010")
+    expect(promoteVersion("0.1.0", empty, r010).result.status).toBe(0)
+    const r011 = join(tempFixture(), "r011")
+    expect(promoteVersion("0.1.1", r010, r011).result.status).toBe(0)
+    const r012 = join(tempFixture(), "r012")
+    expect(promoteVersion("0.1.2", r011, r012).result.status).toBe(0)
+
+    const w1 = join(tempFixture(), "rw1")
+    expect(runCli(["withdraw", "--current-site", r012, "--output-site", w1], { env: PROMOTION_ENV }).status).toBe(0)
+    const status1 = readSiteJson(w1, "updates/stable/status.json") as SiteStatus
+    expect(status1.version).toBe("0.1.1")
+    expect(status1.versions).toEqual(["0.1.0", "0.1.1", "0.1.2"])
+
+    const w2 = join(tempFixture(), "rw2")
+    expect(runCli(["withdraw", "--current-site", w1, "--output-site", w2], { env: PROMOTION_ENV }).status).toBe(0)
+    const status2 = readSiteJson(w2, "updates/stable/status.json") as SiteStatus
+    expect(status2.version).toBe("0.1.0")
+    expect(status2.versions).toEqual(["0.1.0", "0.1.1", "0.1.2"])
+    for (const version of ["0.1.0", "0.1.1", "0.1.2"]) {
+      expect(existsSync(join(w2, "updates/stable/history", `${version}.json`))).toBe(true)
+    }
+  })
+
+  it("rejects re-promotion of a version whose immutable history entry already exists", () => {
+    const empty = join(tempFixture(), "empty")
+    const p010 = join(tempFixture(), "p010")
+    expect(promoteVersion("0.1.0", empty, p010).result.status).toBe(0)
+    const p011 = join(tempFixture(), "p011")
+    expect(promoteVersion("0.1.1", p010, p011).result.status).toBe(0)
+    const p012 = join(tempFixture(), "p012")
+    expect(promoteVersion("0.1.2", p011, p012).result.status).toBe(0)
+    const withdrawn = join(tempFixture(), "withdrawn")
+    expect(runCli(["withdraw", "--current-site", p012, "--output-site", withdrawn], { env: PROMOTION_ENV }).status).toBe(0)
+
+    const candidate = makeCandidate("0.1.2")
+    const out = join(tempFixture(), "re-promote")
+    const result = runCli(promoteArgs(candidate.manifestPath, withdrawn, out, "0.1.2"), { env: PROMOTION_ENV })
+    expectFailure(result, "already promoted")
+    expect(existsSync(out)).toBe(false)
+  })
+
+  it("hard-stops when status.json.versions inventory is missing or invalid", () => {
+    const site = join(tempFixture(), "no-inv")
+    mkdirSync(join(site, "updates/stable/history"), { recursive: true })
+    writeJsonFile(join(site, "updates/stable/status.json"), {
+      channel: "stable",
+      version: "0.1.1",
+      previousVersion: "0.1.0",
+    })
+    writeJsonFile(join(site, "updates/stable/history/0.1.0.json"), { ...candidateManifest("0.1.0"), previousVersion: undefined })
+    const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
+    expectFailure(result, "versions")
+
+    const bad = join(tempFixture(), "bad-inv")
+    mkdirSync(join(bad, "updates/stable/history"), { recursive: true })
+    writeJsonFile(join(bad, "updates/stable/status.json"), {
+      channel: "stable",
+      version: "0.1.1",
+      previousVersion: "0.1.0",
+      versions: ["0.1.0", "not-semver"],
+    })
+    writeJsonFile(join(bad, "updates/stable/history/0.1.0.json"), { ...candidateManifest("0.1.0"), previousVersion: undefined })
+    const resultBad = runCli(["withdraw", "--current-site", bad, "--output-site", join(tempFixture(), "out2")], { env: PROMOTION_ENV })
+    expectFailure(resultBad, "versions")
   })
 })

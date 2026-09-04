@@ -309,6 +309,22 @@ function tagUrl(version) {
   return `https://github.com/${RELEASE_OWNER_REPO}/releases/tag/v${version}`
 }
 
+// The immutable off-chain history index: every version ever promoted, in
+// promotion order. Withdrawal preserves it (withdrawn versions stay indexed),
+// and re-promotion is refused once a version's history entry exists. Returns
+// an error message or null.
+function versionInventoryErrors(versions) {
+  if (!Array.isArray(versions) || versions.length === 0) {
+    return `status.json.versions must be a non-empty array of strict semver strings, got ${JSON.stringify(versions)}`
+  }
+  for (const version of versions) {
+    if (typeof version !== "string" || !SEMVER.test(version)) {
+      return `status.json.versions contains an invalid version ${JSON.stringify(version)}`
+    }
+  }
+  return null
+}
+
 // Structural validation for a stable manifest without an assets directory.
 // The workflow performs full asset/signature validation (validate) before
 // promotion; this guards the promoted/restored record itself.
@@ -415,6 +431,7 @@ function runPromote(options) {
   const statusPath = join(currentSite, "updates", "stable", "status.json")
   const latestPath = join(currentSite, "updates", "stable", "latest.json")
   let currentVersion
+  let versionInventory = []
   if (existsSync(latestPath)) {
     const currentManifest = readJsonFile(latestPath, "current stable manifest")
     const currentErrors = manifestStructureErrors(currentManifest)
@@ -422,6 +439,17 @@ function runPromote(options) {
       throw new Error(`current stable state is invalid: ${currentErrors.join("\n")}`)
     }
     currentVersion = currentManifest.version
+    if (!existsSync(statusPath)) {
+      throw new Error(
+        `current stable site has updates/stable/latest.json but no updates/stable/status.json: ${currentSite}`,
+      )
+    }
+    const currentStatus = readJsonFile(statusPath, "current stable status")
+    const inventoryError = versionInventoryErrors(currentStatus?.versions)
+    if (inventoryError !== null) {
+      throw new Error(`current stable state is invalid: ${inventoryError}`)
+    }
+    versionInventory = [...currentStatus.versions]
   } else if (existsSync(statusPath)) {
     throw new Error(
       `current stable site has updates/stable/status.json but no updates/stable/latest.json: ${currentSite}`,
@@ -430,6 +458,14 @@ function runPromote(options) {
   if (currentVersion !== undefined && compareVersions(version, currentVersion) <= 0) {
     throw new Error(
       `candidate version ${JSON.stringify(version)} must be strictly greater than current stable version ${JSON.stringify(currentVersion)}`,
+    )
+  }
+  // History is an immutable off-chain record: a version can never be promoted
+  // twice, even after a withdrawal has rolled the stable pointer back.
+  if (existsSync(join(currentSite, "updates", "stable", "history", `${version}.json`))) {
+    throw new Error(
+      `version ${JSON.stringify(version)} was already promoted (updates/stable/history/${version}.json already exists): ` +
+        `history is immutable and a withdrawn version cannot be re-promoted`,
     )
   }
 
@@ -446,6 +482,7 @@ function runPromote(options) {
     releaseUrl: options["release-url"],
     manifestSha256,
     workflowRun: options["workflow-run"],
+    versions: [...versionInventory, version],
   }
   if (currentVersion !== undefined) {
     record.previousVersion = currentVersion
@@ -477,6 +514,10 @@ function runWithdraw(options) {
       `withdrawal requires status.json.previousVersion to be strict semver, got ${JSON.stringify(previousVersion)}`,
     )
   }
+  const inventoryError = versionInventoryErrors(status?.versions)
+  if (inventoryError !== null) {
+    throw new Error(`stable status is invalid: ${inventoryError}`)
+  }
 
   const historyPath = join(currentSite, "updates", "stable", "history", `${previousVersion}.json`)
   if (!existsSync(historyPath)) {
@@ -507,6 +548,7 @@ function runWithdraw(options) {
     promotedAt: resolvePubDate(undefined),
     releaseUrl: typeof historyRecord.releaseUrl === "string" ? historyRecord.releaseUrl : tagUrl(previousVersion),
     manifestSha256: sha256Hex(latestText),
+    versions: [...status.versions],
   }
   const chainPrevious = historyRecord.previousVersion
   if (typeof chainPrevious === "string" && SEMVER.test(chainPrevious)) {

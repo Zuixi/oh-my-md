@@ -1,11 +1,12 @@
 name: Withdraw Stable Update
 
 # Protected manual withdrawal that restores the previous known-good stable
-# manifest. Reads status.json.previousVersion, requires its history entry,
-# restores it as latest.json, preserves all history, and records the current
-# version. It never mutates a GitHub Release, tag, or asset and never instructs
-# clients to downgrade; a defective installed version requires a higher fixed
-# release. Required reviewers come from the stable-updates Environment.
+# manifest. Reads the status record's previous-version pointer, requires its
+# history entry, restores it as latest.json, preserves all history and the
+# immutable versions inventory, and records the current version. It never
+# mutates a GitHub Release, tag, or asset and never instructs clients to
+# downgrade; a defective installed version requires a higher fixed release.
+# Required reviewers come from the stable-updates Environment.
 on:
   workflow_dispatch:
 
@@ -41,13 +42,18 @@ jobs:
           }
           fetch "updates/stable/latest.json" || true
           fetch "updates/stable/status.json" || true
-          # Reconstruct the full history chain so the site copy preserves every
-          # previously promoted version.
-          version="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(s.version || '') } catch { process.stdout.write('') }")"
-          while [ -n "$version" ]; do
-            fetch "updates/stable/history/$version.json" || break
-            version="$(node -e "try { const h = JSON.parse(require('fs').readFileSync('current-site/updates/stable/history/$version.json', 'utf8')); process.stdout.write(h.previousVersion || '') } catch { process.stdout.write('') }")"
-          done
+          # Fetch every indexed history entry from the deterministic versions
+          # inventory (an immutable index of every promoted version), not just
+          # the rollback chain, so the copied site preserves history even after
+          # a withdrawal keeps the withdrawn version indexed.
+          inventory="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(Array.isArray(s.versions) ? s.versions.join('\n') : '') } catch { process.stdout.write('') }")"
+          while IFS= read -r version; do
+            [ -n "$version" ] || continue
+            if ! fetch "updates/stable/history/$version.json"; then
+              echo "indexed history entry $version is unavailable at the public endpoint" >&2
+              exit 1
+            fi
+          done <<< "$inventory"
       - name: Withdraw stable update to previous version
         shell: bash
         run: |
