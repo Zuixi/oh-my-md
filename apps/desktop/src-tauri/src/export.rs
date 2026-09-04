@@ -60,6 +60,7 @@ pub fn styled_export_html(html: &str) -> String {
 #[path = "export_native.rs"]
 mod native;
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn measure_export_script(min_height: i32, max_height: i32) -> String {
     format!(
         "(function(){{var r=document.documentElement,b=document.body;\
@@ -70,6 +71,7 @@ pub(crate) fn measure_export_script(min_height: i32, max_height: i32) -> String 
     )
 }
 
+#[cfg(target_os = "macos")]
 const EXPORT_TIMEOUT_SECS: u64 = 20;
 
 #[tauri::command]

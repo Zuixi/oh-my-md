@@ -154,6 +154,19 @@ describe("Tauri frontend security configuration", () => {
   })
 })
 
+describe("platform-specific Rust exports", () => {
+  it("does not compile macOS-only export helpers into Linux release builds", () => {
+    const exportRs = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
+
+    expect(exportRs).toMatch(
+      /#\[cfg\(any\(target_os = "macos", test\)\)\]\s+pub\(crate\) fn measure_export_script/,
+    )
+    expect(exportRs).toMatch(
+      /#\[cfg\(target_os = "macos"\)\]\s+const EXPORT_TIMEOUT_SECS/,
+    )
+  })
+})
+
 describe("Windows installer branding assets", () => {
   it("uses NSIS sidebar and WiX bitmaps at the required aspect ratios", () => {
     const config = readJson("../src-tauri/tauri.conf.json") as {
