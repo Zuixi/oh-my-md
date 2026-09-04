@@ -20,6 +20,17 @@ pub const SESSION_FLUSH_EVENT: &str = "session-flush";
 
 pub const SESSION_FLUSH_TIMEOUT: Duration = Duration::from_millis(2000);
 
+/// How a flush round ended. Ordinary quit paths ignore the outcome (a
+/// timeout must still finish), but the update-restart command reports it so
+/// the coordinator can abort the install on timeout instead of exiting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlushOutcome {
+    /// The webview called `session_flush_ack` before the deadline.
+    Acknowledged,
+    /// No ack arrived inside the timeout; the round still finished.
+    TimedOut,
+}
+
 #[derive(Clone, Default)]
 pub struct FlushGate {
     pending: Arc<Mutex<Option<mpsc::Sender<()>>>>,
@@ -29,8 +40,13 @@ pub struct FlushGate {
 impl FlushGate {
     /// Starts one flush round; returns `false` (and does nothing) when a
     /// round is already in flight. `finish` runs exactly once — after ack
-    /// or timeout, whichever comes first.
-    pub fn begin(&self, timeout: Duration, finish: impl FnOnce() + Send + 'static) -> bool {
+    /// or timeout, whichever comes first — and receives the `FlushOutcome`
+    /// so callers can distinguish acked persistence from a timeout.
+    pub fn begin(
+        &self,
+        timeout: Duration,
+        finish: impl FnOnce(FlushOutcome) + Send + 'static,
+    ) -> bool {
         let (tx, rx) = mpsc::channel();
         let mut guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
@@ -42,10 +58,13 @@ impl FlushGate {
         let pending = Arc::clone(&self.pending);
         let flushed = Arc::clone(&self.flushed);
         std::thread::spawn(move || {
-            let _ = rx.recv_timeout(timeout);
+            let outcome = match rx.recv_timeout(timeout) {
+                Ok(()) => FlushOutcome::Acknowledged,
+                Err(_) => FlushOutcome::TimedOut,
+            };
             *pending.lock().unwrap_or_else(|e| e.into_inner()) = None;
             flushed.store(true, Ordering::Release);
-            finish();
+            finish(outcome);
         });
         true
     }
@@ -81,31 +100,33 @@ impl FlushGate {
 mod tests {
     use super::*;
 
-    fn await_finish(done: mpsc::Receiver<()>) {
+    /// Waits for the finish callback and returns the outcome it reported.
+    fn await_finish(done: mpsc::Receiver<FlushOutcome>) -> FlushOutcome {
         done.recv_timeout(Duration::from_secs(2))
-            .expect("finish ran");
+            .expect("finish ran with an outcome")
     }
 
     #[test]
-    fn ack_completes_round_and_runs_finish() {
+    fn ack_outcome_is_acknowledged_and_finish_runs() {
         let gate = FlushGate::default();
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(gate.begin(Duration::from_secs(5), move || {
-            let _ = done_tx.send(());
+        assert!(gate.begin(Duration::from_secs(5), move |outcome| {
+            let _ = done_tx.send(outcome);
         }));
         gate.ack();
-        await_finish(done_rx);
+        assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
         assert!(!gate.in_progress());
     }
 
     #[test]
-    fn timeout_runs_finish_without_ack() {
+    fn timeout_outcome_is_timed_out_and_finish_still_runs() {
         let gate = FlushGate::default();
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(gate.begin(Duration::from_millis(20), move || {
-            let _ = done_tx.send(());
+        assert!(gate.begin(Duration::from_millis(20), move |outcome| {
+            let _ = done_tx.send(outcome);
         }));
-        await_finish(done_rx);
+        assert_eq!(await_finish(done_rx), FlushOutcome::TimedOut);
+        assert!(!gate.in_progress());
     }
 
     #[test]
@@ -113,14 +134,14 @@ mod tests {
         let gate = FlushGate::default();
         let (first_tx, first_rx) = mpsc::channel();
         let (second_tx, second_rx) = mpsc::channel();
-        assert!(gate.begin(Duration::from_millis(200), move || {
-            let _ = first_tx.send(());
+        assert!(gate.begin(Duration::from_millis(200), move |outcome| {
+            let _ = first_tx.send(outcome);
         }));
-        assert!(!gate.begin(Duration::from_secs(5), move || {
-            let _ = second_tx.send(());
+        assert!(!gate.begin(Duration::from_secs(5), move |outcome| {
+            let _ = second_tx.send(outcome);
         }));
         gate.ack();
-        await_finish(first_rx);
+        assert_eq!(await_finish(first_rx), FlushOutcome::Acknowledged);
         assert!(
             second_rx.recv_timeout(Duration::from_millis(300)).is_err(),
             "the ignored begin's finish must not run"
@@ -131,11 +152,11 @@ mod tests {
     fn flushed_flag_is_consumed_once() {
         let gate = FlushGate::default();
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(gate.begin(Duration::from_secs(5), move || {
-            let _ = done_tx.send(());
+        assert!(gate.begin(Duration::from_secs(5), move |outcome| {
+            let _ = done_tx.send(outcome);
         }));
         gate.ack();
-        await_finish(done_rx);
+        assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
         assert!(gate.consume_flushed());
         assert!(!gate.consume_flushed());
     }
@@ -145,5 +166,21 @@ mod tests {
         let gate = FlushGate::default();
         gate.ack();
         assert!(!gate.in_progress());
+    }
+
+    #[test]
+    fn update_round_outcome_is_observable_and_marker_clears_before_next_quit() {
+        // Mirrors prepare_update_restart: the update command runs its own
+        // round, observes Acknowledged, keeps the app running, and clears the
+        // round's one-shot marker so a later ordinary quit still flushes.
+        let gate = FlushGate::default();
+        let (done_tx, done_rx) = mpsc::channel();
+        assert!(gate.begin(Duration::from_secs(5), move |outcome| {
+            let _ = done_tx.send(outcome);
+        }));
+        gate.ack();
+        assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
+        assert!(gate.consume_flushed());
+        assert!(!gate.consume_flushed());
     }
 }
