@@ -25,6 +25,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -55,6 +56,12 @@
         "bannerPath": "icons/wix-banner.bmp",
         "dialogImagePath": "icons/wix-dialog.bmp"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://zuixi.github.io/oh-my-md/updates/stable/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNEIyRDIyNUExRTY5QgpSV1NiNXFFbDBySVVEaWFnYi9SWU1nWW1Wb2V5U3VMd2FscnQvQ0ZmU2wyQkVPMHhFWjE1ZVluTwo="
     }
   }
 }
