@@ -45,7 +45,8 @@ describe("release workflow", () => {
 
     expect(windows).toContain("runs-on: windows-2022")
     expect(windows).not.toContain("runs-on: windows-latest")
-    expect(windows).toMatch(/--bundles nsis,wix/)
+    expect(windows).toMatch(/--bundles nsis,msi/)
+    expect(windows).not.toMatch(/--bundles nsis,wix/)
     expect(windows).toContain("actions/upload-artifact@")
     expect(windows).toContain("**/*.msi")
     expect(windows).toContain("**/*-setup.exe")
