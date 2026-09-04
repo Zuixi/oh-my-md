@@ -14,6 +14,7 @@ import type {
   SaveDocumentResult,
 } from "../src/desktopServices"
 import type { AdapterDownloadEvent, AdapterUpdate, UpdateAdapter } from "../src/updateAdapter"
+import type { UpdateFailureKind } from "../src/updateCoordinator"
 import type { PrepareUpdateRestartResult } from "../src/desktopServices"
 import type { CreateEditorOptions, EditorDocumentUpdate } from "../src/Editor"
 import {
@@ -119,7 +120,7 @@ export interface AppHarness {
   readonly services: HarnessServices
   seedFile: (path: string, contents: string) => void
   disk: (path: string) => DiskFixture
-  renderApp: (props?: { autosaveMs?: number; watchMs?: number; docMaterializeMs?: number }) => RenderResult
+  renderApp: (props?: { autosaveMs?: number; watchMs?: number; docMaterializeMs?: number; logUpdateFailure?: (failure: UpdateFailureKind) => void }) => RenderResult
   editorForTab: (tabId: number) => FakeEditorHandle
   allEditors: () => readonly FakeEditorHandle[]
   activateTab: (tabId: number) => void
@@ -321,6 +322,7 @@ interface HarnessContext {
   autosaveMs: number
   watchMs: number
   docMaterializeMs: number
+  logUpdateFailure: ((failure: UpdateFailureKind) => void) | null
   flushHandler: (() => void | Promise<void>) | null
   /** Single-slot plan for the fake updater's next check (default: no update). */
   nextUpdateCheck: { kind: "none" } | { kind: "handle"; handle: FakeUpdateHandle } | { kind: "error"; error: Error }
@@ -472,6 +474,7 @@ function appElement(context: HarnessContext, watchMs: number) {
     watchMs,
     docMaterializeMs: context.docMaterializeMs,
     updateAdapter: context.updateAdapter,
+    logUpdateFailure: context.logUpdateFailure ?? undefined,
   })
 }
 
@@ -581,6 +584,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     // 默认同步物化：既有套件保持 emit→docsRef 即时可见的旧语义；
     // 时序专项测试（App.docMaterialize/App.stats）按需传 250。
     docMaterializeMs: 0,
+    logUpdateFailure: null,
     flushHandler: null,
     nextUpdateCheck: { kind: "none" },
     lastUpdateHandle: null,
@@ -603,6 +607,7 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       context.autosaveMs = props.autosaveMs ?? 0
       context.watchMs = props.watchMs ?? NO_WATCH_MS
       context.docMaterializeMs = props.docMaterializeMs ?? 0
+      context.logUpdateFailure = props.logUpdateFailure ?? null
       context.rendered = render(appElement(context, context.watchMs))
       lastMountedApp = context.rendered
       return context.rendered

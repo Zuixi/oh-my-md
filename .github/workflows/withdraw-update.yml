@@ -34,14 +34,26 @@ jobs:
           mkdir -p current-site/updates/stable/history
           fetch() {
             local path="$1"
-            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "current-site/$path" "$base/$path" 2>/dev/null; then
-              return 0
-            fi
-            rm -f "current-site/$path"
-            return 1
+            local code
+            code="$(curl -sfSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -o "current-site/$path" -w '%{http_code}' "$base/$path" 2>/dev/null || true)"
+            case "$code" in
+              200) return 0 ;;
+              404) rm -f "current-site/$path"; return 3 ;;
+              *) rm -f "current-site/$path"; return 1 ;;
+            esac
           }
-          fetch "updates/stable/latest.json" || true
-          fetch "updates/stable/status.json" || true
+          # Withdrawal restores the previous known-good state from the deployed
+          # site; an absent (404) or unreachable endpoint is always a hard
+          # failure, never a no-op.
+          fetch "updates/stable/latest.json" || {
+            echo "deployed stable latest.json is unavailable at the public endpoint; refusing to withdraw" >&2
+            exit 1
+          }
+          fetch "updates/stable/status.json" || {
+            echo "deployed stable status.json is unavailable at the public endpoint; refusing to withdraw" >&2
+            exit 1
+          }
           # Fetch every indexed history entry from the deterministic versions
           # inventory (an immutable index of every promoted version), not just
           # the rollback chain, so the copied site preserves history even after

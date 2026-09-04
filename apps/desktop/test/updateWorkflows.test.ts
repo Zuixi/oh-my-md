@@ -152,6 +152,45 @@ describe("stable update workflows input safety", () => {
     }
   })
 
+  it("distinguishes a genuine HTTP 404 from transport, 5xx, and timeout failures on site fetch", () => {
+    for (const [, workflow] of WORKFLOWS) {
+      // The fetch helper decides from the actual HTTP status code, never from
+      // `curl ... || true` swallowing the exit status.
+      expect(workflow).toContain("%{http_code}")
+      expect(workflow).toContain("200) return 0")
+      expect(workflow).toContain("404) rm -f")
+      // Every non-200/non-404 outcome (DNS failure, 5xx, timeout, empty body)
+      // maps to the same hard-failure status as an unavailable endpoint.
+      expect(workflow).toContain('*) rm -f "current-site/$path"; return 1')
+    }
+  })
+
+  it("hard-fails transport failures instead of letting them fall through via || true", () => {
+    // Promotion captures each status; a non-404 failure (return 1) hard-stops.
+    expect(PROMOTE).toContain('fetch "updates/stable/latest.json" || latest_status=$?')
+    expect(PROMOTE).toContain('fetch "updates/stable/status.json" || status_status=$?')
+    expect(PROMOTE).not.toContain('fetch "updates/stable/latest.json" || true')
+    expect(PROMOTE).not.toContain('fetch "updates/stable/status.json" || true')
+    // Withdrawal needs the deployed state; an absent/404 endpoint is a hard
+    // stop, so the fetches attach to a `|| { ... exit 1 }` block, never `|| true`.
+    expect(WITHDRAW).toContain('fetch "updates/stable/latest.json" || {')
+    expect(WITHDRAW).toContain('fetch "updates/stable/status.json" || {')
+    expect(WITHDRAW).toContain("refusing to withdraw")
+    expect(WITHDRAW).not.toContain('fetch "updates/stable/latest.json" || true')
+    expect(WITHDRAW).not.toContain('fetch "updates/stable/status.json" || true')
+  })
+
+  it("accepts a first promotion only when both index files are verified 404 and rejects partial state", () => {
+    expect(PROMOTE).toContain('"$latest_status" -ne 3')
+    expect(PROMOTE).toContain('"$status_status" -ne 3')
+    expect(PROMOTE).toContain("no deployed stable site yet")
+    expect(PROMOTE).toContain("refusing to promote")
+    // One index file present while the other is missing/404 must never be
+    // treated as a first deployment; the whole step hard-stops instead.
+    expect(PROMOTE).not.toMatch(/fetch "updates\/stable\/latest\.json" \|\| true/)
+    expect(PROMOTE).not.toMatch(/fetch "updates\/stable\/status\.json" \|\| true/)
+  })
+
   it("fetches every indexed history entry from the status versions inventory", () => {
     for (const [, workflow] of WORKFLOWS) {
       expect(workflow).toContain("current-site/updates/stable/history")
@@ -198,6 +237,16 @@ describe("promote-update workflow", () => {
     expect(PROMOTE).toContain("pubkey")
     expect(PROMOTE).toContain("untrusted comment:")
     expect(PROMOTE).toMatch(/minisign\.pub/)
+  })
+
+  it("passes each signature file explicitly to minisign instead of relying on default naming", () => {
+    // minisign defaults to the conventional `<artifact>.sig` sibling, so a
+    // sig-less `-Vm` could silently verify the wrong file after a rename.
+    // Pin the exact artifact<-signature argument relationship.
+    expect(PROMOTE).toContain('artifact="${sig%.sig}"')
+    expect(PROMOTE).toContain('-s "$sig"')
+    expect(PROMOTE).toMatch(/"\$minisign" -Vm "\$artifact" -p "\$pubkey" -s "\$sig"/)
+    expect(PROMOTE).not.toMatch(/"\$minisign" -Vm "\$artifact" -p "\$pubkey"[^\s-]/)
   })
 
   it("runs the tested CLI to validate then promote into the site tree", () => {

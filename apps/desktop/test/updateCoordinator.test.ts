@@ -58,6 +58,7 @@ function makeEnv(overrides: Partial<UpdateCoordinatorDependencies> = {}) {
     prepareRestart: vi.fn<() => Promise<PrepareUpdateRestartResult>>().mockResolvedValue({ kind: "ready" }),
     openReleasePage: vi.fn().mockResolvedValue(undefined),
     reportManualFailure: vi.fn(),
+    logFailure: vi.fn(),
     notifyLatest: vi.fn(),
     isWindows: vi.fn().mockReturnValue(false),
     classifyError: vi.fn().mockReturnValue("unknown"),
@@ -241,6 +242,44 @@ describe("createUpdateCoordinator", () => {
       { kind: "checking", source: "startup" },
       { kind: "idle" },
     ])
+  })
+  it("logs a startup check failure (including signature/manifest) through logFailure with no user UI", async () => {
+    const boom = new Error("minisign signature mismatch")
+    const { deps, updater } = makeEnv({ classifyError: vi.fn().mockReturnValue("signature") })
+    updater.check.mockRejectedValueOnce(boom)
+    const coordinator = createUpdateCoordinator(deps)
+    const { states } = collect(coordinator)
+
+    await coordinator.check("startup")
+
+    expect(deps.classifyError).toHaveBeenCalledWith(boom, "check")
+    expect(deps.logFailure).toHaveBeenCalledTimes(1)
+    expect(deps.logFailure).toHaveBeenCalledWith("signature")
+    expect(deps.reportManualFailure).not.toHaveBeenCalled()
+    expect(deps.notifyLatest).not.toHaveBeenCalled()
+    expect(states).toEqual([
+      { kind: "idle" },
+      { kind: "checking", source: "startup" },
+      { kind: "idle" },
+    ])
+  })
+
+  it("keeps manual check failures on the user-facing path without logFailure", async () => {
+    const boom = new Error("bad manifest")
+    const { deps, updater } = makeEnv({ classifyError: vi.fn().mockReturnValue("manifest") })
+    updater.check.mockRejectedValueOnce(boom)
+    const coordinator = createUpdateCoordinator(deps)
+
+    await coordinator.check("manual")
+
+    expect(deps.logFailure).not.toHaveBeenCalled()
+    expect(deps.reportManualFailure).toHaveBeenCalledWith("manifest")
+    expect(last(statesOf(coordinator))).toEqual({
+      kind: "failed",
+      stage: "check",
+      failure: "manifest",
+      retryable: false,
+    })
   })
 
   it("reports and publishes a manual check failure with the classified kind", async () => {
@@ -662,6 +701,89 @@ describe("createUpdateCoordinator", () => {
 
     expect(handle.install).not.toHaveBeenCalled()
     expect(last(states)).toEqual({ kind: "readyToInstall", update: UPDATE })
+  })
+
+  it("re-checks readiness at install time and blocks on edits made after the final confirmation", async () => {
+    const reasons: UpdateBlockedTab[] = [{ tabId: 1, displayName: "draft.md", reason: "dirtyDocument" }]
+    const order: string[] = []
+    const { deps, handle, updater } = makeEnv({
+      flushPendingEdits: vi.fn(() => { order.push("flush") }),
+      checkRestartReadiness: vi
+        .fn()
+        .mockImplementationOnce(() => { order.push("readiness"); return { ready: true, reasons: [] } })
+        .mockImplementationOnce(() => { order.push("readiness"); return { ready: false, reasons } }),
+      prepareRestart: vi.fn<() => Promise<PrepareUpdateRestartResult>>(async () => {
+        order.push("prepare")
+        return { kind: "ready" }
+      }),
+    })
+    const coordinator = createUpdateCoordinator(deps)
+    const { states } = collect(coordinator)
+
+    await reachDownloaded(coordinator)
+    await coordinator.requestInstall()
+    expect(last(states)).toEqual({ kind: "readyToInstall", update: UPDATE })
+
+    await coordinator.install()
+
+    expect(order).toEqual(["flush", "readiness", "prepare", "flush", "readiness"])
+    expect(handle.install).not.toHaveBeenCalled()
+    expect(updater.relaunch).not.toHaveBeenCalled()
+    expect(last(states)).toEqual({ kind: "blocked", update: UPDATE, reasons })
+  })
+
+  it("requires a repeated requestInstall after an install-time block before the installer runs", async () => {
+    const reasons: UpdateBlockedTab[] = [{ tabId: 1, displayName: "draft.md", reason: "saveConflict" }]
+    const { deps, handle } = makeEnv({
+      checkRestartReadiness: vi
+        .fn()
+        .mockReturnValueOnce({ ready: true, reasons: [] })
+        .mockReturnValueOnce({ ready: false, reasons })
+        .mockReturnValueOnce({ ready: true, reasons: [] })
+        .mockReturnValueOnce({ ready: true, reasons: [] }),
+    })
+    const coordinator = createUpdateCoordinator(deps)
+    const { states } = collect(coordinator)
+
+    await reachDownloaded(coordinator)
+    await coordinator.requestInstall()
+    await coordinator.install()
+    expect(last(states)).toEqual({ kind: "blocked", update: UPDATE, reasons })
+
+    // The user saves and repeats the confirmation flow; prepareRestart runs
+    // again, and only the second install() reaches the installer.
+    await coordinator.requestInstall()
+    expect(deps.prepareRestart).toHaveBeenCalledTimes(2)
+    expect(last(states)).toEqual({ kind: "readyToInstall", update: UPDATE })
+
+    await coordinator.install()
+    expect(handle.install).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports an install-time readiness throw through the readiness stage", async () => {
+    const boom = new Error("readiness broken")
+    const { deps } = makeEnv({
+      checkRestartReadiness: vi
+        .fn()
+        .mockReturnValueOnce({ ready: true, reasons: [] })
+        .mockImplementationOnce(() => { throw boom }),
+      classifyError: vi.fn().mockReturnValue("unknown"),
+    })
+    const coordinator = createUpdateCoordinator(deps)
+    const { states } = collect(coordinator)
+
+    await reachDownloaded(coordinator)
+    await coordinator.requestInstall()
+    await coordinator.install()
+
+    expect(deps.classifyError).toHaveBeenCalledWith(boom, "readiness")
+    expect(deps.reportManualFailure).toHaveBeenCalledWith("unknown")
+    expect(last(states)).toEqual({
+      kind: "failed",
+      stage: "readiness",
+      failure: "unknown",
+      retryable: true,
+    })
   })
 
   it("relaunches only after install resolves on non-Windows", async () => {

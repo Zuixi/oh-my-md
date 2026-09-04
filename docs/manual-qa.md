@@ -329,7 +329,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 ### 发布与 stable 控制面（Draft ≠ stable）
 - [ ] artifact-only 手动运行（workflow_dispatch）：三平台构建 + 签名 + 校验和，停在 workflow artifacts，不创建 Release（真实产物文件名与 manifest glob 匹配在此暴露）
 - [ ] Tag 运行：只创建一个 Draft——含五个人类安装包、SHA256SUMS.txt（覆盖全部 staged 资产：latest.json、签名、安装包）、三平台 updater 产物、candidate `latest.json`
-- [ ] 用真实 minisign 二进制 + 仓库提交的 public key 验证每个 `.sig`（`minisign -Vm <artifact> -p <pubkey>`）— **NOT RUN**（需真实二进制/密钥）
+- [ ] 用真实 minisign 二进制 + 仓库提交的 public key 验证每个 `.sig`（`minisign -Vm <artifact> -s <signature> -p <pubkey>`）— **NOT RUN**（需真实二进制/密钥）
 - [ ] minisign 拒绝：非生产测试通道/本地 fixture 放入故意无效的 candidate 或 `.sig`，客户端与 promotion 均拒绝安装/拒绝 promote — **NOT RUN**（需真实打包产物）
 - [ ] Publish release 后：公开 Release 不触发任何自动 promotion；stable 端点 `updates/stable/latest.json` 仍为旧版本或不存在
 - [ ] 受保护 promotion（人工运行 `promote-update.yml`；`stable-updates` 环境含 required reviewers；Pages source=GitHub Actions——两者均为仓库设置外部前置条件）：校验公开、非 Draft、非 prerelease、精确 tag → 下载候选与签名 → minisign 验证 → 版本严格递增 → 写 history/status → Pages 部署 → 拉取公共端点比对 SHA-256

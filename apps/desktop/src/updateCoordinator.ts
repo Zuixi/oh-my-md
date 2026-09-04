@@ -57,6 +57,8 @@ export interface UpdateCoordinatorDependencies {
   readonly prepareRestart: () => Promise<PrepareUpdateRestartResult>
   readonly openReleasePage: () => Promise<void>
   readonly reportManualFailure: (failure: UpdateFailureKind) => void
+  /** Startup-check failure log sink (spec §10/§14): no user UI, only a structured log entry. */
+  readonly logFailure: (failure: UpdateFailureKind) => void
   readonly notifyLatest: () => void
   readonly isWindows: () => boolean
   readonly classifyError: (error: unknown, stage: UpdateStage) => UpdateFailureKind
@@ -82,6 +84,7 @@ export function createUpdateCoordinator(dependencies: UpdateCoordinatorDependenc
     prepareRestart,
     openReleasePage,
     reportManualFailure,
+    logFailure,
     notifyLatest,
     isWindows,
     classifyError,
@@ -148,6 +151,9 @@ export function createUpdateCoordinator(dependencies: UpdateCoordinatorDependenc
         reportManualFailure(failure)
         publish({ kind: "failed", stage: "check", failure, retryable: isRetryable(failure) })
       } else {
+        // Startup failures stay off the user UI; only the classified product
+        // kind reaches the log sink (spec §10/§14), never raw error internals.
+        logFailure(failure)
         publish({ kind: "idle" })
       }
     } finally {
@@ -226,8 +232,26 @@ export function createUpdateCoordinator(dependencies: UpdateCoordinatorDependenc
     const handle = privateHandle
     if (handle === null) return
     operationActive = true
-    publish({ kind: "installing", update: state.update })
     try {
+      // Edits made after the final confirmation must block installation: flush
+      // pending materialization and re-run the document-safety gate exactly as
+      // requestInstall does. A blocked install stays in `blocked` and keeps the
+      // downloaded handle; the user saves and repeats requestInstall, which
+      // performs prepareRestart again before a later install() may proceed.
+      try {
+        flushPendingEdits()
+        const readiness = checkRestartReadiness()
+        if (!readiness.ready) {
+          publish({ kind: "blocked", update: state.update, reasons: readiness.reasons })
+          return
+        }
+      } catch (error) {
+        const failure = classifyError(error, "readiness")
+        reportManualFailure(failure)
+        publish({ kind: "failed", stage: "readiness", failure, retryable: isRetryable(failure) })
+        return
+      }
+      publish({ kind: "installing", update: state.update })
       await handle.install()
       // On Windows the NSIS installer relaunches the app itself; the call may
       // terminate the process without resolving, so never require it to.

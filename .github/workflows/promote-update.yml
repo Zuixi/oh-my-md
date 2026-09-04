@@ -126,7 +126,9 @@ jobs:
               echo "signature without matching updater artifact: $sig" >&2
               exit 1
             }
-            "$minisign" -Vm "$artifact" -p "$pubkey" || {
+            # minisign defaults to the conventional <artifact>.sig sibling, so
+            # the signature file is passed explicitly rather than implied.
+            "$minisign" -Vm "$artifact" -p "$pubkey" -s "$sig" || {
               echo "minisign verification failed for $artifact" >&2
               exit 1
             }
@@ -142,17 +144,35 @@ jobs:
           set -euo pipefail
           base="https://zuixi.github.io/oh-my-md"
           mkdir -p current-site/updates/stable/history
+          # Reconstruct the deployed tree from the public endpoint. Only a
+          # genuine HTTP 404 is distinguishable from every transport/5xx/timeout
+          # failure, which must hard-fail: return 0 on 200, 3 on verified 404,
+          # 1 on anything else.
           fetch() {
             local path="$1"
-            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "current-site/$path" "$base/$path" 2>/dev/null; then
-              return 0
-            fi
-            rm -f "current-site/$path"
-            return 1
+            local code
+            code="$(curl -sfSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -o "current-site/$path" -w '%{http_code}' "$base/$path" 2>/dev/null || true)"
+            case "$code" in
+              200) return 0 ;;
+              404) rm -f "current-site/$path"; return 3 ;;
+              *) rm -f "current-site/$path"; return 1 ;;
+            esac
           }
-          # First promotion has no deployed site; fetch failures are expected.
-          fetch "updates/stable/latest.json" || true
-          fetch "updates/stable/status.json" || true
+          latest_status=0
+          status_status=0
+          fetch "updates/stable/latest.json" || latest_status=$?
+          fetch "updates/stable/status.json" || status_status=$?
+          # First promotion has no deployed site: both index files must be a
+          # verified 404. Missing one index while the other exists (partial
+          # state) and any transport failure are hard failures, not fall-throughs.
+          if [ "$latest_status" -ne 0 ] || [ "$status_status" -ne 0 ]; then
+            if [ "$latest_status" -ne 3 ] || [ "$status_status" -ne 3 ]; then
+              echo "current stable endpoint is unavailable (latest=$latest_status status=$status_status); refusing to promote" >&2
+              exit 1
+            fi
+            echo "no deployed stable site yet; this is the first promotion"
+          fi
           # Fetch every indexed history entry from the deterministic versions
           # inventory (an immutable index of every promoted version), not just
           # the rollback chain, so the copied site preserves history even after

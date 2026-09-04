@@ -116,18 +116,21 @@ describe("App update integration", () => {
     expect(document.querySelector(".update-banner-message")?.textContent).toContain("0.9.9")
   })
 
-  it("schedules a startup failure silently", async () => {
+  it("logs a startup check failure through the log hook with no user UI (spec §10/§14)", async () => {
     const harness = makeAppHarness()
     harness.services.updateCapability = vi.fn(async () => ({ check: true, install: true }))
     harness.updates.nextCheckError(new Error("Failed to fetch release JSON"))
+    const logUpdateFailure = vi.fn()
 
     vi.useFakeTimers()
-    harness.renderApp()
+    harness.renderApp({ logUpdateFailure })
 
     await act(async () => { await vi.advanceTimersByTimeAsync(STARTUP_UPDATE_CHECK_MS) })
     for (let i = 0; i < 5; i += 1) {
       await act(async () => { await Promise.resolve() })
     }
+    expect(logUpdateFailure).toHaveBeenCalledTimes(1)
+    expect(logUpdateFailure).toHaveBeenCalledWith("network")
     expect(harness.services.reportError).not.toHaveBeenCalled()
     expect(harness.services.notifySuccess).not.toHaveBeenCalled()
     expect(document.querySelector(".update-banner")).toBeNull()
@@ -381,6 +384,28 @@ describe("App update integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart and install" }))
     await waitFor(() => expect(handle.install).toHaveBeenCalled())
     await waitFor(() => expect(harness.updates.relaunch()).toHaveBeenCalled())
+  })
+
+  it("blocks install when a document is edited after the final confirmation", async () => {
+    const harness = makeAppHarness()
+    const handle = await reachDownloaded(harness)
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart and install" }))
+    await waitFor(() =>
+      expect(document.querySelector(".update-banner-message")?.textContent)
+        .toContain("close and restart"))
+    expect(handle.install).not.toHaveBeenCalled()
+
+    // An edit made after the final confirmation must block the actual install.
+    await harness.openFileTab("/notes/a.md", "saved")
+    edit(harness, 1, "edited after confirmation")
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart and install" }))
+
+    await waitFor(() => expect(updateBannerList()?.textContent).toContain("a.md"))
+    expect(updateBannerList()?.textContent).toContain("Unsaved changes")
+    expect(handle.install).not.toHaveBeenCalled()
+    expect(harness.updates.relaunch()).not.toHaveBeenCalled()
   })
 
   it("hiding during a download hides the banner but the completed download reappears", async () => {

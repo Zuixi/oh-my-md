@@ -159,6 +159,8 @@ interface AppProps {
   docMaterializeMs?: number
   /** Automatic-update adapter; tests inject a fake, production uses the Tauri plugin adapter. */
   updateAdapter?: UpdateAdapter
+  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs to console. */
+  logUpdateFailure?: (failure: UpdateFailureKind) => void
 }
 
 const OUTLINE_DEBOUNCE_MS = 150
@@ -279,6 +281,16 @@ interface OutlineIdleGlobal {
 }
 
 /**
+ * Startup-check failures log with no user UI (spec §10/§14). The app has no
+ * structured logger yet; recoveryWriter already uses `console.error` on
+ * purpose. Log only the classified product failure kind — never raw updater
+ * internals or document content.
+ */
+function logUpdateStartupFailure(failure: UpdateFailureKind): void {
+  console.error(`[updates] startup check failed: ${failure}`)
+}
+
+/**
  * Best-effort update failure classification from dependency errors (spec §14).
  * The Tauri plugin rejects with Rust `thiserror` Display text; match stable
  * substrings and default to `unknown` rather than exposing raw internals.
@@ -322,6 +334,7 @@ export default function App({
   watchMs = 30000,
   docMaterializeMs = DOC_MATERIALIZE_MS,
   updateAdapter = createTauriUpdateAdapter(),
+  logUpdateFailure = logUpdateStartupFailure,
 }: AppProps) {
   const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
@@ -993,6 +1006,7 @@ export default function App({
       reportManualFailure: failure => {
         if (mountedRef.current) services.reportError(localeT(`update.failure.${failure}`))
       },
+      logFailure: logUpdateFailure,
       notifyLatest: () => {
         services.notifySuccess?.(localeT("update.current"))
       },
