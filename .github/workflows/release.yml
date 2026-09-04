@@ -73,8 +73,8 @@ jobs:
         with:
           toolchain: 1.87.0
       - uses: ./.github/actions/setup-pnpm
-      - name: Build x64 NSIS and WiX installers
-        run: pnpm --filter @omd/desktop tauri build --bundles nsis,wix
+      - name: Build x64 NSIS and MSI installers
+        run: pnpm --filter @omd/desktop tauri build --bundles nsis,msi
       - name: Upload Windows packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
