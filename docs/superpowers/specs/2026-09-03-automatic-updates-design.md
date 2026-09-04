@@ -55,8 +55,10 @@ Generate one Tauri updater key pair. Store:
 
 - the public key in `apps/desktop/src-tauri/tauri.conf.json`;
 - the private key in the `TAURI_SIGNING_PRIVATE_KEY` GitHub Actions secret;
-- its password in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`;
+- its password in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when the key is password-protected;
 - at least two encrypted offline recovery copies under maintainer control.
+
+The existing updater trust root is reused: its public key previously shipped in repository configuration, `TAURI_SIGNING_PRIVATE_KEY` already exists in GitHub Actions, and the local recovery key is permission-restricted. This implementation never reads or rewrites the private-key contents. Before promoting the first updater-capable release, maintainers must create and verify the second encrypted offline backup; replacing this trust root requires a separately approved migration.
 
 The private key must never enter repository files, `.env`, logs, caches, workflow artifacts, Releases, or diagnostic archives. Pull-request workflows must not receive the secrets.
 
@@ -135,7 +137,7 @@ Requirements:
 - Both macOS architecture keys point to the same verified Universal updater artifact.
 - URLs point to immutable assets under the exact version tag, never `latest` or a branch.
 - The Windows automatic-update entry uses the NSIS updater artifact. MSI remains a manual/managed deployment package.
-- The Linux automatic-update entry uses AppImage.
+- The Linux automatic-update entry uses Tauri's canonical `.AppImage.tar.gz` updater artifact; the raw `.AppImage` remains the human-download package.
 - Release notes are treated as remote plain text and are never injected as HTML.
 
 Pages also retains auditable copies:
@@ -158,7 +160,7 @@ The tag workflow receives updater signing secrets only in package-building jobs.
 | --- | --- |
 | macOS Universal | `.app.tar.gz`, `.app.tar.gz.sig` |
 | Windows x64 | NSIS updater executable and `.sig` |
-| Linux x64 | `.AppImage`, `.AppImage.sig` |
+| Linux x64 | `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` |
 
 Before creating the Draft Release, CI verifies:
 
@@ -227,6 +229,7 @@ type UpdateState =
   | { kind: "downloading"; update: AvailableUpdate; downloaded: number; total?: number }
   | { kind: "downloaded"; update: AvailableUpdate }
   | { kind: "blocked"; update: AvailableUpdate; reasons: UpdateBlockedTab[] }
+  | { kind: "readyToInstall"; update: AvailableUpdate }
   | { kind: "installing"; update: AvailableUpdate }
   | { kind: "failed"; stage: UpdateStage; failure: UpdateFailureKind; retryable: boolean }
 
@@ -247,6 +250,7 @@ interface UpdateCoordinator {
   check(source: UpdateSource): Promise<void>
   download(): Promise<void>
   requestInstall(): Promise<void>
+  install(): Promise<void>
   dismiss(): void
   dispose(): void
 }
@@ -322,7 +326,7 @@ List affected tabs and reasons, preserving document names but no full paths. Pro
 
 ### 11.5 Final confirmation
 
-After readiness and session flush succeed, show a final confirmation stating that installation closes and restarts oh-my-md and that all documents are saved. Only the confirmation action invokes installation.
+After readiness and session flush succeed, enter `readyToInstall` and show a final confirmation stating that installation closes and restarts oh-my-md and that all documents are saved. Only the separate `install()` action invokes installation. On Windows, updater installation terminates the process and the NSIS installer relaunches it, so all safety checks and confirmation must precede the call; macOS and AppImage call Tauri process relaunch after installation resolves.
 
 ## 12. Document-Safety Gate
 
@@ -386,11 +390,14 @@ Expected policy:
 | Runtime | Check | Install |
 | --- | ---: | ---: |
 | Packaged macOS application | yes | yes |
-| Installed Windows application | yes | yes |
+| Windows NSIS installation | yes | yes |
+| Windows MSI installation | yes | no; open Release |
 | Linux AppImage (`APPIMAGE` is present) | yes | yes |
 | Linux deb/other package | yes | no; open Release |
 | Development/unpackaged binary | no | no |
 | Unknown | no | no |
+
+MSI is deliberately check-only: a generic `windows-x86_64` manifest entry would otherwise let an MSI installation consume the NSIS updater and mix installer ownership.
 
 Unknown environments fail closed. Platform branching stays in `apps/desktop/src/platform.ts` or Rust `cfg!(target_os = …)` as appropriate.
 
