@@ -1086,6 +1086,20 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .update-banner-dismiss:focus-visible {
   outline: 2px solid var(--omd-link); outline-offset: 2px;
 }
+.update-banner-notes {
+  /* 远端 release notes 是远程纯文本：样式只做空白保留，内容仍由 React 转义。 */
+  flex-basis: 100%; margin: 0;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--omd-muted);
+}
+.update-banner-progress {
+  flex-basis: 100%; margin: 0; font-size: 12px;
+  color: var(--omd-muted);
+}
+.update-banner-blocked-list {
+  flex-basis: 100%; margin: 0; padding-left: 1.25em;
+  display: flex; flex-direction: column; gap: 2px;
+}
 /* Opening overlay (Spec 05b): above editor chrome, below stacked modals. */
 .opening-overlay {
   position: fixed; inset: 0; z-index: 90;

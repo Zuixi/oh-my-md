@@ -27,6 +27,10 @@ export const ASSETS_DIR_NAME = "assets"
 /** GitHub Releases page used by update notifications; matches the release CI target repo. */
 export const RELEASES_URL = "https://github.com/Zuixi/oh-my-md/releases/latest"
 
+/** Startup automatic-update check delay (spec §10: eight seconds after mount).
+ *  Frontend-only: the check is scheduled by the desktop App, not by Rust. */
+export const STARTUP_UPDATE_CHECK_MS = 8000
+
 /** Editor content max width in px; must match `--omd-content-width` in styles.css. */
 export const CONTENT_MAX_WIDTH = 900
 

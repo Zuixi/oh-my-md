@@ -13,6 +13,8 @@ import type {
   DocumentCommandError,
   SaveDocumentResult,
 } from "../src/desktopServices"
+import type { AdapterDownloadEvent, AdapterUpdate, UpdateAdapter } from "../src/updateAdapter"
+import type { PrepareUpdateRestartResult } from "../src/desktopServices"
 import type { CreateEditorOptions, EditorDocumentUpdate } from "../src/Editor"
 import {
   makeFakeDisk,
@@ -40,6 +42,49 @@ function deferred<T>() {
 export type EditorMock = {
   create: Mock<(parent: HTMLElement, options: CreateEditorOptions) => EditorView>
   reset: Mock<(view: EditorView, options: CreateEditorOptions) => void>
+}
+
+/** Test-driving handle for the fake updater. `download` captures the adapter
+ * event callback and parks until the test drives `emitDownload`/`finishDownload`
+ * (or rejects), mirroring how the coordinator consumes `onEvent`. */
+export interface FakeUpdateHandle {
+  readonly currentVersion: string
+  readonly version: string
+  readonly notes: string
+  readonly publishedAt?: string
+  readonly download: Mock<(onEvent: (event: AdapterDownloadEvent) => void) => Promise<void>>
+  readonly install: Mock<() => Promise<void>>
+  readonly close: Mock<() => Promise<void>>
+  emitDownload(event: AdapterDownloadEvent): void
+  finishDownload(): void
+  failDownload(error: Error): void
+}
+
+export function makeFakeUpdateHandle(
+  overrides: Partial<Pick<FakeUpdateHandle, "currentVersion" | "version" | "notes" | "publishedAt">> = {},
+): FakeUpdateHandle {
+  let onEvent: ((event: AdapterDownloadEvent) => void) | null = null
+  let resolveDownload: (() => void) | null = null
+  let rejectDownload: ((reason?: unknown) => void) | null = null
+  const handle: FakeUpdateHandle = {
+    currentVersion: overrides.currentVersion ?? "0.0.1",
+    version: overrides.version ?? "0.1.1",
+    notes: overrides.notes ?? "Bug fixes and polish.",
+    publishedAt: overrides.publishedAt,
+    download: vi.fn(async eventCallback => {
+      onEvent = eventCallback
+      await new Promise<void>((resolve, reject) => {
+        resolveDownload = resolve
+        rejectDownload = reject
+      })
+    }),
+    install: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    emitDownload: event => { onEvent?.(event) },
+    finishDownload: () => { resolveDownload?.() },
+    failDownload: error => { rejectDownload?.(error) },
+  }
+  return handle
 }
 
 /** Emit keeps accepting `doc` for harness bookkeeping (fake view state), but the
@@ -93,6 +138,15 @@ export interface AppHarness {
   nextSaveResult: (result: SaveDocumentResult) => void
   failNextSave: (error: DocumentCommandError) => void
   pauseNextSave: () => { promise: Promise<void>; resolve: (value: void) => void; reject: (reason?: unknown) => void }
+  /** Narrow automatic-update fakes (spec Task 5): a controllable check plan. */
+  updates: {
+    nextAvailable: (overrides?: Partial<Pick<FakeUpdateHandle, "currentVersion" | "version" | "notes" | "publishedAt">>) => FakeUpdateHandle
+    nextNoUpdate: () => void
+    nextCheckError: (error: Error) => void
+    lastHandle: () => FakeUpdateHandle | null
+    relaunch: () => Mock<() => Promise<void>>
+    adapter: () => FakeUpdater
+  }
 }
 
 export function normalizationId(value: number): NormalizationId {
@@ -268,6 +322,16 @@ interface HarnessContext {
   watchMs: number
   docMaterializeMs: number
   flushHandler: (() => void | Promise<void>) | null
+  /** Single-slot plan for the fake updater's next check (default: no update). */
+  nextUpdateCheck: { kind: "none" } | { kind: "handle"; handle: FakeUpdateHandle } | { kind: "error"; error: Error }
+  /** The last handle returned by the fake updater's check, for install/close assertions. */
+  lastUpdateHandle: FakeUpdateHandle | null
+  updateAdapter: FakeUpdater
+}
+
+interface FakeUpdater extends UpdateAdapter {
+  check: Mock<() => Promise<AdapterUpdate | null>>
+  relaunch: Mock<() => Promise<void>>
 }
 
 let lastMountedApp: RenderResult | null = null
@@ -298,6 +362,24 @@ async function invokeSaveDocument(
     return override.result
   }
   return context.fakeDisk.saveDocument(path, contents, expected)
+}
+
+/** Narrow desktop-owned update fakes: a controllable `check()` plan plus no-op
+ * relaunch. The adapter/coordinator wiring lives in App; this only feeds it. */
+function createFakeUpdateAdapter(context: HarnessContext): FakeUpdater {
+  return {
+    check: vi.fn(async (): Promise<AdapterUpdate | null> => {
+      const plan = context.nextUpdateCheck
+      context.nextUpdateCheck = { kind: "none" }
+      if (plan.kind === "error") throw plan.error
+      if (plan.kind === "handle") {
+        context.lastUpdateHandle = plan.handle
+        return plan.handle
+      }
+      return null
+    }),
+    relaunch: vi.fn(async () => undefined),
+  }
 }
 
 function harnessServices(context: HarnessContext): HarnessServices {
@@ -347,6 +429,10 @@ function harnessServices(context: HarnessContext): HarnessServices {
     revealInFinder: vi.fn(async () => undefined),
     clearRecovery: vi.fn(async () => undefined),
     setWindowTheme: vi.fn(async () => undefined),
+    // Automatic-update host contracts (spec §13/§12). Defaults fail closed so
+    // unrelated App tests never start updater work; update tests override.
+    updateCapability: vi.fn(async () => ({ check: false, install: false })),
+    prepareUpdateRestart: vi.fn<() => Promise<PrepareUpdateRestartResult>>(async () => ({ kind: "ready" })),
   }
 }
 
@@ -385,6 +471,7 @@ function appElement(context: HarnessContext, watchMs: number) {
     autosaveMs: context.autosaveMs,
     watchMs,
     docMaterializeMs: context.docMaterializeMs,
+    updateAdapter: context.updateAdapter,
   })
 }
 
@@ -495,8 +582,14 @@ export function createAppHarness(editor: EditorMock): AppHarness {
     // 时序专项测试（App.docMaterialize/App.stats）按需传 250。
     docMaterializeMs: 0,
     flushHandler: null,
+    nextUpdateCheck: { kind: "none" },
+    lastUpdateHandle: null,
+    updateAdapter: null as unknown as FakeUpdater,
   }
   context.services = harnessServices(context)
+  // The adapter reads the context's single-slot check plan, so it is built
+  // only after `context` is addressable.
+  context.updateAdapter = createFakeUpdateAdapter(context)
   installEditorMock(context)
   installEnginePendingLookup()
 
@@ -551,6 +644,18 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       const gate = deferred<void>()
       context.savePauseQueue.push(gate)
       return gate
+    },
+    updates: {
+      nextAvailable: (overrides = {}) => {
+        const handle = makeFakeUpdateHandle(overrides)
+        context.nextUpdateCheck = { kind: "handle", handle }
+        return handle
+      },
+      nextNoUpdate: () => { context.nextUpdateCheck = { kind: "none" } },
+      nextCheckError: error => { context.nextUpdateCheck = { kind: "error", error } },
+      lastHandle: () => context.lastUpdateHandle,
+      relaunch: () => context.updateAdapter.relaunch,
+      adapter: () => context.updateAdapter,
     },
   }
 }
