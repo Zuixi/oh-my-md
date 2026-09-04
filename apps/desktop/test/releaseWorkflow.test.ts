@@ -91,6 +91,7 @@ describe("release workflow", () => {
       expect(block).toContain("RUSTFLAGS: -D warnings")
       expect(block).toContain("UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")
       expect(block).toContain("node scripts/prepare-updater-key.mjs")
+      expect(block).toContain("env -u TAURI_SIGNING_PRIVATE_KEY pnpm")
       expect(block).toContain("tauri signer sign --private-key-path")
       expect(block).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}")
       expect(block).not.toContain("TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")

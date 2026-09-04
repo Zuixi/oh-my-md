@@ -45,7 +45,7 @@ jobs:
         run: |
           probe="$RUNNER_TEMP/omd-signing-probe"
           printf 'oh-my-md updater signing probe' > "$probe"
-          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          env -u TAURI_SIGNING_PRIVATE_KEY pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
           rm -f "$probe" "$probe.sig"
       - name: Build Universal app and DMG
         run: pnpm --filter @omd/desktop tauri build --target universal-apple-darwin --bundles app,dmg
@@ -100,7 +100,7 @@ jobs:
         run: |
           probe="$RUNNER_TEMP/omd-signing-probe"
           printf 'oh-my-md updater signing probe' > "$probe"
-          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          env -u TAURI_SIGNING_PRIVATE_KEY pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
           rm -f "$probe" "$probe.sig"
       - name: Build x64 NSIS and MSI installers
         run: pnpm --filter @omd/desktop tauri build --bundles nsis,msi
@@ -151,7 +151,7 @@ jobs:
         run: |
           probe="$RUNNER_TEMP/omd-signing-probe"
           printf 'oh-my-md updater signing probe' > "$probe"
-          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          env -u TAURI_SIGNING_PRIVATE_KEY pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
           rm -f "$probe" "$probe.sig"
       - name: Build x64 deb and AppImage packages
         run: pnpm --filter @omd/desktop tauri build --bundles deb,appimage
