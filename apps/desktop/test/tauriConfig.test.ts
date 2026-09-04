@@ -154,7 +154,7 @@ describe("Tauri frontend security configuration", () => {
   })
 })
 
-describe("platform-specific Rust exports", () => {
+describe("platform-specific Rust code", () => {
   it("does not compile macOS-only export helpers into Linux release builds", () => {
     const exportRs = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
 
@@ -163,6 +163,15 @@ describe("platform-specific Rust exports", () => {
     )
     expect(exportRs).toMatch(
       /#\[cfg\(target_os = "macos"\)\]\s+const EXPORT_TIMEOUT_SECS/,
+    )
+  })
+
+  it("does not compile Unix xattr helpers into Windows release builds", () => {
+    const saveRs = readFileSync(resolve(process.cwd(), "src-tauri/src/documents/save.rs"), "utf8")
+
+    expect(saveRs).not.toContain("#[cfg(not(target_os = \"macos\"))]\nfn is_required_xattr")
+    expect(saveRs).toMatch(
+      /#\[cfg\(target_os = "macos"\)\]\s+fn metadata_failed/,
     )
   })
 })

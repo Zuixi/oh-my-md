@@ -77,6 +77,14 @@
 
 ## Tooling and process
 
+## Tauri updater signing keys and macOS targets are exact contracts
+
+`tauri signer generate` already writes a single-line Base64 private key. Do not Base64 it again. More subtly, Tauri's strict decoder rejects any whitespace after the final `=` padding: a valid 348-byte key ends with `==` at offsets 346–347, but a trailing space/CRLF makes the error misleadingly point at offset 346 (`Invalid symbol 61`). Release jobs therefore pass the repository secret only to `scripts/prepare-updater-key.mjs`, which trims surrounding whitespace, validates/canonicalizes the Base64, writes a mode-0600 runner-temp key file, and exports that file path as `TAURI_SIGNING_PRIVATE_KEY`. The workflow runs a small signer probe before the multi-minute package build. Never print the secret while debugging.
+
+`bundle.createUpdaterArtifacts: true` is not enough by itself: the build must include an updater-enabled target. On macOS, `--bundles dmg` creates only the DMG and emits `no updater-enabled targets were built`; use `--bundles app,dmg` so Tauri creates `.app.tar.gz` and `.app.tar.gz.sig`. Windows uses `nsis,msi` (`wix` is a config section, not a CLI bundle name); Linux uses `deb,appimage`.
+
+Release jobs compile Rust with `RUSTFLAGS=-D warnings`, so platform-only helpers need matching `cfg` gates instead of tolerated dead code. The frontend equivalent is not to suppress Vite warnings: CodeMirror's HTML/Markdown dependency chain already loads CSS/HTML/JavaScript language packages, so `parse/codeLanguages.ts` imports those three statically and only lazily imports languages that can actually split into separate chunks.
+
 ## Manual QA baselines can become stale
 
 `docs/manual-qa.md` is valuable for IME, undo/redo, scrolling, and file workflows, but embedded test counts and milestone labels are snapshots of the time they were written.

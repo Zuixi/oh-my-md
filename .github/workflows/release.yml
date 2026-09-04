@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 120
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RUSTFLAGS: -D warnings
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,8 +37,25 @@ jobs:
       - name: Install macOS Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: ./.github/actions/setup-pnpm
-      - name: Build Universal DMG
-        run: pnpm --filter @omd/desktop tauri build --target universal-apple-darwin --bundles dmg
+      - name: Validate and stage updater signing key
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/prepare-updater-key.mjs "$RUNNER_TEMP"
+      - name: Verify updater signing key
+        run: |
+          probe="$RUNNER_TEMP/omd-signing-probe"
+          printf 'oh-my-md updater signing probe' > "$probe"
+          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          rm -f "$probe" "$probe.sig"
+      - name: Build Universal app and DMG
+        run: pnpm --filter @omd/desktop tauri build --target universal-apple-darwin --bundles app,dmg
+      - name: Require macOS installer and updater artifacts
+        shell: bash
+        run: |
+          bundle="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle"
+          find "$bundle" -type f -name '*.dmg' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.app.tar.gz' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.app.tar.gz.sig' -print -quit | grep -q .
       - name: Upload macOS package and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -54,7 +71,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 120
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RUSTFLAGS: -D warnings
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Enable long paths
@@ -73,8 +90,27 @@ jobs:
         with:
           toolchain: 1.87.0
       - uses: ./.github/actions/setup-pnpm
+      - name: Validate and stage updater signing key
+        shell: bash
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/prepare-updater-key.mjs "$RUNNER_TEMP"
+      - name: Verify updater signing key
+        shell: bash
+        run: |
+          probe="$RUNNER_TEMP/omd-signing-probe"
+          printf 'oh-my-md updater signing probe' > "$probe"
+          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          rm -f "$probe" "$probe.sig"
       - name: Build x64 NSIS and MSI installers
         run: pnpm --filter @omd/desktop tauri build --bundles nsis,msi
+      - name: Require Windows installers and updater signature
+        shell: bash
+        run: |
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          find "$bundle" -type f -name '*.msi' -print -quit | grep -q .
+          find "$bundle" -type f -name '*-setup.exe' -print -quit | grep -q .
+          find "$bundle" -type f -name '*-setup.exe.sig' -print -quit | grep -q .
       - name: Upload Windows packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -90,7 +126,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RUSTFLAGS: -D warnings
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,8 +143,25 @@ jobs:
         with:
           toolchain: 1.87.0
       - uses: ./.github/actions/setup-pnpm
+      - name: Validate and stage updater signing key
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/prepare-updater-key.mjs "$RUNNER_TEMP"
+      - name: Verify updater signing key
+        run: |
+          probe="$RUNNER_TEMP/omd-signing-probe"
+          printf 'oh-my-md updater signing probe' > "$probe"
+          pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
+          rm -f "$probe" "$probe.sig"
       - name: Build x64 deb and AppImage packages
         run: pnpm --filter @omd/desktop tauri build --bundles deb,appimage
+      - name: Require Linux packages and updater artifacts
+        run: |
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          find "$bundle" -type f -name '*.deb' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.AppImage' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.AppImage.tar.gz' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.AppImage.tar.gz.sig' -print -quit | grep -q .
       - name: Upload Linux packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
