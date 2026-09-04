@@ -224,13 +224,17 @@ enum PrepareUpdateRestartResult {
 struct UpdateCapabilityRuntime {
     debug: bool,
     platform: UpdatePlatform,
-    /// Normalized `bundle.targets` names (deb, rpm, appimage, nsis, msi,
-    /// app, dmg), with `All` expanded to the platform's default set.
-    bundle_targets: Vec<String>,
-    /// macOS runtime fact: the process runs from a `.app` bundle.
+    /// The actual runtime bundle type reported by
+    /// `tauri::utils::platform::bundle_type()`: `None` means the process is
+    /// not running from a recognized bundle artifact (dev build, plain
+    /// binary, unknown). Configured `bundle.targets` are deliberately not
+    /// part of the policy — `"all"` expands to NSIS on Windows, so the
+    /// configured set cannot tell an actual MSI install from an NSIS one.
+    bundle_type: Option<tauri::utils::config::BundleType>,
+    /// macOS runtime fact: the process runs from a `.app` bundle. Kept
+    /// separate because on macOS `bundle_type()` falls back to `App` even
+    /// for unpackaged binaries and therefore cannot distinguish them.
     inside_macos_app: bool,
-    /// Linux runtime fact: the `APPIMAGE` environment variable is set.
-    appimage: bool,
 }
 
 fn current_platform() -> UpdatePlatform {
@@ -242,30 +246,6 @@ fn current_platform() -> UpdatePlatform {
         UpdatePlatform::Linux
     } else {
         UpdatePlatform::Other
-    }
-}
-
-/// Tauri's `bundle.targets: "all"` expands per platform at build time; map it
-/// to the targets this project actually ships. Explicit lists pass through.
-fn bundle_target_names(targets: &tauri::utils::config::BundleTarget) -> Vec<String> {
-    use tauri::utils::config::BundleTarget;
-    match targets {
-        BundleTarget::List(list) => list.iter().map(|target| target.to_string()).collect(),
-        BundleTarget::One(target) => vec![target.to_string()],
-        BundleTarget::All => {
-            if cfg!(target_os = "macos") {
-                vec!["app".into(), "dmg".into()]
-            } else if cfg!(target_os = "windows") {
-                // NSIS is the canonical Windows updater delivery; an MSI-only
-                // build must say so explicitly via `bundle.targets` so the
-                // policy flips to check-only (spec §13 MSI ruling).
-                vec!["nsis".into()]
-            } else if cfg!(target_os = "linux") {
-                vec!["appimage".into(), "deb".into()]
-            } else {
-                vec![]
-            }
-        }
     }
 }
 
@@ -283,7 +263,10 @@ fn inside_macos_app_bundle() -> bool {
 
 /// Install-capability policy per spec §13. Pure: every platform/installer
 /// row is a distinct input combination, so tests pin the full table on any
-/// host without touching Tauri globals.
+/// host without touching Tauri globals. Windows/Linux key on the actual
+/// runtime bundle type (the marker the bundler patches into the installed
+/// binary) — never on configured `bundle.targets`, which cannot distinguish
+/// an MSI install from an NSIS one under `targets: "all"`.
 fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapability {
     if runtime.debug {
         return UpdateCapability {
@@ -307,6 +290,7 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
         install: false,
         reason: Some(UpdateCapabilityReason::Unsupported),
     };
+    use tauri::utils::config::BundleType;
     match runtime.platform {
         UpdatePlatform::MacOs => {
             if runtime.inside_macos_app {
@@ -315,24 +299,21 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
                 unsupported
             }
         }
-        UpdatePlatform::Windows => {
-            if runtime.bundle_targets.is_empty() {
-                unsupported
-            } else if runtime.bundle_targets.iter().any(|t| t == "msi") {
-                check_only
-            } else {
-                full
-            }
-        }
-        UpdatePlatform::Linux => {
-            if runtime.appimage {
-                full
-            } else if runtime.bundle_targets.is_empty() {
-                unsupported
-            } else {
-                check_only
-            }
-        }
+        UpdatePlatform::Windows => match &runtime.bundle_type {
+            // Actual installer type: only an NSIS install may auto-update;
+            // an actual MSI install must stay check-only so the user grabs
+            // installers from the Release page (spec §13 MSI ruling).
+            Some(BundleType::Nsis) => full,
+            Some(BundleType::Msi) => check_only,
+            // Unknown artifact (dev build, plain exe): fail closed.
+            _ => unsupported,
+        },
+        UpdatePlatform::Linux => match &runtime.bundle_type {
+            Some(BundleType::AppImage) => full,
+            // Deb/rpm and other packaged Linux consume installers manually.
+            Some(BundleType::Deb) | Some(BundleType::Rpm) => check_only,
+            _ => unsupported,
+        },
         UpdatePlatform::Other => unsupported,
     }
 }
@@ -360,13 +341,16 @@ fn session_flush_ack(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn update_capability(app: tauri::AppHandle) -> UpdateCapability {
+fn update_capability(_app: tauri::AppHandle) -> UpdateCapability {
     let runtime = UpdateCapabilityRuntime {
         debug: cfg!(debug_assertions),
         platform: current_platform(),
-        bundle_targets: bundle_target_names(&app.config().bundle.targets),
+        // Actual artifact the process runs from: the bundler patches a
+        // bundle-type marker into each artifact's binary, so an MSI install
+        // reports Msi and an NSIS install reports Nsis regardless of how
+        // `bundle.targets` was configured.
+        bundle_type: tauri::utils::platform::bundle_type(),
         inside_macos_app: inside_macos_app_bundle(),
-        appimage: std::env::var_os("APPIMAGE").is_some(),
     };
     update_capability_policy(&runtime)
 }
@@ -1446,16 +1430,14 @@ mod tests {
     fn capability_runtime(
         debug: bool,
         platform: UpdatePlatform,
-        targets: &[&str],
-        appimage: bool,
+        bundle_type: Option<tauri::utils::config::BundleType>,
         inside_macos_app: bool,
     ) -> UpdateCapabilityRuntime {
         UpdateCapabilityRuntime {
             debug,
             platform,
-            bundle_targets: targets.iter().map(|t| t.to_string()).collect(),
+            bundle_type,
             inside_macos_app,
-            appimage,
         }
     }
 
@@ -1477,45 +1459,61 @@ mod tests {
             reason: Some(reason),
         };
 
+        use tauri::utils::config::BundleType;
         let cases: Vec<(UpdateCapabilityRuntime, UpdateCapability)> = vec![
-            // Packaged macOS application: yes / yes
+            // Packaged macOS application (.app): yes / yes
             (
-                capability_runtime(false, UpdatePlatform::MacOs, &["app", "dmg"], false, true),
+                capability_runtime(false, UpdatePlatform::MacOs, Some(BundleType::App), true),
                 full,
             ),
-            // Windows NSIS installation: yes / yes
+            // Windows NSIS install: yes / yes
             (
-                capability_runtime(false, UpdatePlatform::Windows, &["nsis"], false, false),
+                capability_runtime(
+                    false,
+                    UpdatePlatform::Windows,
+                    Some(BundleType::Nsis),
+                    false,
+                ),
                 full,
             ),
-            // Windows MSI installation: yes / no (open Release)
+            // Windows MSI install: yes / no (open Release)
             (
-                capability_runtime(false, UpdatePlatform::Windows, &["msi"], false, false),
+                capability_runtime(false, UpdatePlatform::Windows, Some(BundleType::Msi), false),
                 check_only(UpdateCapabilityReason::ManualPackage),
             ),
-            // Linux AppImage (APPIMAGE present): yes / yes
+            // Linux AppImage: yes / yes
             (
-                capability_runtime(false, UpdatePlatform::Linux, &["appimage"], true, false),
+                capability_runtime(
+                    false,
+                    UpdatePlatform::Linux,
+                    Some(BundleType::AppImage),
+                    false,
+                ),
                 full,
             ),
-            // Linux deb/other package: yes / no (open Release)
+            // Linux deb package: yes / no (open Release)
             (
-                capability_runtime(false, UpdatePlatform::Linux, &["deb"], false, false),
+                capability_runtime(false, UpdatePlatform::Linux, Some(BundleType::Deb), false),
+                check_only(UpdateCapabilityReason::ManualPackage),
+            ),
+            // Linux rpm package: yes / no (open Release)
+            (
+                capability_runtime(false, UpdatePlatform::Linux, Some(BundleType::Rpm), false),
                 check_only(UpdateCapabilityReason::ManualPackage),
             ),
             // Development build: no / no
             (
-                capability_runtime(true, UpdatePlatform::MacOs, &["app", "dmg"], false, true),
+                capability_runtime(true, UpdatePlatform::MacOs, Some(BundleType::App), true),
                 disabled(UpdateCapabilityReason::Development),
             ),
             // Unpackaged macOS binary: no / no
             (
-                capability_runtime(false, UpdatePlatform::MacOs, &["app", "dmg"], false, false),
+                capability_runtime(false, UpdatePlatform::MacOs, Some(BundleType::App), false),
                 disabled(UpdateCapabilityReason::Unsupported),
             ),
             // Unknown platform: no / no (fail closed)
             (
-                capability_runtime(false, UpdatePlatform::Other, &[], false, false),
+                capability_runtime(false, UpdatePlatform::Other, None, false),
                 disabled(UpdateCapabilityReason::Unsupported),
             ),
         ];
@@ -1530,8 +1528,108 @@ mod tests {
     }
 
     #[test]
-    fn update_capability_policy_windows_without_bundle_targets_fails_closed() {
-        let runtime = capability_runtime(false, UpdatePlatform::Windows, &[], false, false);
+    fn runtime_bundle_type_distinguishes_actual_nsis_from_actual_msi() {
+        // Root-cause regression for the MSI gap: `bundle.targets: "all"`
+        // expands to NSIS on Windows, so the old configured-target inference
+        // reported install=true for actual MSI installations. The policy must
+        // key only on the runtime bundle type, which the bundler patches into
+        // the installed binary — Nsis when installed from the NSIS setup exe,
+        // Msi when installed from an MSI.
+        use tauri::utils::config::BundleType;
+
+        let nsis = capability_runtime(
+            false,
+            UpdatePlatform::Windows,
+            Some(BundleType::Nsis),
+            false,
+        );
+        assert_eq!(
+            update_capability_policy(&nsis),
+            UpdateCapability {
+                check: true,
+                install: true,
+                reason: None,
+            }
+        );
+
+        let msi = capability_runtime(false, UpdatePlatform::Windows, Some(BundleType::Msi), false);
+        assert_eq!(
+            update_capability_policy(&msi),
+            UpdateCapability {
+                check: true,
+                install: false,
+                reason: Some(UpdateCapabilityReason::ManualPackage),
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_bundle_type_distinguishes_appimage_from_deb_and_rpm() {
+        // Actual runtime bundle types decide on Linux too: an AppImage install
+        // gets auto-update, while deb/rpm installs stay check-only. The old
+        // implementation consulted configured targets plus the APPIMAGE env
+        // var; the runtime bundle type alone is decisive.
+        use tauri::utils::config::BundleType;
+
+        let appimage = capability_runtime(
+            false,
+            UpdatePlatform::Linux,
+            Some(BundleType::AppImage),
+            false,
+        );
+        assert_eq!(
+            update_capability_policy(&appimage),
+            UpdateCapability {
+                check: true,
+                install: true,
+                reason: None,
+            }
+        );
+
+        for bundle in [BundleType::Deb, BundleType::Rpm] {
+            let runtime =
+                capability_runtime(false, UpdatePlatform::Linux, Some(bundle.clone()), false);
+            assert_eq!(
+                update_capability_policy(&runtime),
+                UpdateCapability {
+                    check: true,
+                    install: false,
+                    reason: Some(UpdateCapabilityReason::ManualPackage),
+                },
+                "installed Linux bundle {bundle:?} must be check-only"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_keys_only_on_runtime_bundle_type_not_configured_targets() {
+        // The old inference read `bundle.targets` ("all" → [nsis] on Windows),
+        // which cannot tell an actual MSI install from an NSIS one — any mixed
+        // or "all" configured-target combination made the MSI row report
+        // install=true. The runtime input now carries only the detected bundle
+        // type; configured targets are no longer part of the policy at all.
+        // This pins that contract: for a given installed artifact, the
+        // capability is decided by the artifact alone.
+        use tauri::utils::config::BundleType;
+
+        for bundle in [BundleType::Nsis, BundleType::Msi] {
+            let install_expectation = matches!(&bundle, BundleType::Nsis);
+            let runtime =
+                capability_runtime(false, UpdatePlatform::Windows, Some(bundle.clone()), false);
+            let capability = update_capability_policy(&runtime);
+            assert_eq!(capability.check, true);
+            assert_eq!(
+                capability.install, install_expectation,
+                "install for Windows must follow the detected bundle type only"
+            );
+        }
+    }
+
+    #[test]
+    fn update_capability_policy_windows_without_runtime_bundle_type_fails_closed() {
+        // Unpatched binary (dev build / plain exe) on Windows: no recognized
+        // bundle type → no / no.
+        let runtime = capability_runtime(false, UpdatePlatform::Windows, None, false);
         assert_eq!(
             update_capability_policy(&runtime),
             UpdateCapability {
@@ -1543,8 +1641,8 @@ mod tests {
     }
 
     #[test]
-    fn update_capability_policy_linux_without_bundle_targets_fails_closed() {
-        let runtime = capability_runtime(false, UpdatePlatform::Linux, &[], false, false);
+    fn update_capability_policy_linux_without_runtime_bundle_type_fails_closed() {
+        let runtime = capability_runtime(false, UpdatePlatform::Linux, None, false);
         assert_eq!(
             update_capability_policy(&runtime),
             UpdateCapability {
