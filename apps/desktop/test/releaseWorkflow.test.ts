@@ -112,7 +112,7 @@ describe("release workflow", () => {
     for (const pattern of ["*.msi", "*-setup.exe", "*-setup.exe.sig"]) {
       expect(windows).toContain(`-name '${pattern}'`)
     }
-    for (const pattern of ["*.deb", "*.AppImage", "*.AppImage.tar.gz", "*.AppImage.tar.gz.sig"]) {
+    for (const pattern of ["*.deb", "*.AppImage", "*.AppImage.sig"]) {
       expect(linux).toContain(`-name '${pattern}'`)
     }
   })
@@ -125,8 +125,8 @@ describe("release workflow", () => {
     expect(macos).toContain("**/*.app.tar.gz")
     expect(macos).toContain("**/*.app.tar.gz.sig")
     expect(windows).toContain("**/*-setup.exe.sig")
-    expect(linux).toContain("**/*.AppImage.tar.gz")
-    expect(linux).toContain("**/*.AppImage.tar.gz.sig")
+    expect(linux).toContain("**/*.AppImage.sig")
+    expect(linux).not.toContain("**/*.AppImage.tar.gz")
   })
 
   it("stages updater artifacts, then generates and validates the candidate manifest before checksums and the Draft", () => {
@@ -136,8 +136,8 @@ describe("release workflow", () => {
       "*.app.tar.gz",
       "*.app.tar.gz.sig",
       "*-setup.exe.sig",
-      "*.AppImage.tar.gz",
-      "*.AppImage.tar.gz.sig",
+      "*.AppImage",
+      "*.AppImage.sig",
     ]) {
       expect(publish).toContain(`'${pattern}'`)
     }

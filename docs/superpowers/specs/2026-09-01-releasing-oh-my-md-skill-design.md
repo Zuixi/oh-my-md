@@ -51,9 +51,9 @@ The release matrix is:
 | --- | --- | --- | --- |
 | macOS | Universal: Intel x86_64 + Apple Silicon arm64 | `.dmg` | `.app.tar.gz`, `.app.tar.gz.sig` |
 | Windows | x64 | NSIS `.exe`, WiX `.msi` | NSIS `-setup.exe.sig` (NSIS auto-installs; MSI is check-only/manual) |
-| Linux | x64 | `.AppImage`, `.deb` | `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` (AppImage auto-installs; deb is check-only/manual) |
+| Linux | x64 | `.AppImage`, `.deb` | `.AppImage`, `.AppImage.sig` (AppImage auto-installs; deb is check-only/manual) |
 
-Version `0.0.1` packages are unsigned and upgrade manually; the first updater-capable public version is `0.1.0`. Each package job additionally emits minisign-signed updater artifacts (`.app.tar.gz` + `.app.tar.gz.sig` on macOS, `*-setup.exe.sig` on Windows, `.AppImage.tar.gz` + `.AppImage.tar.gz.sig` on Linux), and the `publish` job attaches the candidate updater manifest `latest.json` to the Draft.
+Version `0.0.1` packages are unsigned and upgrade manually; the first updater-capable public version is `0.1.0`. Each package job additionally emits minisign-signed updater artifacts (`.app.tar.gz` + `.app.tar.gz.sig` on macOS, `*-setup.exe.sig` on Windows, `.AppImage` + `.AppImage.sig` on Linux), and the `publish` job attaches the candidate updater manifest `latest.json` to the Draft.
 
 Stable-channel automatic updates are separate from this release workflow. The Draft is explicitly promoted to `https://zuixi.github.io/oh-my-md/updates/stable/latest.json` only by the protected manual `stable-updates` workflow (required reviewers; Pages source = GitHub Actions is an external repository setting), never by this skill.
 
@@ -183,7 +183,7 @@ When the workflow succeeds, verify that the GitHub Release:
 - Contains at least one `.AppImage`.
 - Contains at least one `.deb`.
 - Contains `SHA256SUMS.txt`.
-- Contains `latest.json` (the candidate updater manifest) and at least one each of `.app.tar.gz`, `.app.tar.gz.sig`, `-setup.exe.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig`.
+- Contains `latest.json` (the candidate updater manifest) and at least one each of `.app.tar.gz`, `.app.tar.gz.sig`, `-setup.exe.sig`, `.AppImage`, `.AppImage.sig`.
 - States that macOS and Windows packages are unsigned.
 
 Artifact matching is suffix/pattern based; exact Tauri-generated filenames are not hard-coded. The candidate manifest is additionally validated with the tested repo CLI (`node scripts/update-manifest.mjs validate --manifest <latest.json> --version X.Y.Z --tag vX.Y.Z --assets <dir>`) for strict-semver version, RFC 3339 `pub_date`, the four platform keys, exact-tag immutable URLs, and non-empty signatures.

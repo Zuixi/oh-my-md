@@ -24,7 +24,7 @@
 - Windows updater `install()` may terminate the process without resolving; all safety work must happen first.
 - Static stable endpoint: `https://zuixi.github.io/oh-my-md/updates/stable/latest.json` over HTTPS only.
 - Release artifacts and tags are immutable. Promotion is strictly increasing; withdrawal restores the previous known-good manifest and never downgrades installed clients.
-- Canonical Linux updater artifact is `.AppImage.tar.gz` plus `.sig`; raw `.AppImage` remains the human package.
+- Canonical Linux updater artifact is Tauri 2.11's raw `.AppImage` plus `.sig`; the same AppImage is the human package.
 - No beta channel, forced update, silent download/install, custom update server, delta patching, or downloaded-bundle persistence in this plan.
 - Follow TDD: every production behavior starts with a focused failing test and observed expected failure.
 - Do not grow `App.tsx` with updater internals; orchestration belongs in focused desktop modules.

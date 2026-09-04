@@ -224,7 +224,8 @@ describe("promote-update workflow", () => {
     expect(PROMOTE).toContain("--pattern 'latest.json'")
     expect(PROMOTE).toContain("--pattern '*.app.tar.gz'")
     expect(PROMOTE).toContain("--pattern '*-setup.exe'")
-    expect(PROMOTE).toContain("--pattern '*.AppImage.tar.gz'")
+    expect(PROMOTE).toContain("--pattern '*.AppImage'")
+    expect(PROMOTE).toContain("--pattern '*.AppImage.sig'")
   })
 
   it("pins a minisign verifier and checks artifacts against the decoded committed public key", () => {
