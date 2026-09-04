@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -360,5 +361,351 @@ describe("update-manifest candidate validation", () => {
 
     const result = runCli([...VALIDATE_ARGS, "--manifest", manifestPath, "--assets", assets])
     expectFailure(result, "missing platform entry windows-x86_64")
+  })
+})
+// ---------------------------------------------------------------------------
+// Stable promotion and withdrawal (Task 7)
+// ---------------------------------------------------------------------------
+
+const DOWNLOAD_BASE = "https://github.com/Zuixi/oh-my-md/releases/download"
+const RELEASE_TAG_BASE = "https://github.com/Zuixi/oh-my-md/releases/tag"
+const PROMOTION_RUN = "https://github.com/Zuixi/oh-my-md/actions/runs/123"
+const PROMOTION_ENV = { SOURCE_DATE_EPOCH: "1767225600" }
+const PROMOTED_AT = "2026-01-01T00:00:00.000Z"
+
+type SiteStatus = {
+  channel: string
+  version: string
+  promotedAt: string
+  releaseUrl: string
+  manifestSha256: string
+  workflowRun?: string
+  previousVersion?: string
+}
+
+function candidateManifest(version: string): Manifest {
+  const tag = `v${version}`
+  return {
+    version,
+    pub_date: "2026-09-10T10:00:00Z",
+    platforms: {
+      "darwin-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
+      "darwin-aarch64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
+      "windows-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md-setup.exe`, signature: "sig-win\n" },
+      "linux-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.AppImage.tar.gz`, signature: "sig-linux\n" },
+    },
+  }
+}
+
+function writeJsonFile(path: string, value: unknown): void {
+  writeFileSync(path, JSON.stringify(value, null, 2))
+}
+
+function makeCandidate(version: string): { manifestPath: string; siteDir: string } {
+  const root = tempFixture()
+  const candidateDir = join(root, "candidate")
+  mkdirSync(candidateDir, { recursive: true })
+  const manifestPath = join(candidateDir, "latest.json")
+  writeJsonFile(manifestPath, candidateManifest(version))
+  return { manifestPath, siteDir: join(root, "site") }
+}
+
+function promoteArgs(candidate: string, currentSite: string, outputSite: string, version: string): string[] {
+  return [
+    "promote",
+    "--candidate", candidate,
+    "--current-site", currentSite,
+    "--release-url", `${RELEASE_TAG_BASE}/v${version}`,
+    "--workflow-run", PROMOTION_RUN,
+    "--output-site", outputSite,
+  ]
+}
+
+function readSiteJson(site: string, relative: string): unknown {
+  return JSON.parse(readFileSync(join(site, relative), "utf8"))
+}
+
+function sha256OfFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex")
+}
+
+function promoteVersion(version: string, currentSite: string, outputSite: string) {
+  const candidate = makeCandidate(version)
+  const result = runCli(promoteArgs(candidate.manifestPath, currentSite, outputSite, version), {
+    env: PROMOTION_ENV,
+  })
+  return { result, candidate }
+}
+
+describe("update-manifest stable promotion", () => {
+  it("promotes the first candidate into a complete stable site", () => {
+    const { manifestPath } = makeCandidate("0.1.1")
+    const currentSite = join(tempFixture(), "current-site")
+    const outputSite = join(tempFixture(), "site")
+
+    const result = runCli(promoteArgs(manifestPath, currentSite, outputSite, "0.1.1"), { env: PROMOTION_ENV })
+
+    expect(result.status).toBe(0)
+    const latest = readSiteJson(outputSite, "updates/stable/latest.json") as Manifest
+    expect(latest).toEqual(candidateManifest("0.1.1"))
+    expect(readSiteJson(outputSite, "updates/stable/status.json")).toEqual({
+      channel: "stable",
+      version: "0.1.1",
+      promotedAt: PROMOTED_AT,
+      releaseUrl: `${RELEASE_TAG_BASE}/v0.1.1`,
+      manifestSha256: sha256OfFile(join(outputSite, "updates/stable/latest.json")),
+      workflowRun: PROMOTION_RUN,
+    })
+    const history = readSiteJson(outputSite, "updates/stable/history/0.1.1.json") as Manifest & {
+      previousVersion?: string
+    }
+    expect(history).toMatchObject(candidateManifest("0.1.1"))
+    expect(history.previousVersion).toBeUndefined()
+    expect(existsSync(join(outputSite, ".nojekyll"))).toBe(true)
+  })
+
+  it("produces byte-identical output across repeated promotions of the same candidate", () => {
+    const { manifestPath } = makeCandidate("0.1.0")
+    const siteA = join(tempFixture(), "site-a")
+    const siteB = join(tempFixture(), "site-b")
+    const resultA = runCli(promoteArgs(manifestPath, join(tempFixture(), "current"), siteA, "0.1.0"), { env: PROMOTION_ENV })
+    const resultB = runCli(promoteArgs(manifestPath, join(tempFixture(), "current"), siteB, "0.1.0"), { env: PROMOTION_ENV })
+
+    expect(resultA.status).toBe(0)
+    expect(resultB.status).toBe(0)
+    for (const relative of [
+      "updates/stable/latest.json",
+      "updates/stable/status.json",
+      "updates/stable/history/0.1.0.json",
+    ]) {
+      expect(readFileSync(join(siteA, relative)).equals(readFileSync(join(siteB, relative)))).toBe(true)
+    }
+  })
+
+  it("rejects an equal or lower candidate version", () => {
+    const first = makeCandidate("0.1.1")
+    const firstSite = join(tempFixture(), "first")
+    expect(runCli(promoteArgs(first.manifestPath, join(tempFixture(), "current"), firstSite, "0.1.1"), { env: PROMOTION_ENV }).status).toBe(0)
+
+    for (const lower of ["0.1.1", "0.1.0"]) {
+      const candidate = makeCandidate(lower)
+      const out = join(tempFixture(), "out")
+      const result = runCli(promoteArgs(candidate.manifestPath, firstSite, out, lower), { env: PROMOTION_ENV })
+      expectFailure(result, "strictly greater")
+      expect(existsSync(out)).toBe(false)
+    }
+  })
+
+  it("preserves history and records the previous version on an increasing promotion", () => {
+    const empty = join(tempFixture(), "empty")
+    const site010 = join(tempFixture(), "site-010")
+    expect(promoteVersion("0.1.0", empty, site010).result.status).toBe(0)
+
+    const site011 = join(tempFixture(), "site-011")
+    const result = promoteVersion("0.1.1", site010, site011).result
+    expect(result.status).toBe(0)
+
+    expect((readSiteJson(site011, "updates/stable/latest.json") as Manifest).version).toBe("0.1.1")
+    const status = readSiteJson(site011, "updates/stable/status.json") as SiteStatus
+    expect(status.version).toBe("0.1.1")
+    expect(status.workflowRun).toBe(PROMOTION_RUN)
+    expect(status.previousVersion).toBe("0.1.0")
+    const history011 = readSiteJson(site011, "updates/stable/history/0.1.1.json") as { previousVersion?: string; workflowRun?: string }
+    expect(history011.previousVersion).toBe("0.1.0")
+    expect(history011.workflowRun).toBe(PROMOTION_RUN)
+
+    expect(existsSync(join(site011, "updates/stable/history/0.1.0.json"))).toBe(true)
+    const original010 = readFileSync(join(site010, "updates/stable/history/0.1.0.json"))
+    const preserved010 = readFileSync(join(site011, "updates/stable/history/0.1.0.json"))
+    expect(preserved010.equals(original010)).toBe(true)
+
+    expect((readSiteJson(site010, "updates/stable/latest.json") as Manifest).version).toBe("0.1.0")
+  })
+
+  it("does not mutate the candidate manifest input", () => {
+    const currentSite = join(tempFixture(), "current")
+    const { manifestPath, siteDir } = makeCandidate("0.1.1")
+    const before = readFileSync(manifestPath)
+    const result = runCli(promoteArgs(manifestPath, currentSite, siteDir, "0.1.1"), { env: PROMOTION_ENV })
+
+    expect(result.status).toBe(0)
+    expect(readFileSync(manifestPath).equals(before)).toBe(true)
+    expect((readSiteJson(siteDir, "updates/stable/latest.json") as Manifest).version).toBe("0.1.1")
+  })
+
+  it("rejects a release URL that does not match the candidate version tag", () => {
+    const { manifestPath, siteDir } = makeCandidate("0.1.1")
+    const currentSite = join(tempFixture(), "current")
+    const result = runCli(
+      [
+        "promote",
+        "--candidate", manifestPath,
+        "--current-site", currentSite,
+        "--release-url", `${RELEASE_TAG_BASE}/v0.1.2`,
+        "--workflow-run", PROMOTION_RUN,
+        "--output-site", siteDir,
+      ],
+      { env: PROMOTION_ENV },
+    )
+
+    expectFailure(result, "release tag URL")
+    expect(existsSync(siteDir)).toBe(false)
+  })
+
+  it("rejects a malformed workflow run URL", () => {
+    const { manifestPath, siteDir } = makeCandidate("0.1.1")
+    const currentSite = join(tempFixture(), "current")
+    const result = runCli(
+      [
+        "promote",
+        "--candidate", manifestPath,
+        "--current-site", currentSite,
+        "--release-url", `${RELEASE_TAG_BASE}/v0.1.1`,
+        "--workflow-run", "not-a-run-url",
+        "--output-site", siteDir,
+      ],
+      { env: PROMOTION_ENV },
+    )
+
+    expectFailure(result, "workflow-run")
+    expect(existsSync(siteDir)).toBe(false)
+  })
+
+  it("rejects a candidate manifest whose platform URL is not an immutable tag asset", () => {
+    const root = tempFixture()
+    const manifestPath = join(root, "latest.json")
+    const bad = candidateManifest("0.1.1")
+    bad.platforms["darwin-x86_64"]!.url = `${BASE}/latest/oh-my-md.app.tar.gz`
+    writeJsonFile(manifestPath, bad)
+    const currentSite = join(tempFixture(), "current")
+    const siteDir = join(root, "site")
+
+    const result = runCli(promoteArgs(manifestPath, currentSite, siteDir, "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result, "immutable tag asset")
+    expect(existsSync(siteDir)).toBe(false)
+  })
+
+  it("rejects a candidate with an empty platform signature", () => {
+    const root = tempFixture()
+    const manifestPath = join(root, "latest.json")
+    const bad = candidateManifest("0.1.1")
+    bad.platforms["linux-x86_64"]!.signature = "   "
+    writeJsonFile(manifestPath, bad)
+
+    const result = runCli(promoteArgs(manifestPath, join(tempFixture(), "current"), join(root, "site"), "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result, "signature must be a non-empty string")
+  })
+
+  it("hard-stops when the current stable site is inconsistent or invalid", () => {
+    const { manifestPath } = makeCandidate("0.1.1")
+
+    const onlyStatus = join(tempFixture(), "only-status")
+    mkdirSync(join(onlyStatus, "updates/stable"), { recursive: true })
+    writeJsonFile(join(onlyStatus, "updates/stable/status.json"), { channel: "stable", version: "0.1.0" })
+    const out1 = join(tempFixture(), "out1")
+    const result1 = runCli(promoteArgs(manifestPath, onlyStatus, out1, "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result1, "current stable")
+    expect(existsSync(out1)).toBe(false)
+
+    const badLatest = join(tempFixture(), "bad-latest")
+    mkdirSync(join(badLatest, "updates/stable"), { recursive: true })
+    writeFileSync(join(badLatest, "updates/stable/latest.json"), "{not json")
+    const out2 = join(tempFixture(), "out2")
+    const result2 = runCli(promoteArgs(manifestPath, badLatest, out2, "0.1.1"), { env: PROMOTION_ENV })
+    expectFailure(result2, "current stable")
+    expect(existsSync(out2)).toBe(false)
+  })
+})
+
+describe("update-manifest stable withdrawal", () => {
+  it("withdraws to the previous known-good manifest and can walk the full chain", () => {
+    const empty = join(tempFixture(), "empty")
+    const site010 = join(tempFixture(), "s010")
+    expect(promoteVersion("0.1.0", empty, site010).result.status).toBe(0)
+    const site011 = join(tempFixture(), "s011")
+    expect(promoteVersion("0.1.1", site010, site011).result.status).toBe(0)
+    const site012 = join(tempFixture(), "s012")
+    expect(promoteVersion("0.1.2", site011, site012).result.status).toBe(0)
+
+    const withdrawn1 = join(tempFixture(), "w1")
+    const result1 = runCli(["withdraw", "--current-site", site012, "--output-site", withdrawn1], { env: PROMOTION_ENV })
+    expect(result1.status).toBe(0)
+    expect((readSiteJson(withdrawn1, "updates/stable/latest.json") as Manifest).version).toBe("0.1.1")
+    expect(readSiteJson(withdrawn1, "updates/stable/status.json")).toEqual({
+      channel: "stable",
+      version: "0.1.1",
+      promotedAt: PROMOTED_AT,
+      releaseUrl: `${RELEASE_TAG_BASE}/v0.1.1`,
+      manifestSha256: sha256OfFile(join(withdrawn1, "updates/stable/latest.json")),
+      previousVersion: "0.1.0",
+    })
+    for (const version of ["0.1.0", "0.1.1", "0.1.2"]) {
+      expect(existsSync(join(withdrawn1, "updates/stable/history", `${version}.json`))).toBe(true)
+    }
+
+    const withdrawn2 = join(tempFixture(), "w2")
+    const result2 = runCli(["withdraw", "--current-site", withdrawn1, "--output-site", withdrawn2], { env: PROMOTION_ENV })
+    expect(result2.status).toBe(0)
+    expect((readSiteJson(withdrawn2, "updates/stable/latest.json") as Manifest).version).toBe("0.1.0")
+    const status2 = readSiteJson(withdrawn2, "updates/stable/status.json") as SiteStatus
+    expect(status2.version).toBe("0.1.0")
+    expect(status2.previousVersion).toBeUndefined()
+
+    const withdrawn3 = join(tempFixture(), "w3")
+    const result3 = runCli(["withdraw", "--current-site", withdrawn2, "--output-site", withdrawn3], { env: PROMOTION_ENV })
+    expectFailure(result3, "previousVersion")
+    expect(existsSync(withdrawn3)).toBe(false)
+  })
+
+  it("hard-stops when status.json is missing or invalid", () => {
+    const emptySite = join(tempFixture(), "empty")
+    const result = runCli(["withdraw", "--current-site", emptySite, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
+    expectFailure(result, "status.json")
+
+    const badStatus = join(tempFixture(), "bad")
+    mkdirSync(join(badStatus, "updates/stable"), { recursive: true })
+    writeFileSync(join(badStatus, "updates/stable/status.json"), "{oops")
+    const resultBad = runCli(["withdraw", "--current-site", badStatus, "--output-site", join(tempFixture(), "out2")], { env: PROMOTION_ENV })
+    expectFailure(resultBad, "status.json")
+  })
+
+  it("hard-stops when previousVersion is missing from status", () => {
+    const site = join(tempFixture(), "site")
+    mkdirSync(join(site, "updates/stable"), { recursive: true })
+    writeJsonFile(join(site, "updates/stable/status.json"), { channel: "stable", version: "0.1.0" })
+
+    const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
+    expectFailure(result, "previousVersion")
+  })
+
+  it("hard-stops when the previous version's history entry is missing", () => {
+    const site = join(tempFixture(), "site")
+    mkdirSync(join(site, "updates/stable"), { recursive: true })
+    writeJsonFile(join(site, "updates/stable/status.json"), {
+      channel: "stable",
+      version: "0.1.1",
+      previousVersion: "0.1.0",
+    })
+
+    const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
+    expectFailure(result, "history entry")
+  })
+
+  it("hard-stops when the restored history entry is invalid", () => {
+    const site = join(tempFixture(), "site")
+    mkdirSync(join(site, "updates/stable/history"), { recursive: true })
+    writeJsonFile(join(site, "updates/stable/status.json"), {
+      channel: "stable",
+      version: "0.1.1",
+      previousVersion: "0.1.0",
+    })
+    writeJsonFile(join(site, "updates/stable/history/0.1.0.json"), {
+      version: "0.1.0",
+      pub_date: "not-a-date",
+      platforms: {},
+    })
+
+    const result = runCli(["withdraw", "--current-site", site, "--output-site", join(tempFixture(), "out")], { env: PROMOTION_ENV })
+    expectFailure(result, "invalid")
   })
 })

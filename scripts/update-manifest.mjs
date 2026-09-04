@@ -5,6 +5,9 @@
 //     --assets DIR --output DIR/latest.json [--pub-date RFC3339]
 //   node scripts/update-manifest.mjs validate --manifest FILE \
 //     --version X.Y.Z --tag vX.Y.Z --assets DIR
+//   node scripts/update-manifest.mjs promote --candidate latest.json \
+//     --current-site DIR --release-url URL --workflow-run URL --output-site DIR
+//   node scripts/update-manifest.mjs withdraw --current-site DIR --output-site DIR
 //
 // The tool discovers the actual Tauri updater artifact filenames instead of
 // guessing: exactly one macOS *.app.tar.gz + .sig, one Windows *-setup.exe +
@@ -12,8 +15,9 @@
 // maps both Darwin architectures to the one Universal tarball, and points
 // every platform at an immutable release-tag URL. pub_date is RFC3339, taken
 // from --pub-date, else SOURCE_DATE_EPOCH, else the current time.
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
-import { basename, join } from "node:path"
+import { createHash } from "node:crypto"
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { basename, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 const RELEASE_OWNER_REPO = "Zuixi/oh-my-md"
@@ -264,12 +268,268 @@ function runValidate(options) {
   console.log(`OK: ${basename(options.manifest)} valid for version ${options.version} (tag ${options.tag})`)
 }
 
+function readJsonFile(path, label) {
+  let text
+  try {
+    text = readFileSync(path, "utf8")
+  } catch {
+    throw new Error(`${label} is missing or unreadable: ${path}`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`${label} is not valid JSON: ${path}`)
+  }
+}
+
+function parseSemver(version) {
+  if (typeof version !== "string" || !SEMVER.test(version)) return null
+  return version.split(".").map(Number)
+}
+
+function compareVersions(a, b) {
+  const av = parseSemver(a)
+  const bv = parseSemver(b)
+  if (av === null || bv === null) {
+    throw new Error(
+      `version comparison requires strict semver, got ${JSON.stringify(a)} and ${JSON.stringify(b)}`,
+    )
+  }
+  for (let i = 0; i < av.length; i += 1) {
+    if (av[i] !== bv[i]) return av[i] < bv[i] ? -1 : 1
+  }
+  return 0
+}
+
+function sha256Hex(text) {
+  return createHash("sha256").update(text, "utf8").digest("hex")
+}
+
+function tagUrl(version) {
+  return `https://github.com/${RELEASE_OWNER_REPO}/releases/tag/v${version}`
+}
+
+// Structural validation for a stable manifest without an assets directory.
+// The workflow performs full asset/signature validation (validate) before
+// promotion; this guards the promoted/restored record itself.
+function manifestStructureErrors(manifest, expectedVersion) {
+  const errors = []
+  const version = manifest?.version
+  if (typeof version !== "string" || !SEMVER.test(version)) {
+    errors.push(
+      `manifest version must be strict semver MAJOR.MINOR.PATCH, got ${JSON.stringify(manifest?.version)}`,
+    )
+  } else if (expectedVersion !== undefined && version !== expectedVersion) {
+    errors.push(
+      `manifest version ${JSON.stringify(version)} does not match expected version ${JSON.stringify(expectedVersion)}`,
+    )
+  }
+
+  if (
+    typeof manifest?.pub_date !== "string" ||
+    !RFC3339.test(manifest.pub_date) ||
+    Number.isNaN(Date.parse(manifest.pub_date))
+  ) {
+    errors.push(`manifest pub_date must be RFC3339 UTC, got ${JSON.stringify(manifest?.pub_date)}`)
+  }
+
+  const platforms = manifest?.platforms
+  if (typeof platforms !== "object" || platforms === null || Array.isArray(platforms)) {
+    errors.push("manifest platforms must be an object with exactly the four Tauri platform keys")
+    return errors
+  }
+  for (const key of PLATFORM_KEYS) {
+    if (!(key in platforms)) {
+      errors.push(`missing platform entry ${key}`)
+    }
+  }
+  for (const key of Object.keys(platforms)) {
+    if (!PLATFORM_KEYS.includes(key)) {
+      errors.push(`unexpected platform entry ${key}`)
+    }
+  }
+  if (typeof version === "string" && SEMVER.test(version)) {
+    const wantPrefix = `${RELEASE_BASE}/v${version}/`
+    for (const key of PLATFORM_KEYS) {
+      const entry = platforms[key]
+      if (typeof entry !== "object" || entry === null) {
+        errors.push(`platform ${key} entry must be an object with string url and signature`)
+        continue
+      }
+      if (typeof entry.url !== "string") {
+        errors.push(`platform ${key} url must be a string`)
+      } else if (!entry.url.startsWith(wantPrefix) || entry.url.slice(wantPrefix.length).includes("/")) {
+        errors.push(
+          `platform ${key} URL must be the immutable tag asset under ${wantPrefix}, got ${JSON.stringify(entry.url)}`,
+        )
+      }
+      if (typeof entry.signature !== "string" || !entry.signature.trim()) {
+        errors.push(`platform ${key} signature must be a non-empty string`)
+      }
+    }
+  }
+  return errors
+}
+
+// Copies the complete existing site tree into the fresh output site before any
+// stable file changes, guarding against overlapping input/output directories.
+function prepareSite(outputSite, currentSite) {
+  const outputResolved = resolve(outputSite)
+  const currentResolved = resolve(currentSite)
+  if (outputResolved === currentResolved) {
+    throw new Error(`output-site must differ from current-site (${currentSite})`)
+  }
+  if (outputResolved.startsWith(`${currentResolved}/`)) {
+    throw new Error(`output-site must not be inside current-site (${currentSite})`)
+  }
+  if (currentResolved.startsWith(`${outputResolved}/`) && existsSync(outputResolved)) {
+    throw new Error(`output-site must not contain current-site (${currentSite})`)
+  }
+  rmSync(outputResolved, { recursive: true, force: true })
+  if (existsSync(currentResolved)) {
+    cpSync(currentResolved, outputResolved, { recursive: true })
+  }
+}
+
+function runPromote(options) {
+  const candidate = readJsonFile(options.candidate, "candidate manifest")
+  const structureErrors = manifestStructureErrors(candidate)
+  if (structureErrors.length > 0) {
+    throw new Error(structureErrors.join("\n"))
+  }
+  const version = candidate.version
+
+  const expectedReleaseUrl = tagUrl(version)
+  if (options["release-url"] !== expectedReleaseUrl) {
+    throw new Error(
+      `--release-url ${JSON.stringify(options["release-url"])} must be the exact release tag URL ${expectedReleaseUrl} for version ${JSON.stringify(version)}`,
+    )
+  }
+  if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+$/.test(options["workflow-run"])) {
+    throw new Error(
+      `--workflow-run must be a GitHub Actions run URL, got ${JSON.stringify(options["workflow-run"])}`,
+    )
+  }
+
+  const currentSite = options["current-site"]
+  const statusPath = join(currentSite, "updates", "stable", "status.json")
+  const latestPath = join(currentSite, "updates", "stable", "latest.json")
+  let currentVersion
+  if (existsSync(latestPath)) {
+    const currentManifest = readJsonFile(latestPath, "current stable manifest")
+    const currentErrors = manifestStructureErrors(currentManifest)
+    if (currentErrors.length > 0) {
+      throw new Error(`current stable state is invalid: ${currentErrors.join("\n")}`)
+    }
+    currentVersion = currentManifest.version
+  } else if (existsSync(statusPath)) {
+    throw new Error(
+      `current stable site has updates/stable/status.json but no updates/stable/latest.json: ${currentSite}`,
+    )
+  }
+  if (currentVersion !== undefined && compareVersions(version, currentVersion) <= 0) {
+    throw new Error(
+      `candidate version ${JSON.stringify(version)} must be strictly greater than current stable version ${JSON.stringify(currentVersion)}`,
+    )
+  }
+
+  const outputSite = options["output-site"]
+  prepareSite(outputSite, currentSite)
+
+  const latestText = `${JSON.stringify(candidate, null, 2)}\n`
+  const manifestSha256 = sha256Hex(latestText)
+  const promotedAt = resolvePubDate(undefined)
+  const record = {
+    channel: "stable",
+    version,
+    promotedAt,
+    releaseUrl: options["release-url"],
+    manifestSha256,
+    workflowRun: options["workflow-run"],
+  }
+  if (currentVersion !== undefined) {
+    record.previousVersion = currentVersion
+  }
+
+  const stableDir = join(outputSite, "updates", "stable")
+  mkdirSync(join(stableDir, "history"), { recursive: true })
+  writeFileSync(join(stableDir, "latest.json"), latestText)
+  writeFileSync(
+    join(stableDir, "history", `${version}.json`),
+    `${JSON.stringify({ ...candidate, ...record }, null, 2)}\n`,
+  )
+  writeFileSync(
+    join(outputSite, "updates", "stable", "status.json"),
+    `${JSON.stringify(record, null, 2)}\n`,
+  )
+  writeFileSync(join(outputSite, ".nojekyll"), "")
+  console.log(
+    `promoted ${version}${currentVersion !== undefined ? ` (previous ${currentVersion})` : " (first stable)"} at ${promotedAt}`,
+  )
+}
+
+function runWithdraw(options) {
+  const currentSite = options["current-site"]
+  const status = readJsonFile(join(currentSite, "updates", "stable", "status.json"), "stable status")
+  const previousVersion = status?.previousVersion
+  if (typeof previousVersion !== "string" || !SEMVER.test(previousVersion)) {
+    throw new Error(
+      `withdrawal requires status.json.previousVersion to be strict semver, got ${JSON.stringify(previousVersion)}`,
+    )
+  }
+
+  const historyPath = join(currentSite, "updates", "stable", "history", `${previousVersion}.json`)
+  if (!existsSync(historyPath)) {
+    throw new Error(
+      `history entry for previous version ${JSON.stringify(previousVersion)} is required for withdrawal: updates/stable/history/${previousVersion}.json`,
+    )
+  }
+  const historyRecord = readJsonFile(historyPath, "history entry")
+  const historyErrors = manifestStructureErrors(historyRecord, previousVersion)
+  if (historyErrors.length > 0) {
+    throw new Error(
+      `history entry for ${previousVersion} is invalid: ${historyErrors.join("\n")}`,
+    )
+  }
+
+  const outputSite = options["output-site"]
+  prepareSite(outputSite, currentSite)
+
+  const restored = {
+    version: historyRecord.version,
+    pub_date: historyRecord.pub_date,
+    platforms: historyRecord.platforms,
+  }
+  const latestText = `${JSON.stringify(restored, null, 2)}\n`
+  const record = {
+    channel: "stable",
+    version: previousVersion,
+    promotedAt: resolvePubDate(undefined),
+    releaseUrl: typeof historyRecord.releaseUrl === "string" ? historyRecord.releaseUrl : tagUrl(previousVersion),
+    manifestSha256: sha256Hex(latestText),
+  }
+  const chainPrevious = historyRecord.previousVersion
+  if (typeof chainPrevious === "string" && SEMVER.test(chainPrevious)) {
+    record.previousVersion = chainPrevious
+  }
+
+  const stableDir = join(outputSite, "updates", "stable")
+  mkdirSync(stableDir, { recursive: true })
+  writeFileSync(join(stableDir, "latest.json"), latestText)
+  writeFileSync(
+    join(stableDir, "status.json"),
+    `${JSON.stringify(record, null, 2)}\n`,
+  )
+  // history files are preserved by the complete site copy above
+  console.log(`withdrawn stable update to previous version ${previousVersion} at ${record.promotedAt}`)
+}
+
 function parseArgs(argv) {
   const [command, ...rest] = argv
-  if (!["candidate", "validate"].includes(command)) {
+  if (!["candidate", "validate", "promote", "withdraw"].includes(command)) {
     throw new Error(
-      `expected 'candidate' or 'validate', got ${JSON.stringify(command ?? "")}. ` +
-        `Usage: node scripts/update-manifest.mjs <candidate|validate> [options]`,
+      `expected 'candidate', 'validate', 'promote', or 'withdraw', got ${JSON.stringify(command ?? "")}. ` +
+        `Usage: node scripts/update-manifest.mjs <candidate|validate|promote|withdraw> [options]`,
     )
   }
   const options = {}
@@ -286,8 +546,12 @@ function parseArgs(argv) {
     options[key] = value
     i += 1
   }
-  const required =
-    command === "candidate" ? ["version", "tag", "assets", "output"] : ["version", "tag", "assets", "manifest"]
+  const required = {
+    candidate: ["version", "tag", "assets", "output"],
+    validate: ["version", "tag", "assets", "manifest"],
+    promote: ["candidate", "current-site", "release-url", "workflow-run", "output-site"],
+    withdraw: ["current-site", "output-site"],
+  }[command]
   for (const key of required) {
     if (options[key] === undefined) {
       throw new Error(`--${key} is required for '${command}'`)
@@ -301,8 +565,12 @@ function main(argv) {
     const { command, options } = parseArgs(argv)
     if (command === "candidate") {
       runCandidate(options)
-    } else {
+    } else if (command === "validate") {
       runValidate(options)
+    } else if (command === "promote") {
+      runPromote(options)
+    } else {
+      runWithdraw(options)
     }
     return 0
   } catch (error) {

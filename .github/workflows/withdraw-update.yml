@@ -1,0 +1,85 @@
+name: Withdraw Stable Update
+
+# Protected manual withdrawal that restores the previous known-good stable
+# manifest. Reads status.json.previousVersion, requires its history entry,
+# restores it as latest.json, preserves all history, and records the current
+# version. It never mutates a GitHub Release, tag, or asset and never instructs
+# clients to downgrade; a defective installed version requires a higher fixed
+# release. Required reviewers come from the stable-updates Environment.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: stable-updates
+  cancel-in-progress: false
+
+jobs:
+  withdraw:
+    runs-on: ubuntu-22.04
+    environment: stable-updates
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch current stable site from public endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://zuixi.github.io/oh-my-md"
+          mkdir -p current-site/updates/stable/history
+          fetch() {
+            local path="$1"
+            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "current-site/$path" "$base/$path" 2>/dev/null; then
+              return 0
+            fi
+            rm -f "current-site/$path"
+            return 1
+          }
+          fetch "updates/stable/latest.json" || true
+          fetch "updates/stable/status.json" || true
+          # Reconstruct the full history chain so the site copy preserves every
+          # previously promoted version.
+          version="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(s.version || '') } catch { process.stdout.write('') }")"
+          while [ -n "$version" ]; do
+            fetch "updates/stable/history/$version.json" || break
+            version="$(node -e "try { const h = JSON.parse(require('fs').readFileSync('current-site/updates/stable/history/$version.json', 'utf8')); process.stdout.write(h.previousVersion || '') } catch { process.stdout.write('') }")"
+          done
+      - name: Withdraw stable update to previous version
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/update-manifest.mjs withdraw \
+            --current-site current-site \
+            --output-site site
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload complete Pages site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+          include-hidden-files: true
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Verify deployed endpoint restores previous manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          local="$(sha256sum site/updates/stable/latest.json | awk '{print $1}')"
+          for attempt in 1 2 3 4 5; do
+            published="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+              "${{ steps.pages.outputs.base_url }}/updates/stable/latest.json" | sha256sum | awk '{print $1}')" || true
+            if [ -n "$published" ] && [ "$published" = "$local" ]; then
+              echo "deployed latest.json matches restored manifest ($local)"
+              exit 0
+            fi
+            echo "attempt $attempt: endpoint hash '$published' does not match restored '$local'"
+            sleep $((attempt * 2))
+          done
+          echo "endpoint latest.json does not match the restored manifest after retries" >&2
+          exit 1
