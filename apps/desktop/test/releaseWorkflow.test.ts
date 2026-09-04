@@ -39,7 +39,7 @@ describe("release workflow", () => {
     expect(macos).toContain("runs-on: macos-14")
     expect(macos).toContain("aarch64-apple-darwin")
     expect(macos).toContain("x86_64-apple-darwin")
-    expect(macos).toMatch(/--target universal-apple-darwin.*--bundles dmg/s)
+    expect(macos).toMatch(/--target universal-apple-darwin.*--bundles app,dmg/s)
     expect(macos).toContain("actions/upload-artifact@")
     expect(macos).toContain("**/*.dmg")
 
@@ -81,18 +81,39 @@ describe("release workflow", () => {
     expect(SETUP_RUST_ACTION).toContain("librsvg2-dev")
   })
 
-  it("passes updater signing secrets only to the three platform build jobs", () => {
+  it("normalizes the updater key into a temporary file only in platform build jobs", () => {
     const macos = jobBlock("macos", "windows")
     const windows = jobBlock("windows", "linux")
     const linux = jobBlock("linux", "publish")
     const publish = jobBlock("publish")
 
     for (const block of [macos, windows, linux]) {
-      expect(block).toContain("TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")
+      expect(block).toContain("RUSTFLAGS: -D warnings")
+      expect(block).toContain("UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")
+      expect(block).toContain("node scripts/prepare-updater-key.mjs")
+      expect(block).toContain("tauri signer sign --private-key-path")
       expect(block).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}")
+      expect(block).not.toContain("TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")
     }
+    expect(publish).not.toContain("UPDATER_PRIVATE_KEY")
     expect(publish).not.toContain("TAURI_SIGNING_PRIVATE_KEY")
     expect(publish).not.toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
+  })
+
+  it("requires every platform's installer and updater assets before upload", () => {
+    const macos = jobBlock("macos", "windows")
+    const windows = jobBlock("windows", "linux")
+    const linux = jobBlock("linux", "publish")
+
+    for (const pattern of ["*.dmg", "*.app.tar.gz", "*.app.tar.gz.sig"]) {
+      expect(macos).toContain(`-name '${pattern}'`)
+    }
+    for (const pattern of ["*.msi", "*-setup.exe", "*-setup.exe.sig"]) {
+      expect(windows).toContain(`-name '${pattern}'`)
+    }
+    for (const pattern of ["*.deb", "*.AppImage", "*.AppImage.tar.gz", "*.AppImage.tar.gz.sig"]) {
+      expect(linux).toContain(`-name '${pattern}'`)
+    }
   })
 
   it("uploads signed updater artifacts and signatures for every platform", () => {

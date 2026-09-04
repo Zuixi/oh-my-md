@@ -4,6 +4,8 @@ import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
 import { editorExtensions, codeHighlightStyle } from "../src/index"
 import { preloadMarkdownCodeLanguages } from "../src/parse/codeLanguages"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 
 const doc = "intro\n\n```js\nconst x = 1 // hi\n```\n\ntail"
 
@@ -23,6 +25,20 @@ function fullyParsedState(): EditorState {
   parent.remove()
   return complete
 }
+
+describe("Markdown code-language loading", () => {
+  it("does not dynamically import language packages already loaded by Markdown and HTML", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/parse/codeLanguages.ts"), "utf8")
+
+    for (const packageName of [
+      "@codemirror/lang-css",
+      "@codemirror/lang-html",
+      "@codemirror/lang-javascript",
+    ]) {
+      expect(source).not.toContain(`import(\"${packageName}\")`)
+    }
+  })
+})
 
 describe("editing-state native code highlighting", () => {
   // 语言懒加载的 skipping-parser 重解析由 view 的 measure 循环驱动（浏览器正常，

@@ -93,6 +93,7 @@ fn copy_xattrs(source: &Path, dest: &Path) -> Result<(), DocumentError> {
             Ok(Some(value)) => value,
             Ok(None) => continue,
             Err(error) => {
+                #[cfg(target_os = "macos")]
                 if is_required_xattr(&name_str) {
                     return Err(metadata_failed(format!(
                         "failed to read required xattr {name_str} on {}: {error}",
@@ -105,6 +106,7 @@ fn copy_xattrs(source: &Path, dest: &Path) -> Result<(), DocumentError> {
         };
 
         if let Err(error) = xattr::set(dest, &name, &value) {
+            #[cfg(target_os = "macos")]
             if is_required_xattr(&name_str) {
                 return Err(metadata_failed(format!(
                     "failed to write required xattr {name_str} on {}: {error}",
@@ -123,11 +125,7 @@ fn is_required_xattr(name: &str) -> bool {
     REQUIRED_XATTRS.iter().any(|required| *required == name)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn is_required_xattr(_name: &str) -> bool {
-    false
-}
-
+#[cfg(target_os = "macos")]
 fn metadata_failed(message: impl Into<String>) -> DocumentError {
     DocumentError::MetadataFailed(message.into())
 }

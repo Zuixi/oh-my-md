@@ -1,9 +1,12 @@
 import { LanguageDescription } from "@codemirror/language"
+import { css } from "@codemirror/lang-css"
+import { html } from "@codemirror/lang-html"
+import { javascript } from "@codemirror/lang-javascript"
 
 /**
  * lang-markdown 的嵌套代码语言表：fence info 的语言 token 命中后，代码内容由
- * 对应 Lezer 语法解析（编辑态原生高亮的来源）。全部懒加载 —— 只在文档真的出现
- * 该语言围栏时才 import，50MB 级文档无代码时不付任何成本。
+ * 对应 Lezer 语法解析（编辑态原生高亮的来源）。大部分语言懒加载；CSS / HTML /
+ * JavaScript 已由 Markdown/HTML 依赖链静态加载，直接复用以避免无效动态分块警告。
  *
  * 覆盖常用集合（Lezer 官方包）；Shiki 的 63 语言渲染态高亮不受影响 —— 两套
  * 体系各管一态：渲染态 CodeWidget 用 Shiki，编辑态原生行用这套。
@@ -18,10 +21,8 @@ export function preloadMarkdownCodeLanguages(): Promise<readonly unknown[]> {
 
 export function markdownCodeLanguages(): LanguageDescription[] {
   if (cached) return cached
-  const js = (typescript: boolean, jsx: boolean) => async () => {
-    const { javascript } = await import("@codemirror/lang-javascript")
-    return javascript({ typescript, jsx })
-  }
+  const js = (typescript: boolean, jsx: boolean) => async () =>
+    javascript({ typescript, jsx })
   cached = [
     LanguageDescription.of({
       name: "JavaScript", alias: ["js", "jsx", "mjs", "cjs"],
@@ -57,11 +58,11 @@ export function markdownCodeLanguages(): LanguageDescription[] {
     }),
     LanguageDescription.of({
       name: "CSS", alias: ["scss"], extensions: [],
-      load: async () => (await import("@codemirror/lang-css")).css(),
+      load: async () => css(),
     }),
     LanguageDescription.of({
       name: "HTML", alias: ["htm"], extensions: [],
-      load: async () => (await import("@codemirror/lang-html")).html(),
+      load: async () => html(),
     }),
     LanguageDescription.of({
       name: "SQL", alias: ["mysql", "postgres"], extensions: [],
