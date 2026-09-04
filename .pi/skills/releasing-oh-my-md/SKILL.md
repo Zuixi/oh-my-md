@@ -1,6 +1,6 @@
 ---
 name: releasing-oh-my-md
-description: Use when preparing, tagging, pushing, monitoring, or validating an oh-my-md GitHub Release from source, including three-platform desktop packages.
+description: Use when preparing, tagging, pushing, monitoring, or validating an oh-my-md GitHub Release from source, including three-platform desktop packages and the signed updater set.
 ---
 
 # Releasing oh-my-md
@@ -116,9 +116,12 @@ Re-read current state with `gh release view "$TAG" --json tagName,isDraft,name,b
 - exact tag `TAG`, Draft state, and title containing `VERSION`;
 - body stating macOS and Windows packages are unsigned;
 - at least one asset matching each pattern: `*.dmg`, `*-setup.exe`, `*.msi`, `*.AppImage`, `*.deb`;
-- an asset named exactly `SHA256SUMS.txt`.
+- an asset named exactly `SHA256SUMS.txt`;
+- the candidate updater manifest `latest.json`, and at least one asset matching each updater pattern: `*.app.tar.gz`, `*.app.tar.gz.sig`, `*-setup.exe.sig`, `*.AppImage.tar.gz`, `*.AppImage.tar.gz.sig`.
 
 Match suffixes/patterns, not complete generated filenames. Wrong tag/state, missing notice/checksum, or any missing platform package is failed validation—not partial success. Report the inventory and stop; never mutate release state to conceal a mismatch.
+
+**Validate the candidate manifest with the tested repo CLI before reporting success.** Download the updater assets to a scratch directory and run `node scripts/update-manifest.mjs validate --manifest <latest.json> --version "$VERSION" --tag "$TAG" --assets <dir>`. It must confirm strict-semver `version`, RFC 3339 `pub_date`, the four platform keys, URLs pinned to the exact immutable tag, and non-empty signatures. The candidate manifest is **not** the stable endpoint: it reaches `updates/stable/latest.json` only through the protected manual `stable-updates` workflow after a human publishes — never as part of this skill.
 
 ## 10. Human QA and publication handoff
 
@@ -130,6 +133,8 @@ Provide the workflow URL, existing Draft URL, complete asset inventory, and down
 
 Only a human may click **Publish release**. Never publish, change visibility, or mark the release latest automatically.
 
+**Stable-channel promotion is a separate protected handoff.** After the human publishes, promotion of the candidate to `https://zuixi.github.io/oh-my-md/updates/stable/latest.json` — and any withdrawal — runs only through the manual `promote-update.yml` / `withdraw-update.yml` workflows behind required reviewers on the `stable-updates` GitHub Environment (Pages source and the reviewer setting are external repository prerequisites, not automated). The agent never runs or schedules promotion/withdrawal, never constructs or serves an unverified `latest` manifest, and never accesses the updater signing private key (`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` exist only as GitHub Actions secrets for the package-building jobs and never enter agent context, repositories, logs, or Release assets).
+
 ## Red flags — stop
 
 | Rationalization or action | Required response |
@@ -139,6 +144,8 @@ Only a human may click **Publish release**. Never publish, change visibility, or
 | “CI can be the verification gate” after failed `pnpm verify` | Refuse; no commit, tag, or push. |
 | Generic “继续” or a different/prefix version in the confirmation | Refuse; require a boundary-delimited literal `确认推送 $TAG` after fresh identity checks. |
 | “Create/publish a Draft” without rereading state | Revalidate first; never duplicate or publish it. |
+| “I'll promote the stable channel myself / run the promotion workflow” | Refuse; stable promotion and withdrawal are protected human-run manual workflows, separate from this release. |
+| Accessing or reproducing the updater signing private key | Refuse; key material stays in GitHub Actions secrets and encrypted offline backups, never in agent context. |
 | Missing one platform is “good enough” | Validation failed; require the full matrix and `SHA256SUMS.txt`. |
 | `git add .`, `git add -A`, wildcard staging, force flags, tag deletion/movement, silent stash/reset | Forbidden. Stop and preserve user and release state. |
 

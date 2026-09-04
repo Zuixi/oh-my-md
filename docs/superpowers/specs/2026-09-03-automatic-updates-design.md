@@ -381,7 +381,7 @@ The application needs one platform-owned capability result rather than scattered
 interface UpdateCapability {
   check: boolean
   install: boolean
-  reason?: "development" | "linuxPackage" | "unsupported"
+  reason?: "development" | "manualPackage" | "unsupported"
 }
 ```
 

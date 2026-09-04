@@ -111,6 +111,23 @@ sudo apt install ./oh-my-md_*.deb
 
 若系统提示缺少 WebKit 或桌面库，请按 [Tauri Linux 前置条件](https://v2.tauri.app/start/prerequisites/#linux)安装对应发行版依赖。
 
+### 自动更新
+
+更新器就绪版本（`0.1.0` 及以后）可以使用 Tauri updater 就地升级：应用检查稳定通道，用内置 minisign 公钥校验每次下载，并且只在两次独立的用户确认之后（先确认下载、再确认重启）才安装。**绝不会静默下载。**
+
+| 安装包 | 应用内自动安装 |
+| --- | --- |
+| macOS（DMG 安装的 app） | ✅ |
+| Windows NSIS（`-setup.exe`） | ✅ |
+| Windows MSI | — ¹ |
+| Linux AppImage | ✅ |
+| Linux deb | — ¹ |
+
+¹ 这些安装包会检查更新，但改为打开官方 GitHub Release 页面手动安装——updater 绝不会替换 MSI 或 deb 安装。
+
+- **从 `0.0.1` 开始**：最初发布的构建无法自行更新。请先手动安装一个更新器就绪版本（`0.1.0` 或更高）；此后更高的版本即可在应用内更新。
+- **updater 信任独立于安装包签名**：上面的安装包未签名（见上方警告），但 updater 本身仍然可信——每个更新包都用项目的 minisign 私钥签名，应用用内置的公钥校验签名。签名校验失败会停止安装并指向官方 GitHub Release，绝不回退到未经验证的 URL。
+
 ## 从源码构建
 
 需要 [pnpm](https://pnpm.io/)（或 Corepack）、[Rust 工具链](https://rustup.rs/)与当前系统的 [Tauri 前置条件](https://v2.tauri.app/start/prerequisites/)。macOS 需 Xcode 命令行工具，Linux 需 WebKitGTK 开发库，Windows 需 Microsoft Visual Studio C++ 生成工具。
@@ -130,8 +147,8 @@ pnpm dev        # 启动应用
 
 ## 路线图
 
-- [ ] macOS 与 Windows 签名安装包
-- [ ] 在签名发布基础设施就绪后提供自动更新
+- [ ] macOS 与 Windows 签名安装包（Apple Developer / Windows Authenticode 账号仍未就绪）
+- [x] 自动更新——更新器就绪版本（`0.1.0+`）由 minisign 校验的 Tauri updater 提供
 - [ ] 块级 AI 操作（润色 / 续写 / 翻译），支持 OpenAI 兼容接口与本地 Ollama
 - [ ] 插件架构——设计已预留边界
 

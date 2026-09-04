@@ -112,6 +112,23 @@ sudo apt install ./oh-my-md_*.deb
 
 If your system reports missing WebKit or desktop libraries, install the distribution packages listed in the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux).
 
+### Automatic updates
+
+Updater-capable releases (`0.1.0` and later) can update in place with the Tauri updater: the app checks a stable channel, verifies every download with a bundled minisign public key, and installs only after two separate user confirmations (download, then restart). Updates are never downloaded silently.
+
+| Package | Automatic in-app install |
+| --- | --- |
+| macOS app (from the DMG) | ✅ |
+| Windows NSIS (`-setup.exe`) | ✅ |
+| Windows MSI | — ¹ |
+| Linux AppImage | ✅ |
+| Linux deb | — ¹ |
+
+¹ These packages check for updates but open the official GitHub Release page for manual installation — an MSI or deb install is never replaced by the updater.
+
+- **Starting from `0.0.1`:** the originally released build cannot self-update. Install one updater-capable release (`0.1.0` or later) manually once; from then on, higher versions update from inside the app.
+- **Updater trust vs. package signing:** the installer packages above are unsigned (see the warning above), yet the updater remains trusted — every updater bundle is signed with the project's minisign key, and the app verifies signatures against the public key it ships. A signature failure stops installation and points to the official GitHub Release; it never falls back to an unverified URL.
+
 ## Build from source
 
 You need [pnpm](https://pnpm.io/) (or Corepack), a [Rust toolchain](https://rustup.rs/), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. macOS requires Xcode Command Line Tools, Linux requires WebKitGTK development libraries, and Windows requires Microsoft Visual Studio C++ Build Tools.
@@ -131,8 +148,8 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 
 ## Roadmap
 
-- [ ] Signed packages for macOS and Windows
-- [ ] Automatic updates after signed release infrastructure is available
+- [ ] Code-signed packages for macOS and Windows (Apple Developer / Windows Authenticode accounts still pending)
+- [x] Automatic updates — shipped for updater-capable releases (`0.1.0+`) via the minisign-verified Tauri updater
 - [ ] Block-level AI actions (polish / continue / translate) via OpenAI-compatible APIs and local Ollama
 - [ ] Plugin architecture — foundations already reserved in the design
 
