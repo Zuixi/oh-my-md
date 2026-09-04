@@ -54,10 +54,19 @@ import {
 } from "./documentSaveState"
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
+import {
+  createUpdateCoordinator,
+  type UpdateCoordinator,
+  type UpdateFailureKind,
+  type UpdateStage,
+  type UpdateState,
+} from "./updateCoordinator"
+import { updateRestartReadiness } from "./updateRestartReadiness"
+import { createTauriUpdateAdapter, type UpdateAdapter } from "./updateAdapter"
 import { redo, selectAll, undo } from "@codemirror/commands"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
-import { isMacOS } from "./platform"
+import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
@@ -119,7 +128,7 @@ import {
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
-import { initLocale, setLocale, useT } from "./i18n"
+import { initLocale, setLocale, t as localeT, useT } from "./i18n"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
@@ -130,6 +139,7 @@ import {
   OPEN_STREAM_THRESHOLD_BYTES,
   RELEASES_URL,
   SAFE_MODE_BYTES,
+  STARTUP_UPDATE_CHECK_MS,
   SAFE_MODE_LINES,
   SIDEBAR_DEFAULT_WIDTH,
   STORAGE_KEY_OUTLINE_OPEN,
@@ -147,6 +157,10 @@ interface AppProps {
   watchMs?: number
   /** Spec 05a 拉取式物化的 trailing 窗口。0 = 同步物化（测试专用时序缝隙，同 autosaveMs 先例）。 */
   docMaterializeMs?: number
+  /** Automatic-update adapter; tests inject a fake, production uses the Tauri plugin adapter. */
+  updateAdapter?: UpdateAdapter
+  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs to console. */
+  logUpdateFailure?: (failure: UpdateFailureKind) => void
 }
 
 const OUTLINE_DEBOUNCE_MS = 150
@@ -266,6 +280,44 @@ interface OutlineIdleGlobal {
   cancelIdleCallback?: (handle: number) => void
 }
 
+/**
+ * Startup-check failures log with no user UI (spec §10/§14). The app has no
+ * structured logger yet; recoveryWriter already uses `console.error` on
+ * purpose. Log only the classified product failure kind — never raw updater
+ * internals or document content.
+ */
+function logUpdateStartupFailure(failure: UpdateFailureKind): void {
+  console.error(`[updates] startup check failed: ${failure}`)
+}
+
+/**
+ * Best-effort update failure classification from dependency errors (spec §14).
+ * The Tauri plugin rejects with Rust `thiserror` Display text; match stable
+ * substrings and default to `unknown` rather than exposing raw internals.
+ * The coordinator never guesses: every thrown error flows through here with
+ * the exact stage where it was thrown.
+ */
+function classifyUpdateError(error: unknown, stage: UpdateStage): UpdateFailureKind {
+  const message = error instanceof Error ? error.message : String(error)
+  const text = message.toLowerCase()
+  if (
+    text.includes("fetch") || text.includes("network") || text.includes("timeout")
+    || text.includes("offline") || text.includes("econn")
+  ) return "network"
+  if (
+    text.includes("signature") || text.includes("minisign") || text.includes("base64")
+    || text.includes("decode")
+  ) return "signature"
+  if (
+    stage === "check"
+    && (text.includes("json") || text.includes("manifest") || text.includes("platform")
+      || text.includes("semver") || text.includes("parse"))
+  ) return "manifest"
+  if (stage === "download" || text.includes("download")) return "download"
+  if (stage === "install") return "install"
+  return "unknown"
+}
+
 function scheduleOutlineIdle(callback: () => void): void {
   const idle = globalThis as OutlineIdleGlobal
   if (typeof idle.requestIdleCallback === "function" && typeof idle.cancelIdleCallback === "function") {
@@ -281,6 +333,8 @@ export default function App({
   // Fallback poll only: native notify events drive day-to-day refreshes.
   watchMs = 30000,
   docMaterializeMs = DOC_MATERIALIZE_MS,
+  updateAdapter = createTauriUpdateAdapter(),
+  logUpdateFailure = logUpdateStartupFailure,
 }: AppProps) {
   const t = useT()
   const hostsRef = useRef(new Map<number, HTMLDivElement>())
@@ -322,7 +376,7 @@ export default function App({
     transientStatusTimerRef,
     id => { transientStatusTimerRef.current = id },
   )
-  const [showUpdateNotice, setShowUpdateNotice] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" })
   const openingRef = useRef(false)
   const mountedRef = useRef(false)
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS)
@@ -362,6 +416,8 @@ export default function App({
     })
   }
   const materializer = materializerRef.current
+  const updateCoordinatorRef = useRef<UpdateCoordinator | null>(null)
+  const updateCheckTimerRef = useRef<number | null>(null)
   // Spec 05/05b：文档档位（安全模式集合、字节数、只读标记、流式打开暂存 Text）
   // 的单一持有者，取代原先四个并行的 ref（safeModeTabsRef / docBytesRef /
   // docTextsRef / readonlyTabsRef）。预算/窗口化是 engine 进程级全局而安全模式
@@ -921,6 +977,58 @@ export default function App({
     }
   }, [])
 
+  // Automatic updates (spec §10): one coordinator per mounted app, one startup
+  // check eight seconds after mount (silent on failure, never a silent download).
+  // Creating the coordinator here — subscribe once, schedule once, dispose on
+  // cleanup — also survives React StrictMode's effect double-invoke: each effect
+  // pass builds a fresh coordinator instead of reusing a disposed one.
+  useEffect(() => {
+    const coordinator = createUpdateCoordinator({
+      updater: updateAdapter,
+      capability: async () =>
+        services.updateCapability?.() ?? { check: false, install: false, reason: "development" },
+      flushPendingEdits: () => materializer.flush(),
+      checkRestartReadiness: () => updateRestartReadiness({
+        workspace: workspaceRef.current,
+        contentsByTab: docsRef.current,
+        saveStates: saveStateRef.current,
+        normalization: normalizationRef.current,
+        opening: openingRef.current,
+      }),
+      prepareRestart: async () => {
+        const prepare = services.prepareUpdateRestart
+        if (!prepare) throw new Error("update restart is not supported here")
+        return prepare()
+      },
+      openReleasePage: async () => {
+        await services.openExternal?.(RELEASES_URL)
+      },
+      reportManualFailure: failure => {
+        if (mountedRef.current) services.reportError(localeT(`update.failure.${failure}`))
+      },
+      logFailure: logUpdateFailure,
+      notifyLatest: () => {
+        services.notifySuccess?.(localeT("update.current"))
+      },
+      isWindows: () => isWindows(),
+      classifyError: classifyUpdateError,
+    })
+    updateCoordinatorRef.current = coordinator
+    const unsubscribe = coordinator.subscribe(setUpdateState)
+    updateCheckTimerRef.current = window.setTimeout(() => {
+      void coordinator.check("startup")
+    }, STARTUP_UPDATE_CHECK_MS)
+    return () => {
+      if (updateCheckTimerRef.current !== null) {
+        window.clearTimeout(updateCheckTimerRef.current)
+        updateCheckTimerRef.current = null
+      }
+      unsubscribe()
+      coordinator.dispose()
+      if (updateCoordinatorRef.current === coordinator) updateCoordinatorRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     ensureViews()
   }, [workspace.tabs])
@@ -1452,8 +1560,17 @@ export default function App({
     return openPath(nextPath, activeHasContent)
   }
 
-  function showUpdateDownloadNotice() {
-    setShowUpdateNotice(true)
+  function runUpdateDownload() {
+    const coordinator = updateCoordinatorRef.current
+    if (!coordinator) return
+    void coordinator.download().catch(error => {
+      // A check-only download routes to the Release page before any download;
+      // that open rejection is not published through update state, so surface
+      // it at the UI/service boundary (review ruling, Task 4 deferred note).
+      if (mountedRef.current) {
+        services.reportError(errorMessage(t("update.releaseOpenFailed"), error))
+      }
+    })
   }
 
   async function openQuickOpen() {
@@ -2013,7 +2130,7 @@ export default function App({
     { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
-    { id: "check-updates", label: t("cmd.label.check-updates"), run: showUpdateDownloadNotice },
+    { id: "check-updates", label: t("cmd.label.check-updates"), run: () => { void updateCoordinatorRef.current?.check("manual") } },
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
     { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
@@ -2456,10 +2573,15 @@ export default function App({
           {skippedMarkersMessage ? (
             <p className="normalization-skipped-status" role="status">{skippedMarkersMessage}</p>
           ) : null}
-          {showUpdateNotice ? (
+          {updateState.kind !== "idle" ? (
             <UpdateBanner
-              onDownload={() => { void services.openExternal?.(RELEASES_URL) }}
-              onDismiss={() => setShowUpdateNotice(false)}
+              state={updateState}
+              onDownload={runUpdateDownload}
+              onViewRelease={() => { void services.openExternal?.(RELEASES_URL) }}
+              onDismiss={() => { updateCoordinatorRef.current?.dismiss() }}
+              onRequestInstall={() => { void updateCoordinatorRef.current?.requestInstall() }}
+              onInstall={() => { void updateCoordinatorRef.current?.install() }}
+              onFocusBlockedTab={tabId => activateTab(tabId)}
             />
           ) : null}
           {largeDocNotice && largeDocNotice.sessionId === workspace.activeId ? (

@@ -1,0 +1,234 @@
+name: Promote Stable Update
+
+# Protected manual promotion of a verified candidate Release to the stable
+# GitHub Pages endpoint. Never rebuilds or signs binaries: it confirms the
+# public Release exists at the exact tag as non-Draft/non-prerelease, downloads
+# its candidate manifest and signed updater artifacts, verifies every artifact
+# with the committed minisign public key, requires a strict version increase
+# over the deployed stable manifest, and atomically deploys updates/stable/*
+# through GitHub Pages. Required reviewers come from the stable-updates
+# Environment; that repository setting is a documented external prerequisite.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Strict semver version to promote (for example 0.1.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: stable-updates
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-22.04
+    environment: stable-updates
+    env:
+      VERSION: ${{ inputs.version }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate strict version input
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$VERSION"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version must be strict semver MAJOR.MINOR.PATCH, got '$version'" >&2
+            exit 1
+          fi
+      - name: Verify public non-Draft non-prerelease Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$VERSION"
+          tag="v$version"
+          release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,draft,prerelease,url)"
+          release_tag="$(node -e "const r = JSON.parse(process.argv[1]); process.stdout.write(r.tagName)" "$release")"
+          test "$release_tag" = "$tag" || {
+            echo "release for $tag resolved to a different tag: $release_tag" >&2
+            exit 1
+          }
+          node -e "const r = JSON.parse(process.argv[1]); if (r.draft || r.prerelease) { process.stderr.write(r.draft ? 'release is a Draft; refusing to promote\n' : 'release is prerelease; refusing to promote\n'); process.exit(1) }" "$release"
+      - name: Download candidate manifest and signed updater artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+            --pattern 'latest.json' \
+            --pattern '*.app.tar.gz' \
+            --pattern '*.app.tar.gz.sig' \
+            --pattern '*-setup.exe' \
+            --pattern '*-setup.exe.sig' \
+            --pattern '*.AppImage.tar.gz' \
+            --pattern '*.AppImage.tar.gz.sig'
+          test -f release-assets/latest.json || {
+            echo "candidate manifest latest.json missing from the release" >&2
+            exit 1
+          }
+      - name: Install pinned minisign verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/minisign"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$RUNNER_TEMP/minisign.tar.gz" \
+            "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
+          tar -xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP/minisign"
+          find "$RUNNER_TEMP/minisign" -type f -name minisign -exec chmod +x {} \;
+          test -n "$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)" || {
+            echo "minisign binary missing after extraction" >&2
+            exit 1
+          }
+      - name: Decode committed minisign public key
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const conf = JSON.parse(fs.readFileSync("apps/desktop/src-tauri/tauri.conf.json", "utf8"));
+            const blob = conf.plugins && conf.plugins.updater && conf.plugins.updater.pubkey;
+            if (typeof blob !== "string" || !blob) {
+              console.error("updater public key is missing from tauri.conf.json");
+              process.exit(1);
+            }
+            const text = Buffer.from(blob, "base64").toString("utf8");
+            if (!text.startsWith("untrusted comment:") || !text.includes("RWS")) {
+              console.error("updater public key did not decode to a minisign key");
+              process.exit(1);
+            }
+            const pubkeyFile = process.env.RUNNER_TEMP + "/minisign.pub";
+            fs.writeFileSync(pubkeyFile, text.endsWith("\n") ? text : text + "\n");
+            console.log("decoded minisign public key to " + pubkeyFile);
+          '
+      - name: Verify updater artifacts against decoded signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          minisign="$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)"
+          pubkey="$RUNNER_TEMP/minisign.pub"
+          test -s "$pubkey" || { echo "decoded public key missing" >&2; exit 1; }
+          count=0
+          for sig in release-assets/*.sig; do
+            test -f "$sig" || continue
+            artifact="${sig%.sig}"
+            test -f "$artifact" || {
+              echo "signature without matching updater artifact: $sig" >&2
+              exit 1
+            }
+            # minisign defaults to the conventional <artifact>.sig sibling, so
+            # the signature file is passed explicitly rather than implied.
+            "$minisign" -Vm "$artifact" -p "$pubkey" -s "$sig" || {
+              echo "minisign verification failed for $artifact" >&2
+              exit 1
+            }
+            count=$((count + 1))
+          done
+          test "$count" -ge 3 || {
+            echo "expected at least three verified updater artifacts, verified $count" >&2
+            exit 1
+          }
+      - name: Fetch current stable site from public endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://zuixi.github.io/oh-my-md"
+          mkdir -p current-site/updates/stable/history
+          # Reconstruct the deployed tree from the public endpoint. Only a
+          # genuine HTTP 404 is distinguishable from every transport/5xx/timeout
+          # failure, which must hard-fail: return 0 on 200, 3 on verified 404,
+          # 1 on anything else.
+          fetch() {
+            local path="$1"
+            local code
+            code="$(curl -sfSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -o "current-site/$path" -w '%{http_code}' "$base/$path" 2>/dev/null || true)"
+            case "$code" in
+              200) return 0 ;;
+              404) rm -f "current-site/$path"; return 3 ;;
+              *) rm -f "current-site/$path"; return 1 ;;
+            esac
+          }
+          latest_status=0
+          status_status=0
+          fetch "updates/stable/latest.json" || latest_status=$?
+          fetch "updates/stable/status.json" || status_status=$?
+          # First promotion has no deployed site: both index files must be a
+          # verified 404. Missing one index while the other exists (partial
+          # state) and any transport failure are hard failures, not fall-throughs.
+          if [ "$latest_status" -ne 0 ] || [ "$status_status" -ne 0 ]; then
+            if [ "$latest_status" -ne 3 ] || [ "$status_status" -ne 3 ]; then
+              echo "current stable endpoint is unavailable (latest=$latest_status status=$status_status); refusing to promote" >&2
+              exit 1
+            fi
+            echo "no deployed stable site yet; this is the first promotion"
+          fi
+          # Fetch every indexed history entry from the deterministic versions
+          # inventory (an immutable index of every promoted version), not just
+          # the rollback chain, so the copied site preserves history even after
+          # a withdrawal keeps the withdrawn version indexed.
+          inventory="$(node -e "try { const s = JSON.parse(require('fs').readFileSync('current-site/updates/stable/status.json', 'utf8')); process.stdout.write(Array.isArray(s.versions) ? s.versions.join('\n') : '') } catch { process.stdout.write('') }")"
+          while IFS= read -r version; do
+            [ -n "$version" ] || continue
+            if ! fetch "updates/stable/history/$version.json"; then
+              echo "indexed history entry $version is unavailable at the public endpoint" >&2
+              exit 1
+            fi
+          done <<< "$inventory"
+      - name: Validate candidate manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/update-manifest.mjs validate \
+            --manifest release-assets/latest.json \
+            --version "$VERSION" \
+            --tag "v$VERSION" \
+            --assets release-assets
+      - name: Promote stable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/update-manifest.mjs promote \
+            --candidate release-assets/latest.json \
+            --current-site current-site \
+            --release-url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+            --workflow-run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --output-site site
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload complete Pages site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+          include-hidden-files: true
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Verify deployed endpoint matches promoted manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          local="$(sha256sum site/updates/stable/latest.json | awk '{print $1}')"
+          for attempt in 1 2 3 4 5; do
+            published="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+              "${{ steps.pages.outputs.base_url }}/updates/stable/latest.json" | sha256sum | awk '{print $1}')" || true
+            if [ -n "$published" ] && [ "$published" = "$local" ]; then
+              echo "deployed latest.json matches promoted manifest ($local)"
+              exit 0
+            fi
+            echo "attempt $attempt: endpoint hash '$published' does not match promoted '$local'"
+            sleep $((attempt * 2))
+          done
+          echo "endpoint latest.json does not match the promoted manifest after retries" >&2
+          exit 1

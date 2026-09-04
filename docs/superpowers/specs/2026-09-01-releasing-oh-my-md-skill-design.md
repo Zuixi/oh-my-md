@@ -47,13 +47,15 @@ After `v0.0.1` is pushed, any source change requires a higher version such as `0
 
 The release matrix is:
 
-| Platform | Architecture | Packages |
-| --- | --- | --- |
-| macOS | Universal: Intel x86_64 + Apple Silicon arm64 | `.dmg` |
-| Windows | x64 | NSIS `.exe`, WiX `.msi` |
-| Linux | x64 | `.AppImage`, `.deb` |
+| Platform | Architecture | Packages | Updater artifacts |
+| --- | --- | --- | --- |
+| macOS | Universal: Intel x86_64 + Apple Silicon arm64 | `.dmg` | `.app.tar.gz`, `.app.tar.gz.sig` |
+| Windows | x64 | NSIS `.exe`, WiX `.msi` | NSIS `-setup.exe.sig` (NSIS auto-installs; MSI is check-only/manual) |
+| Linux | x64 | `.AppImage`, `.deb` | `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` (AppImage auto-installs; deb is check-only/manual) |
 
-Version `0.0.1` packages are unsigned. Automatic updating is not part of this release workflow. The application may retain a **Check for Updates** command that displays a notice and links to the latest GitHub Release.
+Version `0.0.1` packages are unsigned and upgrade manually; the first updater-capable public version is `0.1.0`. Each package job additionally emits minisign-signed updater artifacts (`.app.tar.gz` + `.app.tar.gz.sig` on macOS, `*-setup.exe.sig` on Windows, `.AppImage.tar.gz` + `.AppImage.tar.gz.sig` on Linux), and the `publish` job attaches the candidate updater manifest `latest.json` to the Draft.
+
+Stable-channel automatic updates are separate from this release workflow. The Draft is explicitly promoted to `https://zuixi.github.io/oh-my-md/updates/stable/latest.json` only by the protected manual `stable-updates` workflow (required reviewers; Pages source = GitHub Actions is an external repository setting), never by this skill.
 
 ## Skill Workflow
 
@@ -181,11 +183,12 @@ When the workflow succeeds, verify that the GitHub Release:
 - Contains at least one `.AppImage`.
 - Contains at least one `.deb`.
 - Contains `SHA256SUMS.txt`.
+- Contains `latest.json` (the candidate updater manifest) and at least one each of `.app.tar.gz`, `.app.tar.gz.sig`, `-setup.exe.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig`.
 - States that macOS and Windows packages are unsigned.
 
-Artifact matching is suffix/pattern based; exact Tauri-generated filenames are not hard-coded.
+Artifact matching is suffix/pattern based; exact Tauri-generated filenames are not hard-coded. The candidate manifest is additionally validated with the tested repo CLI (`node scripts/update-manifest.mjs validate --manifest <latest.json> --version X.Y.Z --tag vX.Y.Z --assets <dir>`) for strict-semver version, RFC 3339 `pub_date`, the four platform keys, exact-tag immutable URLs, and non-empty signatures.
 
-A missing package, missing checksum, wrong tag, or non-Draft state is a failed release validation. The skill must not describe a partial Release as complete.
+A missing package, missing checksum, missing updater set, wrong tag, or non-Draft state is a failed release validation. The skill must not describe a partial Release as complete, and the candidate manifest is not treated as a promoted stable update.
 
 ### 9. Hand off manual QA and publication
 
@@ -200,7 +203,7 @@ The final response includes:
 - Linux AppImage/deb smoke checks
 - A reminder that only a human may click **Publish release**
 
-The skill never publishes a Draft Release, edits release visibility, or marks a release as latest.
+The skill never publishes a Draft Release, edits release visibility, or marks a release as latest. Stable-channel promotion and withdrawal are a separate protected handoff: after the human publishes, the manual `promote-update.yml` / `withdraw-update.yml` workflows (behind required reviewers on the `stable-updates` environment; Pages source = GitHub Actions is a repository setting, not automated) move the candidate to the stable endpoint. The skill never runs or schedules those workflows and never accesses the updater signing private key (`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are GitHub Actions secrets confined to package-building jobs).
 
 ## Safety Rules
 
@@ -224,6 +227,8 @@ Forbidden commands and behaviors include:
 - `git tag -f`
 - deleting or moving an existing release tag
 - auto-publishing a GitHub Release
+- auto-running stable promotion/withdrawal for the user
+- accessing or reproducing the updater signing private key
 - silently discarding or stashing user changes
 - claiming success without fresh command/API evidence
 

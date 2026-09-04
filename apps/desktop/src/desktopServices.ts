@@ -136,6 +136,23 @@ export interface ViewMenuState {
   readonly focus: boolean
 }
 
+/** Spec 09/13 automatic updates: platform-owned install capability. `reason`
+ *  is absent when fully capable; present with `check: false` for
+ *  development/unpackaged/unknown builds and with `install: false` when the
+ *  user installs manually from the Release page (MSI, deb/rpm Linux). */
+export interface UpdateCapability {
+  readonly check: boolean
+  readonly install: boolean
+  readonly reason?: "development" | "manualPackage" | "unsupported"
+}
+
+/** Spec 12 automatic updates: outcome of the update-specific session-flush
+ *  round. `timedOut` means the coordinator must abort installation and keep
+ *  the app running — the update flow never forces exit. */
+export type PrepareUpdateRestartResult =
+  | { readonly kind: "ready" }
+  | { readonly kind: "timedOut" }
+
 export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
@@ -201,6 +218,10 @@ export interface DesktopServices {
   listenSessionFlush?: (handler: () => void | Promise<void>) => () => void
   /** Signals the Rust FlushGate that the webview finished persisting session state. */
   sessionFlushAck?: () => Promise<void>
+  /** Platform-owned automatic-update capability (spec §13); absent means no updater surface. */
+  updateCapability?: () => Promise<UpdateCapability>
+  /** Flush session state for an update restart without forcing exit (spec §12). */
+  prepareUpdateRestart?: () => Promise<PrepareUpdateRestartResult>
   reportError: (message: string) => void
   /** Fire-and-forget success feedback (toast-backed in production; optional so tests/browser builds may omit it). */
   notifySuccess?: (message: string) => void
@@ -431,6 +452,8 @@ export const defaultServices: DesktopServices = {
       // Rust bounds the wait anyway; never stall the quit on a lost ack.
     }
   },
+  updateCapability: () => invoke<UpdateCapability>("update_capability"),
+  prepareUpdateRestart: () => invoke<PrepareUpdateRestartResult>("prepare_update_restart"),
   reportError: message => { toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
   listenMenu: handler => {

@@ -73,18 +73,73 @@ describe("Tauri frontend security configuration", () => {
     expect(csp).toContain("connect-src ipc: http://ipc.localhost ws:")
   })
 
-  it("does not configure updater behavior or build updater artifacts", () => {
+  it("configures the exact HTTPS Pages stable endpoint and shipped public key", () => {
     const config = readJson("../src-tauri/tauri.conf.json") as {
       bundle: { createUpdaterArtifacts?: boolean }
-      plugins?: Record<string, unknown>
+      plugins?: { updater?: { endpoints?: string[]; pubkey?: string } }
     }
+
+    expect(config.bundle.createUpdaterArtifacts).toBe(true)
+    expect(config.plugins?.updater?.endpoints).toEqual([
+      "https://zuixi.github.io/oh-my-md/updates/stable/latest.json",
+    ])
+    expect(config.plugins?.updater?.pubkey).toBe(
+      "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNEIyRDIyNUExRTY5QgpSV1NiNXFFbDBySVVEaWFnYi9SWU1nWW1Wb2V5U3VMd2FscnQvQ0ZmU2wyQkVPMHhFWjE1ZVluTwo=",
+    )
+  })
+
+  it("registers the official updater and process plugins", () => {
+    const libRs = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf8")
+
+    expect(libRs).toContain(".plugin(tauri_plugin_updater::Builder::new().build())")
+    expect(libRs).toContain(".plugin(tauri_plugin_process::init())")
+  })
+
+  it("grants least-privilege updater check/download/install and process restart permissions", () => {
     const capability = readJson("../src-tauri/capabilities/default.json") as {
       permissions: string[]
     }
 
-    expect(config.plugins?.updater).toBeUndefined()
-    expect(config.bundle.createUpdaterArtifacts).toBeUndefined()
+    for (const permission of [
+      "updater:allow-check",
+      "updater:allow-download",
+      "updater:allow-install",
+      "process:allow-restart",
+    ]) {
+      expect(capability.permissions).toContain(permission)
+    }
+
+    // The updater default set would also grant download-and-install (one
+    // combined action that skips the coordinator's confirmation), and process
+    // default would grant exit. Neither is needed or granted.
     expect(capability.permissions).not.toContain("updater:default")
+    expect(capability.permissions).not.toContain("updater:allow-download-and-install")
+    expect(capability.permissions).not.toContain("process:default")
+    expect(capability.permissions).not.toContain("process:allow-exit")
+  })
+
+  it("does not enable insecure updater transport or downgrade behavior", () => {
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      plugins?: {
+        updater?: {
+          dangerousInsecureTransportProtocol?: boolean
+          dangerousAcceptInvalidCerts?: boolean
+          dangerousAcceptInvalidHostnames?: boolean
+          allowDowngrades?: boolean
+          endpoints?: string[]
+        }
+      }
+    }
+    const updater = config.plugins?.updater ?? {}
+
+    expect(updater.dangerousInsecureTransportProtocol).toBeUndefined()
+    expect(updater.dangerousAcceptInvalidCerts).toBeUndefined()
+    expect(updater.dangerousAcceptInvalidHostnames).toBeUndefined()
+    expect(updater.allowDowngrades).toBeUndefined()
+    expect(updater.endpoints !== undefined && updater.endpoints.length > 0).toBe(true)
+    for (const endpoint of updater.endpoints ?? []) {
+      expect(endpoint.startsWith("https://")).toBe(true)
+    }
   })
 
   it("does not grant a permanent wildcard asset protocol scope", () => {

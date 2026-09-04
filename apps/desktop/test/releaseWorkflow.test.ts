@@ -80,8 +80,66 @@ describe("release workflow", () => {
     expect(SETUP_RUST_ACTION).toContain("librsvg2-dev")
   })
 
-  it("does not produce or publish auto-update metadata", () => {
-    expect(WORKFLOW).not.toContain("latest.json")
-    expect(WORKFLOW).not.toContain("createUpdaterArtifacts")
+  it("passes updater signing secrets only to the three platform build jobs", () => {
+    const macos = jobBlock("macos", "windows")
+    const windows = jobBlock("windows", "linux")
+    const linux = jobBlock("linux", "publish")
+    const publish = jobBlock("publish")
+
+    for (const block of [macos, windows, linux]) {
+      expect(block).toContain("TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}")
+      expect(block).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}")
+    }
+    expect(publish).not.toContain("TAURI_SIGNING_PRIVATE_KEY")
+    expect(publish).not.toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
+  })
+
+  it("uploads signed updater artifacts and signatures for every platform", () => {
+    const macos = jobBlock("macos", "windows")
+    const windows = jobBlock("windows", "linux")
+    const linux = jobBlock("linux", "publish")
+
+    expect(macos).toContain("**/*.app.tar.gz")
+    expect(macos).toContain("**/*.app.tar.gz.sig")
+    expect(windows).toContain("**/*-setup.exe.sig")
+    expect(linux).toContain("**/*.AppImage.tar.gz")
+    expect(linux).toContain("**/*.AppImage.tar.gz.sig")
+  })
+
+  it("stages updater artifacts, then generates and validates the candidate manifest before checksums and the Draft", () => {
+    const publish = jobBlock("publish")
+
+    for (const pattern of [
+      "*.app.tar.gz",
+      "*.app.tar.gz.sig",
+      "*-setup.exe.sig",
+      "*.AppImage.tar.gz",
+      "*.AppImage.tar.gz.sig",
+    ]) {
+      expect(publish).toContain(`'${pattern}'`)
+    }
+
+    const candidate = publish.indexOf("update-manifest.mjs candidate")
+    const validate = publish.indexOf("update-manifest.mjs validate")
+    const checksum = publish.indexOf("sha256sum > SHA256SUMS.txt")
+    const draft = publish.indexOf("softprops/action-gh-release@")
+
+    expect(candidate).toBeGreaterThan(-1)
+    expect(publish).toContain("--output release-assets/latest.json")
+    expect(publish).toContain("--assets release-assets")
+    expect(publish).toContain('--tag "${{ github.ref_name }}"')
+    expect(validate).toBeGreaterThan(candidate)
+    expect(checksum).toBeGreaterThan(validate)
+    expect(draft).toBeGreaterThan(checksum)
+  })
+
+  it("checksums every staged asset, including the candidate manifest and signatures", () => {
+    const publish = jobBlock("publish")
+
+    // latest.json must exist before the checksum run, and the find excludes
+    // only the checksum file itself, so the manifest and every .sig are hashed.
+    expect(publish).toContain("test -f latest.json")
+    expect(publish).toContain("! -name SHA256SUMS.txt")
+    expect(publish).toContain("files: release-assets/*")
   })
 })

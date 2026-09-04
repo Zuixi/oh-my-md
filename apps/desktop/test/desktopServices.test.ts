@@ -74,3 +74,40 @@ describe("toast notifications", () => {
     )
   })
 })
+
+describe("update capability (automatic updates)", () => {
+  it("invokes update_capability and returns the platform capability", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce({ check: true, install: true })
+    await expect(defaultServices.updateCapability?.()).resolves.toEqual({
+      check: true,
+      install: true,
+    })
+    expect(invoke).toHaveBeenCalledWith("update_capability")
+  })
+
+  it("returns a check-only capability for manual-install platforms", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce({ check: true, install: false, reason: "manualPackage" })
+    await expect(defaultServices.updateCapability?.()).resolves.toEqual({
+      check: true,
+      install: false,
+      reason: "manualPackage",
+    })
+  })
+})
+
+describe("prepare update restart (automatic updates)", () => {
+  it("invokes prepare_update_restart and returns a ready flush outcome", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce({ kind: "ready" })
+    await expect(defaultServices.prepareUpdateRestart?.()).resolves.toEqual({ kind: "ready" })
+    expect(invoke).toHaveBeenCalledWith("prepare_update_restart")
+  })
+
+  it("surfaces a timedOut session-flush outcome", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce({ kind: "timedOut" })
+    await expect(defaultServices.prepareUpdateRestart?.()).resolves.toEqual({ kind: "timedOut" })
+  })
+})

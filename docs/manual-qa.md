@@ -127,7 +127,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 富文本粘贴：从浏览器复制含格式内容（标题/加粗/链接/列表/表格）粘贴 → 转为 Markdown 插入（turndown+GFM：表格管道语法、删除线 `~~`、代码围栏），光标落在粘贴内容末尾（含覆盖选区粘贴、右键菜单粘贴、编辑菜单"粘贴为纯文本"同样落末尾）；VS Code 复制代码粘贴 → 围栏代码块；纯文本复制粘贴行为与旧版一致（text/plain 等价时走默认通道）；截图粘贴仍走图片通道（引擎粘贴钩子在图片 flavor 时让位）；右键后不粘贴、移动光标再 ⌘V → 插入在当前光标处而非旧右键位置
 - [ ] front matter：文档顶部 `---`…`---` 块折叠为 "YAML front matter" chip（title 显示行数），点击进入源码编辑；⌘E 切源码模式全显；正文中的 `---` 分隔线不受影响；注意首行 `---` 且无闭合的行为变化：整块按 front matter 源码显示（不再当分隔线）；字数统计不含 front matter；front matter 内的 `#` 行不出现在大纲
 - [ ] 版本历史：已保存文件每次保存成功后自动生成快照（`~/Library/Application Support/md.ohmy.desktop/snapshots/`，每文件保留最近 20 份）；File 菜单/命令面板「Version History…」列出时间+大小；"恢复"在新未命名标签打开快照内容且原文件不动（恢复后活动标签切换为快照标签，此时再开历史会提示无文件——切回原标签即可）；"Clear History" 清空后显示空态；未保存的 untitled 标签触发历史命令出现提示不弹层
-- [ ] 应用启动时不自动检查更新；应用菜单「检查更新…」显示非模态手动下载提示，点击后打开 `https://github.com/Zuixi/oh-my-md/releases/latest`；关闭提示不影响编辑
+- [ ] **自动更新（0.1.0+）**：启动后约 8 秒静默检查一次稳定通道（失败无提示、不下载）；菜单「检查更新…」手动触发真实检查，有更新显示非模态更新横幅、无更新提示已是最新、失败可重试；MSI/deb 安装点击主按钮打开官方 GitHub Release 页面而非下载。完整清单见下方「自动更新」节。
 - [ ] 应用菜单「关于 oh-my-md」弹窗版本号与 `tauri.conf.json` 一致（`pnpm release:version` 单源同步，versionSync 测试守护）；设置/会话/恢复数据位于 `~/Library/Application Support/md.ohmy.desktop/`（首次启动自动从旧 temp 目录迁移，不再受系统清理影响）
 - [ ] 打开深层子目录的 .md（FileTree 点开或搜索面板点结果）会逐级自动展开祖先目录并滚动到该文件；千级文件的目录展开后滚动无卡顿、无空白行（树行虚拟化）
 - [ ] 文件树/大纲中的长文件名、长标题单行显示，超出侧栏宽度时末尾省略号截断，悬停显示完整名称（title 提示）；拖拽调宽或改变窗口大小后截断位置实时跟随，不再多行换行遮挡相邻行
@@ -287,19 +287,55 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 ## 发布打包 QA
 
-> 当前发布为未签名安装包，不包含自动更新。Tag 流水线创建 Draft Release，最终发布只能由人工完成。
+> Tag 流水线构建三个平台安装包、对 updater 产物签名并生成 candidate `latest.json`，然后创建 Draft Release——最终发布只能由人工完成；stable 通道的 promotion/withdrawal 是另一组受保护的人工 workflow（见下方「自动更新」节）。已发布的 `0.0.1` 自身不能自动更新，需手动升级到第一个 updater 就绪版本 `0.1.0`。
 
-- [ ] 四处源码版本与 `Cargo.lock` 本地 `omd` 包均为 `0.0.1`；`pnpm --filter @omd/desktop exec vitest run test/versionSync.test.ts` 通过。
-- [ ] `v0.0.1` tag 对应的 Release workflow 成功，且只创建一个 Draft Release；人工发布前不显示为公开 Release。
-- [ ] Draft 资产完整：macOS Universal `.dmg`、Windows x64 `-setup.exe` 与 `.msi`、Linux x64 `.AppImage` 与 `.deb`、`SHA256SUMS.txt`。
+- [ ] 四处源码版本与 `Cargo.lock` 本地 `omd` 包一致（当前 `0.0.1`）；`pnpm --filter @omd/desktop exec vitest run test/versionSync.test.ts test/tauriConfig.test.ts` 通过。
+- [ ] 推送 `v<版本>` tag 后 Release workflow 成功，且只创建一个 Draft Release；人工发布前不显示为公开 Release。
+- [ ] Draft 资产完整：macOS Universal `.dmg`、Windows x64 `-setup.exe` 与 `.msi`、Linux x64 `.AppImage` 与 `.deb`、`SHA256SUMS.txt`，以及签名 updater 产物（macOS `.app.tar.gz` + `.app.tar.gz.sig`、Windows `-setup.exe.sig`、Linux `.AppImage.tar.gz` + `.AppImage.tar.gz.sig`）和 candidate `latest.json`。
 - [ ] 下载全部资产并按 `SHA256SUMS.txt` 校验；文件名、架构与 README 下载表一致。
 - [ ] macOS Apple Silicon 与 Intel（可用时）分别挂载 DMG、拖入 Applications 并启动；记录 Gatekeeper 提示，使用“隐私与安全性 → 仍要打开”或 Finder Control-click →“打开”，不得全局关闭 Gatekeeper。
 - [ ] Windows 分别安装 NSIS `-setup.exe` 与 MSI 并启动；记录 SmartScreen 提示，确认来源后使用“更多信息 → 仍要运行”，不得全局关闭 SmartScreen。
 - [ ] Linux：`chmod +x oh-my-md_*.AppImage && ./oh-my-md_*.AppImage` 可启动；`sudo apt install ./oh-my-md_*.deb` 可安装并启动。
 - [ ] 三个平台均完成：新建 Markdown、编辑、保存、退出重启后重开；HTML 导出可用。macOS 额外验证 PDF/PNG；Windows/Linux 确认 PDF/PNG 入口不可见。
-- [ ] 菜单“检查更新…”仅显示手动下载提示并打开最新 Release 页面；启动后不自动联网检查，也不下载或安装更新。
-- [ ] README / README-zh 的 unsigned 警告、安装说明与实际系统提示一致。
+- [ ] 菜单「检查更新…」的行为与上方「自动更新」节一致（不允许在此打包 QA 只看“手动下载提示”旧行为）；启动后的静默检查不下载、不安装。
+- [ ] README / README-zh 的 unsigned 警告、自动更新矩阵（含 MSI/deb 手动）与安装说明与实际系统提示一致。
 - [ ] 人工检查 Draft 标题、说明、完整资产与校验和后再点击 **Publish release**；自动化或 agent 不得发布。
+
+## 自动更新（Automatic updates，0.1.0+）
+
+自动化已覆盖（变动后需通过）：`pnpm --filter @omd/desktop exec vitest run test/updateCoordinator.test.ts test/updateRestartReadiness.test.ts test/updateAdapter.test.ts test/UpdateBanner.test.tsx test/App.updateCheck.test.tsx test/updateManifest.test.ts test/updateWorkflows.test.ts test/releaseWorkflow.test.ts test/tauriConfig.test.ts test/versionSync.test.ts`；Rust `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml update_capability` 与 `... session_flush`。以下为需真实打包产物 / 双平台安装目视的项，未跑标 **NOT RUN**。
+
+### 发现与下载（绝不静默下载）
+- [ ] 打包产物启动后约 8 秒静默检查一次稳定通道；无更新或检查失败均无横幅、不下载（失败仅日志）
+- [ ] 菜单「检查更新…」手动触发：有更新 → 非模态横幅显示版本 + 纯文本说明 + Download update / View release notes / Later；无更新 → toast 提示已是最新；网络失败 → 可重试错误
+- [ ] 点击 Download update 后才开始下载；下载中显示字节与百分比（总量已知时）+ Hide（隐藏不取消下载）；完成显示 Restart and install / Later
+- [ ] 点 Later 后横幅可关闭、进程内不安装；重启进程后可再次检查/下载
+- [ ] 无“自动降级”：稳定通道版本等于或低于当前版本时手动检查提示已是最新，绝不提供降级安装
+
+### 平台包路由（真实安装产物）
+- [ ] macOS（DMG 安装）/ Windows NSIS / Linux AppImage：检查=可、安装=可
+- [ ] Windows MSI：检查=可、安装=不可——主按钮打开官方 GitHub Release 页面而非下载（验证真实 MSI 运行时 marker 检测）— **NOT RUN**（需 Windows 实机）
+- [ ] Linux deb（或 rpm 等非 AppImage 安装）：检查=可、安装=不可，走 Release 页面 — **NOT RUN**（需 Linux 实机）
+- [ ] `pnpm dev` 未打包产物：不检查、不安装（development/unsupported），无横幅
+
+### 文档安全闸门与最终确认
+- [ ] dirty 文档 → blocked：列出受影响标签（displayName + 原因）+ View first problem document + Dismiss；不提供强制退出/丢弃/覆盖/自动接受规范化
+- [ ] 保存冲突（saveConflict）、保存失败（saveFailed）、待确认规范化（pendingNormalization）、打开中（openOperation）、保存中（activeSave）分别显示对应 block 文案
+- [ ] 清除全部障碍后 Restart and install → 进入 readyToInstall 最终确认：文案明确说明安装将关闭并重启 oh-my-md、所有文档已保存；只有该最终确认后的「安装」才调用安装器
+- [ ] session-flush 超时（不 ack）：安装中止、应用保持运行、可继续编辑（Rust 单测覆盖；GUI 模拟需构造不可 ack）— **NOT RUN**
+- [ ] Windows 安装后由 NSIS 引导重启；macOS/AppImage 安装完成后 Tauri relaunch；重启后为高版本
+- [ ] 安装失败/签名校验失败：应用保持运行（可行时）并显示官方 Release 链接；绝不回退到未经验证的 URL、无 override 按钮
+
+### 发布与 stable 控制面（Draft ≠ stable）
+- [ ] artifact-only 手动运行（workflow_dispatch）：三平台构建 + 签名 + 校验和，停在 workflow artifacts，不创建 Release（真实产物文件名与 manifest glob 匹配在此暴露）
+- [ ] Tag 运行：只创建一个 Draft——含五个人类安装包、SHA256SUMS.txt（覆盖全部 staged 资产：latest.json、签名、安装包）、三平台 updater 产物、candidate `latest.json`
+- [ ] 用真实 minisign 二进制 + 仓库提交的 public key 验证每个 `.sig`（`minisign -Vm <artifact> -s <signature> -p <pubkey>`）— **NOT RUN**（需真实二进制/密钥）
+- [ ] minisign 拒绝：非生产测试通道/本地 fixture 放入故意无效的 candidate 或 `.sig`，客户端与 promotion 均拒绝安装/拒绝 promote — **NOT RUN**（需真实打包产物）
+- [ ] Publish release 后：公开 Release 不触发任何自动 promotion；stable 端点 `updates/stable/latest.json` 仍为旧版本或不存在
+- [ ] 受保护 promotion（人工运行 `promote-update.yml`；`stable-updates` 环境含 required reviewers；Pages source=GitHub Actions——两者均为仓库设置外部前置条件）：校验公开、非 Draft、非 prerelease、精确 tag → 下载候选与签名 → minisign 验证 → 版本严格递增 → 写 history/status → Pages 部署 → 拉取公共端点比对 SHA-256
+- [ ] 端点验证：promotion 后 `https://zuixi.github.io/oh-my-md/updates/stable/latest.json` 与 promoted `latest.json` 哈希一致；`status.json` 记录 channel/version/promotedAt/releaseUrl/manifestSha256/workflowRun/previousVersion 与 versions 清单；`history/<v>.json` 存在
+- [ ] withdrawal（人工运行 `withdraw-update.yml`）：恢复上一 known-good manifest；不删除/移动 Release、tag、asset；部署后端点哈希恢复；新发现停止、已下载/已安装不受影响、无降级
+- [ ] higher-version recovery：withdraw 后用严格更高的版本再次 promotion，客户端可正常自动更新；被 withdraw 的版本不可重复 promote（history 不可变，CLI 拒绝）
 
 ## 性能（Spec 05）
 
