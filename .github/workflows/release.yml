@@ -1,7 +1,8 @@
 name: Release
 
-# Tag pushes build all three platforms and create one human-reviewed Draft
-# Release. Manual runs exercise the same builders but stop at workflow artifacts.
+# Tag pushes build all three platforms, sign updater artifacts, and create one
+# human-reviewed Draft Release. Manual runs exercise the same builders and
+# signing but stop at workflow artifacts.
 on:
   push:
     tags:
@@ -16,6 +17,9 @@ jobs:
     name: macOS Universal DMG
     runs-on: macos-14
     timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate tag matches Tauri version
@@ -35,17 +39,23 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
       - name: Build Universal DMG
         run: pnpm --filter @omd/desktop tauri build --target universal-apple-darwin --bundles dmg
-      - name: Upload macOS package
+      - name: Upload macOS package and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-package
-          path: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+          path: |
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/**/*.app.tar.gz
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/**/*.app.tar.gz.sig
           if-no-files-found: error
 
   windows:
     name: Windows x64 installers
     runs-on: windows-2022
     timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Enable long paths
         run: git config --global core.longpaths true
@@ -65,19 +75,23 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
       - name: Build x64 NSIS and WiX installers
         run: pnpm --filter @omd/desktop tauri build --bundles nsis,wix
-      - name: Upload Windows packages
+      - name: Upload Windows packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-packages
           path: |
             apps/desktop/src-tauri/target/release/bundle/**/*.msi
             apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe.sig
           if-no-files-found: error
 
   linux:
     name: Linux x64 packages
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate tag matches Tauri version
@@ -95,13 +109,15 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
       - name: Build x64 deb and AppImage packages
         run: pnpm --filter @omd/desktop tauri build --bundles deb,appimage
-      - name: Upload Linux packages
+      - name: Upload Linux packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-packages
           path: |
             apps/desktop/src-tauri/target/release/bundle/**/*.deb
             apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage.tar.gz
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage.tar.gz.sig
           if-no-files-found: error
 
   publish:
@@ -111,6 +127,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download all platform packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -121,10 +138,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage'; do
+          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe.sig' '*.AppImage.tar.gz' '*.AppImage.tar.gz.sig'; do
             mapfile -d '' matches < <(find downloaded -type f -name "$pattern" -print0)
             test "${#matches[@]}" -gt 0 || {
-              echo "Missing required release package: $pattern" >&2
+              echo "Missing required release package or updater artifact: $pattern" >&2
               exit 1
             }
             for package in "${matches[@]}"; do
@@ -136,10 +153,31 @@ jobs:
               cp "$package" "release-assets/$name"
             done
           done
-      - name: Create deterministic checksums
+      - name: Generate and validate candidate updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          node scripts/update-manifest.mjs candidate \
+            --version "$version" \
+            --tag "${{ github.ref_name }}" \
+            --assets release-assets \
+            --output release-assets/latest.json \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          node scripts/update-manifest.mjs validate \
+            --manifest release-assets/latest.json \
+            --version "$version" \
+            --tag "${{ github.ref_name }}" \
+            --assets release-assets
+      - name: Create deterministic checksums over every staged asset
         working-directory: release-assets
         shell: bash
-        run: find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+        run: |
+          test -f latest.json || {
+            echo "missing candidate updater manifest" >&2
+            exit 1
+          }
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Create Draft Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -151,5 +189,10 @@ jobs:
             These macOS, Windows, and Linux packages are unsigned. macOS
             Gatekeeper, Windows SmartScreen, or Linux desktop security may warn
             before first launch. Verify downloads against `SHA256SUMS.txt`.
+
+            The `latest.json` manifest and per-platform `.sig` files are the
+            signed candidate updater set. They ship with the Release but are
+            not promoted to the stable endpoint until the protected manual
+            workflow publishes them.
           files: release-assets/*
           fail_on_unmatched_files: true
