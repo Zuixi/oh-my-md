@@ -291,7 +291,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 - [ ] 四处源码版本与 `Cargo.lock` 本地 `omd` 包一致（当前 `0.0.1`）；`pnpm --filter @omd/desktop exec vitest run test/versionSync.test.ts test/tauriConfig.test.ts` 通过。
 - [ ] 推送 `v<版本>` tag 后 Release workflow 成功，且只创建一个 Draft Release；人工发布前不显示为公开 Release。
-- [ ] Draft 资产完整：macOS Universal `.dmg`、Windows x64 `-setup.exe` 与 `.msi`、Linux x64 `.AppImage` 与 `.deb`、`SHA256SUMS.txt`，以及签名 updater 产物（macOS `.app.tar.gz` + `.app.tar.gz.sig`、Windows `-setup.exe.sig`、Linux `.AppImage.tar.gz` + `.AppImage.tar.gz.sig`）和 candidate `latest.json`。
+- [ ] Draft 资产完整：macOS Universal `.dmg`、Windows x64 `-setup.exe` 与 `.msi`、Linux x64 `.AppImage` 与 `.deb`、`SHA256SUMS.txt`，以及签名 updater 产物（macOS `.app.tar.gz` + `.app.tar.gz.sig`、Windows `-setup.exe.sig`、Linux `.AppImage` + `.AppImage.sig`）和 candidate `latest.json`。
 - [ ] 下载全部资产并按 `SHA256SUMS.txt` 校验；文件名、架构与 README 下载表一致。
 - [ ] macOS Apple Silicon 与 Intel（可用时）分别挂载 DMG、拖入 Applications 并启动；记录 Gatekeeper 提示，使用“隐私与安全性 → 仍要打开”或 Finder Control-click →“打开”，不得全局关闭 Gatekeeper。
 - [ ] Windows 分别安装 NSIS `-setup.exe` 与 MSI 并启动；记录 SmartScreen 提示，确认来源后使用“更多信息 → 仍要运行”，不得全局关闭 SmartScreen。

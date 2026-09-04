@@ -160,8 +160,7 @@ jobs:
           bundle="apps/desktop/src-tauri/target/release/bundle"
           find "$bundle" -type f -name '*.deb' -print -quit | grep -q .
           find "$bundle" -type f -name '*.AppImage' -print -quit | grep -q .
-          find "$bundle" -type f -name '*.AppImage.tar.gz' -print -quit | grep -q .
-          find "$bundle" -type f -name '*.AppImage.tar.gz.sig' -print -quit | grep -q .
+          find "$bundle" -type f -name '*.AppImage.sig' -print -quit | grep -q .
       - name: Upload Linux packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -169,8 +168,7 @@ jobs:
           path: |
             apps/desktop/src-tauri/target/release/bundle/**/*.deb
             apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
-            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage.tar.gz
-            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage.tar.gz.sig
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage.sig
           if-no-files-found: error
 
   publish:
@@ -191,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe.sig' '*.AppImage.tar.gz' '*.AppImage.tar.gz.sig'; do
+          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe.sig' '*.AppImage.sig'; do
             mapfile -d '' matches < <(find downloaded -type f -name "$pattern" -print0)
             test "${#matches[@]}" -gt 0 || {
               echo "Missing required release package or updater artifact: $pattern" >&2

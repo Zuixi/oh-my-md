@@ -17,8 +17,8 @@ const STANDARD_FIXTURES: ReadonlyArray<readonly [string, string]> = [
   ["oh-my-md.app.tar.gz.sig", "sig-mac\n"],
   ["oh-my-md-setup.exe", ""],
   ["oh-my-md-setup.exe.sig", "sig-win\n"],
-  ["oh-my-md.AppImage.tar.gz", ""],
-  ["oh-my-md.AppImage.tar.gz.sig", "sig-linux\n"],
+  ["oh-my-md.AppImage", ""],
+  ["oh-my-md.AppImage.sig", "sig-linux\n"],
 ]
 
 const tempDirs: string[] = []
@@ -94,7 +94,7 @@ describe("update-manifest candidate generation", () => {
         "darwin-x86_64": { url: `${BASE}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
         "darwin-aarch64": { url: `${BASE}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
         "windows-x86_64": { url: `${BASE}/oh-my-md-setup.exe`, signature: "sig-win\n" },
-        "linux-x86_64": { url: `${BASE}/oh-my-md.AppImage.tar.gz`, signature: "sig-linux\n" },
+        "linux-x86_64": { url: `${BASE}/oh-my-md.AppImage`, signature: "sig-linux\n" },
       },
     })
   })
@@ -105,8 +105,8 @@ describe("update-manifest candidate generation", () => {
       ["Custom-Editor.app.tar.gz.sig", "sig-a\n"],
       ["omd-x86-setup.exe", ""],
       ["omd-x86-setup.exe.sig", "sig-b\n"],
-      ["desktop.AppImage.tar.gz", ""],
-      ["desktop.AppImage.tar.gz.sig", "sig-c\n"],
+      ["desktop.AppImage", ""],
+      ["desktop.AppImage.sig", "sig-c\n"],
     )
     const output = join(assets, "latest.json")
 
@@ -116,7 +116,7 @@ describe("update-manifest candidate generation", () => {
     const platforms = readManifest(output).platforms
     expect(platforms["darwin-x86_64"]!.url).toBe(`${BASE}/Custom-Editor.app.tar.gz`)
     expect(platforms["windows-x86_64"]!.url).toBe(`${BASE}/omd-x86-setup.exe`)
-    expect(platforms["linux-x86_64"]!.url).toBe(`${BASE}/desktop.AppImage.tar.gz`)
+    expect(platforms["linux-x86_64"]!.url).toBe(`${BASE}/desktop.AppImage`)
   })
 
   it("embeds signature file text verbatim, trailing newline included", () => {
@@ -233,8 +233,8 @@ describe("update-manifest candidate generation", () => {
       ["mismatched.app.tar.gz.sig", "sig\n"],
       ["oh-my-md-setup.exe", ""],
       ["oh-my-md-setup.exe.sig", "sig\n"],
-      ["oh-my-md.AppImage.tar.gz", ""],
-      ["oh-my-md.AppImage.tar.gz.sig", "sig\n"],
+      ["oh-my-md.AppImage", ""],
+      ["oh-my-md.AppImage.sig", "sig\n"],
     )
     const output = join(assets, "latest.json")
     const result = runCli([...GENERATE_ARGS, "--assets", assets, "--output", output])
@@ -341,7 +341,7 @@ describe("update-manifest candidate validation", () => {
         "darwin-x86_64": { url: `${BASE}/oh-my-md.app.tar.gz`, signature: "" },
         "darwin-aarch64": { url: `${BASE}/oh-my-md.app.tar.gz`, signature: "" },
         "windows-x86_64": { url: `${BASE}/oh-my-md-setup.exe`, signature: "" },
-        "linux-x86_64": { url: `${BASE}/oh-my-md.AppImage.tar.gz`, signature: "" },
+        "linux-x86_64": { url: `${BASE}/oh-my-md.AppImage`, signature: "" },
       },
     }
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
@@ -393,7 +393,7 @@ function candidateManifest(version: string): Manifest {
       "darwin-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
       "darwin-aarch64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.app.tar.gz`, signature: "sig-mac\n" },
       "windows-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md-setup.exe`, signature: "sig-win\n" },
-      "linux-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.AppImage.tar.gz`, signature: "sig-linux\n" },
+      "linux-x86_64": { url: `${DOWNLOAD_BASE}/${tag}/oh-my-md.AppImage`, signature: "sig-linux\n" },
     },
   }
 }

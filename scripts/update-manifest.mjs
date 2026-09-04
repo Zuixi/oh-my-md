@@ -11,7 +11,7 @@
 //
 // The tool discovers the actual Tauri updater artifact filenames instead of
 // guessing: exactly one macOS *.app.tar.gz + .sig, one Windows *-setup.exe +
-// .sig, and one Linux *.AppImage.tar.gz + .sig. It embeds .sig text verbatim,
+// .sig, and one Linux *.AppImage + .sig. It embeds .sig text verbatim,
 // maps both Darwin architectures to the one Universal tarball, and points
 // every platform at an immutable release-tag URL. pub_date is RFC3339, taken
 // from --pub-date, else SOURCE_DATE_EPOCH, else the current time.
@@ -43,10 +43,10 @@ const PLATFORMS = [
   },
   {
     name: "Linux",
-    assetLabel: "Linux AppImage updater tarball (*.AppImage.tar.gz)",
-    sigLabel: "Linux AppImage updater signature (*.AppImage.tar.gz.sig)",
-    isAsset: (name) => name.endsWith(".AppImage.tar.gz"),
-    isSig: (name) => name.endsWith(".AppImage.tar.gz.sig"),
+    assetLabel: "Linux AppImage updater bundle (*.AppImage)",
+    sigLabel: "Linux AppImage updater signature (*.AppImage.sig)",
+    isAsset: (name) => name.endsWith(".AppImage"),
+    isSig: (name) => name.endsWith(".AppImage.sig"),
   },
 ]
 

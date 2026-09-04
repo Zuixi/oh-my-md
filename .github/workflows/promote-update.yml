@@ -71,8 +71,8 @@ jobs:
             --pattern '*.app.tar.gz.sig' \
             --pattern '*-setup.exe' \
             --pattern '*-setup.exe.sig' \
-            --pattern '*.AppImage.tar.gz' \
-            --pattern '*.AppImage.tar.gz.sig'
+            --pattern '*.AppImage' \
+            --pattern '*.AppImage.sig'
           test -f release-assets/latest.json || {
             echo "candidate manifest latest.json missing from the release" >&2
             exit 1

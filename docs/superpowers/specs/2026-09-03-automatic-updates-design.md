@@ -137,7 +137,7 @@ Requirements:
 - Both macOS architecture keys point to the same verified Universal updater artifact.
 - URLs point to immutable assets under the exact version tag, never `latest` or a branch.
 - The Windows automatic-update entry uses the NSIS updater artifact. MSI remains a manual/managed deployment package.
-- The Linux automatic-update entry uses Tauri's canonical `.AppImage.tar.gz` updater artifact; the raw `.AppImage` remains the human-download package.
+- The Linux automatic-update entry uses Tauri 2.11's canonical raw `.AppImage` updater artifact and its `.sig` file; the same AppImage is the human-download package.
 - Release notes are treated as remote plain text and are never injected as HTML.
 
 Pages also retains auditable copies:
@@ -160,7 +160,7 @@ The tag workflow receives updater signing secrets only in package-building jobs.
 | --- | --- |
 | macOS Universal | `.app.tar.gz`, `.app.tar.gz.sig` |
 | Windows x64 | NSIS updater executable and `.sig` |
-| Linux x64 | `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` |
+| Linux x64 | `.AppImage`, `.AppImage.sig` |
 
 Before creating the Draft Release, CI verifies:
 
