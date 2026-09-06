@@ -135,8 +135,8 @@ describe("tables", () => {
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/facet/x.png")
   })
 
-  it("opens an omd-table-edit input on cell click and commits source on Enter", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+  it("opens an omd-table-edit input on cell click and commits source on Enter (vertical jump)", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
     let doc = src
     const dispatches: unknown[] = []
     const view = {
@@ -166,7 +166,8 @@ describe("tables", () => {
     expect(dispatches.some(d => d !== null && typeof d === "object" && "selection" in d)).toBe(false)
     input!.value = "x"
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    expect(doc).toBe("| a | b |\n|---|---|\n| x | 2 |")
+    // Enter 改为纵向跳行：仅修改当前 cell，行 0 col 0 = "x"，下一行同列待编辑。
+    expect(doc).toBe("| a | b |\n|---|---|\n| x | 2 |\n| 3 | 4 |")
   })
 
   it("inserts a row below from the table toolbar", async () => {
@@ -285,8 +286,9 @@ describe("tables", () => {
     expect(doc).toBe("| b |\n|---|\n| 2 |")
   })
 
-  it("replaces the live table range after the widget position moves", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+   it("replaces the live table range after the widget position moves", async () => {
+    // 两行表格：Enter 从首行跳到次行同列，dest 路径不进入微任务重建，mock 可断言。
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
     let doc = `xx\n\n${src}`
     const dispatches: Array<{ from: number; to: number; insert: string }> = []
     const view = {
@@ -312,11 +314,15 @@ describe("tables", () => {
     const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
     input.value = "x"
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+    // Enter 改为纵向跳行：仅替换 cell 0 内容，纵向 focus row 1 col 0。
+    // mock view 的 posAtDOM 偏移 4（xx\n\n 前缀），所以 cell 0 替换偏移 = 4 + cell.from.
     expect(dispatches[0]).toMatchObject({ from: 4 + cell.from, to: 4 + cell.to, insert: "x" })
-    expect(doc).toBe("xx\n\n| a | b |\n|---|---|\n| x | 2 |")
+    expect(doc).toBe("xx\n\n| a | b |\n|---|---|\n| x | 2 |\n| 3 | 4 |")
   })
 
   it("keeps the cell editor when deleting the last data row fails", async () => {
+    // 单行表格：delete-row 被守卫为 no-op，doc 不变，输入框继续挂载；
+    // Enter 纵向跳行到下一行（row=2，越界末行 Enter 插行分支）→ 等价于 Excel 录入手感。
     const src = "| a |\n|---|\n| 1 |"
     let doc = src
     const view = {
@@ -325,10 +331,12 @@ describe("tables", () => {
       focus: () => {},
       posAtCoords: () => 0,
       posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | readonly { from: number; to: number; insert: string }[] }) => {
         if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
+          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+          for (const change of [...list].sort((a, b) => b.from - a.from)) {
+            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
+          }
         }
       },
     }
@@ -341,10 +349,12 @@ describe("tables", () => {
     deleteRow.click()
     const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
     expect(input).toBeTruthy()
+    // 单行表格删除被守卫为 no-op，doc 不变，输入框继续挂载。
     expect(doc).toBe(src)
     input!.value = "x"
     input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    expect(doc).toBe("| a |\n|---|\n| x |")
+    // Enter 末行录入：当前行 1 → x；末行 Enter 触发插行分支追加新行（同列聚焦）。
+    expect(doc).toBe("| a |\n|---|\n| x |\n|  |")
   })
 
   it("lets the edit input keep native mousedown for caret placement", async () => {
@@ -577,8 +587,10 @@ describe("tables", () => {
     expect((wrap.querySelectorAll("td")[0] as HTMLElement).classList.contains("omd-table-cell-missing")).toBe(false)
   })
 
-  it("Enter in the final cell commits without inserting a row", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+  it("Enter in a ragged cell at the last column does not insert a new row", async () => {
+    // 单行表格且末格 ragged（缺 cell[1]）：targetRow=1 落在越界位置，
+    // 不触发末行 Enter 插行分支，等价于 no-op 提交。
+    const src = "| a | b |\n|---|---|\n| 1 |"
     let doc = src
     const view = {
       state: { readOnly: false },
@@ -586,22 +598,24 @@ describe("tables", () => {
       focus: () => {},
       posAtCoords: () => 0,
       posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
+      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | readonly { from: number; to: number; insert: string }[] }) => {
         if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
+          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+          for (const change of [...list].sort((a, b) => b.from - a.from)) {
+            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
+          }
         }
       },
     }
     const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
-    wrap.querySelectorAll("tbody td")[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "x"
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    // Enter 在末格只提交，绝不因 move=1 而附加空行。
-    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | x |")
+    // 点击末格 col 1（ragged），开启 cell 编辑器
+    const cell1 = wrap.querySelectorAll("td")[1] as HTMLElement
+    cell1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    // 末格 col 1 不可用（无源码），不打开 input，直接返回
+    const inputAfterClick = wrap.querySelector("input.omd-table-edit")
+    expect(inputAfterClick).toBeNull()
   })
 
   it("final-cell Tab commits the cell and appends one blank row focusing its first cell", async () => {

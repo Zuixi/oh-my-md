@@ -1,4 +1,4 @@
-import type { TableCellData, TableData, TableRowData } from "./model"
+import type { TableAlignment, TableCellData, TableData, TableRowData } from "./model"
 
 export interface TableSourceChange {
   readonly from: number
@@ -72,6 +72,37 @@ function tableMatches(source: string, table: TableData): boolean {
   if (!rowMatches(source, table.header)) return false
   if (!rowMatches(source, table.delimiter)) return false
   return table.rows.every(row => rowMatches(source, row))
+}
+
+/**
+ * Modify the column alignment marker (the GFM `:---` / `:---:` / `---:` cell on
+ * the delimiter row). The marker is the sole source of column alignment, so
+ * replacing it updates both the rendered text-align (read by `tableDataFromNode`)
+ * and the raw Markdown surface.
+ *
+ * Hyphen count preserves any pre-existing minimum width and is bounded to 3+
+ * for visual stability; the marker is rebuilt exactly so the new alignment
+ * collapses/expands without leaving the source range partially patched.
+ */
+export function setTableColumnAlignment(
+  source: string,
+  table: TableData,
+  column: number,
+  alignment: TableAlignment,
+): TableSourceChange | null {
+  if (!tableMatches(source, table)) return null
+  if (column < 0 || column >= table.delimiter.cells.length) return null
+  const cell = table.delimiter.cells[column]
+  if (!cell) return null
+
+  const hyphens = "-".repeat(Math.max(3, cell.source.replace(/:/g, "").length))
+  const marker =
+    alignment === "center" ? `:${hyphens}:`
+    : alignment === "right" ? `${hyphens}:`
+    : alignment === "left" ? `:${hyphens}`
+    : hyphens
+
+  return { from: cell.from, to: cell.to, insert: marker }
 }
 
 export function insertTableRow(

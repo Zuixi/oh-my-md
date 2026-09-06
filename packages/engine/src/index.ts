@@ -70,6 +70,7 @@ export {
   insertTableColumn,
   insertTableRow,
   replaceTableCell,
+  setTableColumnAlignment,
   type TableSourceChange,
 } from "./tables/edit"
 export {

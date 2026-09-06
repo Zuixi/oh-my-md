@@ -339,6 +339,12 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   background: var(--omd-chrome);
   font-weight: 600;
   color: var(--omd-fg);
+  /* 长表格滚动浏览时表头固定在顶端，分辨率列含义不丢。
+     inset 阴影替代被 border-collapse 合并的下边框，避免粘附滚动时下边框闪烁。 */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: inset 0 -1px 0 var(--omd-border);
 }
 .editor-host .omd-table th code, .editor-host .omd-table td code {
   font-family: var(--omd-font-family, ui-monospace, monospace);
@@ -368,6 +374,13 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   padding: 2px 6px; border: 1px solid var(--omd-border);
   border-radius: 4px; background: var(--omd-chrome); color: var(--omd-muted);
   cursor: pointer;
+}
+/* 工具栏按钮的「当前活动状态」高亮：当前列的实际对齐方式下，对齐按钮描边加深。
+   active state 跟随表头单元格 / 编辑格的实际 alignment，与引擎输出语义同步。 */
+.editor-host .omd-table-toolbar button.omd-table-tool-active {
+  color: var(--omd-fg);
+  border-color: var(--omd-link);
+  background: color-mix(in srgb, var(--omd-link) 12%, transparent);
 }
 /* Active row/column highlight while a cell editor is open: background-only so
    cell geometry never changes. The edited intersection honors both classes. */
