@@ -328,12 +328,12 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-table th, .editor-host .omd-table td {
   border: 1px solid var(--omd-border);
-  padding: 8px 14px;
+  padding: 6px 8px;
   vertical-align: top;
   word-break: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: normal;
-  min-width: 90px;
+  min-width: 0;
 }
 .editor-host .omd-table th {
   background: var(--omd-chrome);
@@ -397,9 +397,11 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
      auto-layout table and makes the column jump on click. This equivalent
      fill pattern keeps the input inside the already-sized cell. */
   display: block; width: 0; min-width: 100%; box-sizing: border-box;
-  font: inherit; line-height: inherit; color: inherit;
+  font: inherit; font-size: inherit; font-family: inherit; font-weight: inherit;
+  line-height: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
+  vertical-align: top;
   border: none; outline: none;
-  padding: 0; background: transparent;
+  margin: 0; padding: 0; background: transparent;
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 6px 12px 10px 10px; border-radius: 0 0 12px 12px;

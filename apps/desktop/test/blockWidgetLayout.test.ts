@@ -46,6 +46,9 @@ describe("block widget layout", () => {
     expect(editor).toMatch(/\bpadding\s*:\s*0\s*;/)
     expect(editor).toMatch(/\bbackground\s*:\s*transparent\s*;/)
     expect(editor).toMatch(/\bline-height\s*:\s*inherit\s*;/)
+    // 继承对齐与字体属性，消除表头和单元格点击时的文字跳动/移位
+    expect(editor).toMatch(/\btext-align\s*:\s*inherit\s*;/)
+    expect(editor).toMatch(/\bfont-weight\s*:\s*inherit\s*;/)
     // A percentage width on an input participates in auto table intrinsic
     // sizing and widens the column. Zero width + a percentage min-width fills
     // the assigned cell without contributing the input's default 20ch width.
