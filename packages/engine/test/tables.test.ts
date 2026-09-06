@@ -40,6 +40,16 @@ describe("tables", () => {
     expect(t).not.toContain("widget:block:table")
   })
 
+  it("keeps a caret resting exactly on the end boundary in source editing", () => {
+    // 「粘贴后需按 Enter」的修复在粘贴侧做边界规整（paste/blockBoundaries.ts），
+    // 装饰层不得为「光标恰在 node.to」开渲染例外：手敲表格收尾时光标也停在
+    // node.to，例外会让 widget 在打字中途吞掉正在编辑的行（M2 围栏同类回归）。
+    const state = makeState(doc)
+    const s = state.update({ selection: { anchor: doc.length } }).state
+    const t = collectDecorationSpecs(s, 0, s.doc.length).map(d => d.tag)
+    expect(t).not.toContain("widget:block:table")
+  })
+
   it("inline marks inside cells do not emit decorations under the widget", () => {
     const s2 = makeState(`x\n\n| **a** |\n|---|\n| b |`)
     const s3 = s2.update({ selection: { anchor: 0 } }).state

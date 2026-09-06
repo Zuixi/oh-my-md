@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
-import {
-  convertHtmlToMarkdown,
-  htmlPaste,
-  htmlPasteToMarkdown,
-} from "../src/paste/htmlPaste"
+import { convertHtmlToMarkdown, htmlPaste, htmlPasteToMarkdown } from "../src/paste/htmlPaste"
+import { editorExtensions } from "../src/index"
 
 function clipboard(html: string, text = "") {
   const data = new Map([
@@ -13,6 +10,34 @@ function clipboard(html: string, text = "") {
     ["text/plain", text],
   ])
   return { getData: (type: string) => data.get(type) ?? "" }
+}
+
+function firePaste(view: EditorView, html: string, text = "") {
+  const data = new Map([
+    ["text/html", html],
+    ["text/plain", text],
+    ["text/uri-list", ""],
+  ])
+  const event = new Event("paste", { cancelable: true, bubbles: true })
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      getData: (type: string) => data.get(type) ?? "",
+      items: [],
+    },
+  })
+  view.contentDOM.dispatchEvent(event)
+}
+
+// The turndown conversion runs after a dynamic import, so poll for the
+// document to settle instead of sleeping a fixed tick.
+async function waitForInsert(view: EditorView, fragment: string, timeout = 3000) {
+  const started = Date.now()
+  while (!view.state.doc.toString().includes(fragment)) {
+    if (Date.now() - started > timeout) {
+      throw new Error(`paste did not insert "${fragment}" within ${timeout}ms`)
+    }
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
 }
 
 describe("convertHtmlToMarkdown", () => {
@@ -83,34 +108,6 @@ describe("htmlPaste caret placement (real EditorView)", () => {
     return { view, parent }
   }
 
-  function firePaste(view: EditorView, html: string, text = "") {
-    const data = new Map([
-      ["text/html", html],
-      ["text/plain", text],
-      ["text/uri-list", ""],
-    ])
-    const event = new Event("paste", { cancelable: true, bubbles: true })
-    Object.defineProperty(event, "clipboardData", {
-      value: {
-        getData: (type: string) => data.get(type) ?? "",
-        items: [],
-      },
-    })
-    view.contentDOM.dispatchEvent(event)
-  }
-
-  // The turndown conversion runs after a dynamic import, so poll for the
-  // document to settle instead of sleeping a fixed tick.
-  async function waitForInsert(view: EditorView, fragment: string, timeout = 3000) {
-    const started = Date.now()
-    while (!view.state.doc.toString().includes(fragment)) {
-      if (Date.now() - started > timeout) {
-        throw new Error(`paste did not insert "${fragment}" within ${timeout}ms`)
-      }
-      await new Promise(resolve => setTimeout(resolve, 20))
-    }
-  }
-
   it("places the caret at the end of the inserted markdown", async () => {
     const { view, parent } = makeView("beforeafter", { anchor: 6 })
     firePaste(view, "<p><strong>bold</strong></p>", "bold")
@@ -133,6 +130,64 @@ describe("htmlPaste caret placement (real EditorView)", () => {
     const caret = 6 + "*it*".length
     expect(view.state.selection.main.head).toBe(caret)
     expect(view.state.selection.main.empty).toBe(true)
+    view.destroy()
+    parent.remove()
+  })
+})
+
+describe("pasted block content renders immediately (real editor extensions)", () => {
+  const TABLE_HTML =
+    "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>"
+
+  function makeFullView(doc: string, anchor: number) {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        selection: { anchor },
+        extensions: [editorExtensions()],
+      }),
+      parent,
+    })
+    return { view, parent }
+  }
+
+  async function waitForWidget(view: EditorView, selector: string, timeout = 3000) {
+    const started = Date.now()
+    while (!view.dom.querySelector(selector)) {
+      if (Date.now() - started > timeout) {
+        throw new Error(`"${selector}" did not render within ${timeout}ms after paste`)
+      }
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+  }
+
+  // 用户报告的主症状：复制网页表格后必须按 Enter 才渲染。根因是粘贴 dispatch
+  // 把光标放在 Table 节点的 to 边界上，blockSelected 把边界算块内（手敲围栏的
+  // 保护），表格停留在源码态。修复在粘贴侧做边界规整：块后补空行、光标停在
+  // 空行上；装饰层的边界规则保持不动（tables.test.ts 有守护）。
+  it("renders a pasted table without pressing Enter", async () => {
+    const { view, parent } = makeFullView("intro\n", 6)
+    firePaste(view, TABLE_HTML, "a b")
+
+    await waitForInsert(view, "| a |")
+    const core = await convertHtmlToMarkdown(TABLE_HTML)
+    // 块前空行（表格不打断段落）+ 块尾换行（光标离开 replace 边界）。
+    expect(view.state.doc.toString()).toBe(`intro\n\n${core}\n`)
+    expect(view.state.selection.main.anchor).toBe(view.state.doc.length)
+    await waitForWidget(view, ".omd-table")
+    view.destroy()
+    parent.remove()
+  })
+
+  it("keeps mid-line text after a pasted table out of the table node", async () => {
+    const { view, parent } = makeFullView("foobar", 3)
+    firePaste(view, TABLE_HTML, "a b")
+
+    await waitForInsert(view, "| a |")
+    const core = await convertHtmlToMarkdown(TABLE_HTML)
+    expect(view.state.doc.toString()).toBe(`foo\n\n${core}\n\nbar`)
     view.destroy()
     parent.remove()
   })

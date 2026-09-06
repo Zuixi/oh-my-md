@@ -23,6 +23,7 @@ packages/engine/
 │   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
 │   │   └── chars.ts             # Named ASCII char-code constants (no magic numbers)
 │   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
+│   ├── paste/                   # Rich-HTML paste → Markdown (htmlPaste) + block-boundary normalization (blockBoundaries)
 │   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
 │   └── decorations/
 │       ├── build.ts             # StateField live decorations (seed + pending model) and incremental updates

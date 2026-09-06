@@ -256,6 +256,44 @@ Tests that need a complete build must use the exported `drainPendingLiveBuild`
 helper — the synchronous test-only drain (production must never call it; same
 guard family as `crossLayerNoFullTree.test.ts`).
 
+## Pasted blocks normalize their own boundaries — never "fix" paste rendering in the decoration layer
+
+Rich-paste (turndown HTML→Markdown) used to dispatch with the caret at
+`from + insert.length` — exactly the `Table` node's `to` whenever the pasted
+content ends with a table. `blockSelected` counts both boundaries as inside
+the block (load-bearing: a hand-typed closing fence rests its caret on
+`node.to`, and a half-open check made the widget swallow the block mid-typing,
+M2 root cause C), so a pasted table stayed in source state until the user
+pressed Enter. The two tempting fixes are both wrong:
+
+1. **A decoration-layer exception for "caret exactly at `node.to`"** — a paste
+   and a hand-typed row's last pipe are indistinguishable in
+   `state.selection`; the exception re-creates the M2 swallow for hand typing.
+2. **Appending a newline to every paste** — mutates plain-paragraph pastes
+   that must stay byte-identical (the plain-equivalence heuristic).
+
+The fix is paste-side (`src/paste/blockBoundaries.ts`, wired in
+`src/paste/htmlPaste.ts`, Markdown conversion results only): block-shaped
+inserts (conservative line-start markers: table row, fence, ATX heading, hr,
+list, quote, `$$`) get
+
+- a blank line **before** (mid-line insert → `\n\n`; line start after a
+  non-blank line → `\n` — tables/fences cannot interrupt a paragraph),
+- `\n\n` **after** when same-line text follows the insertion point (without it
+  the trailing text was absorbed into the table's last cell — content
+  corruption, not just cosmetics: `| 1 | 2 |tail` parses as one row), and
+- one trailing `\n` when the insert **ends with an opaque block** (table row /
+  fence close / `$$` / hr on the last line) so the caret rests on a fresh
+  empty line instead of the widget's replace boundary — that is what makes the
+  table render with no Enter.
+
+Position arithmetic in tests is the local trap: in `"prev\ntext"`, position 4
+is the **end of `prev`** (mid-line), not the start of `text`; a `|` in a test
+doc string is literal content. Guards: the real-view paste test in
+`test/htmlPaste.test.ts` (`.omd-table` renders with no Enter), and
+`test/tables.test.ts` "keeps a caret resting exactly on the end boundary in
+source editing" — the decoration rule must never grow a paste exception.
+
 ## Multi-line link constructs leave a dangling empty preview row
 
 Multi-line link constructs (`[text](url\n"title")` — a newline in the
