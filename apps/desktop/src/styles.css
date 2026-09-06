@@ -38,10 +38,6 @@ html[data-theme="light"] {
   --omd-cursor: #1a1a1a;
   --omd-selection-bg: #d7d4f0;
   --omd-selection-bg-unfocused: #d9d9d9;
-  /* Blank-line density (Typora-style): non-caret blank lines render at this
-     line-height instead of the full 1.7 body height. Must stay a unitless
-     number (multiplies the font size like any line-height). */
-  --omd-empty-line-height: 0.9;
   /* Shared size for icon tool buttons (sidebar toggle, outline toggle, panel
      collapse/close) so panel chrome stays uniform. */
   --omd-tool-btn-size: 26px;
@@ -150,10 +146,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
 .editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
 .editor-host .omd-h4, .editor-host .omd-h5, .editor-host .omd-h6 { font-weight: 700; }
-/* Blank lines fold to ~half height (Typora density); the caret's own blank
-   line carries no omd-empty class and keeps full height. Never display:none —
-   CM's line measurement and posAtCoords need a real, clickable box. */
-.editor-host .cm-content .cm-line.omd-empty { line-height: var(--omd-empty-line-height, 0.9); }
 .editor-host .omd-strong { font-weight: 700; }
 .editor-host .omd-em { font-style: italic; }
 .editor-host .omd-del { text-decoration: line-through; }
@@ -428,6 +420,34 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   flex-direction: column;
   font-family: var(--omd-font-family, ui-monospace, monospace);
 }
+.editor-host .omd-code .cm-editor {
+  background: transparent;
+  font-family: var(--omd-font-family, ui-monospace, monospace);
+  font-size: 0.9em;
+  line-height: 1.45;
+  border-radius: 0 0 12px 12px;
+  outline: none;
+}
+.editor-host .omd-code .cm-editor .cm-scroller {
+  overflow-x: auto;
+  line-height: 1.45;
+  padding: 6px 0 10px 0;
+}
+.editor-host .omd-code .cm-editor .cm-content {
+  padding: 0 12px 0 6px;
+}
+.editor-host .omd-code .cm-editor .cm-gutters {
+  background: transparent;
+  border-right: none;
+  color: var(--omd-muted);
+  font-size: 0.85em;
+  padding-left: 4px;
+}
+.editor-host .omd-code .cm-editor .cm-lineNumbers .cm-gutterElement {
+  padding: 0 8px 0 4px;
+  text-align: right;
+  min-width: 2em;
+}
 .editor-host .omd-code {
   border: 1px solid var(--omd-border);
   border-radius: 12px;
@@ -571,7 +591,9 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .cm-line.omd-codeblock-num {
   position: relative;
-  padding-left: 3.2em;
+  padding-left: 2.5em;
+  font-size: 0.9em;
+  line-height: 1.45;
   background: var(--omd-code-block-bg);
   border-left: 1px solid var(--omd-border);
   border-right: 1px solid var(--omd-border);
@@ -580,17 +602,24 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .cm-line.omd-codeblock-num::before {
   content: counter(omd-code-line);
   position: absolute;
-  left: 0.8em;
-  width: 1.6em;
+  left: 0;
+  width: 1.85em;
+  padding-right: 0.45em;
   text-align: right;
   color: var(--omd-muted);
+  font-size: 0.85em;
+  line-height: inherit;
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
-.editor-host .cm-line.omd-codeblock-num-first { counter-reset: omd-code-line; }
+.editor-host .cm-line.omd-codeblock-num-first {
+  counter-reset: omd-code-line;
+  padding-top: 6px;
+}
 .editor-host .cm-line.omd-codeblock-num-last {
   border-bottom: 1px solid var(--omd-border);
   border-radius: 0 0 12px 12px;
+  padding-bottom: 10px;
 }
 .editor-host .omd-code-lines .line {
   display: block;

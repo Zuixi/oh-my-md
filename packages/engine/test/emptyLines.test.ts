@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs, livePreviewField } from "../src/decorations/build"
 import { makeState } from "./helpers"
 
-// 空行密度（Typora 观感）：非 caret 空白行折叠为半高（line:omd-empty），
-// caret 所在空行保持全高，非空选区不展开（拖选视觉稳定）。
+// 空行零装饰（原样保留）：不再为非光标空行发射 line:omd-empty，
+// 彻底消除光标移入移出空行时由于半高/全高切换导致的视口抖动。
 // "a\n\n\nb"：line1 "a"@0，空行 @2、@3，line4 "b"@4。
 
 const emptyTags = (doc: string, sel: number) => {
@@ -13,51 +13,39 @@ const emptyTags = (doc: string, sel: number) => {
     .map(d => d.from)
 }
 
-describe("blank-line density", () => {
-  it("folds every non-caret blank line, stacking consecutive ones", () => {
-    expect(emptyTags("a\n\n\nb", 0)).toEqual([2, 3])
+describe("blank lines keep natural height with zero decorations", () => {
+  it("emits zero omd-empty decorations regardless of caret position", () => {
+    expect(emptyTags("a\n\n\nb", 0)).toEqual([])
+    expect(emptyTags("a\n\n\nb", 2)).toEqual([])
+    expect(emptyTags("a\n\n\nb", 3)).toEqual([])
   })
 
-  it("keeps the caret's own blank line at full height", () => {
-    expect(emptyTags("a\n\n\nb", 2)).toEqual([3])
-    expect(emptyTags("a\n\n\nb", 3)).toEqual([2])
-  })
-
-  it("folds blank lines under a non-empty selection (selection is visual)", () => {
+  it("emits zero omd-empty decorations under non-empty selection", () => {
     const state = makeState("a\n\n\nb").update({ selection: { anchor: 0, head: 4 } }).state
     const tags = collectDecorationSpecs(state, 0, 4).map(d => d.tag)
-    expect(tags.filter(t => t === "line:omd-empty")).toHaveLength(2)
+    expect(tags.filter(t => t === "line:omd-empty")).toHaveLength(0)
   })
 
-  it("treats whitespace-only lines as blank", () => {
-    expect(emptyTags("a\n   \nb", 0)).toEqual([2])
-    expect(emptyTags("a\n\t\t\nb", 0)).toEqual([2])
+  it("treats whitespace-only lines as plain lines without decorations", () => {
+    expect(emptyTags("a\n   \nb", 0)).toEqual([])
+    expect(emptyTags("a\n\t\t\nb", 0)).toEqual([])
   })
 
-  it("does not tag blank lines swallowed by a block widget's source range", () => {
+  it("does not tag blank lines inside or outside block widgets", () => {
     const doc = "```js\n\nconst x = 1\n\n```\n\ntail"
-    // caret after the block: the fence renders as a widget replacing its whole
-    // source range — the two inner blank lines are widget-covered and must not
-    // get line decorations; only the blank line before "tail" folds.
     const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
     const empties = collectDecorationSpecs(state, 0, doc.length)
       .filter(d => d.tag === "line:omd-empty")
       .map(d => d.from)
-    expect(empties).toEqual([doc.indexOf("tail") - 1])
+    expect(empties).toEqual([])
   })
 
-  it("re-folds a blank line incrementally when the caret leaves it", () => {
+  it("keeps specs clean of omd-empty during incremental updates", () => {
     const base = makeState("a\n\n\nb", [livePreviewField])
-    // caret on "b": both blank lines folded
-    expect(base.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty").map(s => s.from))
-      .toEqual([2, 3])
-    // caret moves onto blank line @2: it expands, @3 stays folded
+    expect(base.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty")).toHaveLength(0)
     const onBlank = base.update({ selection: { anchor: 2 } }).state
-    expect(onBlank.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty").map(s => s.from))
-      .toEqual([3])
-    // caret leaves again: the line re-folds
+    expect(onBlank.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty")).toHaveLength(0)
     const away = onBlank.update({ selection: { anchor: 4 } }).state
-    expect(away.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty").map(s => s.from))
-      .toEqual([2, 3])
+    expect(away.field(livePreviewField).specs.filter(s => s.tag === "line:omd-empty")).toHaveLength(0)
   })
 })

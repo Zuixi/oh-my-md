@@ -204,7 +204,8 @@ export class CodeWidget extends BlockWidget {
         fenceLine.number + 1 + clickedLineIndex(e.target),
         view.state.doc.lines,
       )
-      view.dispatch({ selection: { anchor: view.state.doc.line(target).from }, scrollIntoView: true })
+      // 避免强制 scrollIntoView 导致代码块点击时视口发生急剧滚动跳跃
+      view.dispatch({ selection: { anchor: view.state.doc.line(target).from } })
       view.focus()
     })
 
