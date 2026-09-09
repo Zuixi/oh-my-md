@@ -22,13 +22,20 @@ const MAX_RECENT_FILES: usize = 10;
 const ASSETS_DIR_NAME: &str = "assets";
 
 #[tauri::command]
-fn read_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+async fn read_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_file_impl(&path))
+        .await
+        .map_err(|error| format!("read task failed: {error}"))?
+}
+
+fn read_file_impl(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
 // Sync commands run on the Rust main thread, so any of them doing IO can stall
-// every later command (and the window event loop) — see known-gotchas. IO-bound
-// commands must be async + spawn_blocking, like the document commands already are.
+// every later command (and every window's event loop) — see known-gotchas. All
+// IO commands are async + spawn_blocking; the remaining sync commands are
+// memory-only or deliberately main-thread-bound (window/menu mutation).
 #[tauri::command]
 async fn watch_paths(
     app: tauri::AppHandle,
@@ -56,21 +63,33 @@ async fn watch_paths(
 }
 
 #[tauri::command]
-fn write_file(path: String, contents: String) -> Result<(), String> {
-    atomic_write(Path::new(&path), contents.as_bytes())
+async fn write_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_file_impl(&path, contents))
+        .await
+        .map_err(|error| format!("write task failed: {error}"))?
+}
+
+fn write_file_impl(path: &str, contents: String) -> Result<(), String> {
+    atomic_write(Path::new(path), contents.as_bytes())
 }
 
 #[tauri::command]
-fn write_png(path: String, base64: String) -> Result<(), String> {
-    reject_export_png_path(&path)?;
+async fn write_png(path: String, base64: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_png_impl(&path, &base64))
+        .await
+        .map_err(|error| format!("export png write task failed: {error}"))?
+}
+
+fn write_png_impl(path: &str, base64: &str) -> Result<(), String> {
+    reject_export_png_path(path)?;
     if base64.len() > MAX_ENCODED_EXPORT_PNG_BYTES {
         return Err(format!(
             "encoded export image exceeds the {} byte size limit",
             MAX_ENCODED_EXPORT_PNG_BYTES
         ));
     }
-    let bytes = decode_png_base64(&base64)?;
-    atomic_write(Path::new(&path), &bytes)
+    let bytes = decode_png_base64(base64)?;
+    atomic_write(Path::new(path), &bytes)
 }
 
 fn decode_png_base64(base64: &str) -> Result<Vec<u8>, String> {
@@ -449,11 +468,17 @@ fn create_editor_window(
 }
 
 #[tauri::command]
-fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
+async fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_image_impl(&path, &base64, &document_path))
+        .await
+        .map_err(|error| format!("image write task failed: {error}"))?
+}
+
+fn write_image_impl(path: &str, base64: &str, document_path: &str) -> Result<(), String> {
     use base64::Engine;
 
-    let target = Path::new(&path);
-    let document = Path::new(&document_path);
+    let target = Path::new(path);
+    let document = Path::new(document_path);
     validate_image_target(target, document)?;
     if base64.len() > MAX_ENCODED_IMAGE_BYTES {
         return Err(format!(
@@ -567,8 +592,10 @@ async fn write_recovery(key: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
-    workspace::list_recoveries()
+async fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
+    tauri::async_runtime::spawn_blocking(workspace::list_recoveries)
+        .await
+        .map_err(|error| format!("recovery listing task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -579,30 +606,47 @@ async fn read_recovery(key: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn clear_recovery(key: String) -> Result<(), String> {
-    workspace::clear_recovery(key)
+async fn clear_recovery(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::clear_recovery(key))
+        .await
+        .map_err(|error| format!("recovery clear task failed: {error}"))?
 }
 
 #[tauri::command]
-fn get_settings() -> Result<String, String> {
-    workspace::get_settings()
+async fn get_settings() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(workspace::get_settings)
+        .await
+        .map_err(|error| format!("settings read task failed: {error}"))?
 }
 
 #[tauri::command]
-fn save_settings(contents: String) -> Result<(), String> {
-    workspace::save_settings(contents)
+async fn save_settings(contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::save_settings(contents))
+        .await
+        .map_err(|error| format!("settings save task failed: {error}"))?
 }
 
 #[tauri::command]
-fn get_session_state(
+async fn get_session_state(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<String, String> {
-    // The lock closes the atomic-replace gap: without it a read racing a
-    // save's rename could observe a missing file as "no session".
-    let lock = app.state::<workspace::SessionFileLock>();
-    let _guard = lock.lock();
-    Ok(workspace::session_payload_for(window.label())?.unwrap_or_else(|| "{}".to_string()))
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The lock closes the atomic-replace gap: without it a read racing a
+        // save's rename could observe a missing file as "no session". The
+        // guard must be acquired inside the closure: a std MutexGuard is not
+        // Send, so it cannot cross the spawn_blocking boundary.
+        let lock = app.state::<workspace::SessionFileLock>();
+        let _guard = lock.lock();
+        get_session_state_impl(&label)
+    })
+    .await
+    .map_err(|error| format!("session state read task failed: {error}"))?
+}
+
+fn get_session_state_impl(label: &str) -> Result<String, String> {
+    Ok(workspace::session_payload_for(label)?.unwrap_or_else(|| "{}".to_string()))
 }
 
 #[tauri::command]
@@ -1242,24 +1286,28 @@ mod tests {
     fn write_then_read_roundtrip() {
         let path = tmp_path("roundtrip.md");
         let contents = "# 标题\n\nbody with **bold** and 🦀\n".to_string();
-        write_file(path_string(&path), contents.clone()).unwrap();
-        assert_eq!(read_file(path_string(&path)).unwrap(), contents);
+        write_file_impl(&path_string(&path), contents.clone()).unwrap();
+        assert_eq!(read_file_impl(&path_string(&path)).unwrap(), contents);
         fs::remove_file(path).ok();
     }
 
     #[test]
     fn write_png_accepts_png_payload() {
         let path = tmp_path("export.png");
-        write_png(path_string(&path), encoded(PNG_BYTES)).unwrap();
+        write_png_impl(&path_string(&path), &encoded(PNG_BYTES)).unwrap();
         assert_eq!(fs::read(&path).unwrap(), PNG_BYTES);
         fs::remove_file(path).ok();
     }
 
     #[test]
     fn write_png_rejects_traversal_and_non_png() {
-        assert!(write_png("/tmp/../etc/x.png".into(), encoded(PNG_BYTES)).is_err());
-        assert!(write_png(path_string(&tmp_path("export.jpg")), encoded(PNG_BYTES)).is_err());
-        assert!(write_png(path_string(&tmp_path("export.png")), encoded(b"not-png")).is_err());
+        assert!(write_png_impl("/tmp/../etc/x.png", &encoded(PNG_BYTES)).is_err());
+        assert!(
+            write_png_impl(&path_string(&tmp_path("export.jpg")), &encoded(PNG_BYTES)).is_err()
+        );
+        assert!(
+            write_png_impl(&path_string(&tmp_path("export.png")), &encoded(b"not-png")).is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -1271,7 +1319,7 @@ mod tests {
         fs::write(&path, "old").unwrap();
         let old_inode = fs::metadata(&path).unwrap().ino();
 
-        write_file(path_string(&path), "new".into()).unwrap();
+        write_file_impl(&path_string(&path), "new".into()).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert_ne!(fs::metadata(&path).unwrap().ino(), old_inode);
@@ -1330,7 +1378,7 @@ mod tests {
         let path = directory.join("文档-🦀.md");
         fs::create_dir_all(&directory).unwrap();
 
-        write_file(path_string(&path), "你好，Rust".into()).unwrap();
+        write_file_impl(&path_string(&path), "你好，Rust".into()).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "你好，Rust");
         fs::remove_dir_all(directory).ok();
@@ -1347,7 +1395,7 @@ mod tests {
         fs::write(&path, "original").unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
 
-        let result = write_file(path_string(&path), "replacement".into());
+        let result = write_file_impl(&path_string(&path), "replacement".into());
 
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(result.is_err());
@@ -1358,17 +1406,17 @@ mod tests {
 
     #[test]
     fn read_missing_file_errors() {
-        assert!(read_file(path_string(&tmp_path("does-not-exist.md"))).is_err());
+        assert!(read_file_impl(&path_string(&tmp_path("does-not-exist.md"))).is_err());
     }
 
     #[test]
     fn write_image_decodes_base64_and_creates_dirs() {
         let (directory, document, path) = document_image("image-success", "pixel.png");
 
-        write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1384,16 +1432,16 @@ mod tests {
         let jpeg = b"\xff\xd8\xff\xe0jpeg";
         let webp = b"RIFF\x04\x00\x00\x00WEBP";
 
-        write_image(
-            path_string(&jpeg_path),
-            encoded(jpeg),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&jpeg_path),
+            &encoded(jpeg),
+            &path_string(&document),
         )
         .unwrap();
-        write_image(
-            path_string(&webp_path),
-            encoded(webp),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&webp_path),
+            &encoded(webp),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1406,10 +1454,10 @@ mod tests {
     fn write_image_accepts_current_documents_assets_directory() {
         let (directory, document, image) = document_image("document-assets", "pixel.png");
 
-        write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1423,10 +1471,10 @@ mod tests {
         let second_directory = tmp_path("second-document");
         let image = second_directory.join("assets/pixel.png");
 
-        assert!(write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        assert!(write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .is_err());
         assert!(!image.exists());
@@ -1439,10 +1487,10 @@ mod tests {
         let (directory, document) = prepare_document("image-traversal");
         let path = directory.join("assets/../pixel.png");
 
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!directory.join("pixel.png").exists());
@@ -1461,10 +1509,10 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, &assets).unwrap();
 
-        assert!(write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!outside.join("pixel.png").exists());
@@ -1475,10 +1523,10 @@ mod tests {
     #[test]
     fn write_image_rejects_bad_base64() {
         let (directory, document, path) = document_image("bad-base64", "x.png");
-        assert!(write_image(
-            path_string(&path),
-            "!!!not-base64!!!".into(),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            "!!!not-base64!!!",
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1487,10 +1535,10 @@ mod tests {
     #[test]
     fn write_image_rejects_unsupported_extension() {
         let (directory, document, path) = document_image("bad-extension", "x.gif");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1499,10 +1547,10 @@ mod tests {
     #[test]
     fn write_image_rejects_mismatched_format() {
         let (directory, document, path) = document_image("bad-format", "x.jpg");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1512,10 +1560,10 @@ mod tests {
     fn write_image_rejects_destination_outside_assets() {
         let (directory, document) = prepare_document("outside-assets");
         let path = directory.join("pixel.png");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
@@ -1526,10 +1574,10 @@ mod tests {
     fn write_image_rejects_nested_destination_inside_assets() {
         let (directory, document) = prepare_document("nested-assets");
         let path = directory.join("assets/nested/pixel.png");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
@@ -1540,10 +1588,10 @@ mod tests {
     fn write_image_rejects_oversized_decoded_payload() {
         let (directory, document, path) = document_image("oversized", "large.png");
         let payload = vec![0_u8; 10 * 1024 * 1024 + 1];
-        assert!(write_image(
-            path_string(&path),
-            encoded(&payload),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(&payload),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
