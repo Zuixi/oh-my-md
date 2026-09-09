@@ -30,10 +30,18 @@ fn read_file(path: String) -> Result<String, String> {
 // every later command (and the window event loop) — see known-gotchas. IO-bound
 // commands must be async + spawn_blocking, like the document commands already are.
 #[tauri::command]
-async fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+async fn watch_paths(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+) -> Result<(), String> {
     if paths.len() > watcher::MAX_WATCHED_PATHS {
         return Err("too many watch paths".into());
     }
+    // The webview is injected from the caller's context, so each window owns
+    // its own watch set without the TS contract changing shape; the OS
+    // watcher reconciles to the union of all windows' sets.
+    let label = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         // Missing paths are skipped: watching is best-effort hinting, and a file
         // may legitimately not exist yet (fresh tab about to save its first copy).
@@ -41,7 +49,7 @@ async fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), St
             .iter()
             .filter_map(|path| std::fs::canonicalize(path).ok())
             .collect();
-        watcher::set_watched_paths(&app, &canonical)
+        watcher::set_watched_paths(&app, &label, &canonical)
     })
     .await
     .map_err(|error| format!("watch task failed: {error}"))?
@@ -1042,6 +1050,9 @@ pub fn run() {
                 // A window destroyed before draining must not leak its queued
                 // opens into a future window reusing the label.
                 windows::drop_pending(window.label());
+                // Its watches must not leak either: release the ones no
+                // surviving window still needs (shared paths stay watched).
+                watcher::drop_window_watches(app, window.label());
             }
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 // Red X / Cmd+W: the webview's 1s debounced session save would
