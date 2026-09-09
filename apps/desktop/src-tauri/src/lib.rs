@@ -976,15 +976,24 @@ pub fn run() {
                 }
                 let label = window.label().to_string();
                 let closing = window.clone();
+                let finish_app = app.clone();
                 let targets = vec![label.clone()];
                 if !gate.begin(
                     session_flush::SESSION_FLUSH_TIMEOUT,
                     &targets,
                     move |_outcome| {
-                        // A failed shard removal must not trap the window
-                        // open: log and destroy regardless.
-                        if let Err(e) = workspace::remove_session_shard(&label) {
-                            log::warn!("failed to remove session shard for {label}: {e}");
+                        // Shard removal is a read-modify-write over the shared
+                        // session.json, so it must hold the same lock as shard
+                        // saves: a surviving window's debounced save straddling
+                        // this write would resurrect the closed shard. A failed
+                        // removal must not trap the window open: log and
+                        // destroy regardless.
+                        {
+                            let lock = finish_app.state::<workspace::SessionFileLock>();
+                            let _guard = lock.lock();
+                            if let Err(e) = workspace::remove_session_shard(&label) {
+                                log::warn!("failed to remove session shard for {label}: {e}");
+                            }
                         }
                         let _ = closing.destroy();
                     },
@@ -993,7 +1002,7 @@ pub fn run() {
                 }
                 // Begin before emit: an ack racing an unregistered round
                 // would no-op and stall the close until the timeout.
-                let _ = app.emit_to(&window.label(), session_flush::SESSION_FLUSH_EVENT, ());
+                let _ = app.emit_to(window.label(), session_flush::SESSION_FLUSH_EVENT, ());
             }
             _ => {}
         })
