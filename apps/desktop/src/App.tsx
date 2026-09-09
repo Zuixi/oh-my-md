@@ -68,6 +68,7 @@ import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
 import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
+import { isMainWindow } from "./windowScope"
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
@@ -960,12 +961,14 @@ export default function App({
         for (const path of pendingOpen) {
           await openExternalRef.current(path)
         }
-      } else {
+      } else if (isMainWindow()) {
         const restored = await restoreSavedSession()
         if (!restored) {
           await restoreDraft()
         }
       }
+      // Non-main windows without pending files and without a session shard
+      // (get_session_state returns "{}") keep their fresh untitled tab.
     })()
     return () => {
       mountedRef.current = false
@@ -2083,6 +2086,7 @@ export default function App({
     { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
     { id: "tab", label: t("cmd.label.tab"), shortcut: shortcutFor("tab"), run: newTab },
+    { id: "new-window", label: t("cmd.label.newWindow"), shortcut: shortcutFor("new-window"), run: () => { void services.createNewWindow?.() } },
     { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
     { id: "theme", label: t("cmd.label.theme"), run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: t("cmd.label.css"), run: () => void loadCustomCss(services, setCustomCss) },

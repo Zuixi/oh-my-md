@@ -420,6 +420,26 @@ fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Opens a fresh editor window (palette/shortcut path). Synchronous on
+/// purpose: window creation must run on the main thread, and Tauri keeps
+/// non-async commands on it.
+#[tauri::command]
+fn create_editor_window(
+    app: tauri::AppHandle,
+    initial_paths: Option<Vec<String>>,
+) -> Result<String, String> {
+    windows::create_editor_window(
+        &app,
+        &windows::CreateWindowOptions {
+            label: None,
+            initial_paths: initial_paths.unwrap_or_default(),
+            bounds: None,
+            maximized: false,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
     use base64::Engine;
@@ -1046,6 +1066,7 @@ pub fn run() {
             quit_app,
             session_flush_ack,
             app_version,
+            create_editor_window,
             take_pending_open_files,
             diagnostics::export_diagnostics,
             menu::set_menu_locale,

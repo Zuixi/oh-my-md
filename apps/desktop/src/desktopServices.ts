@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { toast } from "react-toastify"
 import type { Text } from "@codemirror/state"
@@ -188,6 +189,8 @@ export interface DesktopServices {
   setWindowTheme?: (theme: "light" | "dark" | null) => Promise<void>
   quitApp?: () => Promise<void>
   appVersion?: () => Promise<string>
+  /** Opens a fresh editor window (label assigned by Rust); optional paths open on mount. */
+  createNewWindow?: (initialPaths?: string[]) => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
   allowWorkspaceDir?: (path: string) => Promise<void>
   listDir?: (path: string) => Promise<TreeEntry[]>
@@ -236,6 +239,17 @@ export interface DesktopServices {
 
 function isDocumentErrorCode(code: string): code is DocumentErrorCode {
   return (DOCUMENT_ERROR_CODES as readonly string[]).includes(code)
+}
+
+/**
+ * Registration target for window-scoped events. Rust emits `menu-command`,
+ * `open-file`, and the session-flush event with `emit_to(<this window>)`;
+ * the JS `listen()` default (`{ kind: "Any" })` would ALSO receive every
+ * other window's targeted events, so each listener must pin its own label.
+ * Broadcast `emit`s (e.g. `workspace-changed`) still reach AnyLabel listeners.
+ */
+function listenTarget(): { kind: "AnyLabel"; label: string } {
+  return { kind: "AnyLabel", label: getCurrentWindow().label }
 }
 
 export function toDocumentCommandError(error: unknown): DocumentCommandError {
@@ -353,6 +367,9 @@ export const defaultServices: DesktopServices = {
     await invoke("quit_app")
   },
   appVersion: () => invoke<string>("app_version"),
+  createNewWindow: async initialPaths => {
+    await invoke("create_editor_window", { initialPaths })
+  },
   allowDocumentAssets: async (path) => {
     await invoke("allow_document_assets", { documentPath: path })
   },
@@ -442,7 +459,7 @@ export const defaultServices: DesktopServices = {
     }
   },
   listenSessionFlush: handler => {
-    const pending = listen(SESSION_FLUSH_EVENT, () => handler())
+    const pending = listen(SESSION_FLUSH_EVENT, () => handler(), { target: listenTarget() })
     return () => { void pending.then(unlisten => unlisten()) }
   },
   sessionFlushAck: async () => {
@@ -457,11 +474,19 @@ export const defaultServices: DesktopServices = {
   reportError: message => { toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
   listenMenu: handler => {
-    const pending = listen<string>("menu-command", event => handler(event.payload))
+    const pending = listen<string>(
+      "menu-command",
+      event => handler(event.payload),
+      { target: listenTarget() },
+    )
     return () => { void pending.then(unlisten => unlisten()) }
   },
   listenOpenFile: handler => {
-    const pending = listen<string>("open-file", event => handler(event.payload))
+    const pending = listen<string>(
+      "open-file",
+      event => handler(event.payload),
+      { target: listenTarget() },
+    )
     return () => { void pending.then(unlisten => unlisten()) }
   },
   listenDragDrop: handler => {

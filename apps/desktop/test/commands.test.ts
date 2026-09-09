@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { filterCommands, runMenuCommand, type AppCommand } from "../src/commands"
+import { filterCommands, MENU_TO_COMMAND, runMenuCommand, type AppCommand } from "../src/commands"
 
 const commands: AppCommand[] = [
   { id: "open", label: "Open file", run: () => undefined },
@@ -64,6 +64,10 @@ describe("command registry", () => {
     expect(image).toHaveBeenCalledOnce()
     expect(clearRecents).toHaveBeenCalledOnce()
     expect(openRecent).toHaveBeenCalledWith("/notes/doc.md")
+  })
+
+  it("maps the native new-window item to the palette command", () => {
+    expect(MENU_TO_COMMAND["new-window"]).toBe("new-window")
   })
 
 })

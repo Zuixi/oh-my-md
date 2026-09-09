@@ -26,6 +26,7 @@ pub struct MenuLabels {
     pub preferences: &'static str,
     pub file: &'static str,
     pub new: &'static str,
+    pub new_window: &'static str,
     pub open_file: &'static str,
     pub quick_open: &'static str,
     pub open_folder: &'static str,
@@ -98,6 +99,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             preferences: "设置…",
             file: "文件",
             new: "新建",
+            new_window: "新建窗口",
             open_file: "打开…",
             quick_open: "快速打开…",
             open_folder: "打开文件夹…",
@@ -167,6 +169,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             preferences: "Settings…",
             file: "File",
             new: "New",
+            new_window: "New Window",
             open_file: "Open…",
             quick_open: "Quick Open…",
             open_folder: "Open Folder…",
@@ -495,6 +498,12 @@ fn file_submenu<R: Runtime, M: Manager<R>>(
 ) -> tauri::Result<Submenu<R>> {
     SubmenuBuilder::new(app, l.file)
         .item(&item(app, "new", l.new, Some("CmdOrCtrl+N"))?)
+        .item(&item(
+            app,
+            "new-window",
+            l.new_window,
+            Some("CmdOrCtrl+Shift+N"),
+        )?)
         .item(&item(app, "open-file", l.open_file, Some("CmdOrCtrl+O"))?)
         .item(&item(app, "quick-open", l.quick_open, Some("CmdOrCtrl+P"))?)
         .item(&item(app, "open-folder", l.open_folder, None)?)
