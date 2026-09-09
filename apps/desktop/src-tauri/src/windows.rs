@@ -136,6 +136,16 @@ pub(crate) fn take_pending(label: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Drops `label`'s queue outright instead of draining it. Called when a
+/// window is destroyed: a window torn down before its webview drained must
+/// not leak stale paths into a future window reusing the label.
+pub(crate) fn drop_pending(label: &str) {
+    PENDING_OPEN_FILES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(label);
+}
+
 /// Mirrors a saved session payload into the registry so open-file routing
 /// sees each window's latest open paths/folder without an extra IPC round.
 /// Called by the `save_session_state` command after the shard lands.
@@ -189,6 +199,24 @@ mod pending_tests {
         assert!(take_pending("main").is_empty(), "drain consumes");
         assert_eq!(
             take_pending("editor-2"),
+            vec!["/tmp/b.md".to_string()],
+            "other window's queue untouched"
+        );
+    }
+
+    #[test]
+    fn drop_pending_discards_only_that_windows_queue() {
+        // Distinct labels from the other pending test: the queue map is a
+        // shared static and cargo runs this module's tests in parallel.
+        queue_open_file("editor-31", "/tmp/a.md");
+        queue_open_file("editor-32", "/tmp/b.md");
+        drop_pending("editor-31");
+        assert!(
+            take_pending("editor-31").is_empty(),
+            "dropped queue drains nothing"
+        );
+        assert_eq!(
+            take_pending("editor-32"),
             vec!["/tmp/b.md".to_string()],
             "other window's queue untouched"
         );

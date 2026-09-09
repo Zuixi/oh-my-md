@@ -335,8 +335,11 @@ fn quit_app(app: tauri::AppHandle) {
         &targets,
         move |_outcome| exit_handle.exit(0),
     ) {
-        // Broadcast reaches every target for now; Task 7 makes it targeted.
-        let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+        // Targeted per window: only the labels registered as round targets
+        // are asked to flush.
+        for label in &targets {
+            let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+        }
     } else {
         app.exit(0);
     }
@@ -388,7 +391,9 @@ async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpdateRestartRe
     }
     // Register the round before emitting: an ack racing an unregistered
     // round would no-op and stall the flush until the timeout.
-    let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+    for label in &targets {
+        let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+    }
 
     // Async so the webview's session_flush_ack IPC can still be processed
     // while this command waits on the gate.
@@ -937,22 +942,50 @@ pub fn run() {
             log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Red X / Cmd+W: the webview's 1s debounced session save would be
-            // torn down with the window, so flush first and destroy after.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) => {
+                let app = window.app_handle();
+                let registry = app.state::<std::sync::Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .note_focused(window.label());
+            }
+            tauri::WindowEvent::Destroyed => {
+                let app = window.app_handle();
+                let registry = app.state::<std::sync::Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .unregister(window.label());
+                // A window destroyed before draining must not leak its queued
+                // opens into a future window reusing the label.
+                windows::drop_pending(window.label());
+            }
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                // Red X / Cmd+W: the webview's 1s debounced session save would
+                // be torn down with the window, so flush first and destroy
+                // after. Flushing THIS window only also drops its session
+                // shard (a closed window must not restore); app exit keeps
+                // all shards — see ExitRequested.
                 api.prevent_close();
-                let gate = window.app_handle().state::<session_flush::FlushGate>();
+                let app = window.app_handle();
+                let gate = app.state::<session_flush::FlushGate>();
                 if gate.in_progress() {
                     return;
                 }
-                let app = window.app_handle();
+                let label = window.label().to_string();
                 let closing = window.clone();
-                let targets = vec![window.label().to_string()];
+                let targets = vec![label.clone()];
                 if !gate.begin(
                     session_flush::SESSION_FLUSH_TIMEOUT,
                     &targets,
                     move |_outcome| {
+                        // A failed shard removal must not trap the window
+                        // open: log and destroy regardless.
+                        if let Err(e) = workspace::remove_session_shard(&label) {
+                            log::warn!("failed to remove session shard for {label}: {e}");
+                        }
                         let _ = closing.destroy();
                     },
                 ) {
@@ -960,8 +993,9 @@ pub fn run() {
                 }
                 // Begin before emit: an ack racing an unregistered round
                 // would no-op and stall the close until the timeout.
-                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+                let _ = app.emit_to(&window.label(), session_flush::SESSION_FLUSH_EVENT, ());
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             documents::read_document,
@@ -1054,7 +1088,9 @@ pub fn run() {
                 ) {
                     return;
                 }
-                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+                for label in &targets {
+                    let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+                }
             }
         });
 }

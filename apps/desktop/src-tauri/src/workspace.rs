@@ -505,13 +505,13 @@ pub fn save_session_shard(
     save_session_shard_at(&config_dir(), label, contents, bounds, maximized)
 }
 
-// Session-close cleanup and restore-window enumeration arrive with the
-// window lifecycle tasks; the store surface is complete and tested now.
-#[allow(dead_code)]
+/// Session-close cleanup, called from the CloseRequested flush finisher.
 pub fn remove_session_shard(label: &str) -> Result<(), String> {
     remove_session_shard_at(&config_dir(), label)
 }
 
+// Restore-window enumeration arrives with the later window lifecycle tasks;
+// the store surface is complete and tested now.
 #[allow(dead_code)]
 pub fn list_session_windows() -> Result<Vec<SessionWindowEntry>, String> {
     list_session_windows_at(&config_dir())
