@@ -319,6 +319,13 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
     }
 }
 
+/// Every live window label, used as the flush target set for app-wide
+/// rounds (quit, update restart, exit). Per-window rounds pass the single
+/// closing label instead.
+fn all_window_labels<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<String> {
+    app.webview_windows().keys().cloned().collect()
+}
+
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     let gate = app.state::<session_flush::FlushGate>();
@@ -327,9 +334,13 @@ fn quit_app(app: tauri::AppHandle) {
         return;
     }
     let exit_handle = app.clone();
-    if gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-        exit_handle.exit(0)
-    }) {
+    let targets = all_window_labels(&app);
+    if gate.begin(
+        session_flush::SESSION_FLUSH_TIMEOUT,
+        &targets,
+        move |_outcome| exit_handle.exit(0),
+    ) {
+        // Broadcast reaches every target for now; Task 7 makes it targeted.
         let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
     } else {
         app.exit(0);
@@ -338,7 +349,9 @@ fn quit_app(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn session_flush_ack(app: tauri::AppHandle) {
-    app.state::<session_flush::FlushGate>().ack();
+    // Transitional: the command carries no window context until Task 3
+    // makes it window-aware; "main" is the only live window today.
+    app.state::<session_flush::FlushGate>().ack("main");
 }
 
 #[tauri::command]
@@ -365,11 +378,16 @@ async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpdateRestartRe
         return PrepareUpdateRestartResult::TimedOut;
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let started = gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |outcome| {
-        // Update rounds never exit or restart the app: report the outcome
-        // and let the caller decide. A timeout must leave the editor open.
-        let _ = done_tx.send(outcome);
-    });
+    let targets = all_window_labels(&app);
+    let started = gate.begin(
+        session_flush::SESSION_FLUSH_TIMEOUT,
+        &targets,
+        move |outcome| {
+            // Update rounds never exit or restart the app: report the outcome
+            // and let the caller decide. A timeout must leave the editor open.
+            let _ = done_tx.send(outcome);
+        },
+    );
     if !started {
         return PrepareUpdateRestartResult::TimedOut;
     }
@@ -897,9 +915,14 @@ pub fn run() {
                 }
                 let app = window.app_handle();
                 let closing = window.clone();
-                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-                    let _ = closing.destroy();
-                }) {
+                let targets = vec![window.label().to_string()];
+                if !gate.begin(
+                    session_flush::SESSION_FLUSH_TIMEOUT,
+                    &targets,
+                    move |_outcome| {
+                        let _ = closing.destroy();
+                    },
+                ) {
                     return;
                 }
                 // Begin before emit: an ack racing an unregistered round
@@ -990,9 +1013,12 @@ pub fn run() {
                     return;
                 }
                 let exit_handle = app.clone();
-                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-                    exit_handle.exit(0)
-                }) {
+                let targets = all_window_labels(app);
+                if !gate.begin(
+                    session_flush::SESSION_FLUSH_TIMEOUT,
+                    &targets,
+                    move |_outcome| exit_handle.exit(0),
+                ) {
                     return;
                 }
                 let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
