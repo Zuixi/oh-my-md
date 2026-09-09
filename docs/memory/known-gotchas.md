@@ -74,6 +74,7 @@
 - **Rust `line_count` must match CM's DefaultSplit** — lone `\r` is a separator too (`count_line_separators`).
 - **Tauri plugin commands are wire contracts** — prefer official JS bindings; never fire-and-forget a plugin invoke.
 - **macOS font enumeration must use CoreText** — NSFontManager is main-thread-confined; the enumeration body runs under `spawn_blocking`.
+- **Capability `windows` is label-matched with glob support** — a new window label not covered by any pattern (e.g. `editor-*`) fails every invoke at runtime while TS tests stay green.
 
 ## Tooling and process
 

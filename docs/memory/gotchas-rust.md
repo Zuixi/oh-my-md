@@ -126,3 +126,27 @@ The other platforms follow the same shape: Windows uses DirectWrite
 en-US preferred name); Linux shells out to `fc-list : family` best-effort and
 reports an empty list when fontconfig is absent — the picker then offers
 presets only, which is the designed degradation, not an error to fix.
+
+## Capability `windows` patterns are label-matched with globs; an uncovered label gets zero IPC
+
+Tauri 2 grants permissions per window **label**, and the `windows` array in
+`capabilities/default.json` accepts glob patterns (documented in
+`gen/schemas/desktop-schema.json`). A window whose label matches no capability
+gets no IPC permissions at all, so every `invoke` from it rejects at runtime —
+while every TypeScript test stays green, because desktop tests mock
+`desktopServices` at the TS boundary and never cross the real capability
+check. Dynamically created windows are the trap: the multi-window host's
+`editor-N` labels (`src-tauri/src/windows.rs`) exist nowhere in config, so
+shipping them without a covering pattern would make every invoke in a new
+editor window fail at runtime. This is the config-file sibling of the IPC
+wire-drift traps above — it compiles, passes tests, and breaks only in the
+running app.
+
+Rules: when Rust code creates a window with a new label family, extend the
+capability in the same change. `default.json` uses `["main", "editor-*"]` —
+the explicit `editor-*` glob, not a bare `"*"`, so future utility windows
+cannot silently inherit editor permissions — and `tauri.conf.json` declares
+`"label": "main"` explicitly so the config-declared window and the capability
+stay visibly linked. Drift guard:
+`apps/desktop/test/windowCapabilities.test.ts` asserts both patterns; extend
+it when adding another label family.
