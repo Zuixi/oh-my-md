@@ -327,3 +327,63 @@ This is deliberate architecture, not an oversight: all editor chrome colors flow
 - Focused vs unfocused selections are two separate rules: the 6-class focused chain must outrank CM's base 5-class focused rule; the plain 3-class rule carries the unfocused token.
 - Nested editors inside `.cm-content` (the math popup's CodeMirror, the code-title input) draw **native** carets; the `caret-color: var(--omd-cursor) !important` rule on `.cm-content :focus` must keep `!important` to beat tightSelection's own `!important` restore. If a nested editor ever adopts overlay cursors, exclude its `.cm-content` there or carets double-paint.
 - `apps/desktop/test/selectionTheme.test.ts` pins both the selector structure and WCAG contrast floors (computed with colord, alpha composited over `--omd-bg`) — update it together with any token change.
+
+## JS `listen()` defaults to Any and receives every window's `emit_to` (tauri 2.11.5)
+
+Rust `emit_to(label, …)` scopes the **emit**, not the delivery: verified in
+the tauri 2.11.5 event source, a JS listener registered with the default
+target (`EventTarget { kind: "Any" }`) receives **every** event — including
+events other windows emitted with `emit_to(<their label>)`. The reasoning
+trap is reading "targeted emit" as "only the target window's listeners fire";
+it actually means "delivered to listeners matching the target", and `Any`
+matches everything. With multiple webviews sharing one app, a default-
+registered `menu-command` listener fires in **every** window for one menu
+click, so the wrong window executes the command (and each window's
+`session-flush` handler would run N times per quit round).
+
+The fix pattern is pinning the listener's own label:
+`listen(event, handler, { target: { kind: "AnyLabel", label: getCurrentWindow().label } })`
+— wrapped as `listenTarget()` in `desktopServices.ts`. Exactly three
+listeners must stay scoped: `listenSessionFlush`, `listenMenu`, and
+`listenOpenFile`, matching the three Rust `emit_to` sites
+(`session-flush`, `menu-command`, `open-file`). Broadcast `emit` (e.g.
+`workspace-changed` from `watcher.rs`) still reaches `AnyLabel` listeners —
+that is why `listenWorkspaceChange` safely keeps the default Any target:
+every window needs watcher events. Any new Rust `emit_to` needs its JS
+listener registered through `listenTarget()`, or it will work perfectly
+with one window and cross-talk the moment a second one opens.
+
+## Non-`main` windows must never call `restoreDraft()`
+
+`restoreDraft()` (App.tsx) offers the most recent crash-recovery record, but
+recovery files are app-global state with no window keying — whichever webview
+runs it consumes the offer. A fresh `editor-N` window that ran it on mount
+would hijack the main window's recovery record: the restore prompt appears in
+the wrong window, and confirming/clearing there moves or destroys the
+recovery key the main window's next launch was expecting.
+
+The mount effect's branch order is the guard: explicit pending opens win
+first (`takePendingOpenFiles` — a launch/open-with request beats any
+restore), then only `windowScope.isMainWindow()` may run
+`restoreSavedSession()` and, if nothing restored, `restoreDraft()`. A non-
+main window without pending files and without a session shard
+(`get_session_state` returns `"{}"`) keeps its fresh untitled tab. Do not
+"share" recovery across windows later without first keying recovery records
+per window — the gate exists because the data model is single-window.
+
+## `localStorage` is shared across same-origin webviews; the session key is a fallback
+
+Every editor window loads the same `index.html`, so all webviews see **one**
+`localStorage` store — concurrent writes race and the last writer silently
+wins. `STORAGE_KEY_SESSION` (`omd_saved_session`) therefore cannot carry
+per-window state, and that is fine only because it is a degraded-mode
+FALLBACK: `saveSessionState` writes it just when the Rust `save_session_state`
+invoke fails, and `getSessionState` reads it just when the invoke fails. The
+Rust per-window shard under `SessionFileLock` is the truth; two live windows
+round-tripping through the same localStorage key would clobber each other.
+
+Rule: never build per-window state on unsuffixed localStorage keys — key by
+`currentWindowLabel()` or keep the state in Rust where it is already sharded.
+The same shared-store caveat applies to any other same-origin persistence a
+window touches (settings are safe: they are Rust-owned and identical across
+windows by design).
