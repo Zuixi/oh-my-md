@@ -5,6 +5,7 @@ mod fonts;
 mod menu;
 mod session_flush;
 mod watcher;
+mod windows;
 mod workspace;
 
 use std::io::Write;
@@ -853,11 +854,20 @@ pub fn run() {
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
+        .manage(Mutex::<windows::WindowRegistry>::default())
         .setup(|app| {
             for arg in std::env::args().skip(1) {
                 if !arg.starts_with('-') {
                     resolve_and_record_open_arg(app.handle(), &arg, None);
                 }
+            }
+            {
+                use std::sync::Mutex;
+                let registry = app.state::<Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .register("main");
             }
             // Apply the persisted theme before the first paint; the webview's
             // set_window_theme push arrives only after React boots, which
