@@ -89,6 +89,8 @@ impl WindowRegistry {
         self.metas.get(label)
     }
 
+    /// Test-only introspection; non-test callers use mru_order/window_with_path.
+    #[cfg(test)]
     pub fn labels(&self) -> &[String] {
         &self.labels
     }

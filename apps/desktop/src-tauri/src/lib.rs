@@ -1219,7 +1219,15 @@ pub fn run() {
             } = event
             {
                 let gate = app.state::<session_flush::FlushGate>();
-                if gate.consume_flushed() {
+                // `flushed` is one-shot from a completed flush round and can
+                // be stale: with ≥2 live windows, closing ONE of them
+                // completes its round and sets the flag while the app lives
+                // on, and a later OS-quit would wrongly skip the app-wide
+                // flush. Only honor the flag on the designed handoff — the
+                // close round destroyed the LAST window, so this re-entrant
+                // exit sees no webviews left. A stale flag with windows
+                // remaining falls through to the full flush round below.
+                if gate.consume_flushed() && app.webview_windows().is_empty() {
                     return;
                 }
                 if app.webview_windows().is_empty() {
