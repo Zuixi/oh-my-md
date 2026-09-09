@@ -364,10 +364,15 @@ recovery key the main window's next launch was expecting.
 
 The mount effect's branch order is the guard: explicit pending opens win
 first (`takePendingOpenFiles` — a launch/open-with request beats any
-restore), then only `windowScope.isMainWindow()` may run
-`restoreSavedSession()` and, if nothing restored, `restoreDraft()`. A non-
-main window without pending files and without a session shard
-(`get_session_state` returns `"{}"`) keeps its fresh untitled tab. Do not
+restore), then EVERY window runs `restoreSavedSession()` — session shards
+are per-window (`get_session_state` resolves the calling webview), so a
+restored `editor-N` window reopens its own tabs/folder from its own shard —
+and only `restoreDraft()` stays gated on `windowScope.isMainWindow()`. A
+window without a session shard (empty payload — `get_session_state`
+returns `"{}"`, which `restoreSavedSession` treats as nothing to restore)
+keeps its fresh untitled tab and never drafts; that "without a shard"
+clause is load-bearing, because an empty shard must fall through to a
+fresh untitled tab, never to the app-global recovery offer. Do not
 "share" recovery across windows later without first keying recovery records
 per window — the gate exists because the data model is single-window.
 

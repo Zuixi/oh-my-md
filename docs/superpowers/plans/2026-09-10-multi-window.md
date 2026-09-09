@@ -920,6 +920,8 @@ export function isMainWindow(): boolean {
 ```
 
   (`restoreSavedSession` already returns false for `{}` payloads — verify while implementing; if an empty-shard window would still call it, that path is harmless because the shard payload is empty.)
+
+  > **Errata (post-review, 2026-09-10):** the snippet's `else if (isMainWindow())` gating was a plan flaw corrected after review — session shards are per-window, so `restoreSavedSession()` runs in EVERY window (restored `editor-N` windows reopen their own tabs; empty shard → fresh untitled tab); only `restoreDraft()` is main-only.
 - [ ] **Step 5: Implement Rust menu item** — menu.rs: add `new_window: &'static str` to `MenuLabels` with `"New Window"` / `"新建窗口"`, add to both locale structs, and in `file_submenu` directly after the `new` item:
 
 ```rust
