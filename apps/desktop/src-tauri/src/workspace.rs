@@ -510,9 +510,6 @@ pub fn remove_session_shard(label: &str) -> Result<(), String> {
     remove_session_shard_at(&config_dir(), label)
 }
 
-// Restore-window enumeration arrives with the later window lifecycle tasks;
-// the store surface is complete and tested now.
-#[allow(dead_code)]
 pub fn list_session_windows() -> Result<Vec<SessionWindowEntry>, String> {
     list_session_windows_at(&config_dir())
 }

@@ -966,6 +966,55 @@ pub fn run() {
                     log::warn!("startup window theme failed: {e}");
                 }
             }
+            // Multi-window session restore: main is already created by
+            // config (theme applied above); replay its saved geometry, then
+            // spawn one window per remaining shard with its saved label so
+            // labels stay deterministic across restarts.
+            let session_windows = {
+                // Same lock contract as get_session_state: a save's atomic
+                // rename must not race this read.
+                let lock = app.state::<workspace::SessionFileLock>();
+                let _guard = lock.lock();
+                workspace::list_session_windows()
+            };
+            match session_windows {
+                Ok(entries) => {
+                    for entry in &entries {
+                        if entry.label == "main" {
+                            if let Some(window) = app.get_webview_window("main") {
+                                // Saved via outer_position/inner_size (physical
+                                // pixels), so the Physical round-trip is exact.
+                                if let Some(b) = entry.bounds {
+                                    let _ = window.set_position(tauri::Position::Physical(
+                                        tauri::PhysicalPosition::new(b.x, b.y),
+                                    ));
+                                    let _ = window.set_size(tauri::Size::Physical(
+                                        tauri::PhysicalSize::new(b.width, b.height),
+                                    ));
+                                }
+                                if entry.maximized {
+                                    let _ = window.maximize();
+                                }
+                            }
+                            continue;
+                        }
+                        // One bad shard must not block the others: log and
+                        // keep restoring.
+                        if let Err(e) = windows::create_editor_window(
+                            app.handle(),
+                            &windows::CreateWindowOptions {
+                                label: Some(entry.label.clone()),
+                                initial_paths: Vec::new(),
+                                bounds: entry.bounds,
+                                maximized: entry.maximized,
+                            },
+                        ) {
+                            log::warn!("session restore for window {} failed: {e}", entry.label);
+                        }
+                    }
+                }
+                Err(e) => log::warn!("session restore listing failed: {e}"),
+            }
             menu::install(app)?;
             watcher::install(app.handle());
             if let Err(e) = workspace::migrate_legacy_config() {
