@@ -21,11 +21,6 @@ const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4
 const MAX_RECENT_FILES: usize = 10;
 const ASSETS_DIR_NAME: &str = "assets";
 
-// Mirrors the event name in apps/desktop/src/desktopServices.ts listenOpenFile.
-const OPEN_FILE_EVENT: &str = "open-file";
-const MAX_PENDING_OPEN_FILES: usize = 16;
-static PENDING_OPEN_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -348,10 +343,10 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn session_flush_ack(app: tauri::AppHandle) {
-    // Transitional: the command carries no window context until Task 3
-    // makes it window-aware; "main" is the only live window today.
-    app.state::<session_flush::FlushGate>().ack("main");
+fn session_flush_ack(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+    // The webview is injected from the caller's context, so the ack lands on
+    // the window that actually flushed, not a hardcoded label.
+    app.state::<session_flush::FlushGate>().ack(window.label());
 }
 
 #[tauri::command]
@@ -789,17 +784,11 @@ fn is_markdown_path(path: &Path) -> bool {
         })
 }
 
-fn queue_open_file(path: String) {
-    if let Ok(mut pending) = PENDING_OPEN_FILES.lock() {
-        if !pending.contains(&path) && pending.len() < MAX_PENDING_OPEN_FILES {
-            pending.push(path);
-        }
-    }
-}
-
 fn record_open_file(app: &tauri::AppHandle, path: String) {
-    queue_open_file(path.clone());
-    let _ = app.emit(OPEN_FILE_EVENT, path);
+    // Still single-target for now: the only window is main. Task 9 replaces
+    // this call site with windows::route_open_file.
+    windows::queue_open_file("main", &path);
+    let _ = app.emit(windows::OPEN_FILE_EVENT, path);
 }
 
 fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Option<&str>) {
@@ -829,13 +818,11 @@ fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Optio
 }
 
 /// Drained by the webview after mount: launch-time Opened events can fire
-/// before the frontend listener is registered.
+/// before the frontend listener is registered. The webview is injected from
+/// the caller's context, so each window drains its own queue.
 #[tauri::command]
-fn take_pending_open_files() -> Vec<String> {
-    PENDING_OPEN_FILES
-        .lock()
-        .map(|mut pending| std::mem::take(&mut *pending))
-        .unwrap_or_default()
+fn take_pending_open_files(window: tauri::WebviewWindow) -> Vec<String> {
+    windows::take_pending(window.label())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1409,23 +1396,6 @@ mod tests {
         let document = directory.join("../document.md");
         assert!(document_directory_for_assets(&document).is_err());
         fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn pending_open_files_queue_is_bounded_and_drains_once() {
-        for i in 0..(MAX_PENDING_OPEN_FILES + 5) {
-            queue_open_file(format!("/tmp/doc-{i}.md"));
-        }
-
-        let drained = take_pending_open_files();
-        assert_eq!(drained.len(), MAX_PENDING_OPEN_FILES);
-        assert_eq!(drained[0], "/tmp/doc-0.md");
-        assert_eq!(
-            drained[MAX_PENDING_OPEN_FILES - 1],
-            format!("/tmp/doc-{}.md", MAX_PENDING_OPEN_FILES - 1)
-        );
-        // A drain consumes the queue; a second drain sees nothing.
-        assert!(take_pending_open_files().is_empty());
     }
 
     #[test]

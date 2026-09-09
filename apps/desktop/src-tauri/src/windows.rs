@@ -1,9 +1,11 @@
-//! Multi-window host state: window registry, focus order (MRU), and the
-//! per-window mirror used by open-file routing. Pure core — no Tauri types
-//! in the registry itself so behavior is unit-testable on any host.
+//! Multi-window host state: window registry, focus order (MRU), the
+//! per-window mirror used by open-file routing, and the per-window
+//! pending-open-files queue. Pure core — no Tauri types in the registry
+//! itself so behavior is unit-testable on any host.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 /// Per-window mirror of what the frontend last flushed. Routing decisions
 /// tolerate staleness: the frontend owns tab truth, so a stale mirror at
@@ -87,6 +89,59 @@ impl WindowRegistry {
                     .is_some_and(|m| m.open_paths.iter().any(|p| p == path))
             })
             .map(|s| s.as_str())
+    }
+}
+
+/// Mirrors the event name in apps/desktop/src/desktopServices.ts listenOpenFile.
+pub(crate) const OPEN_FILE_EVENT: &str = "open-file";
+
+/// Open-file handoff queue, keyed by window label. `HashMap::new` is not a
+/// const fn (RandomState seeds at runtime), hence the LazyLock.
+const MAX_PENDING_OPEN_FILES: usize = 16;
+static PENDING_OPEN_FILES: LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Queues `path` for `label`'s webview. Launch-time and second-instance
+/// opens can fire before the webview registered its listener, so paths wait
+/// here until drained. Bounded per window and de-duplicated per window, so
+/// a burst of repeats cannot evict distinct files.
+pub(crate) fn queue_open_file(label: &str, path: &str) {
+    let mut pending = PENDING_OPEN_FILES.lock().unwrap_or_else(|e| e.into_inner());
+    let queue = pending.entry(label.to_string()).or_default();
+    if !queue.iter().any(|p| p == path) && queue.len() < MAX_PENDING_OPEN_FILES {
+        queue.push(path.to_string());
+    }
+}
+
+/// Takes (drains) `label`'s queued open files in FIFO order. A second drain
+/// sees nothing; other windows' queues are untouched.
+pub(crate) fn take_pending(label: &str) -> Vec<String> {
+    PENDING_OPEN_FILES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(label)
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use super::*;
+
+    #[test]
+    fn pending_queue_is_per_window_bounded_and_deduped() {
+        queue_open_file("main", "/tmp/a.md");
+        queue_open_file("main", "/tmp/a.md"); // dedupe
+        queue_open_file("editor-2", "/tmp/b.md");
+        for i in 0..(MAX_PENDING_OPEN_FILES + 5) {
+            queue_open_file("main", &format!("/tmp/m{i}.md"));
+        }
+        assert_eq!(take_pending("main").len(), MAX_PENDING_OPEN_FILES);
+        assert!(take_pending("main").is_empty(), "drain consumes");
+        assert_eq!(
+            take_pending("editor-2"),
+            vec!["/tmp/b.md".to_string()],
+            "other window's queue untouched"
+        );
     }
 }
 
