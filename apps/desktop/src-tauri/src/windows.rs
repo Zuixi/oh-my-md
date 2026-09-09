@@ -6,6 +6,19 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use tauri::Manager;
+
+/// Persisted window geometry captured at session-save time for restore.
+/// Fields are single words today, but the camelCase attribute plus the
+/// serialization test pin the wire shape for any future multi-word field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
 
 /// Per-window mirror of what the frontend last flushed. Routing decisions
 /// tolerate staleness: the frontend owns tab truth, so a stale mirror at
@@ -123,6 +136,43 @@ pub(crate) fn take_pending(label: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Mirrors a saved session payload into the registry so open-file routing
+/// sees each window's latest open paths/folder without an extra IPC round.
+/// Called by the `save_session_state` command after the shard lands.
+pub fn update_meta_from_payload(app: &tauri::AppHandle, label: &str, payload_json: &str) {
+    let meta = meta_from_payload(payload_json);
+    let registry = app.state::<Mutex<WindowRegistry>>();
+    registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .set_meta(label, meta);
+}
+
+/// Pure payload → mirror extraction. The payload is the frontend's
+/// `SavedSessionState` JSON (`openPaths`/`folder`/`activePath`); anything
+/// malformed or wrong-typed degrades to an empty mirror rather than guessing.
+fn meta_from_payload(payload_json: &str) -> WindowMeta {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload_json) else {
+        return WindowMeta::default();
+    };
+    WindowMeta {
+        open_paths: value
+            .get("openPaths")
+            .and_then(|paths| paths.as_array())
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| path.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        folder: value
+            .get("folder")
+            .and_then(|folder| folder.as_str())
+            .map(str::to_string),
+    }
+}
+
 #[cfg(test)]
 mod pending_tests {
     use super::*;
@@ -199,5 +249,26 @@ mod tests {
         r.set_meta("editor-2", meta(&[], Some("/tmp/docs")));
         assert_eq!(r.window_with_path("/tmp/a.md"), Some("main"));
         assert_eq!(r.window_with_path("/tmp/other.md"), None);
+    }
+
+    #[test]
+    fn meta_from_payload_parses_paths_and_folder_tolerantly() {
+        let parsed = meta_from_payload(
+            r#"{"folder":"/d","openPaths":["/a.md","/b.md"],"activePath":"/a.md"}"#,
+        );
+        assert_eq!(
+            parsed.open_paths,
+            vec!["/a.md".to_string(), "/b.md".to_string()]
+        );
+        assert_eq!(parsed.folder.as_deref(), Some("/d"));
+
+        // Malformed JSON and wrong-typed fields degrade to an empty mirror
+        // instead of panicking or guessing.
+        assert_eq!(meta_from_payload("not json"), WindowMeta::default());
+        assert_eq!(
+            meta_from_payload(r#"{"openPaths":"nope","folder":7}"#),
+            WindowMeta::default()
+        );
+        assert_eq!(meta_from_payload("{}"), WindowMeta::default());
     }
 }

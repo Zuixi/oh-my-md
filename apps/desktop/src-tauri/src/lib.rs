@@ -561,15 +561,60 @@ fn save_settings(contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_session_state() -> Result<String, String> {
-    workspace::get_session_state()
+fn get_session_state(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    // The lock closes the atomic-replace gap: without it a read racing a
+    // save's rename could observe a missing file as "no session".
+    let lock = app.state::<workspace::SessionFileLock>();
+    let _guard = lock.lock();
+    Ok(workspace::session_payload_for(window.label())?.unwrap_or_else(|| "{}".to_string()))
 }
 
 #[tauri::command]
-async fn save_session_state(contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::save_session_state(contents))
-        .await
-        .map_err(|error| format!("session state task failed: {error}"))?
+async fn save_session_state(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    contents: String,
+) -> Result<(), String> {
+    // Tauri window getters dispatch to the window's event loop but are
+    // thread-safe; capture the geometry BEFORE spawn_blocking so the shard
+    // records the moment this webview flushed.
+    let label = window.label().to_string();
+    let bounds = current_window_bounds(&window);
+    let maximized = window.is_maximized().unwrap_or(false);
+    let save_app = app.clone();
+    let save_label = label.clone();
+    let save_contents = contents.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = save_app.state::<workspace::SessionFileLock>();
+        let _guard = lock.lock();
+        workspace::save_session_shard(&save_label, &save_contents, bounds, maximized)
+    })
+    .await
+    .map_err(|error| format!("session state task failed: {error}"))??;
+    // The registry mirror follows the persisted payload so open-file routing
+    // sees each window's latest open paths/folder without an extra round.
+    windows::update_meta_from_payload(&app, &label, &contents);
+    Ok(())
+}
+
+/// Bounds for the session shard. Minimized or unqueryable windows keep
+/// `None` so restore falls back to default placement instead of persisting
+/// placeholder geometry.
+fn current_window_bounds(window: &tauri::WebviewWindow) -> Option<windows::WindowBounds> {
+    if window.is_minimized().unwrap_or(false) {
+        return None;
+    }
+    let position = window.outer_position().ok()?;
+    let size = window.inner_size().ok()?;
+    Some(windows::WindowBounds {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
 }
 
 #[tauri::command]
@@ -859,6 +904,7 @@ pub fn run() {
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
+        .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
         .setup(|app| {
             for arg in std::env::args().skip(1) {
