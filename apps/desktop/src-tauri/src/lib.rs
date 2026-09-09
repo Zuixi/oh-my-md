@@ -149,7 +149,7 @@ fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) -> Resu
 // before its first paint, because the webview only learns the theme after
 // React loads settings over IPC (tauri-apps/tauri#6027). Anything unreadable,
 // missing, or "system" maps to None so the window keeps following the OS.
-fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
+pub(crate) fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
     let value: serde_json::Value = serde_json::from_str(raw_settings).ok()?;
     window_theme_from_arg(value.get("theme")?.as_str()?).ok()
 }

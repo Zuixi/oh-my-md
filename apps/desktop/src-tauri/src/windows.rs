@@ -183,6 +183,62 @@ fn meta_from_payload(payload_json: &str) -> WindowMeta {
     }
 }
 
+/// Options for creating an editor window. Defaults describe the plain
+/// `new-window` case: fresh `editor-N` label, 800x600, no queued files.
+#[derive(Debug, Default)]
+pub struct CreateWindowOptions {
+    /// Restore path only: reuse a label from the session snapshot.
+    pub label: Option<String>,
+    pub initial_paths: Vec<String>,
+    pub bounds: Option<WindowBounds>,
+    pub maximized: bool,
+}
+
+/// Creates an editor window, registers it, and queues any initial opens.
+/// Called by the `new-window` menu item now; window restore (later tasks)
+/// supplies a session label/bounds/paths instead of the defaults.
+pub fn create_editor_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    opts: &CreateWindowOptions,
+) -> tauri::Result<String> {
+    let label = opts.label.clone().unwrap_or_else(|| {
+        let registry = app.state::<Mutex<WindowRegistry>>();
+        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        guard.next_label()
+    });
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title("oh-my-md");
+    match opts.bounds {
+        Some(b) => {
+            builder = builder
+                .position(b.x as f64, b.y as f64)
+                .inner_size(b.width as f64, b.height as f64);
+        }
+        None => builder = builder.inner_size(800.0, 600.0),
+    }
+    builder = builder.maximized(opts.maximized);
+    let window = builder.build()?;
+    // Match the no-flash startup theme (same source of truth as setup):
+    // "system"/missing → None keeps following the OS appearance.
+    if let Err(e) = window.set_theme(crate::startup_window_theme(
+        &crate::workspace::get_settings().unwrap_or_default(),
+    )) {
+        log::warn!("new window theme failed: {e}");
+    }
+    {
+        let registry = app.state::<Mutex<WindowRegistry>>();
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .register(&label);
+    }
+    for path in &opts.initial_paths {
+        queue_open_file(&label, path);
+    }
+    Ok(label)
+}
+
 #[cfg(test)]
 mod pending_tests {
     use super::*;
