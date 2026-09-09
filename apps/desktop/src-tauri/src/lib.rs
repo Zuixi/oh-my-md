@@ -854,14 +854,12 @@ fn is_markdown_path(path: &Path) -> bool {
         })
 }
 
-fn record_open_file(app: &tauri::AppHandle, path: String) {
-    // Still single-target for now: the only window is main. Task 9 replaces
-    // this call site with windows::route_open_file.
-    windows::queue_open_file("main", &path);
-    let _ = app.emit(windows::OPEN_FILE_EVENT, path);
-}
-
-fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Option<&str>) {
+/// Resolves one raw CLI arg to a canonical markdown path: strips `file://`
+/// and stray quotes, joins relative args against `cwd` (or the process
+/// working directory), and canonicalizes. Non-markdown or unresolvable args
+/// return None. Shared by the launch argv loop and the second-instance
+/// callback; routing the result is the caller's choice.
+fn resolve_open_arg(raw_arg: &str, cwd: Option<&str>) -> Option<String> {
     let clean = raw_arg
         .strip_prefix("file://")
         .unwrap_or(raw_arg)
@@ -878,13 +876,15 @@ fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Optio
     } else {
         path.to_path_buf()
     };
-    if is_markdown_path(&resolved) {
-        let canonical = std::fs::canonicalize(&resolved)
+    if !is_markdown_path(&resolved) {
+        return None;
+    }
+    Some(
+        std::fs::canonicalize(&resolved)
             .unwrap_or(resolved)
             .to_string_lossy()
-            .into_owned();
-        record_open_file(app, canonical);
-    }
+            .into_owned(),
+    )
 }
 
 /// Drained by the webview after mount: launch-time Opened events can fire
@@ -899,17 +899,21 @@ fn take_pending_open_files(window: tauri::WebviewWindow) -> Vec<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            // A second launch focuses the running window; markdown file
-            // arguments open in this instance (macOS delivers the same via
-            // RunEvent::Opened instead of a second process).
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // Markdown file arguments open in this instance (macOS delivers
+            // the same via RunEvent::Opened instead of a second process);
+            // each routes to its best window. A bare second launch just
+            // focuses the most recent window (or creates one).
+            let mut routed_any = false;
             for arg in argv.iter().skip(1) {
                 if !arg.starts_with('-') {
-                    resolve_and_record_open_arg(app, arg, Some(&cwd));
+                    if let Some(canonical) = resolve_open_arg(arg, Some(&cwd)) {
+                        windows::route_open_file(app, &canonical);
+                        routed_any = true;
+                    }
                 }
+            }
+            if !routed_any {
+                windows::ensure_window(app);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -932,9 +936,17 @@ pub fn run() {
         .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
         .setup(|app| {
+            // Launch argv: the registry is empty and the config-declared main
+            // window does not exist yet, so routing would spawn a duplicate
+            // editor window. Queue straight for "main" and emit targeted at
+            // it — the webview may not be listening yet, and the queue is
+            // the durable path it drains after mount.
             for arg in std::env::args().skip(1) {
                 if !arg.starts_with('-') {
-                    resolve_and_record_open_arg(app.handle(), &arg, None);
+                    if let Some(canonical) = resolve_open_arg(&arg, None) {
+                        windows::queue_open_file("main", &canonical);
+                        let _ = app.emit_to("main", windows::OPEN_FILE_EVENT, &canonical);
+                    }
                 }
             }
             {
@@ -1086,8 +1098,14 @@ pub fn run() {
                     if !is_markdown_path(&path) {
                         continue;
                     }
-                    record_open_file(app, path.to_string_lossy().into_owned());
+                    windows::route_open_file(app, &path.to_string_lossy().into_owned());
                 }
+            }
+            // macOS dock-icon click (no file): bring back the most recent
+            // window, or create one when the user closed them all.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                windows::ensure_window(app);
             }
             // Cmd+Q / native quit arrives as ExitRequested without per-window
             // CloseRequested. code: None marks user-initiated exits; our own

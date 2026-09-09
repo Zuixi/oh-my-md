@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Persisted window geometry captured at session-save time for restore.
 /// Fields are single words today, but the camelCase attribute plus the
@@ -93,6 +93,13 @@ impl WindowRegistry {
         &self.labels
     }
 
+    /// MRU order, most recently focused first. Read access for open-file
+    /// routing: `pick_window` iterates this order so score ties resolve to
+    /// the most recently used window.
+    pub fn mru_order(&self) -> &[String] {
+        &self.mru
+    }
+
     pub fn window_with_path(&self, path: &str) -> Option<&str> {
         self.labels
             .iter()
@@ -107,6 +114,55 @@ impl WindowRegistry {
 
 /// Mirrors the event name in apps/desktop/src/desktopServices.ts listenOpenFile.
 pub(crate) const OPEN_FILE_EVENT: &str = "open-file";
+
+fn normalized(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+/// Parent directory of a path after `\` → `/` normalization. Owned because
+/// the normalization allocates; callers compare via `as_deref`.
+fn parent_dir(path: &str) -> Option<String> {
+    let n = normalized(path);
+    n.rfind('/').map(|i| n[..i].to_string())
+}
+
+/// MarkText-style scoring, simplified: exact mirror match, else folder
+/// containment (+5) and open-file sibling dirs (+1); ties fall to MRU
+/// because iteration follows MRU order and only strictly-greater scores
+/// displace the incumbent.
+pub fn pick_window<'a>(registry: &'a WindowRegistry, path: &str) -> Option<&'a str> {
+    if let Some(existing) = registry.window_with_path(path) {
+        return Some(existing);
+    }
+    let target = normalized(path);
+    let target_dir = parent_dir(path);
+    let mut best: Option<(&str, i32)> = None;
+    for label in registry.mru_order() {
+        let Some(meta) = registry.meta(label) else {
+            continue;
+        };
+        let mut score = 0;
+        if let Some(folder) = meta.folder.as_deref() {
+            let folder = normalized(folder);
+            let folder = folder.trim_end_matches('/');
+            // Separator boundary: "/docs" must not claim "/docs-extra/x.md".
+            if target.starts_with(&format!("{folder}/")) {
+                score += 5;
+            }
+        }
+        if let Some(dir) = target_dir.as_deref() {
+            score += meta
+                .open_paths
+                .iter()
+                .filter(|p| parent_dir(p).as_deref() == Some(dir))
+                .count() as i32;
+        }
+        if best.map_or(true, |(_, s)| score > s) {
+            best = Some((label.as_str(), score));
+        }
+    }
+    best.map(|(label, _)| label)
+}
 
 /// Open-file handoff queue, keyed by window label. `HashMap::new` is not a
 /// const fn (RandomState seeds at runtime), hence the LazyLock.
@@ -239,6 +295,59 @@ pub fn create_editor_window<R: tauri::Runtime>(
     Ok(label)
 }
 
+/// Routes one open-file request to the best window: the pick_window score,
+/// falling back to the focused (MRU) window when nothing scores. The chosen
+/// window is shown and focused, the path is queued (the webview may not have
+/// its listener registered yet), and a targeted event pokes already-running
+/// webviews. With no live window at all (macOS after closing everything), a
+/// new window is created carrying the file as its initial tab.
+pub fn route_open_file(app: &tauri::AppHandle, path: &str) {
+    let target = {
+        let registry = app.state::<Mutex<WindowRegistry>>();
+        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        pick_window(&guard, path)
+            .map(str::to_string)
+            .or_else(|| guard.focused().map(str::to_string))
+    };
+    match target.and_then(|label| app.get_webview_window(&label)) {
+        Some(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+            queue_open_file(window.label(), path);
+            let _ = app.emit_to(window.label(), OPEN_FILE_EVENT, path);
+        }
+        None => {
+            // No window at all (macOS after closing all): open a new one
+            // carrying the file as its initial tab.
+            let _ = create_editor_window(
+                app,
+                &CreateWindowOptions {
+                    initial_paths: vec![path.to_string()],
+                    ..Default::default()
+                },
+            );
+        }
+    }
+}
+
+/// Focuses the MRU window (also unminimizing it) or creates an empty one.
+/// Used by no-arg second launches and the macOS dock-icon Reopen event,
+/// where there is no file to route but the user expects a visible window.
+pub fn ensure_window(app: &tauri::AppHandle) {
+    let focused = {
+        let registry = app.state::<Mutex<WindowRegistry>>();
+        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        guard.focused().map(str::to_string)
+    };
+    if let Some(window) = focused.as_deref().and_then(|l| app.get_webview_window(l)) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    } else {
+        let _ = create_editor_window(app, &CreateWindowOptions::default());
+    }
+}
+
 #[cfg(test)]
 mod pending_tests {
     use super::*;
@@ -322,6 +431,42 @@ mod tests {
         assert_eq!(r.focused(), Some("main"));
         r.note_focused("unknown"); // no-op for unregistered labels
         assert_eq!(r.focused(), Some("main"));
+    }
+
+    #[test]
+    fn pick_window_prefers_exact_match_then_folder_then_mru() {
+        let mut r = WindowRegistry::default();
+        r.register("main");
+        r.set_meta("main", meta(&["/docs/a.md"], Some("/docs")));
+        r.register("editor-2");
+        r.set_meta("editor-2", meta(&["/notes/b.md"], Some("/notes")));
+        // MRU tie-break favors editor-2
+        r.note_focused("editor-2");
+        // exact mirror match wins even unfocused
+        assert_eq!(pick_window(&r, "/docs/a.md"), Some("main"));
+        // folder containment +5 beats sibling-dir +1
+        assert_eq!(pick_window(&r, "/docs/new.md"), Some("main"));
+        // sibling dir of editor-2's open file (+1) beats nothing; MRU also editor-2
+        assert_eq!(pick_window(&r, "/notes/c.md"), Some("editor-2"));
+        // no signal at all → MRU window
+        assert_eq!(pick_window(&r, "/other/x.md"), Some("editor-2"));
+        // and an empty registry has no opinion
+        assert_eq!(pick_window(&WindowRegistry::default(), "/other/x.md"), None);
+    }
+
+    #[test]
+    fn folder_match_requires_separator_boundary() {
+        let mut r = WindowRegistry::default();
+        r.register("main");
+        r.set_meta("main", meta(&[], Some("/docs")));
+        // "/docs-extra/x.md" must NOT count as inside "/docs"; still the MRU
+        // fallback here because main is the only window
+        assert_eq!(pick_window(&r, "/docs-extra/x.md"), Some("main"));
+        // prove the +5 did not come from a prefix bug: with a competitor the
+        // boundary decides
+        r.register("editor-2");
+        r.set_meta("editor-2", meta(&["/docs-extra/y.md"], None));
+        assert_eq!(pick_window(&r, "/docs-extra/x.md"), Some("editor-2"));
     }
 
     #[test]
