@@ -1276,7 +1276,11 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   pointer-events: none;
 }
 .sidebar-secondary {
-  width: 200px; min-width: 0; overflow: auto;
+  /* Matches the file sidebar's default (SIDEBAR_DEFAULT_WIDTH = 230) so both
+     panels read as one consistent chrome column. The outline panel has no
+     drag resizer — fixed width, no --omd-sidebar-width binding (that var
+     tracks the primary sidebar's live drag width). */
+  width: 230px; min-width: 0; overflow: auto;
   border-right: 1px solid var(--omd-border);
   background: var(--omd-chrome); font-size: 13px;
   flex-shrink: 0;
@@ -1388,6 +1392,18 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 }
 .outline-item {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Hover/focus feedback so the hovered heading stands out from the rest of
+   the list. --omd-bar is a full step darker than the panel background
+   (--omd-chrome) — --omd-border was tried first and was visually
+   indistinguishable from the panel. */
+.outline-item:hover {
+  background: var(--omd-bar);
+  color: var(--omd-fg);
+}
+.outline-item:focus-visible {
+  outline: 2px solid var(--omd-link);
+  outline-offset: -2px;
 }
 .filetree-chevron {
   width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none;

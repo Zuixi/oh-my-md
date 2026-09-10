@@ -99,6 +99,14 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
     expect(STYLES_CSS).toContain(`var(--omd-sidebar-width, ${SIDEBAR_DEFAULT_WIDTH}px)`)
   })
 
+  it("outline sidebar (sidebar-secondary) default width matches the file sidebar default", () => {
+    // The outline panel has no drag resizer, so its fixed width must track the
+    // file sidebar's *default* (not its live drag var).
+    expect(STYLES_CSS).toMatch(
+      new RegExp(`\\.sidebar-secondary\\s*\\{[^}]*width:\\s*${SIDEBAR_DEFAULT_WIDTH}px`, "m"),
+    )
+  })
+
   it("large-doc thresholds match engine constants", () => {
     expect(LARGE_DOC_LINES).toBe(ENGINE_LARGE_DOC_LINES)
     expect(SAFE_MODE_LINES).toBe(ENGINE_SAFE_MODE_LINES)
