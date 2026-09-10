@@ -6,6 +6,7 @@ import { stex } from "@codemirror/legacy-modes/mode/stex"
 import { history, historyKeymap } from "@codemirror/commands"
 import type { SyntaxNode } from "@lezer/common"
 import { BlockWidget } from "../blockWidget"
+import { MATH_BLOCK_ESTIMATE_PX } from "../widgetHeights"
 import { blockWidgetRange } from "../blockSelectionOverlay"
 
 export function mathTexOf(src: string): string {
@@ -88,6 +89,9 @@ export class MathBlockWidget extends BlockWidget {
   protected get cssClass() { return "omd-math" }
 
   private resizeObs?: ResizeObserver
+
+  // 滚动性能：display 数学通常 ~2 行，缺省一行行高估算偏小（见 widgetHeights.ts）。
+  override get estimatedHeight() { return MATH_BLOCK_ESTIMATE_PX }
 
   eq(other: MathBlockWidget) {
     // CM reuse contract: pass-0 uses eq and reuses DOM WITHOUT calling updateDOM.

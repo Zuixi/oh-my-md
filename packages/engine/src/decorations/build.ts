@@ -6,7 +6,7 @@ import {
   type Transaction,
 } from "@codemirror/state"
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
-import { Decoration, type DecorationSet, EditorView } from "@codemirror/view"
+import { Decoration, type DecorationSet, EditorView, type WidgetType } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import { nearCursor, type DecoSpec } from "./types"
@@ -408,12 +408,36 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     !removalRanges.some(range => intersects(from, to, range))
   const retained = mappedSpecs.filter(spec => keep(spec.from, spec.to))
   const seen = new Set(retained.map(spec => `${spec.tag}:${spec.from}:${spec.to}`))
-  const additions = rebuilt.filter(spec => {
-    const key = `${spec.tag}:${spec.from}:${spec.to}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  // 身份复用（滚动稳定性）：重建区间内被移除的同键 spec，若 widget 等价（eq）则
+  // 复用原 spec 对象。CM 的 heightRelevantDecoChanges 按对象身份判变（比较器不
+  // 调 eq），Decoration 身份漂移 = height-relevant 变更 → applyChanges 用估算值
+  // 重建该块高度图，丢弃已测高度 → 下一帧实测改回。measureBlockWidget 每次绘制
+  // 都触发该重建，「实测→估算→实测」振荡表现为滚轮下滑时位置回撤、拖动滚动条
+  // 时 thumb 与内容映射漂移。复用身份后该区间对高度图零变更。
+  const removedByKey = new Map<string, DecoSpec>()
+  for (const spec of mappedSpecs) {
+    if (!keep(spec.from, spec.to)) {
+      removedByKey.set(`${spec.tag}:${spec.from}:${spec.to}`, spec)
+    }
+  }
+  const widgetOf = (spec: DecoSpec): WidgetType | undefined =>
+    (spec.deco.spec as { widget?: WidgetType }).widget
+  const additions = rebuilt
+    .filter(spec => {
+      const key = `${spec.tag}:${spec.from}:${spec.to}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map(spec => {
+      const dropped = removedByKey.get(`${spec.tag}:${spec.from}:${spec.to}`)
+      if (!dropped) return spec
+      const oldWidget = widgetOf(dropped)
+      const newWidget = widgetOf(spec)
+      // 仅 widget spec 等价时复用：非 widget 装饰（line/mark/replace）身份漂移
+      // 不影响高度图（compareRange 是 no-op），不值得冒语义比较风险。
+      return oldWidget && newWidget && oldWidget.eq(newWidget) ? dropped : spec
+    })
 
   return {
     deco: mappedDeco.update({

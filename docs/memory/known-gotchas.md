@@ -18,6 +18,8 @@
 - **Selection is visual, the caret is editing** — a non-empty selection reveals nothing; mid-drag reveal relayouts shift `posAtCoords`.
 - **Tests may need to force the syntax tree** — use `makeState`; for large docs mount a temp view + `forceParsing`; compare incremental against `buildLiveDecorations` on the same state.
 - **Block widget geometry can desync CM's heightmap** — async widgets need a sync placeholder plus a field refresh; no vertical margins on block DOM; identity before `eq()`; opaque replaces quantize `posAtCoords`.
+- **Block widgets must declare `estimatedHeight`** — CM estimates unknown-height blocks at one line, over-drawing the viewport on scroll (table-doc jank); estimates live in `widgetHeights.ts` with a test + bench guard.
+- **Decoration rebuilds must preserve equivalent widget identity** — CM's heightmap treats a Decoration identity change as height-relevant and resets measured heights to the estimate (scroll rollback/thumb drift); `build.ts` reuses `eq`-equal dropped specs, guarded by `specIdentity.test.ts`.
 - **Structure and appearance live in different packages** — a green engine test does not prove the desktop looks right.
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
