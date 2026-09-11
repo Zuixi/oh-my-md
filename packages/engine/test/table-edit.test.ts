@@ -7,6 +7,7 @@ import {
   insertTableColumn,
   insertTableRow,
   replaceTableCell,
+  setTableColumnAlignment,
   type TableSourceChange,
 } from "../src/tables/edit"
 import { tableDataFromNode, type TableCellData, type TableData } from "../src/tables/model"
@@ -105,6 +106,60 @@ describe("table source transforms: cell edits", () => {
     expect(applyChanges(text, [change!])).toBe(`| A | B |
 | --- | --- |
 | x |`)
+  })
+})
+
+describe("setTableColumnAlignment", () => {
+  it("sets left, center, right alignment on a default column", () => {
+    const source = `| A | B |
+| --- | --- |
+| 1 | 2 |`
+    const { data, text } = tableRecord(source)
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 0, "left")!]))
+      .toBe(`| A | B |
+| :--- | --- |
+| 1 | 2 |`)
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 0, "center")!]))
+      .toBe(`| A | B |
+| :---: | --- |
+| 1 | 2 |`)
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 0, "right")!]))
+      .toBe(`| A | B |
+| ---: | --- |
+| 1 | 2 |`)
+  })
+
+  it("returns the existing marker when alignment is already default", () => {
+    const source = `| A | B |
+| --- | --- |
+| 1 | 2 |`
+    const { data, text } = tableRecord(source)
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 0, "")!]))
+      .toBe(source)
+  })
+
+  it("preserves hyphen count when changing an already-aligned column", () => {
+    const source = `| A | B |
+| ---: | :------: |
+| 1 | 2 |`
+    const { data, text } = tableRecord(source)
+    // 1 hyphen → 1 hyphen should not exceed visual stability; function must
+    // always pad to at least 3 hyphens.
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 0, "left")!]))
+      .toBe(`| A | B |
+| :--- | :------: |
+| 1 | 2 |`)
+    // 6-hyphen centered column should stay 6 hyphens wide on switch to right.
+    expect(applyChanges(text, [setTableColumnAlignment(text, data, 1, "right")!]))
+      .toBe(`| A | B |
+| ---: | ------: |
+| 1 | 2 |`)
+  })
+
+  it("rejects an out-of-range column index", () => {
+    const { data, text } = tableRecord(src)
+    expect(setTableColumnAlignment(text, data, -1, "left")).toBeNull()
+    expect(setTableColumnAlignment(text, data, 99, "left")).toBeNull()
   })
 })
 

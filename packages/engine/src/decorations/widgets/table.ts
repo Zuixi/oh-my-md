@@ -6,9 +6,10 @@ import {
   insertTableColumn,
   insertTableRow,
   replaceTableCell,
+  setTableColumnAlignment,
   type TableSourceChange,
 } from "../../tables/edit"
-import type { TableData } from "../../tables/model"
+import type { TableAlignment, TableData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon, type IconName } from "../icons"
@@ -21,7 +22,23 @@ interface PendingTableEdit {
 
 const pendingTableEdits = new WeakMap<EditorView, PendingTableEdit>()
 
-type TableToolAction = "insert-row" | "insert-col" | "delete-row" | "delete-col"
+/** 把对齐 action 装回为单条 marker 替换 change；列索引越界时返回 null。 */
+function alignColumnChange(
+  self: TableWidget,
+  alignment: TableAlignment,
+  col: number,
+): TableSourceChange | null {
+  return setTableColumnAlignment(self.src, self.table, col, alignment)
+}
+
+type TableToolAction =
+  | "insert-row"
+  | "insert-col"
+  | "delete-row"
+  | "delete-col"
+  | "align-left"
+  | "align-center"
+  | "align-right"
 
 const pendingTableTools = new WeakMap<
   EditorView,
@@ -195,7 +212,12 @@ export class TableWidget extends BlockWidget {
     const canDeleteCol = this.table.header.cells.length > 1
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
+    // 当前活动列的对齐方式 —— 用于工具栏按钮高亮「当前状态」
+    const currentAlign: TableAlignment = this.table.aligns[this.col] ?? ""
     for (const [act, iconName, title] of [
+      ["align-left", "align-left", "Align column left"],
+      ["align-center", "align-center", "Align column center"],
+      ["align-right", "align-right", "Align column right"],
       ["insert-row", "row-insert-bottom", "Insert row below"],
       ["insert-col", "column-insert-right", "Insert column right"],
       ["delete-row", "row-remove", "Delete row"],
@@ -211,6 +233,14 @@ export class TableWidget extends BlockWidget {
       btn.disabled = readonly
         || (act === "delete-row" && !canDeleteRow)
         || (act === "delete-col" && !canDeleteCol)
+      // 对齐按钮按下时高亮该对齐方式（active state），与表格实际对齐语义同步
+      if (
+        (act === "align-left" && currentAlign === "left")
+        || (act === "align-center" && currentAlign === "center")
+        || (act === "align-right" && currentAlign === "right")
+      ) {
+        btn.classList.add("omd-table-tool-active")
+      }
       btn.addEventListener("mousedown", e => {
         e.preventDefault()
         e.stopPropagation()
@@ -348,8 +378,15 @@ export class TableWidget extends BlockWidget {
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault()
         const tab = e.key === "Tab"
-        const shiftTab = tab && e.shiftKey
-        this.commitEdit(shiftTab ? -1 : 1, shiftTab ? "shift-tab" : tab ? "tab" : "enter")
+        const shift = e.shiftKey
+        if (tab) {
+          // Tab 仍走横向遍历：右/左换格，末列 Tab 自动追加新行
+          this.commitEdit(shift ? -1 : 1, shift ? "shift-tab" : "tab")
+        } else {
+          // Enter 改为纵向录入：移动到「正下方同行 / Shift+Enter 正上方同行」，
+          // 末行 Enter 自动追加新行并停留在同列，对齐 Excel / Numbers 的高频录入手感。
+          this.commitEditVertical(shift ? -1 : 1)
+        }
       } else if (e.key === "Escape") {
         e.preventDefault()
         this.cancelEdit()
@@ -396,6 +433,47 @@ export class TableWidget extends BlockWidget {
     this.replace(changes, dest)
   }
 
+  // Enter 键的纵向录入：同列换行（dir=+1）/ Shift+Enter 上行（dir=-1）。
+  // 越界表尾自动追加新行并停留同列，模拟 Excel / Numbers 的高频录入手感。
+  // 失败时（首格 Shift+Enter 越界）保持输入框挂载，等价于 commitEdit 的「陈旧元数据」兜底。
+  private commitEditVertical(dir: 1 | -1) {
+    const edit = this.editing
+    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
+    if (!edit || !input) return
+    const cell = this.cellData(edit.row, edit.col)
+    if (!cell) return
+    const change = replaceTableCell(this.src, cell, input.value)
+    if (!change) return
+    this.editing = null
+    this.clearActive()
+    const targetRow = edit.row + dir
+    const totalRows = this.table.rows.length + 1
+    let dest: { row: number; col: number } | null = null
+    let changes: TableSourceChange[] = [change]
+
+    if (targetRow === 0) {
+      // 进入表头（一般不发生；保留对称语义）。
+      if (this.table.header.cells[edit.col]) {
+        dest = { row: 0, col: edit.col }
+      }
+    } else if (targetRow > 0 && targetRow - 1 < this.table.rows.length) {
+      // 数据行实际存在：检查该行 ragged 槽可用性。
+      const rowCells = this.table.rows[targetRow - 1]?.cells
+      if (rowCells && rowCells[edit.col]) {
+        dest = { row: targetRow, col: edit.col }
+      }
+    } else if (targetRow >= totalRows && dir === 1) {
+      // 末行 Enter：同一事务追加新行并停留同列（oldRowCount + 1 行、edit.col）
+      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
+      if (inserted && changesNonOverlapping([change, ...inserted])) {
+        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
+        dest = { row: this.table.rows.length + 1, col: edit.col }
+      }
+    }
+    // dir === -1 越界到 -1（首格 Shift+Enter）或合成格不可用：等同于 no-op 提交
+    this.replace(changes, dest)
+  }
+
   private neighbor(row: number, col: number, dir: 1 | -1) {
     const cols = this.table.header.cells.length
     const rows = this.table.rows.length + 1
@@ -405,10 +483,23 @@ export class TableWidget extends BlockWidget {
   }
 
   private tableToolChanges(act: TableToolAction, row: number, col: number) {
-    return act === "insert-row" ? insertTableRow(this.src, this.table, row)
-      : act === "insert-col" ? insertTableColumn(this.src, this.table, col)
-      : act === "delete-row" ? deleteTableRow(this.src, this.table, row - 1)
-      : deleteTableColumn(this.src, this.table, col)
+    if (act === "insert-row") return insertTableRow(this.src, this.table, row)
+    if (act === "insert-col") return insertTableColumn(this.src, this.table, col)
+    if (act === "delete-row") return deleteTableRow(this.src, this.table, row - 1)
+    if (act === "delete-col") return deleteTableColumn(this.src, this.table, col)
+    if (act === "align-left") {
+      const change = alignColumnChange(this, "left", col)
+      return change ? [change] : null
+    }
+    if (act === "align-center") {
+      const change = alignColumnChange(this, "center", col)
+      return change ? [change] : null
+    }
+    if (act === "align-right") {
+      const change = alignColumnChange(this, "right", col)
+      return change ? [change] : null
+    }
+    return null
   }
 
   private tool(act: TableToolAction) {

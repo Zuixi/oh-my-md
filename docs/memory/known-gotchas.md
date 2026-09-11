@@ -35,6 +35,7 @@
 - **Decorations are seeded and windowed** — never assume a decoration exists outside the viewport window; `drainPendingLiveBuild` is test-only.
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.
 - **`Text.append` continues the last line** — batched assembly needs an empty junction line (`docText.ts`).
+- **Pasted blocks normalize their own boundaries** — blank line before/after + opaque-end newline in `paste/blockBoundaries.ts`; never "fix" paste rendering with a decoration-layer boundary exception.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
 

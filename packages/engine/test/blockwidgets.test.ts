@@ -192,12 +192,14 @@ describe("block widget pipeline", () => {
     const dom = new TableWidget("| a |\n|---|\n| 1 |", 0, table).toDOM(view)
     await new Promise(resolve => setTimeout(resolve, 0))   // renderInto 走微任务
     const buttons = [...dom.querySelectorAll(".omd-table-toolbar button")] as HTMLElement[]
-    expect(buttons).toHaveLength(4)
+    // 7 个工具按钮：3 个对齐 + 4 个结构（增删行/列）
+    expect(buttons).toHaveLength(7)
     for (const btn of buttons) {
       expect(btn.querySelector("svg.omd-icon")).toBeTruthy()
       expect(btn.textContent).toBe("")
     }
     expect(buttons.map(btn => btn.getAttribute("aria-label"))).toEqual([
+      "Align column left", "Align column center", "Align column right",
       "Insert row below", "Insert column right", "Delete row", "Delete column",
     ])
     dom.remove()

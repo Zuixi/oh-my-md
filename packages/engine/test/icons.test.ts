@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest"
 import { ICON_NAMES, icon } from "../src/decorations/icons"
 
 describe("inline svg icons", () => {
-  it("vendors the nine open-source icons by name", () => {
+  it("vendors the twelve open-source icons by name", () => {
     expect([...ICON_NAMES].sort()).toEqual([
+      "align-center", "align-left", "align-right",
       "check", "code", "column-insert-right", "column-remove", "copy",
       "pencil", "row-insert-bottom", "row-remove", "triangle-alert",
     ])

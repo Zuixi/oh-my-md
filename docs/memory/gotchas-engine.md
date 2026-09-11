@@ -25,7 +25,7 @@ Rebuild ranges use `endLine.to + 1` as an **exclusive** end (the next line's `fr
 
 Boundary positions are intentionally different:
 
-- Blank lines (no syntax node — scanned outside the tree iteration in `collectDecorationSpecs`) get `line:omd-empty` and render ~half height (Typora density), except the caret's own blank line (full height, the caret needs a line box; typing into a gap expands it). Non-empty selections never expand one — mid-drag height flips move `posAtCoords` endpoints (atomicRanges Rule 3 family). Never `display:none` a blank line: CM's heightmap and click mapping need a real box. Safe-mode pruning returns blank-line specs like any other decoration, which shifts line-aligned pending boundaries by the span of the blank line.
+- Blank lines emit zero line decorations and keep full natural height at all times, avoiding any layout jitter or viewport jump when entering or leaving an empty line. Never `display:none` a blank line: CM's heightmap and click mapping need a real box. Safe-mode pruning returns blank-line pending ranges like any other span.
 - Decorative marks fold unconditionally (Route A, see `types.ts`): paired emphasis/strike/highlight/underline/sub/sup/inline-code marks, heading marks, and list marks never flip on caret movement. Link/image/inline-math/footnote reveals use node-level `cursorInside` (same rule in and out of quotes). Editing affordance for folded marks: format toggle commands (`format/commands.ts`) and Backspace at a folded boundary (mid-line atoms delete whole via `skipAtomic`; line-start marks like `### ` delete one char per press = progressive demotion).
 - QuoteMark is the exception among block marks: it folds unless the **caret** is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Non-empty selections never count as `cursorInside` — selection is visual.
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
@@ -276,6 +276,44 @@ decoration exists outside the viewport window (or that `pending` is empty).
 Tests that need a complete build must use the exported `drainPendingLiveBuild`
 helper — the synchronous test-only drain (production must never call it; same
 guard family as `crossLayerNoFullTree.test.ts`).
+
+## Pasted blocks normalize their own boundaries — never "fix" paste rendering in the decoration layer
+
+Rich-paste (turndown HTML→Markdown) used to dispatch with the caret at
+`from + insert.length` — exactly the `Table` node's `to` whenever the pasted
+content ends with a table. `blockSelected` counts both boundaries as inside
+the block (load-bearing: a hand-typed closing fence rests its caret on
+`node.to`, and a half-open check made the widget swallow the block mid-typing,
+M2 root cause C), so a pasted table stayed in source state until the user
+pressed Enter. The two tempting fixes are both wrong:
+
+1. **A decoration-layer exception for "caret exactly at `node.to`"** — a paste
+   and a hand-typed row's last pipe are indistinguishable in
+   `state.selection`; the exception re-creates the M2 swallow for hand typing.
+2. **Appending a newline to every paste** — mutates plain-paragraph pastes
+   that must stay byte-identical (the plain-equivalence heuristic).
+
+The fix is paste-side (`src/paste/blockBoundaries.ts`, wired in
+`src/paste/htmlPaste.ts`, Markdown conversion results only): block-shaped
+inserts (conservative line-start markers: table row, fence, ATX heading, hr,
+list, quote, `$$`) get
+
+- a blank line **before** (mid-line insert → `\n\n`; line start after a
+  non-blank line → `\n` — tables/fences cannot interrupt a paragraph),
+- `\n\n` **after** when same-line text follows the insertion point (without it
+  the trailing text was absorbed into the table's last cell — content
+  corruption, not just cosmetics: `| 1 | 2 |tail` parses as one row), and
+- one trailing `\n` when the insert **ends with an opaque block** (table row /
+  fence close / `$$` / hr on the last line) so the caret rests on a fresh
+  empty line instead of the widget's replace boundary — that is what makes the
+  table render with no Enter.
+
+Position arithmetic in tests is the local trap: in `"prev\ntext"`, position 4
+is the **end of `prev`** (mid-line), not the start of `text`; a `|` in a test
+doc string is literal content. Guards: the real-view paste test in
+`test/htmlPaste.test.ts` (`.omd-table` renders with no Enter), and
+`test/tables.test.ts` "keeps a caret resting exactly on the end boundary in
+source editing" — the decoration rule must never grow a paste exception.
 
 ## Multi-line link constructs leave a dangling empty preview row
 

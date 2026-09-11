@@ -1,6 +1,7 @@
 /// <reference path="../types/turndown-plugin-gfm.d.ts" />
 import { EditorView } from "@codemirror/view"
 import type { Extension } from "@codemirror/state"
+import { normalizeBlockPaste } from "./blockBoundaries"
 
 // Rich-text paste: convert clipboard text/html to Markdown with turndown +
 // the GFM plugin (tables, strikethrough, task lists). Loading is lazy and
@@ -90,15 +91,20 @@ export function htmlPaste(): Extension {
       event.preventDefault()
       const selection = view.state.selection.main
       void htmlPasteToMarkdown(clipboard).then(markdown => {
-        const insert = markdown ?? clipboard.getData("text/plain")
-        if (!insert) return
+        const raw = markdown ?? clipboard.getData("text/plain")
+        if (!raw) return
+        // 块级 Markdown 做边界规整（块前空行/块后空行/不透明块尾换行），粘贴即
+        // 渲染；纯文本等价回退保持逐字节旧行为，不做规整。
+        const insert = markdown
+          ? normalizeBlockPaste(view.state.doc, selection.from, selection.to, markdown)
+          : { text: raw, caret: raw.length }
         view.dispatch({
-          changes: { from: selection.from, to: selection.to, insert },
+          changes: { from: selection.from, to: selection.to, insert: insert.text },
           // An explicit selection is required: without one, CM maps the old
           // cursor through the change with assoc -1 and it stays before the
           // inserted text instead of at its end (the default doPaste puts the
           // caret after the pasted content).
-          selection: { anchor: selection.from + insert.length },
+          selection: { anchor: selection.from + insert.caret },
           userEvent: "input.paste",
           scrollIntoView: true,
         })

@@ -32,8 +32,8 @@ describe("blank lines inside verbatim blocks keep full height", () => {
     expect(tagsBetween(doc, start + 3, start, end)).not.toContain("line:omd-empty")
   })
 
-  it("prose blank lines outside blocks still collapse", () => {
+  it("prose blank lines outside blocks emit zero omd-empty decorations", () => {
     const doc = "intro\n\n\noutro"
-    expect(tagsBetween(doc, 0, 0, doc.length)).toContain("line:omd-empty")
+    expect(tagsBetween(doc, 0, 0, doc.length)).not.toContain("line:omd-empty")
   })
 })

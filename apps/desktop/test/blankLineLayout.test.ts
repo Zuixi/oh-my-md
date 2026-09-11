@@ -4,26 +4,11 @@ import { describe, expect, it } from "vitest"
 
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
 
-function declarationBlocks(selector: string): string[] {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const matches = [...STYLES_CSS.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, "g"))]
-  if (matches.length === 0) throw new Error(`missing styles.css block for ${selector}`)
-  return matches.map(match => match[1])
-}
-
-describe("blank-line density", () => {
-  it("compresses non-caret blank lines via line-height, never display:none", () => {
-    const rules = declarationBlocks(".editor-host .cm-content .cm-line.omd-empty")
-    expect(rules.length).toBeGreaterThan(0)
-    const joined = rules.join("\n")
-    expect(joined).toMatch(/line-height\s*:\s*var\(--omd-empty-line-height/)
-    // CM 的行测量与 posAtCoords 需要真实可点击的盒子；display:none/visibility
-    // 会破坏选区几何与点击映射。
-    expect(joined).not.toMatch(/\bdisplay\s*:\s*none\b/)
-    expect(joined).not.toMatch(/\bvisibility\s*:\s*hidden\b/)
-  })
-
-  it("defines the height token as a unitless line-height multiplier", () => {
-    expect(STYLES_CSS).toMatch(/--omd-empty-line-height\s*:\s*\d+(\.\d+)?\s*;/)
+describe("blank-line density (zero decorations)", () => {
+  it("leaves blank lines uncompressed without omd-empty class or height overrides", () => {
+    // 空行零装饰、原样保留：不使用 line-height 压缩，更绝不用 display:none/visibility:hidden，
+    // 彻底消除光标点击/进出空行导致的行高跳变。
+    expect(STYLES_CSS).not.toMatch(/\.omd-empty\b/)
+    expect(STYLES_CSS).not.toMatch(/--omd-empty-line-height\b/)
   })
 })

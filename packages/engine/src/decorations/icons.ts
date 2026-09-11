@@ -15,8 +15,11 @@ export type IconName =
   | "column-insert-right"
   | "row-remove"
   | "column-remove"
+  | "align-left"
+  | "align-center"
+  | "align-right"
 
-/** lucide-static v1.38.0（ISC）: code, pencil, copy, check, triangle-alert */
+/** lucide-static v1.38.0（ISC）: code, pencil, copy, check, triangle-alert, align-* */
 const LUCIDE: Partial<Record<IconName, string>> = {
   "code": '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
   "pencil":
@@ -29,6 +32,12 @@ const LUCIDE: Partial<Record<IconName, string>> = {
   "triangle-alert":
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>'
     + '<path d="M12 9v4"/><path d="M12 17h.01"/>',
+  "align-left":
+    '<path d="M21 17H3"/><path d="M15 12H3"/><path d="M17 7H3"/>',
+  "align-center":
+    '<path d="M21 17H3"/><path d="M17 12H7"/><path d="M19 7H5"/>',
+  "align-right":
+    '<path d="M21 17H3"/><path d="M9 12h6"/><path d="M21 7H7"/>',
 }
 
 /** Tabler Icons v3.46.0 outline（MIT）: row/column insert/remove —— Lucide 无此组图标 */
