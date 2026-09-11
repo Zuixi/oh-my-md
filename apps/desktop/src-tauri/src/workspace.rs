@@ -1,10 +1,13 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use regex::RegexBuilder;
+
+use crate::windows::WindowBounds;
 
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 // Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
@@ -313,18 +316,202 @@ pub fn save_settings(contents: String) -> Result<(), String> {
     crate::atomic_write(&dir.join("settings.json"), contents.as_bytes())
 }
 
-pub fn get_session_state() -> Result<String, String> {
-    let path = config_dir().join("session.json");
-    if !path.exists() {
-        return Ok("{}".into());
+// --- Per-window session shards -------------------------------------------------
+
+/// `session.json` schema marker. A file without this exact value is a legacy
+/// v1 flat SavedSessionState and reads as `main`'s payload; the next save
+/// persists it as a schema-2 shard (migration on first read).
+const SESSION_SCHEMA_VERSION: u64 = 2;
+const SESSION_FILE_NAME: &str = "session.json";
+
+/// Serializes read-modify-write cycles over `session.json`: all windows
+/// share one file, so concurrent shard saves from different webviews must
+/// not interleave their read-modify-write windows. Managed in lib.rs; the
+/// `_at` store functions stay lock-free so tests can drive them directly.
+#[derive(Default)]
+pub struct SessionFileLock(std::sync::Mutex<()>);
+
+impl SessionFileLock {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
-    fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
-pub fn save_session_state(contents: String) -> Result<(), String> {
-    let dir = config_dir();
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    crate::atomic_write(&dir.join("session.json"), contents.as_bytes())
+/// One window's persisted shard. `payload` is the frontend's
+/// `SavedSessionState` JSON embedded verbatim; bounds/maximized are captured
+/// by the save command for restore.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SessionShard {
+    payload: serde_json::Value,
+    #[serde(default)]
+    bounds: Option<WindowBounds>,
+    #[serde(default)]
+    maximized: bool,
+}
+
+/// On-disk shape: `{ "schema": 2, "windows": { "<label>": <shard> } }`.
+/// BTreeMap keeps the serialized file deterministic across saves.
+#[derive(Serialize)]
+struct SessionFile {
+    schema: u64,
+    windows: BTreeMap<String, SessionShard>,
+}
+
+/// In-memory view of the session file. Missing, unreadable, and malformed
+/// files all read as an empty snapshot (the flat store's tolerance); the
+/// next save rewrites a clean v2 file.
+#[derive(Default)]
+struct SessionSnapshot {
+    windows: BTreeMap<String, SessionShard>,
+}
+
+/// A restored window's label and geometry, consumed by the restore flow.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionWindowEntry {
+    pub label: String,
+    pub bounds: Option<WindowBounds>,
+    pub maximized: bool,
+}
+
+fn session_file_at(root: &Path) -> PathBuf {
+    root.join(SESSION_FILE_NAME)
+}
+
+fn read_session_snapshot_at(root: &Path) -> SessionSnapshot {
+    let Ok(raw) = fs::read_to_string(session_file_at(root)) else {
+        return SessionSnapshot::default();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return SessionSnapshot::default();
+    };
+    if value.get("schema").and_then(|schema| schema.as_u64()) == Some(SESSION_SCHEMA_VERSION) {
+        let mut windows = BTreeMap::new();
+        if let Some(entries) = value.get("windows").and_then(|w| w.as_object()) {
+            for (label, entry) in entries {
+                // Skip a malformed shard instead of losing the whole file.
+                if let Ok(shard) = serde_json::from_value::<SessionShard>(entry.clone()) {
+                    windows.insert(label.clone(), shard);
+                }
+            }
+        }
+        SessionSnapshot { windows }
+    } else if value.is_object() {
+        // Legacy v1: the whole document is a single SavedSessionState owned
+        // by `main`.
+        SessionSnapshot {
+            windows: BTreeMap::from([(
+                "main".to_string(),
+                SessionShard {
+                    payload: value,
+                    bounds: None,
+                    maximized: false,
+                },
+            )]),
+        }
+    } else {
+        SessionSnapshot::default()
+    }
+}
+
+fn write_session_snapshot_at(root: &Path, snapshot: &SessionSnapshot) -> Result<(), String> {
+    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let file = SessionFile {
+        schema: SESSION_SCHEMA_VERSION,
+        windows: snapshot.windows.clone(),
+    };
+    let json = serde_json::to_string(&file).map_err(|e| e.to_string())?;
+    crate::atomic_write(&session_file_at(root), json.as_bytes())
+}
+
+fn session_payload_for_at(root: &Path, label: &str) -> Result<Option<String>, String> {
+    read_session_snapshot_at(root)
+        .windows
+        .get(label)
+        .map(|shard| serde_json::to_string(&shard.payload).map_err(|e| e.to_string()))
+        .transpose()
+}
+
+fn save_session_shard_at(
+    root: &Path,
+    label: &str,
+    contents: &str,
+    bounds: Option<WindowBounds>,
+    maximized: bool,
+) -> Result<(), String> {
+    let payload = serde_json::from_str(contents)
+        .map_err(|e| format!("session payload is not valid JSON: {e}"))?;
+    let mut snapshot = read_session_snapshot_at(root);
+    snapshot.windows.insert(
+        label.to_string(),
+        SessionShard {
+            payload,
+            bounds,
+            maximized,
+        },
+    );
+    write_session_snapshot_at(root, &snapshot)
+}
+
+fn remove_session_shard_at(root: &Path, label: &str) -> Result<(), String> {
+    let mut snapshot = read_session_snapshot_at(root);
+    if snapshot.windows.remove(label).is_none() {
+        // Nothing changed; skip the disk write.
+        return Ok(());
+    }
+    write_session_snapshot_at(root, &snapshot)
+}
+
+fn list_session_windows_at(root: &Path) -> Result<Vec<SessionWindowEntry>, String> {
+    let mut entries: Vec<SessionWindowEntry> = read_session_snapshot_at(root)
+        .windows
+        .into_iter()
+        .map(|(label, shard)| SessionWindowEntry {
+            label,
+            bounds: shard.bounds,
+            maximized: shard.maximized,
+        })
+        .collect();
+    entries.sort_by_key(|entry| session_window_order(&entry.label));
+    Ok(entries)
+}
+
+/// Deterministic restore order: `main` first, then `editor-N` ascending by N
+/// (numeric — "editor-10" must not sort before "editor-2"), other labels
+/// last in lexicographic order.
+fn session_window_order(label: &str) -> (u8, u64, String) {
+    if label == "main" {
+        (0, 0, String::new())
+    } else if let Some(n) = label
+        .strip_prefix("editor-")
+        .and_then(|n| n.parse::<u64>().ok())
+    {
+        (1, n, String::new())
+    } else {
+        (2, 0, label.to_string())
+    }
+}
+
+pub fn session_payload_for(label: &str) -> Result<Option<String>, String> {
+    session_payload_for_at(&config_dir(), label)
+}
+
+pub fn save_session_shard(
+    label: &str,
+    contents: &str,
+    bounds: Option<WindowBounds>,
+    maximized: bool,
+) -> Result<(), String> {
+    save_session_shard_at(&config_dir(), label, contents, bounds, maximized)
+}
+
+/// Session-close cleanup, called from the CloseRequested flush finisher.
+pub fn remove_session_shard(label: &str) -> Result<(), String> {
+    remove_session_shard_at(&config_dir(), label)
+}
+
+pub fn list_session_windows() -> Result<Vec<SessionWindowEntry>, String> {
+    list_session_windows_at(&config_dir())
 }
 
 fn valid_key(key: &str) -> Result<&str, String> {
@@ -1083,16 +1270,142 @@ mod tests {
         std::env::set_var("OMD_CONFIG_DIR", &dir);
 
         assert_eq!(get_settings().unwrap(), "{}");
-        assert_eq!(get_session_state().unwrap(), "{}");
+        assert_eq!(session_payload_for("main").unwrap(), None);
 
         save_settings(r#"{"fontSize":18}"#.into()).unwrap();
         assert_eq!(get_settings().unwrap(), r#"{"fontSize":18}"#);
 
-        save_session_state(r#"{"folder":"/test"}"#.into()).unwrap();
-        assert_eq!(get_session_state().unwrap(), r#"{"folder":"/test"}"#);
+        save_session_shard("main", r#"{"folder":"/test"}"#, None, false).unwrap();
+        assert_eq!(
+            session_payload_for("main").unwrap().unwrap(),
+            r#"{"folder":"/test"}"#
+        );
 
         std::env::remove_var("OMD_CONFIG_DIR");
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn session_shard_roundtrip_and_removal() {
+        let root = tempfile::tempdir().unwrap();
+        save_session_shard_at(
+            root.path(),
+            "main",
+            r#"{"folder":null,"openPaths":["/a.md"],"activePath":"/a.md"}"#,
+            None,
+            false,
+        )
+        .unwrap();
+        save_session_shard_at(
+            root.path(),
+            "editor-2",
+            r#"{"folder":"/d","openPaths":[],"activePath":null}"#,
+            Some(WindowBounds {
+                x: 10,
+                y: 20,
+                width: 800,
+                height: 600,
+            }),
+            true,
+        )
+        .unwrap();
+        // second save for the same label merges, not clobbers other windows
+        save_session_shard_at(
+            root.path(),
+            "main",
+            r#"{"folder":null,"openPaths":[],"activePath":null}"#,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(list_session_windows_at(root.path()).unwrap().len(), 2);
+        assert_eq!(
+            list_session_windows_at(root.path()).unwrap()[0].label,
+            "main",
+            "main is always first"
+        );
+        assert!(session_payload_for_at(root.path(), "editor-2")
+            .unwrap()
+            .unwrap()
+            .contains("/d"));
+        assert!(session_payload_for_at(root.path(), "editor-3")
+            .unwrap()
+            .is_none());
+        remove_session_shard_at(root.path(), "editor-2").unwrap();
+        assert!(session_payload_for_at(root.path(), "editor-2")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn legacy_session_file_migrates_to_main_shard() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("session.json"),
+            r#"{"folder":"/tmp","openPaths":["/tmp/x.md"],"activePath":"/tmp/x.md"}"#,
+        )
+        .unwrap();
+        let payload = session_payload_for_at(root.path(), "main").unwrap();
+        assert!(payload.unwrap().contains("/tmp/x.md"));
+    }
+
+    #[test]
+    fn session_windows_sort_main_first_then_editor_numbers_ascending() {
+        let root = tempfile::tempdir().unwrap();
+        // "editor-10" sorts before "editor-2" lexicographically; the store
+        // must order by the numeric suffix instead.
+        for label in ["editor-10", "editor-2", "zeta", "alpha", "main"] {
+            save_session_shard_at(root.path(), label, "{}", None, false).unwrap();
+        }
+        let labels: Vec<String> = list_session_windows_at(root.path())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.label)
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["main", "editor-2", "editor-10", "alpha", "zeta"]
+        );
+    }
+
+    #[test]
+    fn malformed_session_file_reads_as_empty_and_self_heals_on_save() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("session.json"), "not json {{{").unwrap();
+        assert!(list_session_windows_at(root.path()).unwrap().is_empty());
+        assert!(session_payload_for_at(root.path(), "main")
+            .unwrap()
+            .is_none());
+        save_session_shard_at(root.path(), "main", r#"{"folder":null}"#, None, false).unwrap();
+        let raw = fs::read_to_string(root.path().join("session.json")).unwrap();
+        assert!(raw.contains(r#""schema":2"#), "save writes v2: {raw}");
+        assert!(session_payload_for_at(root.path(), "main")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn window_bounds_and_entry_serialize_camel_case() {
+        // IPC wire assertion (AGENTS.md casing rule).
+        assert_eq!(
+            serde_json::to_string(&WindowBounds {
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4
+            })
+            .unwrap(),
+            r#"{"x":1,"y":2,"width":3,"height":4}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionWindowEntry {
+                label: "editor-2".into(),
+                bounds: None,
+                maximized: true
+            })
+            .unwrap(),
+            r#"{"label":"editor-2","bounds":null,"maximized":true}"#
+        );
     }
 
     #[test]

@@ -24,6 +24,8 @@ export const zh: Record<string, string> = {
   "cmd.label.save-as": "另存为…",
   "cmd.label.folder": "打开文件夹…",
   "cmd.label.tab": "新建",
+  "cmd.label.newWindow": "新建窗口",
+  "cmd.label.new-window": "新建窗口",
   "cmd.label.close": "关闭",
   "cmd.label.theme": "切换主题",
   "cmd.label.css": "加载自定义 CSS",

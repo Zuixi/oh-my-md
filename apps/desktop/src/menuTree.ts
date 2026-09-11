@@ -28,6 +28,7 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
     labelKey: "menu.file",
     entries: [
       { id: "new" },
+      { id: "new-window" },
       { id: "open-file" },
       { id: "quick-open" },
       { id: "open-folder", separatorAfter: true },

@@ -26,6 +26,7 @@ pub struct MenuLabels {
     pub preferences: &'static str,
     pub file: &'static str,
     pub new: &'static str,
+    pub new_window: &'static str,
     pub open_file: &'static str,
     pub quick_open: &'static str,
     pub open_folder: &'static str,
@@ -98,6 +99,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             preferences: "设置…",
             file: "文件",
             new: "新建",
+            new_window: "新建窗口",
             open_file: "打开…",
             quick_open: "快速打开…",
             open_folder: "打开文件夹…",
@@ -167,6 +169,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             preferences: "Settings…",
             file: "File",
             new: "New",
+            new_window: "New Window",
             open_file: "Open…",
             quick_open: "Quick Open…",
             open_folder: "Open Folder…",
@@ -248,25 +251,71 @@ impl Default for MenuState {
     }
 }
 
-/// Install the native menu and forward item ids to the webview.
+/// Install the native menu and route item ids.
 ///
-/// Window-menu commands are handled natively in Rust (they must not reach the
-/// webview); everything else is forwarded as `menu-command`.
+/// `new-window` creates an editor window natively; window-menu commands are
+/// handled natively in Rust against the focused window (they must not reach
+/// the webview); everything else is forwarded as `menu-command` to the
+/// focused window only — macOS's app-level menu has no window identity, so
+/// the registry's MRU decides. With zero windows the command is dropped.
 pub fn install<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let state = MenuState::default();
     rebuild_from_state(app.handle(), &state.recents, &state.locale)?;
     app.manage(Mutex::new(state));
     app.on_menu_event(|handle, event| {
-        if handle_window_command(handle, event.id().as_ref()) {
+        let id = event.id().as_ref();
+        if id == "new-window" {
+            // A failed window creation must not crash the menu handler.
+            let _ = crate::windows::create_editor_window(
+                handle,
+                &crate::windows::CreateWindowOptions::default(),
+            );
             return;
         }
-        let _ = handle.emit(MENU_EVENT, event.id().as_ref());
+        if handle_window_command(handle, id) {
+            return;
+        }
+        let label = {
+            let registry = handle.state::<std::sync::Mutex<crate::windows::WindowRegistry>>();
+            let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+            let live: Vec<String> = handle.webview_windows().keys().cloned().collect();
+            focused_label(&guard, &live)
+        };
+        if let Some(label) = label {
+            let _ = handle.emit_to(&label, MENU_EVENT, id);
+        }
+        // Zero windows (macOS): no webview to receive the command — drop it.
     });
     Ok(())
 }
 
+/// Menu actions target the focused window: macOS's app-level menu has no
+/// window identity, so the registry's MRU decides (fallback: any live webview).
+/// Non-generic on purpose — the resolution is pure registry/label logic.
+fn focused_label(
+    registry: &crate::windows::WindowRegistry,
+    live_labels: &[String],
+) -> Option<String> {
+    if let Some(focused) = registry.focused() {
+        if live_labels.iter().any(|l| l == focused) {
+            return Some(focused.to_string());
+        }
+    }
+    live_labels.first().cloned()
+}
+
 fn handle_window_command<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
-    let target = app.get_webview_window("main");
+    // Same resolution as menu forwarding: window commands act on the focused
+    // window (registry MRU, fallback any live webview) — not a hardcoded
+    // "main". Bring-all-to-front needs no target: it iterates every window.
+    let target = if id != "window-bring-all-to-front" {
+        let registry = app.state::<std::sync::Mutex<crate::windows::WindowRegistry>>();
+        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let live: Vec<String> = app.webview_windows().keys().cloned().collect();
+        focused_label(&guard, &live).and_then(|label| app.get_webview_window(&label))
+    } else {
+        None
+    };
     match id {
         "window-minimize" => {
             if let Some(window) = &target {
@@ -449,6 +498,12 @@ fn file_submenu<R: Runtime, M: Manager<R>>(
 ) -> tauri::Result<Submenu<R>> {
     SubmenuBuilder::new(app, l.file)
         .item(&item(app, "new", l.new, Some("CmdOrCtrl+N"))?)
+        .item(&item(
+            app,
+            "new-window",
+            l.new_window,
+            Some("CmdOrCtrl+Shift+N"),
+        )?)
         .item(&item(app, "open-file", l.open_file, Some("CmdOrCtrl+O"))?)
         .item(&item(app, "quick-open", l.quick_open, Some("CmdOrCtrl+P"))?)
         .item(&item(app, "open-folder", l.open_folder, None)?)
@@ -740,6 +795,38 @@ mod tests {
         assert_eq!(e.undo, "Undo");
         assert_eq!(e.copy, "Copy");
         assert_eq!(e.quit, "Quit oh-my-md");
+    }
+
+    #[test]
+    fn focused_label_prefers_mru_then_any_registered_window() {
+        let mut r = crate::windows::WindowRegistry::default();
+        assert_eq!(focused_label(&r, &[]), None);
+        r.register("main");
+        r.register("editor-2");
+        r.note_focused("main");
+        assert_eq!(
+            focused_label(&r, &["main".to_string(), "editor-2".to_string()]),
+            Some("main".to_string())
+        );
+        let mut r2 = crate::windows::WindowRegistry::default();
+        r2.register("editor-2");
+        // `register` seeds the MRU head, so a window never explicitly focused
+        // is still the MRU pick; note_focused just re-moves it to the front.
+        r2.note_focused("editor-2");
+        assert_eq!(
+            focused_label(&r2, &["editor-2".to_string()]),
+            Some("editor-2".to_string())
+        );
+        // Fallback: the registry's focused label has no live webview anymore
+        // (window destroyed before its Destroyed/unregister ran) — route to
+        // any live webview instead of dropping the command.
+        let mut r3 = crate::windows::WindowRegistry::default();
+        r3.register("editor-2");
+        r3.register("main"); // "main" becomes the MRU head, but only editor-2 is live
+        assert_eq!(
+            focused_label(&r3, &["editor-2".to_string()]),
+            Some("editor-2".to_string())
+        );
     }
 
     #[test]
