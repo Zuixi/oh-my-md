@@ -6,6 +6,7 @@ import { replaceFenceInfo } from "../../fenceInfo"
 import { EditorView, WidgetType } from "@codemirror/view"
 import { syntaxTree } from "@codemirror/language"
 import { createCodeHtmlCache } from "./codeHtmlCache"
+import { countSourceLines, estimateCodeBlockHeightPx, CODE_CHROME_ESTIMATE_PX } from "../widgetHeights"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "../renderBudget"
@@ -80,6 +81,9 @@ export class CodeChromeWidget extends WidgetType {
     return this.lang === other.lang && this.title === other.title
   }
 
+  // 围栏行替换块：标题输入行比普通文本行高，给一行的实测量级（见 widgetHeights.ts）。
+  override get estimatedHeight() { return CODE_CHROME_ESTIMATE_PX }
+
   toDOM(view: EditorView) {
     return buildCodeChromeControls(view, {
       title: this.title,
@@ -150,12 +154,21 @@ export class CodeWidget extends BlockWidget {
   private langPickerDestroy: (() => void) | null = null
   private copyReset: ReturnType<typeof setTimeout> | null = null
 
+  private readonly srcLines: number
+
   constructor(private readonly opts: CodeWidgetOptions) {
     super(opts.src, opts.pos, opts.embed ?? EMPTY_EMBED)
+    this.srcLines = countSourceLines(opts.src)
   }
 
   get lang() { return this.opts.lang }
   get title() { return this.opts.title }
+
+  // 滚动性能：代码块高度随内容行数线性增长，缺省一行行高估算会让视口换算
+  // 过绘（见 widgetHeights.ts 头注）。行数在构造时数一次，getter 保持 O(1)。
+  override get estimatedHeight() {
+    return estimateCodeBlockHeightPx(this.srcLines)
+  }
 
   eq(other: BlockWidget) {
     if (!(other instanceof CodeWidget)) return false

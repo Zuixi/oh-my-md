@@ -47,3 +47,18 @@ export function makeBenchmarkDocBytes(targetBytes: number): string {
   }
   return blocks.join("\n\n")
 }
+
+/** 表格密集文档（滚动性能基准）：每块一张 rows×cols 表 + 一行文本间隔。
+ * 确定性生成，模拟「数百 KB、大量表格」文档的滚动负载形态。 */
+export function makeTableHeavyDoc(tableCount: number, rows: number, cols: number): string {
+  const blocks: string[] = []
+  for (let t = 0; t < tableCount; t++) {
+    const header = Array.from({ length: cols }, (_, c) => `列${t}-${c}`).join(" | ")
+    const sep = Array.from({ length: cols }, () => "---").join(" | ")
+    const body = Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: cols }, (_, c) => `单元格${t}-${r}-${c}`).join(" | "))
+    const table = [`| ${header} |`, `| ${sep} |`, ...body.map(row => `| ${row} |`)].join("\n")
+    blocks.push(`${table}\n\n段落 ${t}：表格间隔文本。`)
+  }
+  return blocks.join("\n\n")
+}

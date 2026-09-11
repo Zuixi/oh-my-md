@@ -1,5 +1,6 @@
 import { EditorView, WidgetType } from "@codemirror/view"
 import { BlockWidget, type BlockEmbed } from "./blockWidget"
+import { FRONT_MATTER_ESTIMATE_PX, HR_ESTIMATE_PX } from "./widgetHeights"
 
 export class EntityWidget extends WidgetType {
   constructor(readonly ch: string, readonly raw: string) { super() }
@@ -78,6 +79,8 @@ export class CheckboxWidget extends WidgetType {
 
 export class HrWidget extends BlockWidget {
   protected get cssClass() { return "omd-hr-block" }
+  // 略高于普通文本行（hr 上下 margin），与其它块 widget 一样显式声明估算。
+  override get estimatedHeight() { return HR_ESTIMATE_PX }
   protected renderInto(el: HTMLElement) {
     el.appendChild(document.createElement("hr"))
   }
@@ -91,6 +94,8 @@ export class FrontMatterWidget extends BlockWidget {
     this.lineCount = src.split("\n").length
   }
   protected get cssClass() { return "omd-front-matter" }
+  // 渲染为单个 chip 行（与源码行数无关），高度略高于普通文本行。
+  override get estimatedHeight() { return FRONT_MATTER_ESTIMATE_PX }
   protected renderInto(el: HTMLElement) {
     const chip = document.createElement("span")
     chip.className = "omd-front-matter-chip"
