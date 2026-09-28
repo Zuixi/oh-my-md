@@ -6,6 +6,7 @@ import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/wi
 import { renderBudgetFlush } from "./decorations/renderBudget"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
+import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { htmlPaste } from "./paste/htmlPaste"
@@ -39,6 +40,8 @@ export { applyToggle, isLivePreview, setLivePreview } from "./modes/livePreview"
 export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from "./modes/livePreview"
 export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
+export { blockPrefixOf, continuePrefixText, markRemovalRange } from "./format/blockPrefix"
+export { continueQuote, continueQuoteSpec, quoteKeymap } from "./format/quotes"
 export { continueFence, continueFenceSpec, fenceKeymap } from "./format/fences"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
@@ -105,6 +108,9 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
+    // 引用行 Enter 续写优先于列表/围栏：带 QuoteMark 的行由它处理，其余行返回
+    // false 放行（纯列表仍走 continueList 的递增/退出语义，围栏仍走 continueFence）。
+    quoteKeymap,
     listKeymap,
     fenceKeymap,
     htmlPaste(),

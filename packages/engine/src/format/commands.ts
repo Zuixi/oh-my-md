@@ -1,9 +1,11 @@
 import {
   type EditorState,
+  type Line,
   type SelectionRange,
   type TransactionSpec,
 } from "@codemirror/state"
 import { keymap, type Command } from "@codemirror/view"
+import { blockPrefixOf, markRemovalRange } from "./blockPrefix"
 
 // Markdown 排版命令。全部是纯函数：给定 EditorState 返回 TransactionSpec（或 null），
 // 由 Command 包装 dispatch，便于 headless 测试。live/source 两模式共用——它们只改源码文本。
@@ -168,17 +170,40 @@ function toggleListSpec(state: EditorState, ordered: boolean): TransactionSpec |
 export const toggleOrderedList = dispatchSpec(state => toggleListSpec(state, true))
 export const toggleUnorderedList = dispatchSpec(state => toggleListSpec(state, false))
 
+/**
+ * 行内最外层引用标记的区间（含标记后的空白）。判定走 blockPrefixOf（Lezer 树），
+ * 因此 `>x`、`  > x`、`- > x` 这些旧 `startsWith("> ")` 漏掉的形式都能识别。
+ * 语法树尚未覆盖该行时退回行首字面判断 —— 宁可退回旧行为，也不能给 `> x` 再套一层。
+ */
+function quoteMarkOf(state: EditorState, line: Line): { from: number; to: number } | null {
+  const prefix = blockPrefixOf(state, line)
+  if (prefix) {
+    const quote = prefix.marks.find(mark => mark.kind === "quote")
+    return quote ? markRemovalRange(quote, line) : null
+  }
+  const literal = /^[ \t]*(> ?)/.exec(line.text)
+  if (!literal) return null
+  const from = line.from + literal[0].length - literal[1].length
+  return { from, to: from + literal[1].length }
+}
+
 function toggleQuoteSpec(state: EditorState): TransactionSpec | null {
   const { from, to } = state.selection.main
   const startLine = state.doc.lineAt(from)
   const endLine = state.doc.lineAt(to)
+  const lines: Line[] = []
+  for (let n = startLine.number; n <= endLine.number; n += 1) lines.push(state.doc.line(n))
+  const marks = lines.map(line => quoteMarkOf(state, line))
+  // 全部已引用 → 整体取消；否则整体加上。逐行取反会让混合选区里已引用的行
+  // 反向失引用（旧行为），用户看到的是一次命令把引用“对调”了。
+  const unquote = marks.every(mark => mark !== null)
   const changes: LineChange[] = []
-  for (let n = startLine.number; n <= endLine.number; n += 1) {
-    const line = state.doc.line(n)
-    const quoted = line.text.startsWith("> ")
-    const prefix = quoted ? { insert: "", remove: 2 } : { insert: "> ", remove: 0 }
-    changes.push({ from: line.from, to: line.from + prefix.remove, insert: prefix.insert })
-  }
+  lines.forEach((line, index) => {
+    const mark = marks[index]
+    if (unquote && mark) changes.push({ from: mark.from, to: mark.to, insert: "" })
+    else if (!unquote && !mark) changes.push({ from: line.from, to: line.from, insert: "> " })
+  })
+  if (changes.length === 0) return null
   return { changes, selection: mapSelection(state, changes, from, to) }
 }
 
