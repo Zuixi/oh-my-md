@@ -116,6 +116,9 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] **引用块开关全有全无**：选中混合行（部分带 `>`）按 Mod-Alt-9 —— 只给未加引用的行加 `>`，全部带引用时整体取消；取消只删标记 + 一个空格，内容缩进（`  >   x` 的额外空格）保留
 - [ ] **引用块里的代码块渲染**：`> ```js` 渲染为带引用条的代码块（Shiki 高亮 + 顶栏 + 左侧引用竖条与上方引用行连续，不出现竖条在代码块处断开）
 - [ ] **引用块里的代码块编辑态**：点击进入编辑态后内容行带行号、顶栏（标题/语言/复制）仍在、顶栏标题与代码内容左缘对齐、引用竖条仍在；改标题/切换语言写回 fence info；再按 ↑/↓ 回渲染态后高亮恢复
+- [ ] **引用内代码块编辑态不露前缀**：进入 `> ```js` 的编辑态后，内容行只显示代码（不显示 `> `），上下箭头在块内移动光标也不出现 `> `；把光标移到围栏行本身（↑ 到首行/尾行）时才显示原始围栏行
+- [ ] **引用条连续（含光标行）**：光标停在引用段落、引用内代码块、引用内表格上时，那一行的引用竖条不断节（`.cm-activeLine` 不会把竖条抹掉）
+- [ ] **↑/↓ 进引用内的块**：从引用外的段落用 ↓ 进入引用内的代码块/表格，落点是块内首个**内容**（表头/首行代码，不含 `> `），不会先停在围栏行或引用标记上
 - [ ] **无语言代码块**：渲染态仍是行样式（灰底 + 行号，无 Shiki）；点击进编辑态出现顶栏（语言下拉为空），选一个语言后写回 fence info，光标离开块后升为 Shiki 渲染
 - [ ] **编辑态语言覆盖**：Go / Ruby / Bash / C# / Kotlin / Swift / R / Perl / Lua / Diff / Dockerfile / PowerShell / XML / SQL 方言等，在**编辑态**（光标进入块内）也有语法高亮；仅渲染态高亮、编辑态纯文本的已知缺口见下方「已知限制」
 
@@ -293,7 +296,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 ## 最近一次验证记录
 
 - 日期：2026-09-29（fix-table-quote-ux：表格/引用块/代码块编辑体验 + 语言覆盖）
-- 自动化已通过：`pnpm --filter @omd/engine test`（630，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 2.6–5.6ms、Enter 续写 p95 ≈5ms，均在 16ms 预算内）
+- 自动化已通过：`pnpm --filter @omd/engine test`（630，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 ≈2.6–5.6ms、Enter 续写循环 p95 ≈11ms —— 单看 Enter 与随后的逐字插入各约 5ms —— 均低于 16ms 预算；同批 `documentStats 50k` 报 11.3ms OVER BUDGET(>8ms)，该模块不在本分支改动范围内，属既有基线/机器抖动，未处理）
 - 上表交互项（单元格 IME / 引用块 Enter / 引用块内代码块 / 编辑态语言覆盖）需 `pnpm dev` + 真实 IME 目视，本环境未执行，保持未勾选
 - 日期：2026-08-14（Task 14 / Conflict-safe guarded save）
 - 自动化已通过：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（206）、`pnpm --filter @omd/desktop build`、`rg` 计划扫描无 TBD/TODO、`git diff --check`
