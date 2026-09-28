@@ -29,7 +29,9 @@ export function continueQuoteSpec(state: EditorState): TransactionSpec | null {
     const outer = prefix.marks.length > 1 ? prefix.marks[prefix.marks.length - 2].to : line.from
     return { changes: { from: line.from, to: line.to, insert: state.doc.sliceString(line.from, outer) } }
   }
-  const head = main.head
+  // 光标落在前缀内部（`> |文本`，例如 Home/鼠标点在标记与内容之间）时按内容起点切分：
+  // 否则原行的标记后空格会被留在新行内容前，续写后多出一个空格。
+  const head = Math.max(main.head, line.from + prefix.text.length)
   return { changes: { from: head, to: head, insert: `\n${continuePrefixText(prefix)}` } }
 }
 

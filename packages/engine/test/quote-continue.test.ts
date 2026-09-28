@@ -108,6 +108,14 @@ describe("continueQuoteSpec (Enter)", () => {
     expect(after("> hello", 4)).toBe("> he\n> llo")
   })
 
+  it("splits at the content start when the caret sits inside the prefix", () => {
+    // `> |hello`（Home、或在标记与内容之间点击）：标记后的空格属于前缀，不能留在
+    // 新行内容前 —— 否则续写结果多一个空格（">  hello"）。
+    expect(after("> hello", 1)).toBe("> \n> hello")
+    expect(after("> hello", 2)).toBe("> \n> hello")
+    expect(after("> > deep", 3)).toBe("> > \n> > deep")
+  })
+
   it("exits one level on a prefix-only line", () => {
     expect(after("> ")).toBe("")
     expect(after("> > ")).toBe("> ")
