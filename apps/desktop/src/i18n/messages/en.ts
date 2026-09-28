@@ -24,6 +24,8 @@ export const en: Record<string, string> = {
   "cmd.label.save-as": "Save As…",
   "cmd.label.folder": "Open Folder…",
   "cmd.label.tab": "New",
+  "cmd.label.newWindow": "New Window",
+  "cmd.label.new-window": "New Window",
   "cmd.label.close": "Close",
   "cmd.label.theme": "Toggle Theme",
   "cmd.label.css": "Load custom CSS",

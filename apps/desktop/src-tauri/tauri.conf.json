@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "oh-my-md",
         "width": 800,
         "height": 600

@@ -1,9 +1,10 @@
 import { EditorState, type StateEffect } from "@codemirror/state"
-import { EditorView } from "@codemirror/view"
+import { EditorView, type WidgetType } from "@codemirror/view"
 import { forceParsing } from "@codemirror/language"
 import { editorExtensions, buildTextFromChunks } from "../src/index"
 import {
   buildLiveDecorations,
+  drainPendingLiveBuild,
   LIVE_BUILD_CHUNK_CHARS,
   liveBuildChunk,
   livePreviewField,
@@ -18,6 +19,13 @@ import { nearestChunk, pendingInWindow } from "../src/decorations/buildDriver"
 
 export const TYPING_P95_BUDGET_MS = 16
 export const STATS_BUDGET_MS = 8
+// 表格滚入视口的引擎侧单次成本预算（advisory）：toDOM(wrap+工具栏) + 微任务里
+// 整表 DOM 构建（parseCell×单元格）+ measureBlockWidget 派发的整块装饰重建。
+// happy-dom 无布局 —— 数值代表脚本成本，不含浏览器 layout/paint。
+export const TABLE_DRAW_BUDGET_MS = 16
+// 估算增益下限：块 widget estimatedHeight 相对「全部按一行行高」基线的倍数。
+// 修复前（estimatedHeight 缺省 -1）增益恒为 1x；20 行表格按行数外推应 ~30x。
+export const ESTIMATE_GAIN_FLOOR = 5
 // ⌘E 切 Live 的切换预算（source→live = compartment reconfigure + 光标种子构建，
 // 成本以 LIVE_SEED_RADIUS_* 为界）：Task 1 前该路径是全量装饰构建（50MB 级秒级
 // 冻结），100ms 是「切换无感」的宽松上限，两档大文档都应远低于此。
@@ -266,4 +274,82 @@ function mountedIngestMs(t0: number, state: EditorState, mode: "source" | "live"
   view.destroy()
   parent.remove()
   return elapsed
+}
+
+/** 块 widget 高度估算增益（滚动性能修复口径）：live 装饰里全部块 widget 的
+ * estimatedHeight 之和，对比「缺省（-1）一行行高」基线（块数 × 行高）。修复前
+ * 两者相等（gain = 1）；估算随内容规模外推后 gain ≈ 平均块行数。gain 崩回 1
+ * 即 estimatedHeight 被移除（视口像素→字符换算回到严重过绘 + 测量回环）。
+ * 字段值必须先排空 pending（种子只建光标附近；且挂载时树只覆盖同步初解析
+ * ~3k 字符，specs 里块极少）——挂载 → 光标移文末（首块离开 blockSelected）→
+ * 全树 → drainPendingLiveBuild，与 test/helpers.ts::makeState 同构。 */
+export function tableEstimateGain(doc: string): {
+  gain: number
+  estimatedPx: number
+  baselinePx: number
+  blockCount: number
+} {
+  // 一行行高基线：默认排版 .cm-content 16px × line-height 1.6 ≈ 26px
+  //（与 src/decorations/widgetHeights.ts 的标定口径一致）。
+  const LINE_ONLY_BASELINE_PX = 26
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({ state: baseState(doc), parent })
+  view.dispatch({ selection: { anchor: doc.length } })
+  forceParsing(view, doc.length, 60000)
+  drainPendingLiveBuild(view)
+  const state = view.state
+  view.destroy()
+  parent.remove()
+  const live = state.field(livePreviewField)
+  const widgets = live.specs
+    .filter(spec => spec.tag.startsWith("widget:block:"))
+    .map(spec => (spec.deco.spec as { widget?: WidgetType }).widget)
+    .filter((widget): widget is WidgetType => widget !== undefined)
+  const estimatedPx = widgets.reduce((sum, widget) => sum + Math.max(0, widget.estimatedHeight), 0)
+  const baselinePx = widgets.length * LINE_ONLY_BASELINE_PX
+  return {
+    gain: baselinePx > 0 ? estimatedPx / baselinePx : 1,
+    estimatedPx,
+    baselinePx,
+    blockCount: widgets.length,
+  }
+}
+
+/** 一张表格滚入视口的引擎侧成本采样：对文档前 tables 张表逐张 toDOM（wrap +
+ * 工具栏 + 微任务整表 DOM 构建）并等微任务落定（含 measureBlockWidget 派发
+ * 触发的整块装饰重建）。滚出视口销毁 DOM 后再滚入即重复此成本 —— 这里用同一
+ * widget 实例反复 toDOM 等价度量（每次都是全新 DOM）。happy-dom 无布局，
+ * 数值代表脚本成本。 */
+export async function measureTableDrawsMs(
+  doc: string,
+  opts: { tables?: number } = {},
+): Promise<TypingLatency> {
+  const limit = opts.tables ?? 8
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({ state: baseState(doc), parent })
+  forceParsing(view, doc.length, 60000)
+  drainPendingLiveBuild(view)
+  // 等一拍：挂载/drain 排下的微任务与 idle 回调全部落定，计时窗口内无背景 dispatch。
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const tables = view.state.field(livePreviewField).specs
+    .filter(spec => spec.tag === "widget:block:table")
+    .map(spec => (spec.deco.spec as { widget?: WidgetType }).widget)
+    .filter((widget): widget is WidgetType => widget !== undefined)
+    .slice(0, limit)
+  const samples: number[] = []
+  for (const widget of tables) {
+    const t0 = performance.now()
+    const dom = widget.toDOM(view)
+    // toDOM 的 renderInto 在 Promise.resolve().then 里同步构建整表 DOM，
+    // measureBlockWidget 派发也在同一微任务链 —— setTimeout(0) 等全部落定。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    samples.push(performance.now() - t0)
+    dom.remove()
+  }
+  view.destroy()
+  parent.remove()
+  const sorted = [...samples].sort((a, b) => a - b)
+  return { p50Ms: percentile(sorted, 50), p95Ms: percentile(sorted, 95), samples: samples.length }
 }

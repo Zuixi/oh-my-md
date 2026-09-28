@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { screen, fireEvent, waitFor } from "@testing-library/react"
+import { screen, fireEvent, waitFor, act } from "@testing-library/react"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createAppHarness, resetMountedApps } from "./appHarness"
+import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
 import type { UserSettings } from "../src/settings"
 import type { SavedSessionState } from "../src/sessionRestore"
 
@@ -141,5 +141,76 @@ describe("App Settings & Session Restore integration", () => {
         }),
       )
     }, { timeout: 2500 })
+  })
+
+  describe("non-main window mount flow", () => {
+    // windowScope.currentWindowLabel reads __TAURI_INTERNALS__ lazily at call
+    // time, so stubbing the global before renderApp turns this webview into a
+    // restored editor-N window — no module mocking needed.
+    const tauriInternals = window as { __TAURI_INTERNALS__?: unknown }
+
+    beforeEach(() => {
+      tauriInternals.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "editor-1" } } }
+    })
+
+    afterEach(() => {
+      delete tauriInternals.__TAURI_INTERNALS__
+    })
+
+    it("restores its own session shard on mount without offering the app-global draft", async () => {
+      const harness = createAppHarness(editor)
+      const savedSession: SavedSessionState = {
+        folder: null,
+        openPaths: ["/projects/shard.md"],
+        activePath: "/projects/shard.md",
+      }
+      vi.mocked(harness.services.getSessionState!).mockResolvedValue(savedSession)
+      harness.seedFile("/projects/shard.md", "Shard content")
+      harness.services.listRecoveries = vi.fn(async () => [])
+      harness.services.readRecovery = vi.fn(async () => "")
+
+      harness.renderApp()
+
+      // The restored tab comes from THIS window's shard (get_session_state is
+      // window-scoped) — not just geometry, and not a fresh untitled tab.
+      await waitFor(() => {
+        expect(harness.services.getSessionState).toHaveBeenCalled()
+        expect(screen.getAllByText("shard.md").length).toBeGreaterThan(0)
+      })
+      // Recovery records are app-global: a non-main window must never even
+      // list them, let alone offer the draft.
+      expect(harness.services.listRecoveries).not.toHaveBeenCalled()
+      expect(harness.services.readRecovery).not.toHaveBeenCalled()
+
+      // Normal flow intact: the restored workspace re-arms the 1s debounce
+      // and re-saves this window's shard.
+      await waitFor(() => {
+        expect(harness.services.saveSessionState).toHaveBeenCalledWith(
+          expect.objectContaining({ openPaths: ["/projects/shard.md"] }),
+        )
+      }, { timeout: 2500 })
+    })
+
+    it("keeps the fresh untitled tab on an empty shard and never drafts", async () => {
+      const harness = createAppHarness(editor)
+      // Empty shard (get_session_state "{}"): nothing to restore.
+      vi.mocked(harness.services.getSessionState!).mockResolvedValue({
+        folder: null,
+        openPaths: [],
+        activePath: null,
+      })
+      harness.services.listRecoveries = vi.fn(async () => [])
+
+      harness.renderApp()
+
+      await waitFor(() => {
+        expect(harness.services.getSessionState).toHaveBeenCalled()
+      })
+      // Let the mount chain finish the restoreDraft gate decision.
+      await act(async () => { await Promise.resolve() })
+
+      expectPathShown("unnamed")
+      expect(harness.services.listRecoveries).not.toHaveBeenCalled()
+    })
   })
 })

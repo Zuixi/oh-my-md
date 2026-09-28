@@ -134,6 +134,27 @@ Before the fix, clicks could land on an arbitrary nearby line (depending on docu
 
 Status update (implemented): code, math, and Mermaid blocks install synchronous source placeholders during `toDOM()` before CodeMirror's first layout measurement, then refresh the owning StateField after async DOM changes. Generic opaque blocks enter source from their current `livePreviewField.specs` range instead of stale constructor offsets or quantized `posAtCoords`; code clicks additionally map rendered `.line` rows to source lines. Identity-first lookup keeps duplicate blocks separate. All block whitespace is padding inside the measured DOM, never a vertical wrapper margin.
 
+## Block widgets must declare `estimatedHeight` — CM assumes one line otherwise
+
+Verified 2026-09-09 against `@codemirror/view` 6.43.8 source (root cause of scroll jank on table-heavy ~200 KB documents). `WidgetType.estimatedHeight` defaults to `-1`, and the height mapper estimates any block widget with an unknown height as **one line height** (`HeightMapper.point`: `if (height < 0) height = this.oracle.lineHeight`). A 20-row table (~900 px) is estimated at ~26 px until first draw. The viewport (visible px ± 1000 px `VP.Margin`) is converted to a character range **using those estimates**, so under-estimation makes one scroll step cover far more content than fits: many heavy widgets get `toDOM()` in a single update, then `measureVisibleLineHeights` (forced layout reads) corrects the map, `contentHeight` jumps, the viewport recomputes, and the redraw/measure loop repeats — the classic "scroll through big block widgets is janky and the scrollbar jumps" (upstream: codemirror/CodeMirror#5873, discuss.codemirror.net/t/9372).
+
+Rules:
+
+- Every `block: true` widget declares `estimatedHeight` via the named constants in `src/decorations/widgetHeights.ts`. The table estimate is **wrap-aware** (per-cell text length → estimated wrapped lines at an even column split, capped): a flat 42px/row looked calibrated on single-line cells (0.15% on a synthetic table) but underestimated a real 5-column doc by **8.4%** of total content height — enough to visibly desync the scrollbar thumb; wrap-awareness brings real docs to ~1–2%. New block widgets must register an estimate there — `test/widgetHeights.test.ts` fails on a block widget without a positive estimate.
+- Estimates only need to be within ~2x: first draw replaces them with measured heights, and heights of out-of-viewport blocks persist in the height map, so the estimate matters only for never-drawn or re-entered blocks. User font scaling skews px constants proportionally — acceptable.
+- Bench `bench/tables.bench.ts` reports the regression guard: `tableEstimateGain` (estimated px vs a line-only baseline) collapses to ~1x if someone removes the estimates; `measureTableDrawsMs` is the per-table viewport-entry cost baseline for the follow-up render-cache work (a table re-renders from scratch on every re-entry — no cache, unlike code HTML).
+
+## Decoration rebuilds must preserve equivalent widget identity — CM resets measured heights otherwise
+
+Verified 2026-09-10 against `@codemirror/view` 6.43.8 (the "wheel down, position rolls back a bit / scrollbar thumb drifts while dragging" symptom on table-heavy documents). CM's `ViewState.update` derives height-relevant ranges via `heightRelevantDecoChanges`, whose `DecorationComparator.comparePoint` does **not** call `eq()` — any point-decoration **identity** change marks the range height-relevant, and `applyChanges` then rebuilds that region of the height map from `estimatedHeight`, **discarding measured heights**. Our `measureBlockWidget` effect (dispatched after every block render) rebuilds the block's specs: before the fix the old spec was dropped and a brand-new equivalent widget added, so every rendered block oscillated measured → estimate → measured — visible as scroll rollback and thumb/content desync.
+
+Rules:
+
+- `updateLiveDecorations` reuses the dropped spec object when a rebuilt spec has the same `tag`/`from`/`to` and `oldWidget.eq(newWidget)` (`build.ts`, `removedByKey` pass). Decoration identity preserved ⇒ no height-relevant change ⇒ height map untouched.
+- Reuse is equivalence-gated on widgets only: non-widget decorations (line/mark/inline replace) churn harmlessly (`compareRange` is a no-op for the height map), and a widget whose inputs changed (`eq` false — edited cell text, changed label) must rotate to a new instance so CM refreshes DOM.
+- `test/specIdentity.test.ts` guards both directions: `measureBlockWidget` keeps the instance identical (and `view.contentHeight` stable); a content edit rotates it.
+- Estimate calibration matters too: with identity reuse, the estimate→measured correction happens exactly once per block (first draw), so a well-calibrated estimate makes even that one-time correction small. Calibration tooling: `apps/desktop/e2e/calibrate-heights.mjs` (block heights in real Chromium) and `apps/desktop/e2e/scroll-audit.mjs` (`估算总高 vs 全文测量后的实际总高` on a real document — the direct thumb-desync metric). Residual error is inherent: never-drawn regions are estimated, so dragging the thumb into them lands within ~2% and converges as CM measures.
+
 ## Structure and appearance live in different packages
 
 The engine emits `omd-*` class names and tests structural ranges/widgets. Desktop CSS in `apps/desktop/src/styles.css` supplies the visual result, including KaTeX CSS.

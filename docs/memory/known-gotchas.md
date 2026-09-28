@@ -18,6 +18,8 @@
 - **Selection is visual, the caret is editing** — a non-empty selection reveals nothing; mid-drag reveal relayouts shift `posAtCoords`.
 - **Tests may need to force the syntax tree** — use `makeState`; for large docs mount a temp view + `forceParsing`; compare incremental against `buildLiveDecorations` on the same state.
 - **Block widget geometry can desync CM's heightmap** — async widgets need a sync placeholder plus a field refresh; no vertical margins on block DOM; identity before `eq()`; opaque replaces quantize `posAtCoords`.
+- **Block widgets must declare `estimatedHeight`** — CM estimates unknown-height blocks at one line, over-drawing the viewport on scroll (table-doc jank); estimates live in `widgetHeights.ts` with a test + bench guard.
+- **Decoration rebuilds must preserve equivalent widget identity** — CM's heightmap treats a Decoration identity change as height-relevant and resets measured heights to the estimate (scroll rollback/thumb drift); `build.ts` reuses `eq`-equal dropped specs, guarded by `specIdentity.test.ts`.
 - **Structure and appearance live in different packages** — a green engine test does not prove the desktop looks right.
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
@@ -67,6 +69,9 @@
 - **`html[data-theme]` only restyles the webview** — native chrome needs `color-scheme` plus `set_window_theme`, applied pre-paint from Rust; the frontend must not push before settings load.
 - **CM base-theme `&dark` variants never apply** — theme via CSS variables, never `EditorView.theme(..., {dark: true})`.
 - **Opaque `background` shorthands erase the quote bar** — the bar is a gradient painted by `--omd-bq-image`; `.omd-code` / `.omd-code-header` use the `background` shorthand and must repaint it.
+- **JS `listen()` defaults to Any — `emit_to` alone does not scope delivery** — targeted listeners pin `{ kind: "AnyLabel", label }` via `listenTarget()` (session-flush, menu, open-file); broadcast `emit` still reaches AnyLabel.
+- **Non-`main` windows must never call `restoreDraft()`** — the mount-flow `windowScope.isMainWindow()` branch keeps a fresh editor window from hijacking the main window's recovery record.
+- **`localStorage` is shared across same-origin webviews** — `STORAGE_KEY_SESSION` is a last-writer-wins fallback only; the Rust per-window shard is the truth.
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
@@ -82,6 +87,10 @@
 - **Rust `line_count` must match CM's DefaultSplit** — lone `\r` is a separator too (`count_line_separators`).
 - **Tauri plugin commands are wire contracts** — prefer official JS bindings; never fire-and-forget a plugin invoke.
 - **macOS font enumeration must use CoreText** — NSFontManager is main-thread-confined; the enumeration body runs under `spawn_blocking`.
+- **Capability `windows` is label-matched with glob support** — a new window label not covered by any pattern (e.g. `editor-*`) fails every invoke at runtime while TS tests stay green.
+- **Menu events carry no window identity** — route through the registry MRU (`menu.rs` `focused_label`); zero windows means the command is dropped.
+- **FlushGate rounds are counting** — one global deadline over the target set; `ack` carries the calling window label and non-target acks are ignored; empty targets complete immediately.
+- **Session shards drop on window close, survive app exit** — removal runs in the CloseRequested finisher under `SessionFileLock`; a crash may restore a window closed after its last flush (accepted).
 
 ## Tooling and process
 

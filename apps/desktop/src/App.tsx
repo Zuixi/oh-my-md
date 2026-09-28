@@ -68,6 +68,7 @@ import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
 import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
+import { isMainWindow } from "./windowScope"
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
@@ -385,6 +386,10 @@ export default function App({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
+  // 最近一次防抖 saveSessionState 的在途 Promise。退出 flush 前先等它落定，
+  // 否则该次写可能在 Rust 侧晚于 finisher 的 shard 删除抵达，把已关窗口的
+  // shard 复活（下次启动又恢复该窗口）。
+  const sessionSaveInFlightRef = useRef<Promise<void> | null>(null)
   const sessionRestoredRef = useRef(false)
   const [theme, setTheme] = useState<AppTheme>("light")
   // The window theme is applied pre-paint by Rust from persisted settings;
@@ -961,8 +966,15 @@ export default function App({
           await openExternalRef.current(path)
         }
       } else {
+        // Session shards are per-window (get_session_state resolves the
+        // calling webview), so EVERY window consults its own shard here —
+        // restored editor-N windows reopen their tabs and folder. Only the
+        // draft-recovery prompt below is main-gated. A window without a
+        // shard (empty payload) keeps its fresh untitled tab and never
+        // drafts: recovery records are app-global, so a non-main window
+        // offering one would hijack the main window's record.
         const restored = await restoreSavedSession()
-        if (!restored) {
+        if (!restored && isMainWindow()) {
           await restoreDraft()
         }
       }
@@ -1050,7 +1062,11 @@ export default function App({
     if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)
     sessionSaveTimerRef.current = window.setTimeout(() => {
       const state = extractSessionState(workspaceRef.current)
-      void services.saveSessionState?.(state)
+      const save = services.saveSessionState?.(state) ?? Promise.resolve()
+      sessionSaveInFlightRef.current = save
+      // 本地 catch：失败由该路径自行消化，避免在途 rejection 变成 webview
+      // 未处理拒绝（flush 侧还有一层兜底 catch）。
+      void save.catch(() => {})
     }, SESSION_SAVE_DEBOUNCE_MS)
     return () => {
       if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)
@@ -1066,6 +1082,13 @@ export default function App({
       if (sessionSaveTimerRef.current !== null) {
         window.clearTimeout(sessionSaveTimerRef.current)
         sessionSaveTimerRef.current = null
+      }
+      // 刚触发的防抖 save 可能仍在 Rust 侧在途：先等它落定，保证它不可能
+      // 晚于最终落盘 / finisher 的 shard 删除抵达。已失败的 straggler 的
+      // rejection 已被防抖路径吸收，这里不得让它连带拒绝 flush。
+      const inFlight = sessionSaveInFlightRef.current
+      if (inFlight) {
+        try { await inFlight } catch { /* absorbed by the debounce path */ }
       }
       try {
         await services.saveSessionState?.(extractSessionState(workspaceRef.current))
@@ -2083,6 +2106,7 @@ export default function App({
     { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
     { id: "tab", label: t("cmd.label.tab"), shortcut: shortcutFor("tab"), run: newTab },
+    { id: "new-window", label: t("cmd.label.newWindow"), shortcut: shortcutFor("new-window"), run: () => { void services.createNewWindow?.() } },
     { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
     { id: "theme", label: t("cmd.label.theme"), run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: t("cmd.label.css"), run: () => void loadCustomCss(services, setCustomCss) },

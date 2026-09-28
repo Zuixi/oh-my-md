@@ -5,6 +5,7 @@ mod fonts;
 mod menu;
 mod session_flush;
 mod watcher;
+mod windows;
 mod workspace;
 
 use std::io::Write;
@@ -20,24 +21,34 @@ const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4
 const MAX_RECENT_FILES: usize = 10;
 const ASSETS_DIR_NAME: &str = "assets";
 
-// Mirrors the event name in apps/desktop/src/desktopServices.ts listenOpenFile.
-const OPEN_FILE_EVENT: &str = "open-file";
-const MAX_PENDING_OPEN_FILES: usize = 16;
-static PENDING_OPEN_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
 #[tauri::command]
-fn read_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+async fn read_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_file_impl(&path))
+        .await
+        .map_err(|error| format!("read task failed: {error}"))?
+}
+
+fn read_file_impl(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
 // Sync commands run on the Rust main thread, so any of them doing IO can stall
-// every later command (and the window event loop) — see known-gotchas. IO-bound
-// commands must be async + spawn_blocking, like the document commands already are.
+// every later command (and every window's event loop) — see known-gotchas. All
+// IO commands are async + spawn_blocking; the remaining sync commands are
+// memory-only or deliberately main-thread-bound (window/menu mutation).
 #[tauri::command]
-async fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+async fn watch_paths(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+) -> Result<(), String> {
     if paths.len() > watcher::MAX_WATCHED_PATHS {
         return Err("too many watch paths".into());
     }
+    // The webview is injected from the caller's context, so each window owns
+    // its own watch set without the TS contract changing shape; the OS
+    // watcher reconciles to the union of all windows' sets.
+    let label = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         // Missing paths are skipped: watching is best-effort hinting, and a file
         // may legitimately not exist yet (fresh tab about to save its first copy).
@@ -45,28 +56,40 @@ async fn watch_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), St
             .iter()
             .filter_map(|path| std::fs::canonicalize(path).ok())
             .collect();
-        watcher::set_watched_paths(&app, &canonical)
+        watcher::set_watched_paths(&app, &label, &canonical)
     })
     .await
     .map_err(|error| format!("watch task failed: {error}"))?
 }
 
 #[tauri::command]
-fn write_file(path: String, contents: String) -> Result<(), String> {
-    atomic_write(Path::new(&path), contents.as_bytes())
+async fn write_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_file_impl(&path, contents))
+        .await
+        .map_err(|error| format!("write task failed: {error}"))?
+}
+
+fn write_file_impl(path: &str, contents: String) -> Result<(), String> {
+    atomic_write(Path::new(path), contents.as_bytes())
 }
 
 #[tauri::command]
-fn write_png(path: String, base64: String) -> Result<(), String> {
-    reject_export_png_path(&path)?;
+async fn write_png(path: String, base64: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_png_impl(&path, &base64))
+        .await
+        .map_err(|error| format!("export png write task failed: {error}"))?
+}
+
+fn write_png_impl(path: &str, base64: &str) -> Result<(), String> {
+    reject_export_png_path(path)?;
     if base64.len() > MAX_ENCODED_EXPORT_PNG_BYTES {
         return Err(format!(
             "encoded export image exceeds the {} byte size limit",
             MAX_ENCODED_EXPORT_PNG_BYTES
         ));
     }
-    let bytes = decode_png_base64(&base64)?;
-    atomic_write(Path::new(&path), &bytes)
+    let bytes = decode_png_base64(base64)?;
+    atomic_write(Path::new(path), &bytes)
 }
 
 fn decode_png_base64(base64: &str) -> Result<Vec<u8>, String> {
@@ -153,7 +176,7 @@ fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) -> Resu
 // before its first paint, because the webview only learns the theme after
 // React loads settings over IPC (tauri-apps/tauri#6027). Anything unreadable,
 // missing, or "system" maps to None so the window keeps following the OS.
-fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
+pub(crate) fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
     let value: serde_json::Value = serde_json::from_str(raw_settings).ok()?;
     window_theme_from_arg(value.get("theme")?.as_str()?).ok()
 }
@@ -318,6 +341,13 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
     }
 }
 
+/// Every live window label, used as the flush target set for app-wide
+/// rounds (quit, update restart, exit). Per-window rounds pass the single
+/// closing label instead.
+fn all_window_labels<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<String> {
+    app.webview_windows().keys().cloned().collect()
+}
+
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     let gate = app.state::<session_flush::FlushGate>();
@@ -326,18 +356,27 @@ fn quit_app(app: tauri::AppHandle) {
         return;
     }
     let exit_handle = app.clone();
-    if gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-        exit_handle.exit(0)
-    }) {
-        let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+    let targets = all_window_labels(&app);
+    if gate.begin(
+        session_flush::SESSION_FLUSH_TIMEOUT,
+        &targets,
+        move |_outcome| exit_handle.exit(0),
+    ) {
+        // Targeted per window: only the labels registered as round targets
+        // are asked to flush.
+        for label in &targets {
+            let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+        }
     } else {
         app.exit(0);
     }
 }
 
 #[tauri::command]
-fn session_flush_ack(app: tauri::AppHandle) {
-    app.state::<session_flush::FlushGate>().ack();
+fn session_flush_ack(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+    // The webview is injected from the caller's context, so the ack lands on
+    // the window that actually flushed, not a hardcoded label.
+    app.state::<session_flush::FlushGate>().ack(window.label());
 }
 
 #[tauri::command]
@@ -364,17 +403,24 @@ async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpdateRestartRe
         return PrepareUpdateRestartResult::TimedOut;
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let started = gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |outcome| {
-        // Update rounds never exit or restart the app: report the outcome
-        // and let the caller decide. A timeout must leave the editor open.
-        let _ = done_tx.send(outcome);
-    });
+    let targets = all_window_labels(&app);
+    let started = gate.begin(
+        session_flush::SESSION_FLUSH_TIMEOUT,
+        &targets,
+        move |outcome| {
+            // Update rounds never exit or restart the app: report the outcome
+            // and let the caller decide. A timeout must leave the editor open.
+            let _ = done_tx.send(outcome);
+        },
+    );
     if !started {
         return PrepareUpdateRestartResult::TimedOut;
     }
     // Register the round before emitting: an ack racing an unregistered
     // round would no-op and stall the flush until the timeout.
-    let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+    for label in &targets {
+        let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+    }
 
     // Async so the webview's session_flush_ack IPC can still be processed
     // while this command waits on the gate.
@@ -401,12 +447,38 @@ fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Opens a fresh editor window (palette/shortcut path). Synchronous on
+/// purpose: window creation must run on the main thread, and Tauri keeps
+/// non-async commands on it.
 #[tauri::command]
-fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
+fn create_editor_window(
+    app: tauri::AppHandle,
+    initial_paths: Option<Vec<String>>,
+) -> Result<String, String> {
+    windows::create_editor_window(
+        &app,
+        &windows::CreateWindowOptions {
+            label: None,
+            initial_paths: initial_paths.unwrap_or_default(),
+            bounds: None,
+            maximized: false,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_image_impl(&path, &base64, &document_path))
+        .await
+        .map_err(|error| format!("image write task failed: {error}"))?
+}
+
+fn write_image_impl(path: &str, base64: &str, document_path: &str) -> Result<(), String> {
     use base64::Engine;
 
-    let target = Path::new(&path);
-    let document = Path::new(&document_path);
+    let target = Path::new(path);
+    let document = Path::new(document_path);
     validate_image_target(target, document)?;
     if base64.len() > MAX_ENCODED_IMAGE_BYTES {
         return Err(format!(
@@ -520,8 +592,10 @@ async fn write_recovery(key: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
-    workspace::list_recoveries()
+async fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
+    tauri::async_runtime::spawn_blocking(workspace::list_recoveries)
+        .await
+        .map_err(|error| format!("recovery listing task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -532,30 +606,92 @@ async fn read_recovery(key: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn clear_recovery(key: String) -> Result<(), String> {
-    workspace::clear_recovery(key)
-}
-
-#[tauri::command]
-fn get_settings() -> Result<String, String> {
-    workspace::get_settings()
-}
-
-#[tauri::command]
-fn save_settings(contents: String) -> Result<(), String> {
-    workspace::save_settings(contents)
-}
-
-#[tauri::command]
-fn get_session_state() -> Result<String, String> {
-    workspace::get_session_state()
-}
-
-#[tauri::command]
-async fn save_session_state(contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::save_session_state(contents))
+async fn clear_recovery(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::clear_recovery(key))
         .await
-        .map_err(|error| format!("session state task failed: {error}"))?
+        .map_err(|error| format!("recovery clear task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn get_settings() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(workspace::get_settings)
+        .await
+        .map_err(|error| format!("settings read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn save_settings(contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::save_settings(contents))
+        .await
+        .map_err(|error| format!("settings save task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn get_session_state(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The lock closes the atomic-replace gap: without it a read racing a
+        // save's rename could observe a missing file as "no session". The
+        // guard must be acquired inside the closure: a std MutexGuard is not
+        // Send, so it cannot cross the spawn_blocking boundary.
+        let lock = app.state::<workspace::SessionFileLock>();
+        let _guard = lock.lock();
+        get_session_state_impl(&label)
+    })
+    .await
+    .map_err(|error| format!("session state read task failed: {error}"))?
+}
+
+fn get_session_state_impl(label: &str) -> Result<String, String> {
+    Ok(workspace::session_payload_for(label)?.unwrap_or_else(|| "{}".to_string()))
+}
+
+#[tauri::command]
+async fn save_session_state(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    contents: String,
+) -> Result<(), String> {
+    // Tauri window getters dispatch to the window's event loop but are
+    // thread-safe; capture the geometry BEFORE spawn_blocking so the shard
+    // records the moment this webview flushed.
+    let label = window.label().to_string();
+    let bounds = current_window_bounds(&window);
+    let maximized = window.is_maximized().unwrap_or(false);
+    let save_app = app.clone();
+    let save_label = label.clone();
+    let save_contents = contents.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = save_app.state::<workspace::SessionFileLock>();
+        let _guard = lock.lock();
+        workspace::save_session_shard(&save_label, &save_contents, bounds, maximized)
+    })
+    .await
+    .map_err(|error| format!("session state task failed: {error}"))??;
+    // The registry mirror follows the persisted payload so open-file routing
+    // sees each window's latest open paths/folder without an extra round.
+    windows::update_meta_from_payload(&app, &label, &contents);
+    Ok(())
+}
+
+/// Bounds for the session shard. Minimized or unqueryable windows keep
+/// `None` so restore falls back to default placement instead of persisting
+/// placeholder geometry.
+fn current_window_bounds(window: &tauri::WebviewWindow) -> Option<windows::WindowBounds> {
+    if window.is_minimized().unwrap_or(false) {
+        return None;
+    }
+    let position = window.outer_position().ok()?;
+    let size = window.inner_size().ok()?;
+    Some(windows::WindowBounds {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
 }
 
 #[tauri::command]
@@ -770,20 +906,12 @@ fn is_markdown_path(path: &Path) -> bool {
         })
 }
 
-fn queue_open_file(path: String) {
-    if let Ok(mut pending) = PENDING_OPEN_FILES.lock() {
-        if !pending.contains(&path) && pending.len() < MAX_PENDING_OPEN_FILES {
-            pending.push(path);
-        }
-    }
-}
-
-fn record_open_file(app: &tauri::AppHandle, path: String) {
-    queue_open_file(path.clone());
-    let _ = app.emit(OPEN_FILE_EVENT, path);
-}
-
-fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Option<&str>) {
+/// Resolves one raw CLI arg to a canonical markdown path: strips `file://`
+/// and stray quotes, joins relative args against `cwd` (or the process
+/// working directory), and canonicalizes. Non-markdown or unresolvable args
+/// return None. Shared by the launch argv loop and the second-instance
+/// callback; routing the result is the caller's choice.
+fn resolve_open_arg(raw_arg: &str, cwd: Option<&str>) -> Option<String> {
     let clean = raw_arg
         .strip_prefix("file://")
         .unwrap_or(raw_arg)
@@ -800,40 +928,44 @@ fn resolve_and_record_open_arg(app: &tauri::AppHandle, raw_arg: &str, cwd: Optio
     } else {
         path.to_path_buf()
     };
-    if is_markdown_path(&resolved) {
-        let canonical = std::fs::canonicalize(&resolved)
+    if !is_markdown_path(&resolved) {
+        return None;
+    }
+    Some(
+        std::fs::canonicalize(&resolved)
             .unwrap_or(resolved)
             .to_string_lossy()
-            .into_owned();
-        record_open_file(app, canonical);
-    }
+            .into_owned(),
+    )
 }
 
 /// Drained by the webview after mount: launch-time Opened events can fire
-/// before the frontend listener is registered.
+/// before the frontend listener is registered. The webview is injected from
+/// the caller's context, so each window drains its own queue.
 #[tauri::command]
-fn take_pending_open_files() -> Vec<String> {
-    PENDING_OPEN_FILES
-        .lock()
-        .map(|mut pending| std::mem::take(&mut *pending))
-        .unwrap_or_default()
+fn take_pending_open_files(window: tauri::WebviewWindow) -> Vec<String> {
+    windows::take_pending(window.label())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            // A second launch focuses the running window; markdown file
-            // arguments open in this instance (macOS delivers the same via
-            // RunEvent::Opened instead of a second process).
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // Markdown file arguments open in this instance (macOS delivers
+            // the same via RunEvent::Opened instead of a second process);
+            // each routes to its best window. A bare second launch just
+            // focuses the most recent window (or creates one).
+            let mut routed_any = false;
             for arg in argv.iter().skip(1) {
                 if !arg.starts_with('-') {
-                    resolve_and_record_open_arg(app, arg, Some(&cwd));
+                    if let Some(canonical) = resolve_open_arg(arg, Some(&cwd)) {
+                        windows::route_open_file(app, &canonical);
+                        routed_any = true;
+                    }
                 }
+            }
+            if !routed_any {
+                windows::ensure_window(app);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -853,11 +985,29 @@ pub fn run() {
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
+        .manage(workspace::SessionFileLock::default())
+        .manage(Mutex::<windows::WindowRegistry>::default())
         .setup(|app| {
+            // Launch argv: the registry is empty and the config-declared main
+            // window does not exist yet, so routing would spawn a duplicate
+            // editor window. Queue straight for "main" and emit targeted at
+            // it — the webview may not be listening yet, and the queue is
+            // the durable path it drains after mount.
             for arg in std::env::args().skip(1) {
                 if !arg.starts_with('-') {
-                    resolve_and_record_open_arg(app.handle(), &arg, None);
+                    if let Some(canonical) = resolve_open_arg(&arg, None) {
+                        windows::queue_open_file("main", &canonical);
+                        let _ = app.emit_to("main", windows::OPEN_FILE_EVENT, &canonical);
+                    }
                 }
+            }
+            {
+                use std::sync::Mutex;
+                let registry = app.state::<Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .register("main");
             }
             // Apply the persisted theme before the first paint; the webview's
             // set_window_theme push arrives only after React boots, which
@@ -868,6 +1018,55 @@ pub fn run() {
                     log::warn!("startup window theme failed: {e}");
                 }
             }
+            // Multi-window session restore: main is already created by
+            // config (theme applied above); replay its saved geometry, then
+            // spawn one window per remaining shard with its saved label so
+            // labels stay deterministic across restarts.
+            let session_windows = {
+                // Same lock contract as get_session_state: a save's atomic
+                // rename must not race this read.
+                let lock = app.state::<workspace::SessionFileLock>();
+                let _guard = lock.lock();
+                workspace::list_session_windows()
+            };
+            match session_windows {
+                Ok(entries) => {
+                    for entry in &entries {
+                        if entry.label == "main" {
+                            if let Some(window) = app.get_webview_window("main") {
+                                // Saved via outer_position/inner_size (physical
+                                // pixels), so the Physical round-trip is exact.
+                                if let Some(b) = entry.bounds {
+                                    let _ = window.set_position(tauri::Position::Physical(
+                                        tauri::PhysicalPosition::new(b.x, b.y),
+                                    ));
+                                    let _ = window.set_size(tauri::Size::Physical(
+                                        tauri::PhysicalSize::new(b.width, b.height),
+                                    ));
+                                }
+                                if entry.maximized {
+                                    let _ = window.maximize();
+                                }
+                            }
+                            continue;
+                        }
+                        // One bad shard must not block the others: log and
+                        // keep restoring.
+                        if let Err(e) = windows::create_editor_window(
+                            app.handle(),
+                            &windows::CreateWindowOptions {
+                                label: Some(entry.label.clone()),
+                                initial_paths: Vec::new(),
+                                bounds: entry.bounds,
+                                maximized: entry.maximized,
+                            },
+                        ) {
+                            log::warn!("session restore for window {} failed: {e}", entry.label);
+                        }
+                    }
+                }
+                Err(e) => log::warn!("session restore listing failed: {e}"),
+            }
             menu::install(app)?;
             watcher::install(app.handle());
             if let Err(e) = workspace::migrate_legacy_config() {
@@ -876,26 +1075,72 @@ pub fn run() {
             log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Red X / Cmd+W: the webview's 1s debounced session save would be
-            // torn down with the window, so flush first and destroy after.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) => {
+                let app = window.app_handle();
+                let registry = app.state::<std::sync::Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .note_focused(window.label());
+            }
+            tauri::WindowEvent::Destroyed => {
+                let app = window.app_handle();
+                let registry = app.state::<std::sync::Mutex<windows::WindowRegistry>>();
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .unregister(window.label());
+                // A window destroyed before draining must not leak its queued
+                // opens into a future window reusing the label.
+                windows::drop_pending(window.label());
+                // Its watches must not leak either: release the ones no
+                // surviving window still needs (shared paths stay watched).
+                watcher::drop_window_watches(app, window.label());
+            }
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                // Red X / Cmd+W: the webview's 1s debounced session save would
+                // be torn down with the window, so flush first and destroy
+                // after. Flushing THIS window only also drops its session
+                // shard (a closed window must not restore); app exit keeps
+                // all shards — see ExitRequested.
                 api.prevent_close();
-                let gate = window.app_handle().state::<session_flush::FlushGate>();
+                let app = window.app_handle();
+                let gate = app.state::<session_flush::FlushGate>();
                 if gate.in_progress() {
                     return;
                 }
-                let app = window.app_handle();
+                let label = window.label().to_string();
                 let closing = window.clone();
-                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-                    let _ = closing.destroy();
-                }) {
+                let finish_app = app.clone();
+                let targets = vec![label.clone()];
+                if !gate.begin(
+                    session_flush::SESSION_FLUSH_TIMEOUT,
+                    &targets,
+                    move |_outcome| {
+                        // Shard removal is a read-modify-write over the shared
+                        // session.json, so it must hold the same lock as shard
+                        // saves: a surviving window's debounced save straddling
+                        // this write would resurrect the closed shard. A failed
+                        // removal must not trap the window open: log and
+                        // destroy regardless.
+                        {
+                            let lock = finish_app.state::<workspace::SessionFileLock>();
+                            let _guard = lock.lock();
+                            if let Err(e) = workspace::remove_session_shard(&label) {
+                                log::warn!("failed to remove session shard for {label}: {e}");
+                            }
+                        }
+                        let _ = closing.destroy();
+                    },
+                ) {
                     return;
                 }
                 // Begin before emit: an ack racing an unregistered round
                 // would no-op and stall the close until the timeout.
-                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+                let _ = app.emit_to(window.label(), session_flush::SESSION_FLUSH_EVENT, ());
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             documents::read_document,
@@ -937,6 +1182,7 @@ pub fn run() {
             quit_app,
             session_flush_ack,
             app_version,
+            create_editor_window,
             take_pending_open_files,
             diagnostics::export_diagnostics,
             menu::set_menu_locale,
@@ -956,8 +1202,14 @@ pub fn run() {
                     if !is_markdown_path(&path) {
                         continue;
                     }
-                    record_open_file(app, path.to_string_lossy().into_owned());
+                    windows::route_open_file(app, &path.to_string_lossy().into_owned());
                 }
+            }
+            // macOS dock-icon click (no file): bring back the most recent
+            // window, or create one when the user closed them all.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                windows::ensure_window(app);
             }
             // Cmd+Q / native quit arrives as ExitRequested without per-window
             // CloseRequested. code: None marks user-initiated exits; our own
@@ -967,7 +1219,15 @@ pub fn run() {
             } = event
             {
                 let gate = app.state::<session_flush::FlushGate>();
-                if gate.consume_flushed() {
+                // `flushed` is one-shot from a completed flush round and can
+                // be stale: with ≥2 live windows, closing ONE of them
+                // completes its round and sets the flag while the app lives
+                // on, and a later OS-quit would wrongly skip the app-wide
+                // flush. Only honor the flag on the designed handoff — the
+                // close round destroyed the LAST window, so this re-entrant
+                // exit sees no webviews left. A stale flag with windows
+                // remaining falls through to the full flush round below.
+                if gate.consume_flushed() && app.webview_windows().is_empty() {
                     return;
                 }
                 if app.webview_windows().is_empty() {
@@ -980,12 +1240,17 @@ pub fn run() {
                     return;
                 }
                 let exit_handle = app.clone();
-                if !gate.begin(session_flush::SESSION_FLUSH_TIMEOUT, move |_outcome| {
-                    exit_handle.exit(0)
-                }) {
+                let targets = all_window_labels(app);
+                if !gate.begin(
+                    session_flush::SESSION_FLUSH_TIMEOUT,
+                    &targets,
+                    move |_outcome| exit_handle.exit(0),
+                ) {
                     return;
                 }
-                let _ = app.emit(session_flush::SESSION_FLUSH_EVENT, ());
+                for label in &targets {
+                    let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
+                }
             }
         });
 }
@@ -1029,24 +1294,28 @@ mod tests {
     fn write_then_read_roundtrip() {
         let path = tmp_path("roundtrip.md");
         let contents = "# 标题\n\nbody with **bold** and 🦀\n".to_string();
-        write_file(path_string(&path), contents.clone()).unwrap();
-        assert_eq!(read_file(path_string(&path)).unwrap(), contents);
+        write_file_impl(&path_string(&path), contents.clone()).unwrap();
+        assert_eq!(read_file_impl(&path_string(&path)).unwrap(), contents);
         fs::remove_file(path).ok();
     }
 
     #[test]
     fn write_png_accepts_png_payload() {
         let path = tmp_path("export.png");
-        write_png(path_string(&path), encoded(PNG_BYTES)).unwrap();
+        write_png_impl(&path_string(&path), &encoded(PNG_BYTES)).unwrap();
         assert_eq!(fs::read(&path).unwrap(), PNG_BYTES);
         fs::remove_file(path).ok();
     }
 
     #[test]
     fn write_png_rejects_traversal_and_non_png() {
-        assert!(write_png("/tmp/../etc/x.png".into(), encoded(PNG_BYTES)).is_err());
-        assert!(write_png(path_string(&tmp_path("export.jpg")), encoded(PNG_BYTES)).is_err());
-        assert!(write_png(path_string(&tmp_path("export.png")), encoded(b"not-png")).is_err());
+        assert!(write_png_impl("/tmp/../etc/x.png", &encoded(PNG_BYTES)).is_err());
+        assert!(
+            write_png_impl(&path_string(&tmp_path("export.jpg")), &encoded(PNG_BYTES)).is_err()
+        );
+        assert!(
+            write_png_impl(&path_string(&tmp_path("export.png")), &encoded(b"not-png")).is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -1058,7 +1327,7 @@ mod tests {
         fs::write(&path, "old").unwrap();
         let old_inode = fs::metadata(&path).unwrap().ino();
 
-        write_file(path_string(&path), "new".into()).unwrap();
+        write_file_impl(&path_string(&path), "new".into()).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert_ne!(fs::metadata(&path).unwrap().ino(), old_inode);
@@ -1117,7 +1386,7 @@ mod tests {
         let path = directory.join("文档-🦀.md");
         fs::create_dir_all(&directory).unwrap();
 
-        write_file(path_string(&path), "你好，Rust".into()).unwrap();
+        write_file_impl(&path_string(&path), "你好，Rust".into()).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "你好，Rust");
         fs::remove_dir_all(directory).ok();
@@ -1134,7 +1403,7 @@ mod tests {
         fs::write(&path, "original").unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
 
-        let result = write_file(path_string(&path), "replacement".into());
+        let result = write_file_impl(&path_string(&path), "replacement".into());
 
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(result.is_err());
@@ -1145,17 +1414,17 @@ mod tests {
 
     #[test]
     fn read_missing_file_errors() {
-        assert!(read_file(path_string(&tmp_path("does-not-exist.md"))).is_err());
+        assert!(read_file_impl(&path_string(&tmp_path("does-not-exist.md"))).is_err());
     }
 
     #[test]
     fn write_image_decodes_base64_and_creates_dirs() {
         let (directory, document, path) = document_image("image-success", "pixel.png");
 
-        write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1171,16 +1440,16 @@ mod tests {
         let jpeg = b"\xff\xd8\xff\xe0jpeg";
         let webp = b"RIFF\x04\x00\x00\x00WEBP";
 
-        write_image(
-            path_string(&jpeg_path),
-            encoded(jpeg),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&jpeg_path),
+            &encoded(jpeg),
+            &path_string(&document),
         )
         .unwrap();
-        write_image(
-            path_string(&webp_path),
-            encoded(webp),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&webp_path),
+            &encoded(webp),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1193,10 +1462,10 @@ mod tests {
     fn write_image_accepts_current_documents_assets_directory() {
         let (directory, document, image) = document_image("document-assets", "pixel.png");
 
-        write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .unwrap();
 
@@ -1210,10 +1479,10 @@ mod tests {
         let second_directory = tmp_path("second-document");
         let image = second_directory.join("assets/pixel.png");
 
-        assert!(write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document),
+        assert!(write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document),
         )
         .is_err());
         assert!(!image.exists());
@@ -1226,10 +1495,10 @@ mod tests {
         let (directory, document) = prepare_document("image-traversal");
         let path = directory.join("assets/../pixel.png");
 
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!directory.join("pixel.png").exists());
@@ -1248,10 +1517,10 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, &assets).unwrap();
 
-        assert!(write_image(
-            path_string(&image),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&image),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!outside.join("pixel.png").exists());
@@ -1262,10 +1531,10 @@ mod tests {
     #[test]
     fn write_image_rejects_bad_base64() {
         let (directory, document, path) = document_image("bad-base64", "x.png");
-        assert!(write_image(
-            path_string(&path),
-            "!!!not-base64!!!".into(),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            "!!!not-base64!!!",
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1274,10 +1543,10 @@ mod tests {
     #[test]
     fn write_image_rejects_unsupported_extension() {
         let (directory, document, path) = document_image("bad-extension", "x.gif");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1286,10 +1555,10 @@ mod tests {
     #[test]
     fn write_image_rejects_mismatched_format() {
         let (directory, document, path) = document_image("bad-format", "x.jpg");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         fs::remove_dir_all(directory).ok();
@@ -1299,10 +1568,10 @@ mod tests {
     fn write_image_rejects_destination_outside_assets() {
         let (directory, document) = prepare_document("outside-assets");
         let path = directory.join("pixel.png");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
@@ -1313,10 +1582,10 @@ mod tests {
     fn write_image_rejects_nested_destination_inside_assets() {
         let (directory, document) = prepare_document("nested-assets");
         let path = directory.join("assets/nested/pixel.png");
-        assert!(write_image(
-            path_string(&path),
-            encoded(PNG_BYTES),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(PNG_BYTES),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
@@ -1327,10 +1596,10 @@ mod tests {
     fn write_image_rejects_oversized_decoded_payload() {
         let (directory, document, path) = document_image("oversized", "large.png");
         let payload = vec![0_u8; 10 * 1024 * 1024 + 1];
-        assert!(write_image(
-            path_string(&path),
-            encoded(&payload),
-            path_string(&document)
+        assert!(write_image_impl(
+            &path_string(&path),
+            &encoded(&payload),
+            &path_string(&document)
         )
         .is_err());
         assert!(!path.exists());
@@ -1373,23 +1642,6 @@ mod tests {
         let document = directory.join("../document.md");
         assert!(document_directory_for_assets(&document).is_err());
         fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn pending_open_files_queue_is_bounded_and_drains_once() {
-        for i in 0..(MAX_PENDING_OPEN_FILES + 5) {
-            queue_open_file(format!("/tmp/doc-{i}.md"));
-        }
-
-        let drained = take_pending_open_files();
-        assert_eq!(drained.len(), MAX_PENDING_OPEN_FILES);
-        assert_eq!(drained[0], "/tmp/doc-0.md");
-        assert_eq!(
-            drained[MAX_PENDING_OPEN_FILES - 1],
-            format!("/tmp/doc-{}.md", MAX_PENDING_OPEN_FILES - 1)
-        );
-        // A drain consumes the queue; a second drain sees nothing.
-        assert!(take_pending_open_files().is_empty());
     }
 
     #[test]

@@ -126,3 +126,101 @@ The other platforms follow the same shape: Windows uses DirectWrite
 en-US preferred name); Linux shells out to `fc-list : family` best-effort and
 reports an empty list when fontconfig is absent — the picker then offers
 presets only, which is the designed degradation, not an error to fix.
+
+## Capability `windows` patterns are label-matched with globs; an uncovered label gets zero IPC
+
+Tauri 2 grants permissions per window **label**, and the `windows` array in
+`capabilities/default.json` accepts glob patterns (documented in
+`gen/schemas/desktop-schema.json`). A window whose label matches no capability
+gets no IPC permissions at all, so every `invoke` from it rejects at runtime —
+while every TypeScript test stays green, because desktop tests mock
+`desktopServices` at the TS boundary and never cross the real capability
+check. Dynamically created windows are the trap: the multi-window host's
+`editor-N` labels (`src-tauri/src/windows.rs`) exist nowhere in config, so
+shipping them without a covering pattern would make every invoke in a new
+editor window fail at runtime. This is the config-file sibling of the IPC
+wire-drift traps above — it compiles, passes tests, and breaks only in the
+running app.
+
+Rules: when Rust code creates a window with a new label family, extend the
+capability in the same change. `default.json` uses `["main", "editor-*"]` —
+the explicit `editor-*` glob, not a bare `"*"`, so future utility windows
+cannot silently inherit editor permissions — and `tauri.conf.json` declares
+`"label": "main"` explicitly so the config-declared window and the capability
+stay visibly linked. Drift guard:
+`apps/desktop/test/windowCapabilities.test.ts` asserts both patterns; extend
+it when adding another label family.
+
+## Menu events carry no window identity; route through the registry MRU
+
+Tauri's app-level `on_menu_event` reaches Rust as `(handle, event)` with only
+the item id — there is no window in the event, because the native (macOS)
+menu bar belongs to the application, not to a window. With several webview
+windows live, "which window runs Save?" has no answer in the event itself:
+menu.rs resolves it from the `WindowRegistry` MRU via `focused_label` — the
+MRU head if it still has a live webview (the head can be mid-destroy), else
+any live webview as fallback, else `None`. `None` means the command is
+dropped: zero windows (macOS after closing everything) has no webview to
+receive an emit, and silently doing nothing beats crashing or inventing a
+target. The `Destroyed` handler unregisters the label, which is what keeps
+the MRU honest; routing through a stale MRU head without the live-webview
+check would emit into a destroyed window.
+
+Two exemptions to the forwarding path: `new-window` creates an editor window
+natively in the handler (it targets no existing window), and the `window-*`
+commands are handled natively in Rust against the same `focused_label`
+resolution (`handle_window_command`) — except `window-bring-all-to-front`,
+which needs no target because it iterates every window. Forwarding itself is
+`emit_to(&label, MENU_EVENT, id)` — targeted, matching the AnyLabel listener
+pinning on the JS side (see the desktop Any/AnyLabel gotcha). Any new
+menu-driven command must decide its target the same way; a hardcoded
+`"main"` label is wrong in every multi-window scenario.
+
+## FlushGate rounds are counting: one global deadline over the target set
+
+`session_flush.rs` runs one round per quit attempt, not one timeout per
+window: `begin(timeout, targets, finish)` arms a single
+`SESSION_FLUSH_TIMEOUT` (2s) deadline covering the whole target set, and the
+`finish` callback runs exactly once — when the last target acks or when the
+deadline hits, whichever comes first. A per-window serial timeout would
+multiply the worst case (N hung webviews × 2s) and still have to finish;
+counting keeps "a hung webview never traps the user" true at any window
+count. `ack(window_label)` removes exactly the calling window's label from
+the pending set; acks from labels outside the target set are ignored (a
+stale or foreign webview ack cannot complete the round), and `begin` while a
+round is in flight returns `false` — the second round never runs, so its
+finish must not either (guarded by `begin_while_in_progress_is_ignored`).
+Empty `targets` complete immediately with `Acknowledged`.
+
+Load-bearing ordering, same as the single-window gate but now per round:
+call `begin` **before** emitting `session-flush` — an ack racing an
+unregistered round no-ops and stalls the close until the timeout. The ack
+command injects the calling `WebviewWindow`, so the label the gate removes
+is the window that actually flushed, never a hardcoded `"main"`. `finish`
+receives the `FlushOutcome`: ordinary quit paths ignore it (a timeout still
+finishes), but `prepare_update_restart` aborts the install on `TimedOut`
+instead of exiting. The one-shot `flushed` flag (`consume_flushed`) exists
+because the window-close round's finisher destroys the last window, which
+re-triggers `ExitRequested` — that follow-up exit must pass through without
+re-flushing.
+
+## Session shards: window close drops its shard, app exit keeps them all
+
+Session state is one `session.json` holding a per-window shard keyed by
+label (`workspace::save_session_shard` / `remove_session_shard` /
+`session_payload_for`, all under `SessionFileLock`). The lifecycle rule:
+`WindowEvent::CloseRequested`'s flush finisher removes the closing window's
+shard (a window the user closed must not come back), while app exit
+(`ExitRequested`, `quit_app`) keeps every shard (the user expects the whole
+workspace back). `get_session_state` answers `"{}"` for a label with no
+shard so a fresh editor window keeps its untitled tab instead of adopting
+another window's session.
+
+Shard removal is a read-modify-write over the shared `session.json`, so the
+finisher must hold the same `SessionFileLock` as shard saves — a surviving
+window's debounced save straddling the removal would otherwise resurrect the
+closed shard from its stale in-memory copy. A failed removal must not trap
+the window open: log and destroy regardless. Accepted residual (VS Code
+parity): a **crash** can restore a window the user closed after that
+window's last flush — the shard only disappears at close time, so a crash
+before the finisher leaves the last-flushed shard on disk.

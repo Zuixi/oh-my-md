@@ -22,6 +22,7 @@ const RECENT_PREFIX = "recent:"
 export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   new: "tab",
   "new-tab": "tab",
+  "new-window": "new-window",
   "open-file": "open",
   "quick-open": "quick-open",
   "open-folder": "folder",

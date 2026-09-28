@@ -12,6 +12,7 @@ import {
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
+import { estimateTableHeightPx } from "../widgetHeights"
 import { icon, type IconName } from "../icons"
 
 interface PendingTableEdit {
@@ -243,6 +244,13 @@ export class TableWidget extends BlockWidget {
     // resolveSrc 不参与相等性：由宿主 facet 注入，只在编辑器配置重建时变化。
     // 先比 src/embed（提交热路径必变，直接短路），相同才比较结构键。
     return super.eq(other) && this.equalityKey === other.equalityKey
+  }
+
+  // 滚动性能：整表一个块，缺省按一行行高估算会让视口换算严重过绘（见
+  // widgetHeights.ts 头注）。换行感知估算（按各格文本长度），首绘后 CM 用
+  // 实测高度替换。
+  override get estimatedHeight() {
+    return estimateTableHeightPx(this.table)
   }
 
   override toDOM(view: EditorView) {

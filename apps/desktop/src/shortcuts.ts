@@ -32,6 +32,7 @@ export const WINDOW_SHORTCUTS: readonly WindowShortcut[] = [
   { id: "quick-open", binding: "Mod+p", key: "p" },
   { id: "open", binding: "Mod+o", key: "o" },
   { id: "tab", binding: "Mod+n", key: "n" },
+  { id: "new-window", binding: "Mod+Shift+n", key: "N", shift: true },
   { id: "close", binding: "Mod+w", key: "w" },
   { id: "save", binding: "Mod+s", key: "s" },
   { id: "save-as", binding: "Mod+Shift+s", key: "s", shift: true },
