@@ -12,6 +12,7 @@ import {
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
 import { icon } from "../icons"
+import { blockPrefixOf } from "../../format/blockPrefix"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
@@ -220,7 +221,12 @@ export class CodeWidget extends BlockWidget {
         view.state.doc.lines,
       )
       // 避免强制 scrollIntoView 导致代码块点击时视口发生急剧滚动跳跃
-      view.dispatch({ selection: { anchor: view.state.doc.line(target).from } })
+      const targetLine = view.state.doc.line(target)
+      // 引用内的代码内容行以 `> ` 开头：落点必须在**内容起点**，落在行首等于落进
+      // QuoteMark 里，标记会因此展开、光标行露出裸 `> `（同一行的其它行正常折叠）。
+      const prefix = blockPrefixOf(view.state, targetLine)
+      const anchor = prefix ? targetLine.from + prefix.text.length : targetLine.from
+      view.dispatch({ selection: { anchor } })
       view.focus()
     })
 
@@ -253,6 +259,10 @@ export class CodeWidget extends BlockWidget {
       onCommitInfo: (title, lang) => this.commitInfo(title, lang),
       onPickerDestroy: destroy => { this.langPickerDestroy = destroy },
     })
+    // 引用/列表内的渲染态代码块：header 自带不透明底色，只有同带引用类时
+    // `.omd-code-header.omd-blockquote-N` 才能把引用条重画上去（与编辑态 chrome 同理）。
+    const embedClasses = blockEmbedClasses(this.embed)
+    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
 
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"

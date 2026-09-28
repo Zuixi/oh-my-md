@@ -12,6 +12,7 @@ import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
 import { parseFenceInfo } from "../fenceInfo"
+import { blockPrefixOf } from "../format/blockPrefix"
 
 const MAX_QUOTE_DEPTH = 4
 const MAX_LIST_DEPTH = 4
@@ -157,6 +158,18 @@ function styleEditingCodeblock(
   }
   for (let number = firstContent; number <= lastContent; number++) {
     const line = doc.line(number)
+    // 引用内围栏的内容行：`> ` 前缀是 FencedCode 的子节点，而本分支会让 walker
+    // 跳过整棵 FencedCode 子树（返回 true），不在这里补折叠，编辑态就会露出裸
+    // `> `（渲染态由 CodeWidget 整体替换，所以只有编辑态暴露）。折叠范围与
+    // foldQuoteMark 一致：标记 + 后随一个空格，光标进入该范围时按 Route A 展开。
+    const prefix = blockPrefixOf(state, line)
+    for (const mark of prefix?.marks ?? []) {
+      if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
+      out.push({
+        from: mark.from, to: mark.to, tag: "replace:QuoteMark",
+        deco: Decoration.replace({}),
+      })
+    }
     out.push({
       from: line.from, to: line.from, tag: "line:omd-codeblock",
       deco: Decoration.line({ class: "omd-codeblock" }),

@@ -178,8 +178,25 @@ describe("block syntax", () => {
     assertNoReplaceOverlap(replaceRanges(doc, 0))
   })
 
-  it("keeps a language-less fenced block line-styled in the rendered state", () => {
-    const doc = "intro\n\n```\nplain text\n```\n"
+  it("folds the quote prefix of every content line in the in-quote editing state", () => {
+    const doc = "intro\n\n> ```bash\n> npm install\n> npm start\n> ```\n"
+    // 光标落在内容起点（点击代码体的落点）：折叠范围是 `> ` 两个字符，起点在范围
+    // 之外，所以光标行同样折叠 —— 编辑态不露出裸 `> `。
+    const inside = doc.indexOf("> npm install") + 2
+    const state = makeState(doc).update({ selection: { anchor: inside } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    const tags = specs.map(d => d.tag)
+    expect(tags).toContain("widget:block:code-chrome")
+    const ranged = specs.map(d => `${d.tag}@${d.from}-${d.to}`)
+    for (const line of ["> npm install", "> npm start"]) {
+      const lineFrom = doc.indexOf(line)
+      expect(ranged).toContain(`replace:QuoteMark@${lineFrom}-${lineFrom + 2}`)
+    }
+    assertNoReplaceOverlap(replaceRanges(doc, 0))
+    expect(() => buildLiveDecorations(state)).not.toThrow()
+  })
+
+  it("keeps a language-less fenced block line-styled in the rendered state", () => {    const doc = "intro\n\n```\nplain text\n```\n"
     const state = makeState(doc).update({ selection: { anchor: 0 } }).state
     const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
     expect(tags).not.toContain("widget:block:code")
