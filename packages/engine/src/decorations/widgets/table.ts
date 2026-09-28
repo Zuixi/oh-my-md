@@ -249,6 +249,14 @@ export class TableWidget extends BlockWidget {
     this.view = view
     this.wrap = super.toDOM(view)
     ownDom(this, this.wrap)
+    const wrap = this.wrap
+    // `</>`（显式进源码）会在 BlockWidget 自己的 mousedown 里把光标移进块、把 widget
+    // 连同输入框一起拆掉：未提交的单元格输入必须先落地。捕获阶段先于按钮处理器执行。
+    wrap.addEventListener("mousedown", e => {
+      if (e.button !== 0) return
+      if (!(e.target instanceof Element) || !e.target.closest(".omd-block-edit")) return
+      domOwner.get(wrap)?.commitPendingEdit()
+    }, true)
     return this.wrap
   }
 
@@ -490,7 +498,19 @@ export class TableWidget extends BlockWidget {
     // 防御所有入口（点击与重建后的键盘续编）：合成 ragged cell 没有可写源码范围。
     if (this.view?.state.readOnly || !this.cellData(row, col)) return
     if (this.editing?.el === el) return
-    this.cancelEdit()
+    const previous = this.editing
+    if (previous) {
+      const input = previous.el.querySelector<HTMLInputElement>("input.omd-table-edit")
+      const cell = this.cellData(previous.row, previous.col)
+      if (input && cell && input.value !== cell.source) {
+        // 换格即提交：绝不静默丢弃已输入内容。落点格交给 pending 重建路径打开 ——
+        // dispatch 之后本实例就不再是 owner（updateDOM 轮换），不能继续在 this 上开编辑器。
+        this.commitEdit(0, undefined, { row, col })
+        return
+      }
+      // 无改动：直接收掉旧编辑器（不产生事务、不留下多余的 undo 步）。
+      this.cancelEdit()
+    }
     this.row = row
     this.col = col
     this.clearActive()
@@ -505,7 +525,15 @@ export class TableWidget extends BlockWidget {
     input.addEventListener("mousedown", e => {
       e.stopPropagation()
     })
+    // 点击/聚焦到表格之外（正文、其它 widget、应用外）必须把输入落地：
+    // 旧行为是 focusout 后整块重建 → 用户输入静默消失（A2）。
+    input.addEventListener("focusout", () => {
+      const owner = (wrap && domOwner.get(wrap)) ?? this
+      owner.commitPendingEdit()
+    })
     input.addEventListener("keydown", e => {
+      // IME 组词中的 Enter/Escape 是候选确认/取消，不能当成单元格提交/放弃（A3）。
+      if (e.isComposing || e.keyCode === 229) return
       // 同上：输入框可能由前一个实例创建，事件必须派发给当前 owner。
       const owner = (wrap && domOwner.get(wrap)) ?? this
       if (e.key === "Enter" || e.key === "Tab") {
@@ -539,7 +567,23 @@ export class TableWidget extends BlockWidget {
     renderTableCellContent(edit.el, this.cellData(edit.row, edit.col)?.text ?? "", this.resolveSrc)
   }
 
-  private commitEdit(move: 1 | -1 | 0, fromKey?: "tab" | "shift-tab" | "enter") {
+  /**
+   * 丢掉输入框之前把未提交的值落地（失焦、显式进源码、widget 被拆之前的最后一道）。
+   * 幂等：Escape/提交路径已把 `editing` 置空，重复调用（focusout 在 DOM 替换时补发）无操作。
+   */
+  private commitPendingEdit(): void {
+    const edit = this.editing
+    if (!edit) return
+    const input = edit.el.querySelector<HTMLInputElement>("input.omd-table-edit")
+    const cell = this.cellData(edit.row, edit.col)
+    // 无输入框或源码槽已失效（陈旧元数据）：还原渲染，绝不派发越界事务。
+    if (!input || !cell) { this.cancelEdit(); return }
+    // 未改动：只收掉编辑器，不产生事务。
+    if (input.value === cell.source) { this.cancelEdit(); return }
+    this.commitEdit(0)
+  }
+
+  private commitEdit(move: 1 | -1 | 0, fromKey?: "tab" | "shift-tab" | "enter", explicitDest?: { row: number; col: number }) {
     const edit = this.editing
     const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
     if (!edit || !input) return
@@ -550,7 +594,7 @@ export class TableWidget extends BlockWidget {
     this.editing = null
     this.clearActive()
     const neighbor = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
-    let dest = neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null
+    let dest = explicitDest ?? (neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null)
     let changes: TableSourceChange[] = [change]
 
     // 末格 Tab：同一事务提交当前单元格并在表尾追加一个空行，重建后聚焦新行首格
