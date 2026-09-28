@@ -607,6 +607,13 @@ export class TableWidget extends BlockWidget {
         dest = { row: this.table.rows.length + 1, col: 0 }
       }
     }
+    // 文本等价提交（转义后与源码同形，例如输入 "a|b" 而源码已是 "a\|b"）：事务不
+    // 改变文档 → 装饰 eq 命中、CM 既不调 toDOM 也不调 updateDOM → pending 永远没人
+    // 消费、输入框留在 DOM 里（Tab 看起来失灵）。这种情况自己收尾，不派发。
+    if (this.textNoop(changes)) {
+      this.settleTextNoop(edit.el, cell, dest)
+      return
+    }
     this.replace(changes, dest)
   }
 
@@ -648,7 +655,34 @@ export class TableWidget extends BlockWidget {
       }
     }
     // dir === -1 越界到 -1（首格 Shift+Enter）或合成格不可用：等同于 no-op 提交
+    if (this.textNoop(changes)) {
+      this.settleTextNoop(edit.el, cell, dest)
+      return
+    }
     this.replace(changes, dest)
+  }
+
+  /** 事务是否在文本上等价（转义后与源码同形）：这类 change 不改变文档，装饰 eq
+   * 会命中，CM 既不调 toDOM 也不调 updateDOM —— pending 与输入框都没人收尾。 */
+  private textNoop(changes: readonly TableSourceChange[]): boolean {
+    return changes.every(change => change.insert === this.src.slice(change.from, change.to))
+  }
+
+  /** 文本等价提交的收尾：不派发事务，自己还原该格渲染并打开落点格（等价于重建
+   * 路径里「pending 消费 + 该格重新渲染」的结果，只是没有事务可派发）。
+   * 落点格只在 DOM 仍挂载时打开 —— 与重建路径的微任务 `isConnected` 守卫同义：
+   * widget 已被替换/销毁（detached corpse）时绝不重新开编辑器。 */
+  private settleTextNoop(
+    editedCell: HTMLElement,
+    cell: TableCellData,
+    dest: { row: number; col: number } | null,
+  ): void {
+    this.editing = null
+    this.clearActive()
+    renderCellSlot(editedCell, cell, this.resolveSrc)
+    if (!dest || !this.wrap?.isConnected) return
+    const target = this.cells[dest.row]?.[dest.col]
+    if (target) this.startEdit(target, dest.row, dest.col)
   }
 
   private neighbor(row: number, col: number, dir: 1 | -1) {

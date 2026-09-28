@@ -107,6 +107,28 @@ describe("table cell input commit", () => {
     expect(input.isConnected || input.parentElement).toBeTruthy()
   })
 
+  it("still moves on when the commit is text-equivalent (no dispatch to rebuild the widget)", async () => {
+    // 源码里的转义形式与输入的转义结果相同 → 事务不改变文档 → 装饰 eq 命中、
+    // CM 不会再调 updateDOM/toDOM：pending 落点与「还原输入框」都必须自己收尾，
+    // 否则 Tab 看起来失灵、输入框留在格子里。
+    const src = "| a | b |\n|---|---|\n| a\\|b | 2 |"
+    const { view, doc, changes } = fakeView(src)
+    const { dom, input } = await mountCellEditing(view, src)
+    // 落点格只在 DOM 仍挂载时重开（detached corpse 守卫）—— 挂到文档上模拟生产。
+    document.body.appendChild(dom)
+    expect(input.value).toBe("a\\|b")
+    input.value = "a|b"   // 转义后与源码同形
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
+
+    expect(changes()).toHaveLength(0)
+    expect(doc()).toBe(src)
+    // 落点格已打开（原先那格恢复渲染）
+    expect(cellOf(dom, 1, 0).querySelector("input.omd-table-edit")).toBeNull()
+    const next = cellOf(dom, 1, 1).querySelector("input.omd-table-edit") as HTMLInputElement | null
+    expect(next?.value).toBe("2")
+    dom.remove()
+  })
+
   it("ignores the legacy 229 keydown emitted by IME candidate windows", async () => {
     const { view, doc, changes } = fakeView(SRC)
     const { input } = await mountCellEditing(view)

@@ -96,6 +96,19 @@ test("taking the block into source with </> commits the pending cell first", asy
   expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
 })
 
+test("Tab on an unchanged cell still advances and keeps the document byte-identical", async ({ page }) => {
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(DOC)}`)
+  const before = await page.evaluate(() => window.__view.state.doc.toString())
+  await openCell(page, 0, 0)
+  await page.keyboard.press("Tab")
+  // 文本等价提交不派发事务（否则装饰 eq 命中、widget 不重建 → 落点永远打不开）。
+  await expect(page.locator("input.omd-table-edit")).toBeFocused()
+  const focused = await page.evaluate(() =>
+    (document.querySelector("input.omd-table-edit") as HTMLInputElement).value)
+  expect(focused).toBe("b1")
+  expect(await page.evaluate(() => window.__view.state.doc.toString())).toBe(before)
+})
+
 test("an unmodified cell closes without touching the document", async ({ page }) => {
   await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(DOC)}`)
   const before = await page.evaluate(() => window.__view.state.doc.toString())
