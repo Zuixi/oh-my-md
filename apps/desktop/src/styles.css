@@ -1519,6 +1519,12 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
 .editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
+/* 但上面两条（以及 CodeMirror 基础主题的 activeLine）都用 background 简写，
+   会把 background-image 一起清成 none —— 光标停在引用段落上时，那一行的引用
+   竖条会缺一节。引用条必须在本规则里按同样的高优先级重画。 */
+.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine {
+  background-image: var(--omd-bq-image);
+}
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */
