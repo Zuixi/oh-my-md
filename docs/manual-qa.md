@@ -296,7 +296,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 ## 最近一次验证记录
 
 - 日期：2026-09-29（fix-table-quote-ux：表格/引用块/代码块编辑体验 + 语言覆盖）
-- 自动化已通过：`pnpm --filter @omd/engine test`（630，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 ≈2.6–5.6ms、Enter 续写循环 p95 ≈11ms —— 单看 Enter 与随后的逐字插入各约 5ms —— 均低于 16ms 预算；同批 `documentStats 50k` 报 11.3ms OVER BUDGET(>8ms)，该模块不在本分支改动范围内，属既有基线/机器抖动，未处理）
+- 自动化已通过：`pnpm --filter @omd/engine test`（634，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop test:e2e`（13，Playwright 真浏览器）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 ≈2.6–5.6ms、Enter 续写循环 p95 ≈11ms —— 单看 Enter 与随后的逐字插入各约 5ms —— 均低于 16ms 预算；同批 `documentStats 50k` 报 11.3ms OVER BUDGET(>8ms)，该模块不在本分支改动范围内，属既有基线/机器抖动，未处理）
 - 上表交互项（单元格 IME / 引用块 Enter / 引用块内代码块 / 编辑态语言覆盖）需 `pnpm dev` + 真实 IME 目视，本环境未执行，保持未勾选
 - 日期：2026-08-14（Task 14 / Conflict-safe guarded save）
 - 自动化已通过：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（206）、`pnpm --filter @omd/desktop build`、`rg` 计划扫描无 TBD/TODO、`git diff --check`
