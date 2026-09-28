@@ -31,7 +31,7 @@ Boundary positions are intentionally different:
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
 - List indent inside a quote must start after the folded `> `; using `line.from` overlaps `replace:QuoteMark` and can make `Decoration.set` throw. List marks fold unconditionally (Route A) in and out of quotes.
 - A list inside a quote and a quote inside a list must not share `omd-li-N`. List-in-quote keeps `omd-blockquote-N` + `omd-li-N` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li-N` instead, which sets `--omd-bq-bar` to the list indent and disables hang. Reusing `omd-li-N` for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
-- Ordinary fenced code without language or inside a quote must stay as line styles (`omd-codeblock` + optional quote classes). Without a language specified, rendering an opaque `widget:block:code` collapses character-level line positions and breaks coordinate mapping / right-click cursor placement. A `widget:block:code` replace inside a quote also removes those lines from the document view and splits the quote into fragments. Fold `CodeMark` / `CodeInfo` with `cursorInside`. Mermaid still needs a widget; put quote/list depth on `BlockWidget.embed` so its chrome aligns. Quote-bar CSS should use `background-image` so it composes with `omd-codeblock`'s `background-color`.
+- Fenced code splits by state, not by location: **rendered** language blocks (in or out of a quote) are a `widget:block:code`; a **rendered** language-less block stays line styles (`omd-codeblock` + quote classes) because there is nothing to highlight and an opaque widget would collapse character-level positions; the **editing** state (caret inside, any language, language-less included) replaces only the opening fence line with `CodeChromeWidget` (`styleEditingCodeblock`), which is also the only GUI path to add a language to a block that has none. Fold `CodeMark` / `CodeInfo` with `cursorInside`. Mermaid still needs a widget; put quote/list depth on `BlockWidget.embed` so its chrome aligns (that is what makes an in-quote code block render like any other block — the older "in-quote fences stay line-styled" rule is gone). Two consequences worth remembering: the opening-line replace drops that line's `line:omd-blockquote-N` decoration, so the chrome must carry its own quote classes; and `.omd-code` / `.omd-code-header` set an opaque `background` shorthand that erases the quote bar painted by `.omd-blockquote*` (see the desktop gotcha on `--omd-bq-image`).
 - HTML entities (`&#x1f4da;`, `&#128218;`, `&copy;`) are built-in Lezer `Entity` nodes. Preview-replace them with `widget:entity` when the cursor is not inside the entity; do not rewrite the source. Decode numeric references with `String.fromCodePoint` (DOMParser in happy-dom truncates supplementary-plane emoji). Do not render arbitrary HTML tags. Unicode emoji in the source are already literal text.
 - GitHub gemoji shortcodes (`:tada:`, `:+1:`) are a Lezer `Emoji` node only when the alias is in `parse/emoji.json` (unicode gemoji, no `:octocat:` images). Preview-replace with `widget:emoji` using `cursorInside`, not line-based `nearCursor`. Typing `:` opens a dedicated completion override that inserts Unicode and replaces the `:query`; do not enable generic `autocompletion()` in `createEditor`. Do not parse inside code, after a word character (`12:00`, `hello:smi`), or as `:)` emoticons.
 - Headings fold `#` / Setext underlines unconditionally (Route A), in and out of quotes — the title can always be edited without showing the ATX marks.
@@ -179,7 +179,7 @@ Facts to remember:
 - Cells are **single-line**, so multi-row block content cannot be expressed; list/quote/fence content in a cell comes only from markers on that one line.
 - Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
-- Widget `eq` compares the full `TableData` model via `JSON.stringify` — every cell's `source` and table-relative range (`model.ts`), not just display strings — so an unchanged table reuses its DOM and any authored range change rebuilds. The model is extracted once per build by `tableDataFromNode` (Lezer-derived, see the table-editing entry below); never re-derive it from re-serialized strings, and never store it in a module-global.
+- Widget `eq` compares `src` + `embed` first and then the cheap lazy `tableEqualityKey` (cell `source`s + alignments + shape) — never `JSON.stringify(table)`, which serialized every cell on every rebuild pass. An unchanged table reuses its DOM; a changed cell reaches `updateDOM`, which patches only the changed cells in place (see the table in-place-refresh entry below). The model is extracted once per build by `tableDataFromNode` (Lezer-derived); never re-derive it from re-serialized strings, and never store it in a module-global.
 - Cell `mousedown` must `preventDefault` + `stopPropagation`. `BlockWidget.toDOM` moves selection into the table source on wrap `mousedown`, which unmounts the widget; without stopping the bubble, in-place `input.omd-table-edit` never stays mounted.
 - Opening the cell input must place a collapsed caret, not call `input.select()`: native selected input text is a dark-blue rectangle that looks like a selected table cell. The input chrome is intentionally transparent/borderless. With `table-layout:auto`, `input { width:100% }` also contributes its default 20ch intrinsic width and makes the column jump; use `width:0; min-width:100%` to fill the already-sized cell without changing the table's intrinsic column calculation.
 
@@ -315,3 +315,83 @@ suite (`test/docText.test.ts`, every-chunk-boundary scans against
 `Text.of(s.split(/\r\n?|\n/))`) is the guard. Related trap in the same file:
 an empty streaming chunk must not adjudicate a pending chunk-trailing `\r`
 (`"\r" + "" + "\n"` is one `\r\n` separator, not two).
+
+## CodeMirror's widget reuse keeps the NEW instance but the OLD DOM and listeners
+
+`docview.findWidget` reuses a widget tile's DOM when pass 0 finds an `eq` match
+(no `updateDOM`, no `destroy`), and on pass 1 — constructor match with a failed
+`eq` — it calls `tile.widget.updateDOM(tile.dom, view, newWidget)` where `this`
+is the **new** widget and the third argument is the **old** one, then stores
+`new WidgetTile(tile.dom, length, widget, flags)`. So after any in-place refresh
+the DOM, its event listeners, and any closure state belong to the *previous*
+instance while CodeMirror holds the *new* one. A listener that closes over
+`this.row` / `this.editing` reads state that no longer exists once the widget is
+replaced, which is why `TableWidget` resolves its live owner through the
+module-level `domOwner` WeakMap — registered under **both** the wrap returned by
+`toDOM` and the `.omd-block-body` that `renderInto` actually hands to the
+renderer (registering only the wrap silently drops every cell/toolbar click) —
+and re-registers both keys inside `updateDOM`. Never close over `this` in widget
+DOM listeners; never key that lookup on a captured position.
+
+Related: `updateDOM` may run against detached DOM (CodeMirror diffs before it
+inserts), so "migration" checks must be structural — e.g. "the live cell input is
+still inside that cell" — never `el.isConnected`.
+
+## Cell input is never silently discarded
+
+Committing one table cell used to drop the typed value whenever the user clicked
+another cell, clicked `</>`, or tabbed away: the only commit path was the input's
+own `keydown`. The contract now is that every exit path commits first —
+`focusout` commits, a capture-phase `mousedown` on the wrap commits *before* the
+block's own source-entry handler runs, and the click-away path passes the clicked
+cell as an explicit pending destination (after that dispatch the old instance is
+no longer the owner, so the pending path reopens the editor on the new one).
+Guards that make it safe: `commitPendingEdit()` is idempotent (an unchanged value
+cancels instead of dispatching an empty transaction), `Escape` clears `editing`
+so the following `focusout` is a no-op, and `keydown` returns early while
+`e.isComposing || e.keyCode === 229` so an IME candidate-confirm Enter never
+commits a half-composed cell. A test that only dispatches `keydown` proves none
+of this; drive `focusout` / `mousedown` on a real view (`tableInputCommit.test.ts`).
+
+## Resolve a fence's enclosing node from the line END, not the line start
+
+`tree.resolveInner(line.from, …)` on a quoted or indented fence lands on the
+`QuoteMark`/`QuoteIndent` that *starts* the line, and the parent walk from there
+never sees the `FencedCode` or `ListItem` that owns the fence — so
+`continueFenceSpec` never completed `> ```js`. Resolving from `Math.max(line.from,
+line.to - 1)` (the caret at the line end, where Enter actually fires) finds the
+real parent, and then the explicit range guards (`node.from < line.from ||
+node.from > line.to`, `mark.from < line.from || mark.to > line.to`) are what keep
+the command from hijacking a fence whose CodeMark belongs to another line. Same
+family as the earlier entry about `lineAt(node.to)` for unterminated fences:
+line-start/line-end position choice *is* the bug in tree-driven commands.
+
+## Fence tokens must resolve on BOTH highlight paths
+
+Rendered code uses Shiki (`src/shiki/languages.ts`), the editing state uses
+Lezer/legacy grammars (`src/parse/codeLanguages.ts`). A token that only one side
+knows makes the same block change appearance when the caret enters it (highlight
+present in preview, plain text while editing, or the reverse). `test/
+codeLanguages.test.ts` asserts the CM table covers **every** token
+`LANGUAGE_ALIASES` resolves, except an explicit five-token gap list (`tf`, `gql`,
+`latex`, `lt`, `vim`) — adding a Shiki language means either adding the CM side or
+justifying the gap there. Legacy grammars are wrapped as `new
+LanguageSupport(StreamLanguage.define(parser))`: `LanguageDescription.load()` is
+typed (and consumed) as a `LanguageSupport`, and the loader stays a dynamic
+`import()` inside `legacyMode` so no legacy mode reaches the main bundle.
+
+## A line-start regex cannot see the real block prefix
+
+Quote/list line handling used `/^(?:> )*/` and `line.text.startsWith("> ")`. Both
+only ever matched the canonical `> ` spelling, so `>x`, `  > x` (indented),
+`- > x` (quote in a list item), `> > nested` and `> - [x] task` silently lost
+their prefix on Enter, and the toggle un-quoted lines it never recognized.
+`format/blockPrefix.ts::blockPrefixOf` reads the prefix from the Lezer tree
+instead: leading indent + each `QuoteMark`/`ListMark`/`TaskMarker` plus the
+whitespace that follows it, stopping at the first non-prefix content. Both
+`continueQuote` (Enter) and `toggleQuoteSpec` (Mod-Alt-9) consume that one model —
+do not reintroduce regexes. Two consequences: removing a mark deletes the mark
+plus exactly **one** following space (`markRemovalRange`; the remaining
+whitespace is content indentation, and eating it turned `  >   x` into `x`), and
+prefix-only lines exit one level by rebuilding the source up to the *second to
+last* mark's end rather than by deleting a fixed number of characters.

@@ -327,3 +327,22 @@ This is deliberate architecture, not an oversight: all editor chrome colors flow
 - Focused vs unfocused selections are two separate rules: the 6-class focused chain must outrank CM's base 5-class focused rule; the plain 3-class rule carries the unfocused token.
 - Nested editors inside `.cm-content` (the math popup's CodeMirror, the code-title input) draw **native** carets; the `caret-color: var(--omd-cursor) !important` rule on `.cm-content :focus` must keep `!important` to beat tightSelection's own `!important` restore. If a nested editor ever adopts overlay cursors, exclude its `.cm-content` there or carets double-paint.
 - `apps/desktop/test/selectionTheme.test.ts` pins both the selector structure and WCAG contrast floors (computed with colord, alpha composited over `--omd-bg`) — update it together with any token change.
+
+## Opaque `background` shorthands erase the quote bar
+
+The quote bar is a `background-image: linear-gradient(...)` on `.omd-blockquote`
+/ `.omd-blockquote-1..4` (the gradient is the bar; there is no border element).
+Any later rule that sets the `background` **shorthand** on an element that also
+carries a quote class silently removes it — which is exactly what `.omd-code`
+(`background: var(--omd-code-block-bg)`) and `.omd-code-header`
+(`background: var(--omd-chrome)`) do, so an in-quote code block lost its bar and
+the quote looked like it ended there. The fix keeps the composition explicit:
+each depth registers its gradient as `--omd-bq-image`, one shared rule paints
+`background-image: var(--omd-bq-image)` on the quote classes, and the
+code-specific rules (`.omd-code.omd-blockquote*`, `.omd-code-header.omd-blockquote*`)
+repaint the same variable after the shorthand. The editing chrome also needs the
+quote `padding-left` restored (`calc(var(--omd-bq-pad, 0px) + 10px)`) or its
+title stops lining up with the code below. When adding any new opaque background
+to an element that can live inside a quote, repaint `--omd-bq-image` — a
+`background-color` shorthand (`.omd-codeblock` uses one) is safe, `background` is
+not.

@@ -104,10 +104,27 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] PNG/JPEG/WebP 使用匹配扩展名；GIF、未知格式和超过 10 MiB 的图片被拒绝
 - [ ] 表格/公式/Mermaid 在 blockquote 或列表内对齐到外层缩进，不炸（冲突过滤兜底）
 
+### 表格 / 引用块 / 代码块输入实测（2026-09，fix-table-quote-ux）
+
+- [ ] **单元格不丢字（四种离开方式）**：在某个单元格输入文字后，分别（a）按 Enter、（b）直接点另一个单元格、（c）点块右上角 `</>`进源码、（d）点块外正文或切换标签页 —— 四种方式都把已输入文本写回文档，不出现「输入消失/回滚成旧值」
+- [ ] **单元格 IME**：中文输入法在单元格内组词时按 Enter 确认候选，**不**提交该格、不跳格、光标不移出（合成结束后再按 Enter 才提交并移到下一格）；合成期间用鼠标点另一个单元格，原格文本仍被提交
+- [ ] **单元格连续 Tab 不重建 DOM**：20×10 表格里连续 Tab 逐格走一遍，表格元素本身不重建（无闪烁/无滚动跳动），提交的那一格文本正确、其它格与分隔行源码逐字节不变
+- [ ] **引用块 Enter 续写矩阵**：对 `> a`、`>a`（无空格）、`  > a`（缩进）、`- > a`（列表项里的引用）、`> - a`、`> 1. a`、`> - [x] a` 逐行按 Enter —— 新行前缀与原文风格一致（缩进/无空格风格都保留）、有序标记 +1、已勾选任务变未勾选
+- [ ] **引用块 Enter 退层**：空 `> ` 行按 Enter 退出一层（变成普通空行，光标停在行首）；`> > ` 退到 `> `；纯列表行（`- a`、`1. a`）的 Enter 仍走列表命令（有序递增、空项退出），不出现引用行为
+- [ ] **引用块 Enter 在前缀内**：把光标放到 `>` 与内容之间（Home 或点在标记后）再按 Enter —— 不出现内容前多一个空格（`>  hello`），新行仍是 `> `
+- [ ] **引用块内 Enter 补全围栏**：`> ```js` 行末按 Enter 自动补出闭合围栏，光标落在内容行（`> `）；列表项里的 ``` 围栏行不补全（有意限制）
+- [ ] **引用块开关全有全无**：选中混合行（部分带 `>`）按 Mod-Alt-9 —— 只给未加引用的行加 `>`，全部带引用时整体取消；取消只删标记 + 一个空格，内容缩进（`  >   x` 的额外空格）保留
+- [ ] **引用块里的代码块渲染**：`> ```js` 渲染为带引用条的代码块（Shiki 高亮 + 顶栏 + 左侧引用竖条与上方引用行连续，不出现竖条在代码块处断开）
+- [ ] **引用块里的代码块编辑态**：点击进入编辑态后内容行带行号、顶栏（标题/语言/复制）仍在、顶栏标题与代码内容左缘对齐、引用竖条仍在；改标题/切换语言写回 fence info；再按 ↑/↓ 回渲染态后高亮恢复
+- [ ] **无语言代码块**：渲染态仍是行样式（灰底 + 行号，无 Shiki）；点击进编辑态出现顶栏（语言下拉为空），选一个语言后写回 fence info，光标离开块后升为 Shiki 渲染
+- [ ] **编辑态语言覆盖**：Go / Ruby / Bash / C# / Kotlin / Swift / R / Perl / Lua / Diff / Dockerfile / PowerShell / XML / SQL 方言等，在**编辑态**（光标进入块内）也有语法高亮；仅渲染态高亮、编辑态纯文本的已知缺口见下方「已知限制」
+
 ## 已知限制（当前范围，非缺陷）
 - 表格单元格内的引用式链接（`[text][id]`）不解析，只有内联 `[text](url)` 生效；跨行块内容（多段列表）无法在单行 cell 内表达
 - 表格 ragged 行缺失的列尾渲染为禁用的合成占位格（`omd-table-cell-missing`，无源码可写）：点击不会打开输入框，Tab 从真实格走向合成格只提交当前格、不打开该格（有意限制，跨行补齐属后续手动复查项）
 - 代码块 ↑/↓ 进入后的就地编辑为等宽行编辑器（带行号）；停止编辑/离开块后恢复 Shiki。活跃键入过程中不做逐键 Shiki（v2 可议）
+- 编辑态语法高亮只覆盖 `parse/codeLanguages.ts` 里的语言表：terraform / graphql / tex（latex）/ vim 目前只有渲染态（Shiki）高亮，光标进入块内为纯文本源码；Shiki 侧另有若干语言（solidity / zig / nim / crystal / matlab / prolog …）同样只覆盖渲染态（`test/codeLanguages.test.ts` 用显式缺口清单守住这份差异）
+- 引用块内围栏的 Enter 补全不覆盖**列表项内**的围栏行（列表内容缩进没有正确答案，沿用既有拒绝），需要手动输入或先移出列表
 - math 仅支持 `$$`/`$` 定界符
 - 脚注：空行仍会结束定义（跨空行的多段脚注暂不合并，见 footnotes.ts 的 ponytail 注记）
 - 行内 HTML 目前只渲染 `<mark>` 高亮、`<u>` 下划线，以及 `&...;` 字符引用；其它标签仍显示源码。`:octocat:` 等无 Unicode 的 GitHub 自定义 emoji 不渲染；`:)` 颜文字不转换
@@ -275,6 +292,9 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 ## 最近一次验证记录
 
+- 日期：2026-09-29（fix-table-quote-ux：表格/引用块/代码块编辑体验 + 语言覆盖）
+- 自动化已通过：`pnpm --filter @omd/engine test`（630，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 2.6–5.6ms、Enter 续写 p95 ≈5ms，均在 16ms 预算内）
+- 上表交互项（单元格 IME / 引用块 Enter / 引用块内代码块 / 编辑态语言覆盖）需 `pnpm dev` + 真实 IME 目视，本环境未执行，保持未勾选
 - 日期：2026-08-14（Task 14 / Conflict-safe guarded save）
 - 自动化已通过：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（206）、`pnpm --filter @omd/desktop build`、`rg` 计划扫描无 TBD/TODO、`git diff --check`
 - Conflict-safe GUI / VoiceOver / IME / Finder tags：本环境未执行 `pnpm dev`，上方新节交互项保持未勾选或标 **NOT RUN**

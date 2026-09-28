@@ -24,6 +24,12 @@
 - **Horizontal rules are block widgets when unselected** — keep `HorizontalRule` in `SELECTION_BLOCKS`.
 - **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; cell `mousedown` stops propagation; the cell input gets a caret, never `select()`.
 - **Table edits are Lezer-range-based and per-view** — no whole-table serialize/parse revival; pending focus lives in per-view `WeakMap`s; real-`EditorView` tests are mandatory.
+- **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
+- **Cell input is never silently discarded** — commit on `focusout`, on capture-phase `mousedown`, and hand the click-away path an explicit destination; guard IME (`isComposing`/`keyCode 229`); idempotent commit.
+- **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
+- **A line-start regex cannot see the real block prefix** — `>x`, `  > x`, `- > x`, `> - [x]` need the tree-driven `blockPrefixOf`; remove a mark plus exactly one space.
+- **Resolve a fence's parent from the line END** — `line.from` lands on `QuoteMark`/`QuoteIndent` and the parent walk never reaches `FencedCode`/`ListItem`.
+- **Fence tokens must resolve on both highlight paths** — a Shiki-only token loses its highlight when the caret enters the block; the alias-parity test guards the gap list.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
 - **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.
@@ -60,6 +66,7 @@
 - **Font family names must be quoted** — route through `cssFamily`; presets pass through unchanged.
 - **`html[data-theme]` only restyles the webview** — native chrome needs `color-scheme` plus `set_window_theme`, applied pre-paint from Rust; the frontend must not push before settings load.
 - **CM base-theme `&dark` variants never apply** — theme via CSS variables, never `EditorView.theme(..., {dark: true})`.
+- **Opaque `background` shorthands erase the quote bar** — the bar is a gradient painted by `--omd-bq-image`; `.omd-code` / `.omd-code-header` use the `background` shorthand and must repaint it.
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
