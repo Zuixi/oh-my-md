@@ -1,6 +1,7 @@
 import { Prec, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { keymap, type Command } from "@codemirror/view"
 import { blockPrefixOf, continuePrefixText } from "./blockPrefix"
+import { isUnclosedFenceLine } from "./fences"
 
 // 引用块（以及任意引用/列表组合）的 Enter 续写。
 //
@@ -18,6 +19,9 @@ export function continueQuoteSpec(state: EditorState): TransactionSpec | null {
   const main = state.selection.main
   if (!main.empty) return null
   const line = state.doc.lineAt(main.head)
+  // 未闭合围栏行让位给 continueFence（它按引用前缀补全闭合围栏并把光标放到内容行）：
+  // 两个命令因此互斥，键位注册顺序不影响结果。
+  if (isUnclosedFenceLine(state)) return null
   const prefix = blockPrefixOf(state, line)
   // 只有带引用标记的行归本命令：纯列表/围栏行保持各自既有命令的语义。
   if (!prefix || !prefix.marks.some(mark => mark.kind === "quote")) return null

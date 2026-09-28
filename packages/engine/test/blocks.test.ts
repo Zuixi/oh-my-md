@@ -164,16 +164,36 @@ describe("block syntax", () => {
     expect(() => buildLiveDecorations(state)).not.toThrow()
   })
 
-  it("keeps fenced code inside a quote as quote lines, not a block widget", () => {
+  it("renders fenced code inside a quote as a code widget that carries the quote class", () => {
     const doc = "intro\n\n> ```bash\n> npm install\n> npm start\n> ```\n"
+    const state = makeState(doc).update({ selection: { anchor: 0 } }).state
+    const specs = collectDecorationSpecs(state, 0, doc.length)
+    const tags = specs.map(d => d.tag)
+    const widget = specs.find(d => d.tag === "widget:block:code")
+    expect(widget).toBeTruthy()
+    // 引用条第 N 级由 widget 容器自己画（与表格/公式/mermaid 同一模型）。
+    expect((widget!.deco.spec.widget as { embed: { quoteDepth: number } }).embed.quoteDepth).toBe(1)
+    expect(tags).toContain("widget:block:code")
+    expect(tags).toContain("replace:QuoteMark")
+    assertNoReplaceOverlap(replaceRanges(doc, 0))
+  })
+
+  it("keeps a language-less fenced block line-styled in the rendered state", () => {
+    const doc = "intro\n\n```\nplain text\n```\n"
     const state = makeState(doc).update({ selection: { anchor: 0 } }).state
     const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
     expect(tags).not.toContain("widget:block:code")
-    expect(tags.filter(t => t === "line:omd-codeblock")).toHaveLength(4)
-    expect(tags).toContain("line:omd-blockquote-1")
-    expect(tags).toContain("replace:QuoteMark")
-    expect(tags).toContain("replace:CodeMark")
-    assertNoReplaceOverlap(replaceRanges(doc, 0))
+    // 三行都是行样式（开围栏 / 内容 / 闭围栏）。
+    expect(tags.filter(t => t === "line:omd-codeblock")).toHaveLength(3)
+  })
+
+  it("gives a language-less block the editing chrome so a language can be picked", () => {
+    const doc = "intro\n\n```\nplain text\n```\n"
+    const inside = doc.indexOf("plain")
+    const state = makeState(doc).update({ selection: { anchor: inside } }).state
+    const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
+    expect(tags).toContain("widget:block:code-chrome")
+    expect(tags).toContain("line:omd-codeblock")
   })
 
   it("keeps table widgets aligned to an enclosing quote", () => {

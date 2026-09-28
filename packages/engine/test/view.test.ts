@@ -445,17 +445,19 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("renders fenced code inside a quote without splitting the quote", async () => {
+  it("renders fenced code inside a quote as a code widget with the quote bar", async () => {
     const doc = "> 运行：\n>\n> ```bash\n> npm install\n> npm start\n> ```\n>\n> 完成\n\noutside"
     const { view, errors } = makeView(doc)
     await tick()
-    expect(view.dom.querySelector(".omd-code")).toBeNull()
-    const codeLines = [...view.dom.querySelectorAll(".omd-codeblock")]
-    expect(codeLines.length).toBeGreaterThanOrEqual(2)
-    expect(codeLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
-    expect(codeLines.some(el => el.textContent?.includes("npm install"))).toBe(true)
-    expect(codeLines.some(el => el.textContent?.includes("npm start"))).toBe(true)
-    expect(codeLines.every(el => !el.textContent?.includes(">"))).toBe(true)
+    const code = view.dom.querySelector(".omd-code")
+    expect(code).not.toBeNull()
+    // widget 容器自带引用类：代码背景不透明，行的引用条画不到它上面。
+    expect(code!.classList.contains("omd-blockquote-1")).toBe(true)
+    expect(code!.textContent).toContain("npm install")
+    expect(code!.textContent).toContain("npm start")
+    expect(code!.textContent).not.toContain(">")
+    // 引用在代码块前后仍然是同一条引用（前后两段都有引用行装饰）。
+    expect(view.dom.querySelectorAll(".omd-blockquote-1").length).toBeGreaterThan(0)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

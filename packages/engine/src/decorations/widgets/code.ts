@@ -74,19 +74,29 @@ export class CodeChromeWidget extends WidgetType {
     readonly lang: string,
     readonly title: string,
     private readonly onPickerDestroy?: (destroy: () => void) => void,
+    /** 引用/列表嵌入：chrome 整行替换掉了围栏行，行装饰不再负责画引用条。 */
+    private readonly embed: BlockEmbed = EMPTY_EMBED,
   ) { super() }
 
   eq(other: CodeChromeWidget) {
     return this.lang === other.lang && this.title === other.title
+      && this.embed.quoteDepth === other.embed.quoteDepth
+      && this.embed.listDepth === other.embed.listDepth
+      && this.embed.quoteInList === other.embed.quoteInList
   }
 
   toDOM(view: EditorView) {
-    return buildCodeChromeControls(view, {
+    const header = buildCodeChromeControls(view, {
       title: this.title,
       lang: this.lang,
       onCommitInfo: (title, lang, header) => commitChromeInfo(view, header, title, lang, this.lang),
       onPickerDestroy: this.onPickerDestroy,
     })
+    // 刻意不加 omd-block（那是给独立块 widget 的 padding/定位用的，加到行内 chrome
+    // 上会撑高围栏行）：只补嵌入类，引用条由 background-image 在 chrome 自身上画。
+    const embedClasses = blockEmbedClasses(this.embed)
+    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
+    return header
   }
 
   override ignoreEvent(event: Event) {
@@ -122,14 +132,19 @@ export interface CodeWidgetOptions {
   embed?: BlockEmbed
 }
 
-function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
-  const classes = ["omd-block", cssClass]
+/** 引用/列表嵌入类（`omd-blockquote-N` / `omd-li-N` / `omd-quote-in-li-N`）。 */
+function blockEmbedClasses(embed: BlockEmbed): string[] {
+  const classes: string[] = []
   if (embed.quoteDepth > 0) classes.push("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
   if (embed.listDepth > 0) {
     const nest = embed.quoteInList ? "omd-quote-in-li" : "omd-li"
     classes.push(`${nest}-${embed.listDepth}`)
   }
-  return classes.join(" ")
+  return classes
+}
+
+function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
+  return ["omd-block", cssClass, ...blockEmbedClasses(embed)].join(" ")
 }
 
 // Shiki 行 span（pre>code>span.line*）与源码内容行 1:1：点击落在第 N 个 line

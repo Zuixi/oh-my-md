@@ -42,7 +42,7 @@ export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdown
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { blockPrefixOf, continuePrefixText, markRemovalRange } from "./format/blockPrefix"
 export { continueQuote, continueQuoteSpec, quoteKeymap } from "./format/quotes"
-export { continueFence, continueFenceSpec, fenceKeymap } from "./format/fences"
+export { continueFence, continueFenceSpec, fenceKeymap, isUnclosedFenceLine } from "./format/fences"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
@@ -108,11 +108,12 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
-    // 引用行 Enter 续写优先于列表/围栏：带 QuoteMark 的行由它处理，其余行返回
-    // false 放行（纯列表仍走 continueList 的递增/退出语义，围栏仍走 continueFence）。
+    // Enter 三家互斥且各自返回 false 让位：围栏行 → continueFence（含引用内的
+    // 围栏，按前缀补全闭合行），带 QuoteMark 的行 → continueQuote，纯列表行 →
+    // continueList（有序递增 / 空项退出语义不变）。
+    fenceKeymap,
     quoteKeymap,
     listKeymap,
-    fenceKeymap,
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,

@@ -78,7 +78,7 @@ describe("editing-state code chrome (fence-line widget)", () => {
 import { EditorView } from "@codemirror/view"
 import { EditorState } from "@codemirror/state"
 import { editorExtensions } from "../src/index"
-import { continueFence } from "../src/format/fences"
+import { continueFence, continueFenceSpec } from "../src/format/fences"
 
 describe("editing-state code chrome (view)", () => {
   // 用户主流程：文档中间输入 ```cpp 回车 → 立即落在渲染好的编辑态代码块内。
@@ -146,6 +146,93 @@ describe("editing-state code chrome (view)", () => {
       await new Promise(r => setTimeout(r, 100))
       expect(view.state.doc.toString()).toContain("```js renamed")
       expect(view.dom.querySelector(".omd-code-header")).toBeTruthy()
+    } finally {
+      view.destroy()
+      parent.remove()
+    }
+  })
+})
+
+describe("fence completion outside a bare line (Task 5)", () => {
+  const done = (doc: string) => {
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const spec = continueFenceSpec(state)
+    return spec ? state.update(spec) : null
+  }
+
+  it("completes a fence inside a quote and keeps the prefix on every line", () => {
+    const next = done("> ```js")!
+    expect(next.state.doc.toString()).toBe("> ```js\n> \n> ```")
+    // 光标落在内容行（`> ` 之后、换行之前）
+    const text = next.state.doc.toString()
+    expect(next.state.selection.main.head).toBe(text.indexOf("\n") + 3)
+  })
+
+  it("keeps nested quote prefixes", () => {
+    expect(done("> > ```js")!.state.doc.toString()).toBe("> > ```js\n> > \n> > ```")
+  })
+
+  it("keeps indentation of an indented fence", () => {
+    expect(done("  ```js")!.state.doc.toString()).toBe("  ```js\n  \n  ```")
+  })
+
+  it("still refuses fences inside a list item", () => {
+    expect(done("- ```js")).toBeNull()
+  })
+})
+
+describe("in-quote code blocks (Task 5)", () => {
+  const mount = async (doc: string, caret: number) => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        selection: { anchor: caret },
+        extensions: [editorExtensions(), EditorView.exceptionSink.of(() => {})],
+      }),
+      parent,
+    })
+    await new Promise(r => setTimeout(r, 100))
+    return { view, parent }
+  }
+
+  it("draws the quote bar on the editing chrome of an in-quote block", async () => {
+    const doc = "> ```js\n> let x = 1\n> ```"
+    const { view, parent } = await mount(doc, doc.indexOf("let x") + 2)
+    try {
+      const header = view.dom.querySelector(".omd-code-header") as HTMLElement | null
+      expect(header).toBeTruthy()
+      // 整行被 chrome 替换后行装饰不再负责引用条，嵌入类必须落到 chrome 自身上
+      expect(header!.classList.contains("omd-blockquote")).toBe(true)
+      expect(header!.classList.contains("omd-blockquote-1")).toBe(true)
+      // 行内 chrome 不能带独立块 widget 的 omd-block（会撑高围栏行）
+      expect(header!.classList.contains("omd-block")).toBe(false)
+    } finally {
+      view.destroy()
+      parent.remove()
+    }
+  })
+
+  it("offers a language picker for a language-less fence and writes the fence info", async () => {
+    const doc = "intro\n\n```\nlet x = 1\n```\n\ntail"
+    const { view, parent } = await mount(doc, doc.indexOf("let x") + 2)
+    try {
+      const header = view.dom.querySelector(".omd-code-header") as HTMLElement | null
+      expect(header).toBeTruthy()
+      expect(view.state.doc.line(3).text).toBe("```")
+      const trigger = header!.querySelector(".omd-code-lang-trigger") as HTMLElement
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      const search = header!.querySelector(".omd-code-lang-search") as HTMLInputElement
+      expect(search).toBeTruthy()
+      search.value = "javascript"
+      search.dispatchEvent(new Event("input", { bubbles: true }))
+      const row = header!.querySelector(".omd-code-lang-list button") as HTMLElement
+      expect(row).toBeTruthy()
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      await new Promise(r => setTimeout(r, 100))
+      // replaceFenceInfo 在无 CodeInfo 时于 CodeMark 之后插入 " lang"（分隔空格）
+      expect(view.state.doc.line(3).text).toBe("``` javascript")
     } finally {
       view.destroy()
       parent.remove()

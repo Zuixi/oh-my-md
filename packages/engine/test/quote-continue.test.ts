@@ -129,8 +129,13 @@ describe("continueQuoteSpec (Enter)", () => {
     expect(continueQuoteSpec(s)).toBeNull()
   })
 
-  it("keeps the quote prefix while a fence is still unclosed", () => {
-    expect(after("> ```js")).toBe("> ```js\n> ")
+  it("defers an unclosed fence line to continueFence", () => {
+    // 围栏行归 continueFence（它按引用前缀补全闭合行并把光标放到内容行）；
+    // 两个命令因此互斥，键位注册顺序不影响结果。
+    expect(continueQuoteSpec(state("> ```js", 7))).toBeNull()
+    expect(continueQuoteSpec(state("  ```js", 7))).toBeNull()
+    // 已闭合块内的引用行仍归本命令
+    expect(after("> ```js\n> x\n> ```\n> tail")).toBe("> ```js\n> x\n> ```\n> tail\n> ")
   })
 })
 
