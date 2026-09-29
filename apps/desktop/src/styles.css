@@ -176,7 +176,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 1em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -186,7 +186,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 2em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -200,7 +200,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 3em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -218,7 +218,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 4em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -235,6 +235,17 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
     var(--omd-bar) calc(var(--omd-bq-bar) + 3em),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3em + 3px),
     transparent calc(var(--omd-bq-bar) + 3em + 3px));
+}
+
+/* 引用条只存在于 background-image 上：每个深度把渐变登记为 --omd-bq-image，
+   再由本条规则统一画上；自身带不透明背景的元素（代码块/编辑态 chrome）在下方
+   显式重画同一条渐变 —— 否则 background 简写会清掉它，引用条在代码块处断开。 */
+.editor-host .omd-blockquote,
+.editor-host .omd-blockquote-1,
+.editor-host .omd-blockquote-2,
+.editor-host .omd-blockquote-3,
+.editor-host .omd-blockquote-4 {
+  background-image: var(--omd-bq-image);
 }
 .editor-host .omd-hr { border-top: 1px solid var(--omd-bar); }
 .editor-host .omd-block.omd-hr-block { padding: 0.4em 0; }
@@ -480,6 +491,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-bottom: 1px solid var(--omd-border);
   border-radius: 12px 12px 0 0;
   background: var(--omd-chrome);
+}
+/* 代码块与编辑态 chrome 自带不透明底色（.omd-code / .omd-code-header 用
+   background 简写），引用条必须显式重画；chrome 的 padding 简写同样要补回引用
+   缩进，否则标题与下方代码内容左边缘错位。 */
+.editor-host .omd-code.omd-blockquote,
+.editor-host .omd-code.omd-blockquote-1,
+.editor-host .omd-code.omd-blockquote-2,
+.editor-host .omd-code.omd-blockquote-3,
+.editor-host .omd-code.omd-blockquote-4,
+.editor-host .omd-code-header.omd-blockquote,
+.editor-host .omd-code-header.omd-blockquote-1,
+.editor-host .omd-code-header.omd-blockquote-2,
+.editor-host .omd-code-header.omd-blockquote-3,
+.editor-host .omd-code-header.omd-blockquote-4 {
+  background-image: var(--omd-bq-image);
+}
+.editor-host .omd-code-header.omd-blockquote,
+.editor-host .omd-code-header.omd-blockquote-1,
+.editor-host .omd-code-header.omd-blockquote-2,
+.editor-host .omd-code-header.omd-blockquote-3,
+.editor-host .omd-code-header.omd-blockquote-4 {
+  padding-left: calc(var(--omd-bq-pad, 0px) + 10px);
 }
 .editor-host .omd-code-title {
   flex: 1;
@@ -1502,6 +1535,12 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
 .editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
+/* 但上面两条（以及 CodeMirror 基础主题的 activeLine）都用 background 简写，
+   会把 background-image 一起清成 none —— 光标停在引用段落上时，那一行的引用
+   竖条会缺一节。引用条必须在本规则里按同样的高优先级重画。 */
+.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine {
+  background-image: var(--omd-bq-image);
+}
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */

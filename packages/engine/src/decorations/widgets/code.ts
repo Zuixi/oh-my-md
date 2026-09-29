@@ -13,6 +13,7 @@ import {
 import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
 import { icon } from "../icons"
+import { blockPrefixOf } from "../../format/blockPrefix"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
@@ -75,22 +76,32 @@ export class CodeChromeWidget extends WidgetType {
     readonly lang: string,
     readonly title: string,
     private readonly onPickerDestroy?: (destroy: () => void) => void,
+    /** 引用/列表嵌入：chrome 整行替换掉了围栏行，行装饰不再负责画引用条。 */
+    private readonly embed: BlockEmbed = EMPTY_EMBED,
   ) { super() }
 
   eq(other: CodeChromeWidget) {
     return this.lang === other.lang && this.title === other.title
+      && this.embed.quoteDepth === other.embed.quoteDepth
+      && this.embed.listDepth === other.embed.listDepth
+      && this.embed.quoteInList === other.embed.quoteInList
   }
 
   // 围栏行替换块：标题输入行比普通文本行高，给一行的实测量级（见 widgetHeights.ts）。
   override get estimatedHeight() { return CODE_CHROME_ESTIMATE_PX }
 
   toDOM(view: EditorView) {
-    return buildCodeChromeControls(view, {
+    const header = buildCodeChromeControls(view, {
       title: this.title,
       lang: this.lang,
       onCommitInfo: (title, lang, header) => commitChromeInfo(view, header, title, lang, this.lang),
       onPickerDestroy: this.onPickerDestroy,
     })
+    // 刻意不加 omd-block（那是给独立块 widget 的 padding/定位用的，加到行内 chrome
+    // 上会撑高围栏行）：只补嵌入类，引用条由 background-image 在 chrome 自身上画。
+    const embedClasses = blockEmbedClasses(this.embed)
+    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
+    return header
   }
 
   override ignoreEvent(event: Event) {
@@ -126,14 +137,19 @@ export interface CodeWidgetOptions {
   embed?: BlockEmbed
 }
 
-function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
-  const classes = ["omd-block", cssClass]
+/** 引用/列表嵌入类（`omd-blockquote-N` / `omd-li-N` / `omd-quote-in-li-N`）。 */
+function blockEmbedClasses(embed: BlockEmbed): string[] {
+  const classes: string[] = []
   if (embed.quoteDepth > 0) classes.push("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
   if (embed.listDepth > 0) {
     const nest = embed.quoteInList ? "omd-quote-in-li" : "omd-li"
     classes.push(`${nest}-${embed.listDepth}`)
   }
-  return classes.join(" ")
+  return classes
+}
+
+function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
+  return ["omd-block", cssClass, ...blockEmbedClasses(embed)].join(" ")
 }
 
 // Shiki 行 span（pre>code>span.line*）与源码内容行 1:1：点击落在第 N 个 line
@@ -218,7 +234,12 @@ export class CodeWidget extends BlockWidget {
         view.state.doc.lines,
       )
       // 避免强制 scrollIntoView 导致代码块点击时视口发生急剧滚动跳跃
-      view.dispatch({ selection: { anchor: view.state.doc.line(target).from } })
+      const targetLine = view.state.doc.line(target)
+      // 引用内的代码内容行以 `> ` 开头：落点必须在**内容起点**，落在行首等于落进
+      // QuoteMark 里，标记会因此展开、光标行露出裸 `> `（同一行的其它行正常折叠）。
+      const prefix = blockPrefixOf(view.state, targetLine)
+      const anchor = prefix ? targetLine.from + prefix.text.length : targetLine.from
+      view.dispatch({ selection: { anchor } })
       view.focus()
     })
 
@@ -251,6 +272,10 @@ export class CodeWidget extends BlockWidget {
       onCommitInfo: (title, lang) => this.commitInfo(title, lang),
       onPickerDestroy: destroy => { this.langPickerDestroy = destroy },
     })
+    // 引用/列表内的渲染态代码块：header 自带不透明底色，只有同带引用类时
+    // `.omd-code-header.omd-blockquote-N` 才能把引用条重画上去（与编辑态 chrome 同理）。
+    const embedClasses = blockEmbedClasses(this.embed)
+    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
 
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"

@@ -12,6 +12,7 @@ import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
 import { parseFenceInfo } from "../fenceInfo"
+import { blockPrefixOf } from "../format/blockPrefix"
 
 const MAX_QUOTE_DEPTH = 4
 const MAX_LIST_DEPTH = 4
@@ -129,6 +130,7 @@ function styleEditingCodeblock(
   out: DecoSpec[],
   langToken: string,
   title: string,
+  embed: BlockEmbed,
 ) {
   const doc = state.doc
   const sel = state.selection.main
@@ -151,11 +153,23 @@ function styleEditingCodeblock(
   if ((closeLine || firstContent <= lastContent) && !overlaps(openLine.from, openLine.to)) {
     out.push({
       from: openLine.from, to: openLine.to, tag: "widget:block:code-chrome",
-      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title), block: true }),
+      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title, undefined, embed), block: true }),
     })
   }
   for (let number = firstContent; number <= lastContent; number++) {
     const line = doc.line(number)
+    // 引用内围栏的内容行：`> ` 前缀是 FencedCode 的子节点，而本分支会让 walker
+    // 跳过整棵 FencedCode 子树（返回 true），不在这里补折叠，编辑态就会露出裸
+    // `> `（渲染态由 CodeWidget 整体替换，所以只有编辑态暴露）。折叠范围与
+    // foldQuoteMark 一致：标记 + 后随一个空格，光标进入该范围时按 Route A 展开。
+    const prefix = blockPrefixOf(state, line)
+    for (const mark of prefix?.marks ?? []) {
+      if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
+      out.push({
+        from: mark.from, to: mark.to, tag: "replace:QuoteMark",
+        deco: Decoration.replace({}),
+      })
+    }
     out.push({
       from: line.from, to: line.from, tag: "line:omd-codeblock",
       deco: Decoration.line({ class: "omd-codeblock" }),
@@ -219,21 +233,27 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     })
     return true
   }
-  if (!langToken || insideBlockquote(node.node)) {
-    styleCodeblockLines(node, state, out)
-    return false
-  }
+  // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器样式、
+  // 尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。这一分支必须排在
+  // 语言/引用判断之前：旧顺序里 `!langToken` 先返回，无语言块永远拿不到 chrome，
+  // 用户只能手敲源码才能加语言（同一段代码在光标进出时还会换一套 DOM）。
+  // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
   if (blockSelected(state, node.from, node.to)) {
-    // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器
-    // 样式、尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。
-    // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
-    if (langToken && langToken !== "mermaid") {
-      styleEditingCodeblock(node, state, out, langToken, title)
+    if (langToken !== "mermaid") {
+      styleEditingCodeblock(node, state, out, langToken, title, embed)
     } else {
       styleCodeblockLines(node, state, out)
     }
     return true
   }
+  // 无语言块渲染态保持行样式：没有 Shiki 输出可展示，折叠成块反而丢掉行号基线。
+  if (!langToken) {
+    styleCodeblockLines(node, state, out)
+    return false
+  }
+  // 引用内的语言块与引用外同一路径：embed 已带 omd-blockquote-N，引用条由 widget
+  // 容器自己画（与表格/公式/mermaid 相同的既有模型；旧代码把引用内 lang 块降级成
+  // 行样式，同样的 Markdown 只因外面套了 `> ` 就没有高亮）。
   out.push({
     from: node.from, to: node.to, tag: "widget:block:code",
     deco: Decoration.replace({
@@ -271,13 +291,6 @@ function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     }
     pos = line.to + 1
   }
-}
-
-function insideBlockquote(node: SyntaxNode): boolean {
-  for (let parent = node.parent; parent; parent = parent.parent) {
-    if (parent.name === "Blockquote") return true
-  }
-  return false
 }
 
 function listIndentStart(lineFrom: number, markFrom: number, state: EditorState): number {

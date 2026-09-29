@@ -392,3 +392,30 @@ Rule: never build per-window state on unsuffixed localStorage keys — key by
 The same shared-store caveat applies to any other same-origin persistence a
 window touches (settings are safe: they are Rust-owned and identical across
 windows by design).
+## Opaque `background` shorthands erase the quote bar
+
+The quote bar is a `background-image: linear-gradient(...)` on `.omd-blockquote`
+/ `.omd-blockquote-1..4` (the gradient is the bar; there is no border element).
+Any later rule that sets the `background` **shorthand** on an element that also
+carries a quote class silently removes it — which is exactly what `.omd-code`
+(`background: var(--omd-code-block-bg)`) and `.omd-code-header`
+(`background: var(--omd-chrome)`) do, so an in-quote code block lost its bar and
+the quote looked like it ended there. The fix keeps the composition explicit:
+each depth registers its gradient as `--omd-bq-image`, one shared rule paints
+`background-image: var(--omd-bq-image)` on the quote classes, and the
+code-specific rules (`.omd-code.omd-blockquote*`, `.omd-code-header.omd-blockquote*`)
+repaint the same variable after the shorthand. The editing chrome also needs the
+quote `padding-left` restored (`calc(var(--omd-bq-pad, 0px) + 10px)`) or its
+title stops lining up with the code below. When adding any new opaque background
+to an element that can live inside a quote, repaint `--omd-bq-image` — a
+`background-color` shorthand (`.omd-codeblock` uses one) is safe, `background` is
+not.
+
+The same shorthand family bites the caret's own line: `.editor-host .cm-content .cm-activeLine`
+sets `background: transparent` (and `.cm-line.omd-codeblock.cm-activeLine` sets
+`background: var(--omd-code-bg)`), which resets `background-image` and makes the quote bar
+disappear exactly where the user is typing. Both are neutralized by a later rule at higher
+specificity — `.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine { background-image:
+var(--omd-bq-image) }` — and `e2e/quote-code.spec.ts` asserts the bar on every quoted line,
+including the active one. Every quote line carries both `omd-blockquote` and `omd-blockquote-N`,
+so the base class alone is enough to match; do not enumerate depths in new rules.

@@ -6,6 +6,7 @@ import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/wi
 import { renderBudgetFlush } from "./decorations/renderBudget"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
+import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { htmlPaste } from "./paste/htmlPaste"
@@ -39,7 +40,9 @@ export { applyToggle, isLivePreview, setLivePreview } from "./modes/livePreview"
 export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from "./modes/livePreview"
 export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
-export { continueFence, continueFenceSpec, fenceKeymap } from "./format/fences"
+export { blockPrefixOf, continuePrefixText, markRemovalRange } from "./format/blockPrefix"
+export { continueQuote, continueQuoteSpec, quoteKeymap } from "./format/quotes"
+export { continueFence, continueFenceSpec, fenceKeymap, isUnclosedFenceLine } from "./format/fences"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
@@ -105,8 +108,12 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
-    listKeymap,
+    // Enter 三家互斥且各自返回 false 让位：围栏行 → continueFence（含引用内的
+    // 围栏，按前缀补全闭合行），带 QuoteMark 的行 → continueQuote，纯列表行 →
+    // continueList（有序递增 / 空项退出语义不变）。
     fenceKeymap,
+    quoteKeymap,
+    listKeymap,
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,

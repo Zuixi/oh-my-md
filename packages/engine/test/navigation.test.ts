@@ -102,4 +102,26 @@ describe("blockEntryPosition", () => {
     expect(blockEntryPosition(s, tFrom, tTo, 1)).toBe(tFrom)
     expect(doc.slice(blockEntryPosition(s, tFrom, tTo, -1))).toBe("| 1 | 2 |\n\npost\n")
   })
+
+  it("enters a quoted fence on its first content line, past the quote prefix", () => {
+    const doc = "pre\n\n> ```ts\n> line1\n> line2\n> ```\n\npost\n"
+    const from = doc.indexOf("```ts")
+    const to = doc.lastIndexOf("```") + 3
+    const s = makeState(doc)
+    // 围栏判定去掉 `> ` 前缀（否则认不出首行围栏，会停在围栏行上）
+    expect(doc.slice(blockEntryPosition(s, from, to, 1))).toBe("line1\n> line2\n> ```\n\npost\n")
+    expect(doc.slice(blockEntryPosition(s, from, to, -1))).toBe("line2\n> ```\n\npost\n")
+    // 落点必须在内容起点：落在行首等于落进 QuoteMark，标记会展开露出裸 `> `
+    expect(blockEntryPosition(s, from, to, 1)).toBe(doc.indexOf("line1"))
+    expect(blockEntryPosition(s, from, to, -1)).toBe(doc.lastIndexOf("line2"))
+  })
+
+  it("enters a quoted table header past the quote prefix", () => {
+    const doc = "pre\n\n> | a | b |\n> |---|---|\n> | 1 | 2 |\n\npost\n"
+    const from = doc.indexOf("| a |")
+    const to = doc.lastIndexOf("| 2 |") + "| 2 |".length
+    const s = makeState(doc)
+    expect(blockEntryPosition(s, from, to, 1)).toBe(doc.indexOf("| a |"))
+    expect(doc.slice(blockEntryPosition(s, from, to, -1))).toBe("| 1 | 2 |\n\npost\n")
+  })
 })
