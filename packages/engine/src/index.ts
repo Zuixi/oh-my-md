@@ -9,6 +9,7 @@ import { markdownKeymap } from "./format/commands"
 import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
+import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
 import { htmlPaste } from "./paste/htmlPaste"
 
 // Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
@@ -42,6 +43,17 @@ export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdown
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { blockPrefixOf, continuePrefixText, markRemovalRange } from "./format/blockPrefix"
 export { continueQuote, continueQuoteSpec, quoteKeymap } from "./format/quotes"
+export {
+  codeContentLine,
+  continueCodeLine,
+  continueCodeLineSpec,
+  indentCodeLine,
+  indentCodeLineSpec,
+  outdentCodeLine,
+  outdentCodeLineSpec,
+  codeIndentKeymap,
+  codeLineKeymap,
+} from "./format/codeLines"
 export { continueFence, continueFenceSpec, fenceKeymap, isUnclosedFenceLine } from "./format/fences"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
@@ -108,9 +120,19 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
-    // Enter 三家互斥且各自返回 false 让位：围栏行 → continueFence（含引用内的
-    // 围栏，按前缀补全闭合行），带 QuoteMark 的行 → continueQuote，纯列表行 →
-    // continueList（有序递增 / 空项退出语义不变）。
+    // Enter 归属（顺序 + Prec 双重确定）：围栏代码**内容行** → continueCodeLine
+    // （复制行块前缀与代码缩进并把光标显式放到新行内容起点）→ 未闭合围栏行 →
+    // continueFence（含引用内的围栏，按前缀补全闭合行）→ 带 QuoteMark 的行 →
+    // continueQuote → 纯列表行 → continueList / 宿主上游命令。四者条件互斥，各自
+    // 对不属于自己的行返回 false。
+    //
+    // 必须 Prec.highest：@codemirror/lang-markdown 的 markdown() 内部会
+    // `support.push(Prec.high(keymap.of(markdownKeymap)))`（Enter →
+    // insertNewlineContinueMarkup），而 markdownLanguageSupport() 是本数组第一项 ——
+    // 同优先级下先注册者胜，停在 Prec.high 会让上游抢走 Enter，引擎语义（空前缀行
+    // 退层、`>x` 风格保真、围栏补全、代码行缩进）在真实编辑器里全部失效。
+    codeLineKeymap,
+    codeIndentKeymap,
     fenceKeymap,
     quoteKeymap,
     listKeymap,

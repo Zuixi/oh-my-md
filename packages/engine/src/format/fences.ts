@@ -77,9 +77,10 @@ export function isUnclosedFenceLine(state: EditorState): boolean {
   return unclosedFenceLine(state) !== null
 }
 
-// 与 listKeymap/quoteKeymap 同级（Prec.high）：desktop 的 defaultKeymap 先注册，
-// Enter 默认绑定必须显式提级才能赢（见 format/lists.ts）。quoteKeymap 用
-// isUnclosedFenceLine 主动让位，三者条件互斥，注册顺序无关。
-export const fenceKeymap = Prec.high(keymap.of([
+// Prec.highest：既要赢 desktop 的 defaultKeymap，也要赢 @codemirror/lang-markdown
+// 自带的 Prec.high Enter（markdown() 内部 push 的 markdownKeymap）。三家人选条件
+// 互斥（codeLineKeymap 只管内容行、本命令只管未闭合围栏行、quoteKeymap 用
+// isUnclosedFenceLine 主动让位），注册顺序因此不影响结果。
+export const fenceKeymap = Prec.highest(keymap.of([
   { key: "Enter", run: continueFence },
 ]))
