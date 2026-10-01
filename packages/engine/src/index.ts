@@ -10,6 +10,7 @@ import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
+import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
 
 // Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
@@ -43,6 +44,7 @@ export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdown
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
 export { blockPrefixOf, continuePrefixText, markRemovalRange } from "./format/blockPrefix"
 export { continueQuote, continueQuoteSpec, quoteKeymap } from "./format/quotes"
+export { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 export {
   codeContentLine,
   continueCodeLine,
@@ -136,6 +138,10 @@ export function editorExtensions(options: EngineOptions = {}) {
     fenceKeymap,
     quoteKeymap,
     listKeymap,
+    // 点击/Home/↑↓ 的光标钳制：前缀是块结构，误入会让标记展开、字插到 `>` 左边。
+    // 排在 livePreviewCompartment 之前，让块间 ↑/↓ 进入（blockEntry）优先命中。
+    caretClampKeymap,
+    caretClampHandlers,
     htmlPaste(),
     renderBudgetFlush(),
     markdownKeymap,

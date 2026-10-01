@@ -416,3 +416,71 @@ plus exactly **one** following space (`markRemovalRange`; the remaining
 whitespace is content indentation, and eating it turned `  >   x` into `x`), and
 prefix-only lines exit one level by rebuilding the source up to the *second to
 last* mark's end rather than by deleting a fixed number of characters.
+
+## `markdown()` bundles its own `Prec.high` Enter keymap
+
+`@codemirror/lang-markdown`'s `markdown()` support pushes
+`Prec.high(keymap.of(markdownKeymap))` (Enter → `insertNewlineContinueMarkup`)
+into the returned support — and `markdownLanguageSupport()` is the FIRST entry of
+`editorExtensions()`. For equal precedence the earlier keymap wins, so an engine
+Enter binding left at `Prec.high` is silently shadowed: the engine's
+`continueQuote` / `continueList` only ran where upstream bails (inside fences,
+`getContext` returns early on `FencedCode`). The symptom is subtle because both
+implementations agree on the happy path (`> hello` → `> hello\n> `) — what
+differs is the prefix-only line (upstream leaves a bare `>` line, the engine
+exits one level), the `>x` (space-less) style, and in-fence caret placement.
+Engine Enter commands therefore sit at **`Prec.highest`**, ordered
+`codeLineKeymap` → `fenceKeymap` → `quoteKeymap` → `listKeymap`, each returning
+`false` for lines it does not own.
+
+The testing lesson is the reusable part: assert **ownership signatures** — an
+outcome only one implementation can produce (exit-one-level on `> `, caret moved
+onto the new code line, style-faithful `>x\n>x`) — never just the visible result
+both produce. `test/enter-ownership.test.ts` drives the real keymap chain
+(`keymap.of([...defaultKeymap, ...historyKeymap])` before `editorExtensions()`)
+for exactly this reason.
+
+## A continuation command must set an explicit selection
+
+`changes: {from: head, to: head, insert: "\n> "}` does NOT move the caret: a
+collapsed selection maps through an insertion at its own position with
+`assoc = -1`, so the caret stays on the **previous** line. Upstream's
+`insertNewlineContinueMarkup` sets the selection explicitly, which is why the
+missing `selection` in `continueQuoteSpec`/`continueListSpec` went unnoticed
+until the engine actually took Enter ownership — and why it showed up first in
+quoted code lines (the one place upstream had already bailed, so the engine's
+command was live). Every continuation spec returns
+`selection: { anchor: insertStart + insert.length }`; `test/enter-ownership.test.ts`
+asserts the caret's line and offset, not just the document text.
+
+## Line block prefixes are structural — clamp the caret, never make them atomic
+
+The folded `> ` / `> - ` / `- [ ] ` prefix is block structure, but `cursorInside`
+reveals a marker whose range contains the caret (invariant 10). Clicking the left
+edge of a quoted line (or pressing Home) resolves to `line.from` = inside the
+prefix, so the marker unfolds and the next typed character lands **before** it —
+the user sees the `>` being pushed right (`abc> `). `navigation/caretClamp.ts`
+clamps the three accidental entry points (mousedown via `posAtCoords`, Home /
+Shift-Home, ArrowUp/Down after running the host command) to
+`format/blockPrefix.ts::lineContentStart`. Two rules:
+
+- Do **not** try `EditorView.atomicRanges` for line-start prefixes: the
+  atomicRanges invariants forbid line-start and cross-line atoms (they break
+  cross-line selection and drag endpoints).
+- "Prefix" means each mark plus **exactly one** following space
+  (`markRemovalRange`). The remaining whitespace is content indentation —
+  classifying it as prefix breaks Tab/Shift-Tab on quoted code lines and makes
+  indentation inheritance accidental.
+
+## There is no indentation service inside a fence
+
+`getIndentation(new IndentContext(state, { simulateBreak: pos }), pos)` returns
+`null` at every position inside a fenced code block: `@codemirror/lang-markdown`
+only declares `indentNodeProp: { Document: () => null }`, and the nested language
+does not contribute one through the mounted tree. So `insertNewlineAndIndent`'s
+"copy the current line's leading whitespace" fallback is all CM can offer, and
+`{`-style auto-indent has to come from the engine:
+`format/codeLines.ts` (`continueCodeLineSpec`) copies the current line's content
+indentation and adds one level when the text before the caret ends with
+`{ ( [ :`. Making this language-aware means providing an `indentService` (or a
+per-language provider table) — a deliberate follow-up, not a config flag.

@@ -2,7 +2,7 @@ import type { Line } from "@codemirror/state"
 import { Prec, type EditorState, type TransactionSpec } from "@codemirror/state"
 import { syntaxTree } from "@codemirror/language"
 import { keymap, type Command } from "@codemirror/view"
-import { blockPrefixOf, markRemovalRange } from "./blockPrefix"
+import { lineContentStart } from "./blockPrefix"
 
 // 围栏代码**内容行**的续行与缩进。
 //
@@ -41,18 +41,6 @@ function fencedCodeAt(state: EditorState, line: Line) {
   return node
 }
 
-/**
- * 代码行的行块前缀结束位置：引用/列表标记 + **恰好一个**后随空格（与
- * `markRemovalRange` 同一规则）。标记之后的其余空白属于**代码缩进**而非前缀 ——
- * 否则 Tab/Shift-Tab 改不到缩进（会被算进前缀吞掉），"与上一行对齐"也只是碰巧。
- * 无标记的普通代码行前缀为空串（行首缩进全部算代码缩进）。
- */
-function codePrefixEnd(state: EditorState, line: Line): number {
-  const prefix = blockPrefixOf(state, line)
-  if (!prefix || prefix.marks.length === 0) return line.from
-  return markRemovalRange(prefix.marks[prefix.marks.length - 1], line).to
-}
-
 export function codeContentLine(state: EditorState): CodeContentLine | null {
   const main = state.selection.main
   if (!main.empty) return null
@@ -62,7 +50,9 @@ export function codeContentLine(state: EditorState): CodeContentLine | null {
   for (let child = fence.firstChild; child; child = child.nextSibling) {
     if (child.name === "CodeMark" && state.doc.lineAt(child.from).number === line.number) return null
   }
-  const end = codePrefixEnd(state, line)
+  // 前缀边界 = 标记 + 恰好一个后随空白；其余空白属于**代码缩进**而不是前缀，
+  // 否则 Tab/Shift-Tab 改不到缩进（会被前缀吞掉），"与上一行对齐"也只是碰巧。
+  const end = lineContentStart(state, line)
   return { line, prefix: state.doc.sliceString(line.from, end), content: state.doc.sliceString(end, line.to) }
 }
 
