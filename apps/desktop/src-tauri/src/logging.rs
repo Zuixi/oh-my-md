@@ -25,8 +25,8 @@ pub const LOG_LEVEL_ENV_VAR: &str = "OMD_LOG";
 /// Probe file created inside the target directory and removed immediately.
 pub const PROBE_FILE_PREFIX: &str = ".write_test_";
 
-/// Session-boundary lines, written by the exit lifecycle and matched as
-/// substrings when a log tail is scanned back. See spec §3.4.5.
+/// Session-boundary lines, written by the exit lifecycle and matched as whole
+/// tokens when a log tail is scanned back. See spec §3.4.5.
 pub const SESSION_START_MARKER: &str = "session start";
 pub const SESSION_EXIT_MARKER: &str = "session exit";
 pub const SESSION_END_MARKER: &str = "session end";
@@ -281,20 +281,41 @@ pub fn newest_archive(dir: &Path, stem: &str) -> Option<PathBuf> {
     candidates.pop()
 }
 
+/// Whether `line` contains `marker` as a whole token: followed by a space or
+/// by the end of the line.
+///
+/// The boundary is load-bearing, not defensive. Task 4 logs the human-readable
+/// determination lines *after* `session start`: "previous session exited
+/// cleanly" and "previous session ended abnormally" contain
+/// `SESSION_EXIT_MARKER` / `SESSION_END_MARKER` as bare substrings. A
+/// `line.contains(marker)` match turns those into an invented exit intent, so a
+/// run that died with no exit intent at all (SIGKILL, segfault, force-kill)
+/// gets reported as `Interrupted` — a system shutdown — and the `Abnormal`
+/// warning this feature exists to raise never fires. Do not simplify this back
+/// to `contains`. See spec §3.4.5.
+fn has_marker(line: &str, marker: &str) -> bool {
+    line.match_indices(marker).any(|(index, _)| {
+        line[index + marker.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| ch == ' ')
+    })
+}
+
 fn parse_markers(text: &str) -> Vec<Marker> {
     let mut markers = Vec::new();
     for line in text.lines() {
-        if line.contains(SESSION_START_MARKER) {
+        if has_marker(line, SESSION_START_MARKER) {
             markers.push(Marker {
                 kind: MarkerKind::Start,
                 clean: false,
             });
-        } else if line.contains(SESSION_END_MARKER) {
+        } else if has_marker(line, SESSION_END_MARKER) {
             markers.push(Marker {
                 kind: MarkerKind::End,
                 clean: line.contains("clean=true"),
             });
-        } else if line.contains(SESSION_EXIT_MARKER) {
+        } else if has_marker(line, SESSION_EXIT_MARKER) {
             markers.push(Marker {
                 kind: MarkerKind::Exit,
                 clean: false,
@@ -490,6 +511,33 @@ mod tests {
         );
     }
 
+    // The whole-file case never enters the partial-line path: the seek start
+    // is 0, so the first line is complete and must survive.
+    #[test]
+    fn read_tail_keeps_the_first_line_when_the_read_starts_at_offset_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = "session start pid=1 version=0.0.1 mode=release\nsession end clean=true\n";
+        assert!((body.len() as u64) < LOG_TAIL_READ_BYTES);
+        let path = write_log(dir.path(), "oh-my-md.log", body);
+        assert_eq!(read_tail(&path, LOG_TAIL_READ_BYTES), body);
+    }
+
+    // Task 4 logs these human-readable determination lines into the same file,
+    // *after* the `session start` line (spec §3.4.5). "session exited" and
+    // "session ended" contain the "session exit"/"session end" markers as bare
+    // substrings, so a `contains` match invents markers that were never
+    // written. None of the three may parse.
+    #[test]
+    fn parse_markers_ignores_the_determination_lines() {
+        let text = "previous session exited cleanly\n\
+                    previous session ended abnormally\n\
+                    previous session was interrupted by the system\n";
+        assert!(
+            parse_markers(text).is_empty(),
+            "determination lines must not be read as session markers"
+        );
+    }
+
     #[test]
     fn newest_archive_is_lexicographically_last() {
         let dir = tempfile::tempdir().unwrap();
@@ -620,6 +668,28 @@ mod tests {
             dir.path(),
             "oh-my-md.log",
             "session end clean=true\nsession start pid=2 version=0.0.1 mode=release\n",
+        );
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Abnormal
+        );
+    }
+
+    // The path this feature exists for: run N−1 quits cleanly, so its log ends
+    // with the (debug-level) "previous session exited cleanly" determination
+    // line; run N scans it, writes `session start` plus the same line, then
+    // dies with no exit intent and no clean end (SIGKILL / segfault /
+    // force-kill). Parsing the determination line as a real `session exit`
+    // makes run N+1 report Interrupted at Info and suppresses the Abnormal
+    // warning the feature was built to raise.
+    #[test]
+    fn scan_reports_abnormal_for_a_crash_after_a_clean_run() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start pid=1 version=0.0.1 mode=release\n\
+             previous session exited cleanly\n",
         );
         assert_eq!(
             scan_previous_session(dir.path(), "oh-my-md"),
