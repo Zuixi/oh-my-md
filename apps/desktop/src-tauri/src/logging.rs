@@ -25,6 +25,12 @@ pub const LOG_LEVEL_ENV_VAR: &str = "OMD_LOG";
 /// Probe file created inside the target directory and removed immediately.
 pub const PROBE_FILE_PREFIX: &str = ".write_test_";
 
+/// Session-boundary lines, written by the exit lifecycle and matched as
+/// substrings when a log tail is scanned back. See spec §3.4.5.
+pub const SESSION_START_MARKER: &str = "session start";
+pub const SESSION_EXIT_MARKER: &str = "session exit";
+pub const SESSION_END_MARKER: &str = "session end";
+
 /// Compiled-in default. Release ships `Info`; debug ships `Debug`.
 pub fn default_level() -> log::LevelFilter {
     if cfg!(debug_assertions) {
@@ -200,6 +206,140 @@ pub struct LogStateView {
     pub dir: String,
 }
 
+/// What the previous run did. See spec §3.4.5.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviousExit {
+    /// The last session reached `session end clean=true`.
+    Clean,
+    /// The last session recorded an exit intent but never reached the end —
+    /// typically a logout/shutdown force-kill.
+    Interrupted,
+    /// The last session started and never recorded any exit.
+    Abnormal,
+    /// No `session start` survived in either window. Never accuse.
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkerKind {
+    Start,
+    Exit,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Marker {
+    pub kind: MarkerKind,
+    pub clean: bool,
+}
+
+/// Read at most `limit` bytes from the end of `path`, lossily decoded.
+///
+/// Seeking to `End(-limit)` can land inside a multi-byte UTF-8 sequence —
+/// log lines contain CJK file paths, so this is not hypothetical. Decoding is
+/// therefore lossy *and* the first (partial) line is dropped.
+pub fn read_tail(path: &Path, limit: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(limit);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if start == 0 {
+        return text;
+    }
+    match text.find('\n') {
+        Some(index) => text[index + 1..].to_string(),
+        None => String::new(),
+    }
+}
+
+/// The newest archive for `stem`. Archive names are zero-padded timestamps
+/// (`rename_file_to_dated`), so lexicographic order is chronological.
+pub fn newest_archive(dir: &Path, stem: &str) -> Option<PathBuf> {
+    let prefix = format!("{stem}_");
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".log"))
+        })
+        .collect();
+    candidates.sort();
+    candidates.pop()
+}
+
+fn parse_markers(text: &str) -> Vec<Marker> {
+    let mut markers = Vec::new();
+    for line in text.lines() {
+        if line.contains(SESSION_START_MARKER) {
+            markers.push(Marker {
+                kind: MarkerKind::Start,
+                clean: false,
+            });
+        } else if line.contains(SESSION_END_MARKER) {
+            markers.push(Marker {
+                kind: MarkerKind::End,
+                clean: line.contains("clean=true"),
+            });
+        } else if line.contains(SESSION_EXIT_MARKER) {
+            markers.push(Marker {
+                kind: MarkerKind::Exit,
+                clean: false,
+            });
+        }
+    }
+    markers
+}
+
+/// Apply the spec §3.4.5 table to a merged, chronological marker list.
+///
+/// A clean end wins over an earlier exit intent: a user-initiated quit writes
+/// *both* lines (the intent at `ExitRequested`, the end at `RunEvent::Exit`),
+/// so stopping at the first marker after the start would call every clean quit
+/// "interrupted" — the table's row is an intent *with no* `session end`.
+pub fn classify(markers: &[Marker]) -> PreviousExit {
+    let Some(start) = markers.iter().rposition(|m| m.kind == MarkerKind::Start) else {
+        return PreviousExit::Unknown;
+    };
+    let after = &markers[start + 1..];
+    if after.iter().any(|m| m.kind == MarkerKind::End && m.clean) {
+        PreviousExit::Clean
+    } else if after.iter().any(|m| m.kind == MarkerKind::Exit) {
+        PreviousExit::Interrupted
+    } else {
+        PreviousExit::Abnormal
+    }
+}
+
+/// Reconstruct the previous run's outcome from the archive and active tails.
+///
+/// The archive's markers are older than the active log's, so they are
+/// concatenated in that order and the rule is applied to the merged sequence:
+/// a session that outgrows `LOG_MAX_FILE_BYTES` keeps its start in the archive
+/// and its end in the active log. Only `LOG_TAIL_READ_BYTES` of each is read.
+pub fn scan_previous_session(dir: &Path, stem: &str) -> PreviousExit {
+    let mut markers = Vec::new();
+    if let Some(archive) = newest_archive(dir, stem) {
+        markers.extend(parse_markers(&read_tail(&archive, LOG_TAIL_READ_BYTES)));
+    }
+    let active = dir.join(format!("{stem}.log"));
+    markers.extend(parse_markers(&read_tail(&active, LOG_TAIL_READ_BYTES)));
+    classify(&markers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +417,251 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, r#"{"degraded":true,"dir":"/tmp/logs"}"#);
+    }
+
+    fn write_log(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn read_tail_drops_the_partial_first_line_and_survives_split_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        // The seek start lands inside the ASCII filler, so the CJK line is
+        // wholly inside the window; only the partial first line has to go.
+        // `read_tail_drops_a_first_line_cut_inside_a_cjk_character` below
+        // covers the boundary-lands-mid-character case.
+        let filler = "x".repeat(LOG_TAIL_READ_BYTES as usize - 2);
+        let body = format!("{filler}笔记.md\nsession end clean=true\n");
+        let path = write_log(dir.path(), "oh-my-md.log", &body);
+        let tail = read_tail(&path, LOG_TAIL_READ_BYTES);
+        assert!(tail.ends_with("session end clean=true\n"));
+        assert!(
+            !tail.starts_with('x'),
+            "the partial first line must be dropped"
+        );
+    }
+
+    // The boundary test above seeks 31 bytes into pure ASCII, so it never
+    // exercises the lossy half of trap 1. This one cuts 笔 in half.
+    #[test]
+    fn read_tail_drops_a_first_line_cut_inside_a_cjk_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let limit = LOG_TAIL_READ_BYTES as usize;
+        // 笔 occupies bytes 65535..65538, so the seek start (65536) is its
+        // second byte and the tail opens on two orphaned continuation bytes.
+        let body = format!(
+            "{}笔记.md\n{}\nsession end clean=true\n",
+            "x".repeat(limit - 1),
+            "y".repeat(limit - 33)
+        );
+        let path = write_log(dir.path(), "oh-my-md.log", &body);
+        assert_eq!(
+            body.len(),
+            limit * 2,
+            "the fixture must straddle the boundary"
+        );
+        let tail = read_tail(&path, LOG_TAIL_READ_BYTES);
+        assert_eq!(
+            tail,
+            format!("{}\nsession end clean=true\n", "y".repeat(limit - 33)),
+            "the partial line (and its replacement characters) must be dropped"
+        );
+    }
+
+    #[test]
+    fn read_tail_reads_no_more_than_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let limit = LOG_TAIL_READ_BYTES as usize;
+        // The start marker is far outside the window: a full-file read would
+        // find it, a bounded tail read must not.
+        let body = format!(
+            "session start pid=1 version=0.0.1 mode=release\n{}\nsession end clean=true\n",
+            "filler\n".repeat(limit)
+        );
+        let path = write_log(dir.path(), "oh-my-md.log", &body);
+        assert!(body.len() > limit * 2);
+        let tail = read_tail(&path, LOG_TAIL_READ_BYTES);
+        assert!(tail.ends_with("session end clean=true\n"));
+        assert!(
+            !tail.contains(SESSION_START_MARKER),
+            "a marker outside the window must not be read"
+        );
+    }
+
+    #[test]
+    fn newest_archive_is_lexicographically_last() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(dir.path(), "oh-my-md_2026-01-01_00-00-00.log", "old");
+        write_log(dir.path(), "oh-my-md_2026-10-02_09-30-00.log", "new");
+        write_log(dir.path(), "oh-my-md.log", "active");
+        let found = newest_archive(dir.path(), "oh-my-md").unwrap();
+        assert!(found.to_string_lossy().contains("2026-10-02"));
+    }
+
+    #[test]
+    fn classify_covers_every_row_of_the_determination_table() {
+        use MarkerKind::*;
+        assert_eq!(classify(&[]), PreviousExit::Unknown);
+        assert_eq!(
+            classify(&[Marker {
+                kind: Start,
+                clean: false
+            }]),
+            PreviousExit::Abnormal
+        );
+        assert_eq!(
+            classify(&[
+                Marker {
+                    kind: Start,
+                    clean: false
+                },
+                Marker {
+                    kind: End,
+                    clean: true
+                },
+            ]),
+            PreviousExit::Clean
+        );
+        assert_eq!(
+            classify(&[
+                Marker {
+                    kind: Start,
+                    clean: false
+                },
+                Marker {
+                    kind: Exit,
+                    clean: false
+                },
+            ]),
+            PreviousExit::Interrupted
+        );
+        // An unmatched End (start rotated out of both windows) is unknown,
+        // never an accusation.
+        assert_eq!(
+            classify(&[Marker {
+                kind: End,
+                clean: true
+            }]),
+            PreviousExit::Unknown
+        );
+    }
+
+    // A user-initiated quit writes *both* lines: the intent at
+    // `ExitRequested{code: None}` and the end at `RunEvent::Exit`. Reading
+    // only the marker immediately after the start would call every clean quit
+    // "interrupted".
+    #[test]
+    fn classify_lets_a_clean_end_win_over_an_earlier_exit_intent() {
+        use MarkerKind::*;
+        assert_eq!(
+            classify(&[
+                Marker {
+                    kind: Start,
+                    clean: false
+                },
+                Marker {
+                    kind: Exit,
+                    clean: false
+                },
+                Marker {
+                    kind: End,
+                    clean: true
+                },
+            ]),
+            PreviousExit::Clean
+        );
+    }
+
+    #[test]
+    fn scan_reports_clean_for_the_real_quit_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start pid=1 version=0.0.1 mode=release\n\
+             session exit intent=user\n\
+             session end clean=true\n",
+        );
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Clean
+        );
+    }
+
+    #[test]
+    fn scan_merges_a_split_session_across_the_rotation_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        // The session outgrew 2 MiB and rotated mid-session: its start is in
+        // the archive, its end in the active log. A single-file reader would
+        // see an unmatched end and could only answer "unknown".
+        write_log(
+            dir.path(),
+            "oh-my-md_2026-10-02_09-30-00.log",
+            "session start pid=1 version=0.0.1 mode=release\n",
+        );
+        write_log(dir.path(), "oh-my-md.log", "session end clean=true\n");
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Clean
+        );
+    }
+
+    #[test]
+    fn scan_reports_abnormal_when_a_later_start_has_no_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md_2026-10-02_09-30-00.log",
+            "session start pid=1 version=0.0.1 mode=release\n",
+        );
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session end clean=true\nsession start pid=2 version=0.0.1 mode=release\n",
+        );
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Abnormal
+        );
+    }
+
+    #[test]
+    fn scan_reports_clean_when_the_last_start_is_followed_by_a_clean_end() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start pid=1 version=0.0.1 mode=release\nsession end clean=true\n",
+        );
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Clean
+        );
+    }
+
+    #[test]
+    fn scan_reports_interrupted_for_an_intent_without_an_end() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start pid=1 version=0.0.1 mode=release\nsession exit intent=shutdown\n",
+        );
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Interrupted
+        );
+    }
+
+    #[test]
+    fn scan_reports_unknown_when_no_start_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(dir.path(), "oh-my-md.log", "session end clean=true\n");
+        assert_eq!(
+            scan_previous_session(dir.path(), "oh-my-md"),
+            PreviousExit::Unknown
+        );
     }
 }
