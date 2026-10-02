@@ -509,6 +509,17 @@ git commit -m "fix: probe the log directory and register the logger without pani
             classify(&[Marker { kind: End, clean: true }]),
             PreviousExit::Unknown
         );
+        // The exact sequence an ordinary Cmd+Q writes: intent from
+        // ExitRequested, then the clean end from RunEvent::Exit. A clean end
+        // must win, or every normal quit reports as interrupted.
+        assert_eq!(
+            classify(&[
+                Marker { kind: Start, clean: false },
+                Marker { kind: Exit, clean: false },
+                Marker { kind: End, clean: true },
+            ]),
+            PreviousExit::Clean
+        );
     }
 
     #[test]
@@ -696,12 +707,18 @@ pub fn classify(markers: &[Marker]) -> PreviousExit {
     let Some(start) = markers.iter().rposition(|m| m.kind == MarkerKind::Start) else {
         return PreviousExit::Unknown;
     };
-    match markers[start + 1..].iter().find(|m| m.kind != MarkerKind::Start) {
-        Some(Marker { kind: MarkerKind::End, clean: true }) => PreviousExit::Clean,
-        Some(Marker { kind: MarkerKind::Exit, .. }) => PreviousExit::Interrupted,
-        // A later Start means the run being examined never exited at all.
-        _ => PreviousExit::Abnormal,
+    let after = &markers[start + 1..];
+    // A clean end anywhere in the tail wins. Task 4 writes BOTH an exit
+    // intent (from `ExitRequested`) and a clean end (from `RunEvent::Exit`)
+    // on every ordinary quit, so examining only the first following marker
+    // would report every clean quit as interrupted.
+    if after.iter().any(|m| m.kind == MarkerKind::End && m.clean) {
+        return PreviousExit::Clean;
     }
+    if after.iter().any(|m| m.kind == MarkerKind::Exit) {
+        return PreviousExit::Interrupted;
+    }
+    PreviousExit::Abnormal
 }
 
 /// Reconstruct the previous run's outcome from the archive and active tails.
