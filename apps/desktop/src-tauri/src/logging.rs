@@ -4,7 +4,9 @@
 //! Spec: docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
 use tauri::Manager;
 
@@ -482,6 +484,126 @@ pub fn install_panic_hook() {
         log::error!("panic at {location} thread={thread}: {message}");
         previous(info);
     }));
+}
+
+/// Command name; must match `LOG_FRONTEND_COMMAND` in `constants.ts`. Rust
+/// dispatches a command by its function name, so this literal has no in-crate
+/// reader — Task 6's `crossLayerConstants.test.ts` drift guard parses this
+/// file, and it is the only consumer.
+#[allow(dead_code)]
+pub const LOG_FRONTEND_COMMAND: &str = "log_frontend";
+
+/// Rust-side safety net over the frontend's own limits (spec §3.9 layer 4).
+/// Must stay above the frontend token bucket (`LOG_RATE_LIMIT_PER_SEC`, 50 in
+/// `constants.ts`), or this net silently truncates legitimate logs.
+pub const LOG_FRONTEND_BUDGET_PER_SEC: u32 = 200;
+
+/// One record the frontend facade offers for logging.
+///
+/// The field names are the §3.11 IPC contract. They are single words, so the
+/// camelCase trap cannot bite here — the serialized-JSON test still pins the
+/// shape, because TypeScript reads a renamed field as `undefined` without
+/// failing to compile.
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct FrontendRecord {
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
+/// Maps the five facade level names onto `log` levels. Anything else — a typo,
+/// a level this build does not know — falls back to `Info` rather than
+/// erroring or dropping the record: logging must never break its caller.
+pub fn parse_level(raw: &str) -> log::Level {
+    match raw.to_ascii_lowercase().as_str() {
+        "error" => log::Level::Error,
+        "warn" => log::Level::Warn,
+        "debug" => log::Level::Debug,
+        "trace" => log::Level::Trace,
+        _ => log::Level::Info,
+    }
+}
+
+/// Per-window record budget (spec §3.9 layer 4), the last line of defence
+/// against a frontend that ignores its own rate control.
+///
+/// Records over the limit are collapsed and counted rather than silently
+/// dropped, so the fact that the log is incomplete is retained instead of
+/// vanishing; the count is cumulative, so a reader cannot mistake "nothing was
+/// collapsed" for "the window happened to be quiet". [`Self::collapsed`] is
+/// that count.
+#[derive(Default)]
+pub struct FrontendBudget {
+    /// Start of the current one-second window; `None` until the first record.
+    window_start: Mutex<Option<Instant>>,
+    /// Records offered in the current window, consumed by `allow`.
+    used: AtomicU32,
+    /// Records collapsed since the process started, never reset.
+    collapsed: AtomicU32,
+    limit: u32,
+}
+
+impl FrontendBudget {
+    pub fn new(limit: u32) -> Self {
+        Self {
+            limit,
+            ..Default::default()
+        }
+    }
+
+    /// Consumes one record's allowance. `true` means log it, `false` means it
+    /// was collapsed into [`Self::collapsed`].
+    fn allow(&self) -> bool {
+        let now = Instant::now();
+        // The lock serializes the window check: without it two racing callers
+        // could both decide the window rolled over and both reset `used`.
+        let mut start = self.window_start.lock().unwrap_or_else(|e| e.into_inner());
+        if start.is_none_or(|s| now.duration_since(s).as_secs() >= 1) {
+            *start = Some(now);
+            self.used.store(1, Ordering::Relaxed);
+            return true;
+        }
+        let used = self.used.fetch_add(1, Ordering::Relaxed) + 1;
+        if used > self.limit {
+            self.collapsed.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
+    /// Records collapsed since the process started, never reset — a reader can
+    /// tell an incomplete log from a quiet one.
+    ///
+    /// Tests are the only consumer today: a unit test cannot build a
+    /// `tauri::State`, so `log_frontend` itself is not drivable here and this
+    /// accessor is how "collapsed rather than dropped" is asserted. It stays
+    /// public (not `cfg(test)`) because it is the count any reporting surface
+    /// must read; `allow` increments it whether or not one exists yet.
+    #[allow(dead_code)] // Asserted by the budget tests; no reporting surface reads it yet.
+    pub fn collapsed(&self) -> u32 {
+        self.collapsed.load(Ordering::Relaxed)
+    }
+}
+
+/// Frontend log sink. Batches arrive as one call so a burst costs one IPC
+/// round trip rather than one per record.
+///
+/// Never `Err`: spec §3.9 says failures degrade rather than propagate, and the
+/// budget's answer to pressure is to collapse, not to refuse. The `Result` is
+/// the §3.11 IPC contract the TypeScript facade awaits.
+#[tauri::command]
+pub fn log_frontend(
+    records: Vec<FrontendRecord>,
+    budget: tauri::State<'_, FrontendBudget>,
+) -> Result<(), String> {
+    for record in records {
+        if !budget.allow() {
+            continue;
+        }
+        let level = parse_level(&record.level);
+        log::log!(target: &record.target, level, "{}", record.message);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -975,5 +1097,55 @@ mod tests {
         assert!(!state.is_exiting());
         state.mark();
         assert!(state.is_exiting());
+    }
+
+    #[test]
+    fn frontend_record_serializes_with_single_word_fields() {
+        // The IPC wire format is a tested contract: TS types cannot catch
+        // casing drift, and desktop tests mock services at the TS boundary.
+        let record = FrontendRecord {
+            level: "error".into(),
+            target: "updates".into(),
+            message: "boom".into(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert_eq!(
+            json,
+            r#"{"level":"error","target":"updates","message":"boom"}"#
+        );
+    }
+
+    #[test]
+    fn unknown_levels_fall_back_to_info_rather_than_erroring() {
+        assert_eq!(parse_level("nonsense"), log::Level::Info);
+        assert_eq!(parse_level("ERROR"), log::Level::Error);
+    }
+
+    #[test]
+    fn budget_collapses_above_the_limit_instead_of_dropping() {
+        let budget = FrontendBudget::new(2);
+        assert!(budget.allow());
+        assert!(budget.allow());
+        assert!(!budget.allow());
+        assert_eq!(budget.collapsed(), 1);
+    }
+
+    // The window rollover is what separates a per-second budget from a
+    // permanent wall: without it, `limit` records would be the whole run's
+    // allowance and every legitimate log after the first second would be
+    // collapsed.
+    #[test]
+    fn budget_refills_when_the_window_rolls_over() {
+        let budget = FrontendBudget::new(1);
+        assert!(budget.allow());
+        assert!(!budget.allow());
+        assert_eq!(budget.collapsed(), 1);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(budget.allow(), "a new window must refill the budget");
+        assert_eq!(
+            budget.collapsed(),
+            1,
+            "collapsed is cumulative, not per window"
+        );
     }
 }

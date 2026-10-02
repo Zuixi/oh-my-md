@@ -983,6 +983,12 @@ pub fn run() {
         .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
         .manage(logging::ExitingState::default())
+        // The frontend log sink's per-second budget (spec §3.9 layer 4). It
+        // must outlive every IPC call, so it is process state, not a command
+        // local.
+        .manage(logging::FrontendBudget::new(
+            logging::LOG_FRONTEND_BUDGET_PER_SEC,
+        ))
         .setup(|app| {
             // Logging first: the probe needs the AppHandle, and Tauri turns a
             // setup error into a panic, so install() swallows its own failures.
@@ -1196,6 +1202,7 @@ pub fn run() {
             take_pending_open_files,
             diagnostics::export_diagnostics,
             logging::log_state,
+            logging::log_frontend,
             menu::set_menu_locale,
             export::export_preview,
             fonts::list_system_fonts
