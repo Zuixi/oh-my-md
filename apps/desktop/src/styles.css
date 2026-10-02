@@ -676,6 +676,16 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
+/* Error boundary (Task 7): a render failure replaces the whole shell, so the
+   recovery surface owns the viewport instead of floating over a broken layout. */
+.omd-error-boundary {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 100vh; padding: 24px; text-align: center;
+  background: var(--omd-bg); color: var(--omd-error-fg);
+}
+.omd-error-boundary p { margin: 0; }
+.omd-error-boundary-actions { display: flex; gap: 8px; }
+.omd-error-boundary button { font: inherit; padding: 6px 12px; cursor: pointer; }
 /* Top bar: unified single-row tab bar */
 .topbar {
   display: flex;
