@@ -284,8 +284,21 @@ pub fn newest_archive(dir: &Path, stem: &str) -> Option<PathBuf> {
     candidates.pop()
 }
 
-/// Whether `line` contains `marker` as a whole token: followed by a space or
-/// by the end of the line.
+/// Whether `marker`, found at `index` in `line`, is a whole token: followed by
+/// a space or by the end of the line.
+///
+/// This is the single definition of "anchored", shared by [`has_marker`] (which
+/// classifies lines) and by the record-text escaper below (which must remove
+/// exactly what `has_marker` accepts). Two copies of this predicate could drift
+/// apart and silently reopen the forgery it exists to close.
+fn marker_anchored_at(line: &str, index: usize, marker: &str) -> bool {
+    line[index + marker.len()..]
+        .chars()
+        .next()
+        .is_none_or(|ch| ch == ' ')
+}
+
+/// Whether `line` contains `marker` as a whole token.
 ///
 /// The boundary is load-bearing, not defensive. Task 4 logs the human-readable
 /// determination lines *after* `session start`: "previous session exited
@@ -297,12 +310,8 @@ pub fn newest_archive(dir: &Path, stem: &str) -> Option<PathBuf> {
 /// warning this feature exists to raise never fires. Do not simplify this back
 /// to `contains`. See spec §3.4.5.
 fn has_marker(line: &str, marker: &str) -> bool {
-    line.match_indices(marker).any(|(index, _)| {
-        line[index + marker.len()..]
-            .chars()
-            .next()
-            .is_none_or(|ch| ch == ' ')
-    })
+    line.match_indices(marker)
+        .any(|(index, _)| marker_anchored_at(line, index, marker))
 }
 
 fn parse_markers(text: &str) -> Vec<Marker> {
@@ -487,10 +496,10 @@ pub fn install_panic_hook() {
 }
 
 /// Command name; must match `LOG_FRONTEND_COMMAND` in `constants.ts`. Rust
-/// dispatches a command by its function name, so this literal has no in-crate
-/// reader — Task 6's `crossLayerConstants.test.ts` drift guard parses this
-/// file, and it is the only consumer.
-#[allow(dead_code)]
+/// dispatches a command by its function name, so this literal has no dispatch
+/// reader; Task 6's `crossLayerConstants.test.ts` drift guard parses this file,
+/// and the layer-4 collapse notice below uses it as its log target so a reader
+/// can tell the sink's own line from the records it carried.
 pub const LOG_FRONTEND_COMMAND: &str = "log_frontend";
 
 /// Rust-side safety net over the frontend's own limits (spec §3.9 layer 4).
@@ -527,11 +536,15 @@ pub fn parse_level(raw: &str) -> log::Level {
 /// Per-window record budget (spec §3.9 layer 4), the last line of defence
 /// against a frontend that ignores its own rate control.
 ///
+/// Only records *below* `Error` reach it: `log_records` parses the level first
+/// and logs `Error` unconditionally, so the fatal record can never be collapsed
+/// and a burst of errors can never eat the non-error allowance (the green
+/// channel of spec §3.9).
+///
 /// Records over the limit are collapsed and counted rather than silently
-/// dropped, so the fact that the log is incomplete is retained instead of
-/// vanishing; the count is cumulative, so a reader cannot mistake "nothing was
-/// collapsed" for "the window happened to be quiet". [`Self::collapsed`] is
-/// that count.
+/// dropped; [`Self::collapsed`] keeps the cumulative count, so a reader cannot
+/// mistake "nothing was collapsed" for "the window happened to be quiet", and
+/// [`Self::take_collapse_notice`] hands out the per-window count for the notice.
 #[derive(Default)]
 pub struct FrontendBudget {
     /// Start of the current one-second window; `None` until the first record.
@@ -540,6 +553,11 @@ pub struct FrontendBudget {
     used: AtomicU32,
     /// Records collapsed since the process started, never reset.
     collapsed: AtomicU32,
+    /// Records collapsed in the current window, reset when it rolls over.
+    window_collapsed: AtomicU32,
+    /// Whether the current window's collapse notice has been written, reset
+    /// when the window rolls over.
+    notice_sent: AtomicBool,
     limit: u32,
 }
 
@@ -561,11 +579,16 @@ impl FrontendBudget {
         if start.is_none_or(|s| now.duration_since(s).as_secs() >= 1) {
             *start = Some(now);
             self.used.store(1, Ordering::Relaxed);
+            // A fresh window is a fresh collapse allowance and a fresh notice
+            // slot, so the reported count is per window, not per run.
+            self.window_collapsed.store(0, Ordering::Relaxed);
+            self.notice_sent.store(false, Ordering::Relaxed);
             return true;
         }
         let used = self.used.fetch_add(1, Ordering::Relaxed) + 1;
         if used > self.limit {
             self.collapsed.fetch_add(1, Ordering::Relaxed);
+            self.window_collapsed.fetch_add(1, Ordering::Relaxed);
             return false;
         }
         true
@@ -578,10 +601,138 @@ impl FrontendBudget {
     /// `tauri::State`, so `log_frontend` itself is not drivable here and this
     /// accessor is how "collapsed rather than dropped" is asserted. It stays
     /// public (not `cfg(test)`) because it is the count any reporting surface
-    /// must read; `allow` increments it whether or not one exists yet.
-    #[allow(dead_code)] // Asserted by the budget tests; no reporting surface reads it yet.
+    /// must read; `allow` increments it whether or not one exists yet. The
+    /// notice reports the *window* count, so this cumulative one stays for the
+    /// diagnostics bundle (Task 12).
+    #[allow(dead_code)] // Asserted by the budget tests; the notice reports the per-window count.
     pub fn collapsed(&self) -> u32 {
         self.collapsed.load(Ordering::Relaxed)
+    }
+
+    /// The current window's collapsed count, if that window has not reported it
+    /// yet. `Some(n)` means the caller owes one `n log records collapsed` line
+    /// and takes the window's notice slot; every later call in the same window
+    /// answers `None`.
+    ///
+    /// The count is read here, at the end of the batch whose first denial
+    /// transitioned the window into the collapsed state, so a batch that
+    /// overflows in one IPC call reports the whole batch's count instead of a
+    /// bare `1`; a caller that offers one record per call still gets at most one
+    /// line per window.
+    fn take_collapse_notice(&self) -> Option<u32> {
+        // Order matters: a batch that collapsed nothing must not burn the
+        // window's notice slot.
+        if self.window_collapsed.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
+        if self.notice_sent.swap(true, Ordering::Relaxed) {
+            return None;
+        }
+        Some(self.window_collapsed.load(Ordering::Relaxed))
+    }
+}
+
+/// Replaces LF and CR with the literal two-character sequences `\n` / `\r`.
+///
+/// The log file is line-oriented, so an unescaped line break in a record's
+/// target or message writes a second physical line. Escaping mirrors §3.7's
+/// LF/CR rule for structured path fields; that grammar's shared helper arrives
+/// with the path-field task, so this sink carries its own.
+fn escape_line_breaks(raw: &str) -> String {
+    let mut escaped = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+/// Removes the session-boundary vocabulary from record text, by escaping the
+/// space inside every marker token [`has_marker`] would accept
+/// (`session end` → `session\ end`).
+///
+/// [`escape_line_breaks`] alone does **not** make a forged boundary impossible.
+/// `has_marker` scans a whole line — it is mid-line matching that keeps the
+/// determination lines ("previous session ended abnormally") from parsing — and
+/// anchors on the character *after* the token. So
+/// `open failed\nsession end clean=true\n` still forges a clean end even with
+/// its newlines escaped, because `session end` is followed by a space. Removing
+/// the anchored token is the only escaping that closes the hole: afterwards the
+/// text cannot contain an accepted `session start` / `session exit` /
+/// `session end` at any position.
+///
+/// Only anchored occurrences are touched, so wording that merely contains a
+/// marker as a prefix ("session ended abnormally") survives byte-for-byte. The
+/// escaping stays readable, in the same backslash style as §3.7.
+fn neutralize_boundary_markers(text: &str) -> String {
+    let mut neutralized = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((index, marker)) = first_anchored_marker(rest) {
+        neutralized.push_str(&rest[..index]);
+        neutralized.push_str(&marker.replace(' ', "\\ "));
+        rest = &rest[index + marker.len()..];
+    }
+    neutralized.push_str(rest);
+    neutralized
+}
+
+/// The earliest anchored boundary marker in `text`, with the marker it belongs
+/// to. Anchors come from [`marker_anchored_at`], the same rule the scanner
+/// classifies with.
+fn first_anchored_marker(text: &str) -> Option<(usize, &'static str)> {
+    let mut earliest: Option<(usize, &'static str)> = None;
+    for marker in [
+        SESSION_START_MARKER,
+        SESSION_EXIT_MARKER,
+        SESSION_END_MARKER,
+    ] {
+        let found = text
+            .match_indices(marker)
+            .map(|(index, _)| index)
+            .find(|&index| marker_anchored_at(text, index, marker));
+        if let Some(index) = found {
+            if earliest.is_none_or(|(first, _)| index < first) {
+                earliest = Some((index, marker));
+            }
+        }
+    }
+    earliest
+}
+
+/// Makes one frontend-supplied field safe to write into the line-oriented log:
+/// one physical line, and no session-boundary vocabulary.
+fn escape_record_text(raw: &str) -> String {
+    neutralize_boundary_markers(&escape_line_breaks(raw))
+}
+
+/// The record loop behind [`log_frontend`], split out so tests can drive the
+/// real sink without a `tauri::State` (which cannot be built outside an app).
+///
+/// The level is parsed before the budget is consulted, on purpose: an `Error`
+/// is logged unconditionally and neither consults nor consumes the budget. That
+/// is spec §3.9's green channel — a misbehaving component's warning storm can
+/// exhaust layer 4, and the fatal record that follows must still get through.
+///
+/// Once per window the layer-4 notice is written, after the batch, reporting
+/// how many records that window collapsed. The wording is `N log records
+/// collapsed`, not the spec's `N error records collapsed`: with the `Error`
+/// bypass above, layer 4 can no longer collapse an error at all, so the spec's
+/// wording would be false.
+fn log_records(records: impl IntoIterator<Item = FrontendRecord>, budget: &FrontendBudget) {
+    for record in records {
+        let level = parse_level(&record.level);
+        if level != log::Level::Error && !budget.allow() {
+            continue;
+        }
+        let target = escape_record_text(&record.target);
+        let message = escape_record_text(&record.message);
+        log::log!(target: target.as_str(), level, "{}", message);
+    }
+    if let Some(collapsed) = budget.take_collapse_notice() {
+        log::warn!(target: LOG_FRONTEND_COMMAND, "{collapsed} log records collapsed");
     }
 }
 
@@ -596,13 +747,7 @@ pub fn log_frontend(
     records: Vec<FrontendRecord>,
     budget: tauri::State<'_, FrontendBudget>,
 ) -> Result<(), String> {
-    for record in records {
-        if !budget.allow() {
-            continue;
-        }
-        let level = parse_level(&record.level);
-        log::log!(target: &record.target, level, "{}", record.message);
-    }
+    log_records(records, &budget);
     Ok(())
 }
 
@@ -694,7 +839,22 @@ mod tests {
     /// What the `log` facade receives, so the writers can be exercised without
     /// a Tauri app: the writers emit through the facade, and the facade is
     /// what the plugin's file sink records.
-    static CAPTURED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    ///
+    /// The target is captured too: the file sink writes it into the same
+    /// physical line as the message, so a newline in *either* field can forge a
+    /// session boundary.
+    #[derive(Clone, Debug)]
+    struct CapturedRecord {
+        level: log::Level,
+        target: String,
+        message: String,
+    }
+
+    static CAPTURED: std::sync::Mutex<Vec<CapturedRecord>> = std::sync::Mutex::new(Vec::new());
+
+    /// Serializes the tests that drive the process-global facade: they share
+    /// `CAPTURED`, and `log::set_boxed_logger` can only succeed once.
+    static LOGGER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct CapturingLogger;
 
@@ -707,14 +867,94 @@ mod tests {
             CAPTURED
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push(record.args().to_string());
+                .push(CapturedRecord {
+                    level: record.level(),
+                    target: record.target().to_string(),
+                    message: record.args().to_string(),
+                });
         }
 
         fn flush(&self) {}
     }
 
-    fn take_captured() -> Vec<String> {
+    /// Installs the capturing logger once for the whole test binary and holds
+    /// the lock that keeps its tests from interleaving captured records. Cargo
+    /// runs tests on parallel threads, so the guard must live for the test.
+    fn capture_log() -> std::sync::MutexGuard<'static, ()> {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        let guard = LOGGER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        INSTALL.call_once(|| {
+            log::set_boxed_logger(Box::new(CapturingLogger)).expect("no logger in unit tests");
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+        guard
+    }
+
+    fn take_captured_records() -> Vec<CapturedRecord> {
         std::mem::take(&mut *CAPTURED.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    fn take_captured() -> Vec<String> {
+        take_captured_records()
+            .into_iter()
+            .map(|record| record.message)
+            .collect()
+    }
+
+    fn frontend_record(level: &str, target: &str, message: &str) -> FrontendRecord {
+        FrontendRecord {
+            level: level.to_string(),
+            target: target.to_string(),
+            message: message.to_string(),
+        }
+    }
+
+    fn info(message: &str) -> FrontendRecord {
+        frontend_record("info", "frontend", message)
+    }
+
+    fn error(message: &str) -> FrontendRecord {
+        frontend_record("error", "frontend", message)
+    }
+
+    /// The layer-4 notices in a capture, isolated by their target so a test can
+    /// count them without the frontend records around them.
+    fn collapse_notices(records: &[CapturedRecord]) -> Vec<String> {
+        records
+            .iter()
+            .filter(|record| record.target == LOG_FRONTEND_COMMAND)
+            .map(|record| record.message.clone())
+            .collect()
+    }
+
+    /// Just this sink's records. Other tests in the binary log through the same
+    /// process-global facade (the `ignore` crate is chatty at debug) and cargo
+    /// runs them in parallel, so an unfiltered assertion on the captured set
+    /// would be flaky. Frontend records carry the `frontend` target.
+    fn frontend_records(records: &[CapturedRecord]) -> Vec<CapturedRecord> {
+        records
+            .iter()
+            .filter(|record| record.target == "frontend")
+            .cloned()
+            .collect()
+    }
+
+    fn frontend_messages(records: &[CapturedRecord]) -> Vec<String> {
+        frontend_records(records)
+            .into_iter()
+            .map(|record| record.message)
+            .collect()
+    }
+
+    /// One written line per record, the way the file sink renders them: target
+    /// and message share a physical line, which is what a forged boundary
+    /// escapes out of.
+    fn written_lines(records: &[CapturedRecord]) -> String {
+        records
+            .iter()
+            .map(|record| format!("{} {}", record.target, record.message))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // The determination line is written *after* the `session start` of the run
@@ -725,8 +965,8 @@ mod tests {
     // phantom exit intent — fails here.
     #[test]
     fn session_boundary_writers_emit_lines_the_scanner_reads_back() {
-        log::set_boxed_logger(Box::new(CapturingLogger)).expect("no logger in unit tests");
-        log::set_max_level(log::LevelFilter::Trace);
+        let _capture = capture_log();
+        let _ = take_captured_records();
 
         write_session_start(4242, "0.0.1");
         note_clean_exit();
@@ -1146,6 +1386,187 @@ mod tests {
             budget.collapsed(),
             1,
             "collapsed is cumulative, not per window"
+        );
+    }
+
+    // Spec §3.9's green channel: a warning storm that exhausts the budget must
+    // not take the fatal record with it. The budget is consulted *after* the
+    // level is parsed, so an `Error` never even reaches `allow` — that is also
+    // why it cannot count as a collapse.
+    #[test]
+    fn error_records_are_logged_even_when_the_budget_is_exhausted() {
+        let _capture = capture_log();
+        let _ = take_captured_records();
+        let budget = FrontendBudget::new(1);
+        log_records(vec![info("before"), info("over")], &budget);
+        assert_eq!(budget.collapsed(), 1, "the second record must be collapsed");
+        let _ = take_captured_records();
+
+        log_records(vec![error("fatal")], &budget);
+        let records = frontend_records(&take_captured_records());
+        assert_eq!(records.len(), 1, "an Error must pass an exhausted budget");
+        assert_eq!(records[0].level, log::Level::Error);
+        assert_eq!(records[0].message, "fatal");
+        assert_eq!(
+            budget.collapsed(),
+            1,
+            "the bypass must neither collapse nor consume"
+        );
+    }
+
+    // The other half of the green channel: because `Error` never calls
+    // `allow`, a burst of fatal records cannot starve the records below it.
+    #[test]
+    fn bypassed_errors_do_not_consume_the_non_error_allowance() {
+        let _capture = capture_log();
+        let _ = take_captured_records();
+        let budget = FrontendBudget::new(2);
+        log_records(vec![info("a")], &budget);
+        let _ = take_captured_records();
+
+        log_records(vec![error("e1"), error("e2"), error("e3")], &budget);
+        let records = frontend_records(&take_captured_records());
+        assert_eq!(records.len(), 3, "every Error must reach the logger");
+        assert!(records.iter().all(|r| r.level == log::Level::Error));
+
+        // "a" used one of the window's two slots; if the errors had consumed
+        // any, "b" could not still pass.
+        log_records(vec![info("b"), info("c")], &budget);
+        let messages = frontend_messages(&take_captured_records());
+        assert!(
+            messages.contains(&"b".to_string()),
+            "a non-error record must still pass after a burst of errors: {messages:?}"
+        );
+        assert!(
+            !messages.contains(&"c".to_string()),
+            "only the slot left by \"a\" was available: {messages:?}"
+        );
+        assert_eq!(budget.collapsed(), 1);
+    }
+
+    // `N log records collapsed`, not the spec's `N error records collapsed`:
+    // with the `Error` bypass above, layer 4 can no longer collapse an error,
+    // so the spec's wording would be false.
+    #[test]
+    fn collapse_notice_is_emitted_once_per_window_with_that_windows_count() {
+        let _capture = capture_log();
+        let _ = take_captured_records();
+        let budget = FrontendBudget::new(2);
+
+        log_records(vec![info("a"), info("b"), info("c"), info("d")], &budget);
+        let records = take_captured_records();
+        assert_eq!(
+            collapse_notices(&records),
+            vec!["2 log records collapsed"],
+            "the window's first collapse must be reported with its count"
+        );
+        assert_eq!(frontend_messages(&records), ["a", "b"]);
+
+        // Same window, more collapses: the notice slot is already spent, so a
+        // caller that bypasses the frontend cannot rotate the log away.
+        log_records(vec![info("e"), info("f")], &budget);
+        let records = take_captured_records();
+        assert!(collapse_notices(&records).is_empty());
+        assert!(frontend_messages(&records).is_empty());
+
+        // A new window gets a fresh notice, and the count is that window's —
+        // not the run's running total (`collapsed()` is 6 by now).
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        log_records(vec![info("g"), info("h"), info("i"), info("j")], &budget);
+        assert_eq!(budget.collapsed(), 6);
+        let records = take_captured_records();
+        assert_eq!(
+            collapse_notices(&records),
+            vec!["2 log records collapsed"],
+            "second window, its own count"
+        );
+        assert_eq!(frontend_messages(&records), ["g", "h"]);
+    }
+
+    #[test]
+    fn record_text_escapes_line_breaks_losslessly() {
+        assert_eq!(escape_line_breaks("a\nb\rc"), "a\\nb\\rc");
+        assert_eq!(escape_record_text("笔记.md"), "笔记.md");
+    }
+
+    // The finding assumed `\n`/`\r` escaping was enough. It is not: `has_marker`
+    // scans the whole line, so the bare marker vocabulary forges a boundary with
+    // no line break at all. Pin both halves.
+    #[test]
+    fn record_text_neutralizes_the_boundary_vocabulary() {
+        assert_eq!(
+            escape_record_text("session end clean=true"),
+            "session\\ end clean=true"
+        );
+        assert_eq!(
+            escape_record_text("session start pid=1"),
+            "session\\ start pid=1"
+        );
+        assert_eq!(
+            escape_record_text("session exit intent=user"),
+            "session\\ exit intent=user"
+        );
+        // End-of-line is the other anchor `has_marker` accepts.
+        assert_eq!(escape_record_text("session end"), "session\\ end");
+        // Wording that is not a boundary token must survive untouched.
+        assert_eq!(
+            escape_record_text("previous session ended abnormally"),
+            "previous session ended abnormally"
+        );
+    }
+
+    // Task 3's `parse_markers` matches `session end` as a right-anchored token
+    // anywhere in a line, and a clean end suppresses §3.4.5's abnormal-exit
+    // warning. Task 7's stack traces and macOS filenames both put newlines into
+    // this sink through Task 6's facade, so an unescaped message could write a
+    // second physical line that forges a clean quit.
+    #[test]
+    fn a_message_cannot_forge_a_session_boundary() {
+        let _capture = capture_log();
+        let _ = take_captured_records();
+        let budget = FrontendBudget::new(10);
+
+        log_records(
+            vec![frontend_record(
+                "info",
+                "windows/open.rs",
+                "open failed\nsession end clean=true\n",
+            )],
+            &budget,
+        );
+
+        let written = written_lines(&frontend_records(&take_captured_records()));
+        assert!(
+            parse_markers(&written).is_empty(),
+            "a message must not parse as a boundary marker: {written:?}"
+        );
+        let run = format!("{}\n{written}", session_start_line(4242, "0.0.1"));
+        assert_eq!(
+            classify(&parse_markers(&run)),
+            PreviousExit::Abnormal,
+            "the forged clean end must not suppress the crash warning: {run:?}"
+        );
+    }
+
+    #[test]
+    fn a_target_cannot_forge_a_session_boundary() {
+        let _capture = capture_log();
+        let _ = take_captured_records();
+        let budget = FrontendBudget::new(10);
+
+        log_records(
+            vec![frontend_record(
+                "info",
+                "notes\nsession end clean=true",
+                "a macOS filename can carry a newline",
+            )],
+            &budget,
+        );
+
+        let written = written_lines(&frontend_records(&take_captured_records()));
+        assert!(
+            parse_markers(&written).is_empty(),
+            "a target must not parse as a boundary marker: {written:?}"
         );
     }
 }
