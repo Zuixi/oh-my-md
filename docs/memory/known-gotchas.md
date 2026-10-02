@@ -36,6 +36,8 @@
 - **A continuation command must set an explicit selection** — inserting at a collapsed caret leaves the caret on the previous line (`assoc = -1`).
 - **Line block prefixes are structural** — clamp clicks/Home/↑↓ to the content start; never make line-start marks atomic; prefix = mark + exactly one space.
 - **There is no indentation service inside a fence** — `getIndentation` is always null there; `{`-style auto-indent is the engine's job.
+- **`alive` is instance-scoped, CM's `destroy` is tile-scoped** — a re-tiled widget gets a second `toDOM` on the same instance and may receive the old tile's `destroy` afterwards; `toDOM` must reactivate and `destroy` must only retire the current DOM.
+- **Async widgets need an observable degrade marker** — a silent `catch {}` / early return turned "render never landed" into an invisible placeholder; emit `data-omd-highlight` / `data-omd-render` and assert it in e2e.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
 - **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.

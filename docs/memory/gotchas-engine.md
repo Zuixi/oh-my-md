@@ -484,3 +484,53 @@ does not contribute one through the mounted tree. So `insertNewlineAndIndent`'s
 indentation and adds one level when the text before the caret ends with
 `{ ( [ :`. Making this language-aware means providing an `indentService` (or a
 per-language provider table) — a deliberate follow-up, not a config flag.
+
+## `alive` is instance-scoped, but CM's `destroy` is tile-scoped
+
+Async block widgets (code / mermaid / math) end their render with
+`if (this.isActive(el)) el.innerHTML = html`, and `isActive()` is
+`BlockWidget.alive`. That flag was set by `destroy()` — but CodeMirror's
+`destroy(dom)` fires when a **tile** is dropped, which is not the same event as
+"this widget instance is finished": the live-decoration rebuild reuses the same
+`Decoration`/widget object (the `removedByKey` pass in `decorations/build.ts`)
+while CM still re-creates the tile, so `toDOM` runs a second time **on the same
+instance** and the previous tile's `destroy` can arrive after it. Instrumented
+timeline in a real browser for a quoted fence that starts the document:
+
+```
+toDOM#1 pos=2 body=false     ← first tile
+toDOM#2 pos=2 body=true      ← same instance re-tiled (this.wrap already set)
+destroy#2 pos=2              ← previous tile dropped → alive = false
+render  alive=false elConnected=true elProbe=2   ← new DOM is connected and on screen
+after debounce alive=false → EARLY-RETURN dead after debounce
+```
+
+Result: the synchronous placeholder `<pre>` stayed forever — no Shiki, no
+`.line` spans, no error (the `catch {}` swallowed everything). The same block
+preceded by any paragraph built once and rendered fine, which is why the bug hid
+in "obvious" fixtures.
+
+Rules:
+
+- `toDOM` **reactivates** the instance: set `alive = true` and record the DOM it
+  produced (`BlockWidget.activateDom`). Every `toDOM` override must call it —
+  `CodeWidget` builds its own wrap and therefore calls it directly instead of
+  going through `super.toDOM`.
+- `destroy(dom)` only retires the instance when `dom` is the **current** DOM (or
+  when called without a DOM); a stale tile's destroy must never kill a widget
+  that has already been re-added. Same idea as `domOwner` in the table widget,
+  in the opposite direction.
+- Never gate the *final* DOM write on a bare connectivity check either
+  (`isConnected` is transiently false while CM diffs/measures) — after the two
+  rules above, `isActive()` is the correct predicate.
+
+## Async widgets must expose an observable degrade marker
+
+`if (!lang) return` plus a `catch {}` made "the async render never landed" a
+silent, invisible failure: the DOM simply kept the synchronous `<pre>`, and the
+only way to notice was asserting Shiki's `.line` spans. Emit an explicit marker
+instead — `.omd-code-body[data-omd-highlight]` = `placeholder | shiki |
+unknown-lang | error` and `.omd-block-body[data-omd-render]` = `placeholder |
+svg | katex | error` (mermaid/math) — and log the swallowed error once via
+`console.debug`. This is what turned the doc-start quoted fence into a failing
+e2e assertion (`Received: "placeholder"`, 14 retries) instead of a mystery.

@@ -44,6 +44,14 @@ export function blockSelected(state: EditorState, from: number, to: number) {
 export abstract class BlockWidget extends WidgetType {
   private alive = true
   private pendingEntry: PendingRender | null = null
+  /**
+   * 本实例当前挂载的 DOM（toDOM 的产物）。异步渲染写回前用它判断"这块 DOM 还归我吗"。
+   * 存在的理由：`alive` 记的是**实例**生命期，而 CM/装饰重建产生的是 **tile** 级事件 ——
+   * 同一个实例会被重新 toDOM 到新 tile 上，并可能乱序收到旧 tile 的 destroy()
+   * （实测时序：toDOM#1 → toDOM#2 → destroy(#1)）；只按 alive 判断会让新 DOM 永远
+   * 停在同步占位（引用内代码块在文档首块时丢失 Shiki 高亮，见 docs/memory/gotchas-engine.md）。
+   */
+  protected currentDom: HTMLElement | undefined
 
   constructor(
     readonly src: string,
@@ -75,6 +83,15 @@ export abstract class BlockWidget extends WidgetType {
   protected onWrapClick(view: EditorView, _wrap: HTMLElement): void { view.focus() }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
+
+  /**
+   * 登记本实例当前 DOM 并重新激活：**每个 toDOM 都必须调用**。同一个实例被重新挂到
+   * 新 tile 上是正常路径（装饰重建会复用同一 Decoration/实例），toDOM 即"重新激活"。
+   */
+  protected activateDom(dom: HTMLElement): void {
+    this.alive = true
+    this.currentDom = dom
+  }
 
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
@@ -117,6 +134,7 @@ export abstract class BlockWidget extends WidgetType {
     const body = document.createElement("div")
     body.className = "omd-block-body"
     wrap.appendChild(body)
+    this.activateDom(wrap)
     this.renderPlaceholder(body)
 
     const start = () => Promise.resolve()
@@ -159,8 +177,14 @@ export abstract class BlockWidget extends WidgetType {
     return event.type === "mousedown" || event.type === "dblclick"
   }
 
-  destroy(_dom?: HTMLElement) {
-    this.alive = false
+  destroy(dom?: HTMLElement) {
+    // tile 级事件，不是实例级：只有"当前 DOM 被丢弃"才退役实例。乱序到达的旧 tile
+    // destroy（toDOM#2 之后才收到 destroy(#1)）不得杀死已重新挂载的实例；
+    // 不传 dom 视为"这个实例不再使用"（测试与显式回收路径）。
+    if (!dom || dom === this.currentDom) {
+      this.alive = false
+      this.currentDom = undefined
+    }
     unregisterBlockWidget(this)
     if (this.pendingEntry) dropPendingBlockRender(this.pendingEntry)
   }

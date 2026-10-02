@@ -38,6 +38,28 @@ test("rendered code block keeps every blank line at full height", async ({ page 
   expect(ratio).toBeLessThan(1.4)
 })
 
+test("a quoted fence that starts the document still gets highlighted", async ({ page }) => {
+  // 最终根因回归：文档首个块是「引用内的围栏」时，装饰重建会把同一个 widget 实例
+  // 重新挂到新 tile 上（toDOM 再次调用）并乱序收到旧 tile 的 destroy()；修复前
+  // destroy 把实例标记为死亡，异步渲染每一步都被 isActive 拒绝 → 永久停在同步占位。
+  // data-omd-highlight 是可观测降级标记（placeholder / unknown-lang / error / shiki）。
+  const doc = "> ```js\n> const a = 1\n> ```\n\noutro"
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
+  const body = page.locator(".omd-code-body")
+  await expect(body).toBeVisible()
+  await expect(body).toHaveAttribute("data-omd-highlight", "shiki")
+  await expect(page.locator(".omd-code-lines .line")).toHaveCount(1)
+})
+
+test("an unknown fence language degrades with an observable marker", async ({ page }) => {
+  const doc = "```not-a-real-lang\nsome text\n```\n\noutro"
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
+  const body = page.locator(".omd-code-body")
+  await expect(body).toBeVisible()
+  // 不再静默：要么命中某语言别名，要么显式标记 unknown-lang（保留纯文本兜底）。
+  await expect(body).toHaveAttribute("data-omd-highlight", /shiki|unknown-lang/)
+})
+
 test("rendered chrome header sits above the code body", async ({ page }) => {
   await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(DOC)}`)
   const header = page.locator(".omd-code-header")
