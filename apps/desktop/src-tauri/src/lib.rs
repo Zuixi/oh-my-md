@@ -950,6 +950,10 @@ fn take_pending_open_files(window: tauri::WebviewWindow) -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before `build()`: a panic during startup must still identify its
+    // `file:line`. The hook chains to the default one, so a panic raised
+    // before the logger exists still reaches stderr.
+    logging::install_panic_hook();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // Markdown file arguments open in this instance (macOS delivers
@@ -978,10 +982,23 @@ pub fn run() {
         .manage(session_flush::FlushGate::default())
         .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
+        .manage(logging::ExitingState::default())
         .setup(|app| {
             // Logging first: the probe needs the AppHandle, and Tauri turns a
             // setup error into a panic, so install() swallows its own failures.
-            app.manage(logging::install(app.handle()));
+            let log_state = logging::install(app.handle());
+            // Scan the previous session *before* writing this run's boundary
+            // line (spec §3.4.5 step 5). Order is load-bearing: our own
+            // `session start` would be the last start in the tail, so every
+            // scan would find a start with nothing after it and report an
+            // abnormal exit on every single launch.
+            let previous = logging::scan_previous_session(&log_state.dir, &log_state.file_stem);
+            logging::write_session_start(std::process::id(), env!("CARGO_PKG_VERSION"));
+            logging::log_startup_header(logging::effective_level(), &log_state);
+            logging::log_previous_exit(previous);
+            // Carried as state for the diagnostics bundle (Task 12).
+            app.manage(logging::PreviousExitState(previous));
+            app.manage(log_state);
             // Launch argv: the registry is empty and the config-declared main
             // window does not exist yet, so routing would spawn a duplicate
             // editor window. Queue straight for "main" and emit targeted at
@@ -1066,7 +1083,6 @@ pub fn run() {
             if let Err(e) = workspace::migrate_legacy_config() {
                 log::warn!("legacy config migration failed: {e}");
             }
-            log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -1206,6 +1222,12 @@ pub fn run() {
             if let tauri::RunEvent::Reopen { .. } = event {
                 windows::ensure_window(app);
             }
+            // Terminal event: the event loop is exiting, so nothing can
+            // outlive this line but the logger's own flush. Matched before
+            // `ExitRequested` because that arm moves `api` out of `event`.
+            if let tauri::RunEvent::Exit = event {
+                logging::note_clean_exit();
+            }
             // Cmd+Q / native quit arrives as ExitRequested without per-window
             // CloseRequested. code: None marks user-initiated exits; our own
             // post-flush `app.exit(0)` carries Some and passes through.
@@ -1213,6 +1235,10 @@ pub fn run() {
                 code: None, api, ..
             } = event
             {
+                // First, before any flushing: a force-kill during the flush
+                // round must still leave an intent behind to distinguish it
+                // from a crash.
+                logging::note_exit_intent(app, "user");
                 let gate = app.state::<session_flush::FlushGate>();
                 // `flushed` is one-shot from a completed flush round and can
                 // be stale: with ≥2 live windows, closing ONE of them

@@ -4,6 +4,7 @@
 //! Spec: docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::Manager;
 
@@ -361,6 +362,128 @@ pub fn scan_previous_session(dir: &Path, stem: &str) -> PreviousExit {
     classify(&markers)
 }
 
+/// Whether the app is on its way out. Consulted by the webview-termination
+/// hook (spec §3.4.4) so a normal teardown is not reported as a crash.
+#[derive(Default)]
+pub struct ExitingState(pub AtomicBool);
+
+impl ExitingState {
+    pub fn mark(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    #[allow(dead_code)] // Spec §3.4.4's termination hook is not wired yet.
+    pub fn is_exiting(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Carries the startup determination to the diagnostics bundle (Task 12).
+#[allow(dead_code)] // Read by the diagnostics bundle, which Task 12 adds.
+pub struct PreviousExitState(pub PreviousExit);
+
+/// The level a determination is logged at, per the spec §3.4.5 table. `None`
+/// means the common case (a clean exit) and is logged at `debug`.
+pub fn level_for_exit(outcome: PreviousExit) -> Option<log::Level> {
+    match outcome {
+        PreviousExit::Clean => None,
+        PreviousExit::Interrupted => Some(log::Level::Info),
+        PreviousExit::Abnormal => Some(log::Level::Warn),
+        PreviousExit::Unknown => Some(log::Level::Info),
+    }
+}
+
+pub fn session_start_line(pid: u32, version: &str) -> String {
+    let mode = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    format!("{SESSION_START_MARKER} pid={pid} version={version} mode={mode}")
+}
+
+pub fn write_session_start(pid: u32, version: &str) {
+    log::info!("{}", session_start_line(pid, version));
+}
+
+/// Written the moment an exit is requested — before any flushing — so a
+/// force-killed shutdown is still distinguishable from a crash.
+pub fn note_exit_intent(app: &tauri::AppHandle, reason: &str) {
+    app.state::<ExitingState>().mark();
+    log::info!("{SESSION_EXIT_MARKER} intent={reason}");
+}
+
+/// Written from `RunEvent::Exit`, the terminal event. `app.exit(0)` skips
+/// `ExitRequested` (`lib.rs:186`), so this cannot live there.
+pub fn note_clean_exit() {
+    log::info!("{SESSION_END_MARKER} clean=true");
+}
+
+/// Reports what the previous run did, at the level `level_for_exit` picks.
+///
+/// The wording is load-bearing, not cosmetic. Every sentence here is written
+/// *after* this run's `session start`, so the next launch's scanner reads it
+/// back; each one is deliberately phrased so that it cannot be re-parsed as a
+/// marker ("session exited", "session ended" — never "session exit " /
+/// "session end "). Rewording one to end a marker on a space would invent an
+/// exit intent and suppress the abnormal-exit warning. See `has_marker`.
+pub fn log_previous_exit(outcome: PreviousExit) {
+    let text = match outcome {
+        PreviousExit::Clean => "previous session exited cleanly",
+        PreviousExit::Interrupted => "previous session was interrupted by the system",
+        PreviousExit::Abnormal => "previous session ended abnormally",
+        PreviousExit::Unknown => "previous session outcome unknown (no markers in range)",
+    };
+    match level_for_exit(outcome) {
+        None => log::debug!("{text}"),
+        Some(log::Level::Warn) => log::warn!("{text}"),
+        Some(_) => log::info!("{text}"),
+    }
+}
+
+/// Version, OS, arch and the resolved logging destination. One line each so
+/// the header is greppable.
+pub fn log_startup_header(level: log::LevelFilter, state: &LogState) {
+    log::info!("app started {}", env!("CARGO_PKG_VERSION"));
+    log::info!(
+        "environment os={} arch={} log_level={} log_dir={:?} degraded={}",
+        os_info::get(),
+        std::env::consts::ARCH,
+        level,
+        state.dir,
+        state.degraded
+    );
+}
+
+/// Logs the panic message, its `file:line`, and the thread, then chains to the
+/// default hook so stderr output is preserved. The `file:line` is what
+/// identifies which of the ~200 `unwrap()` sites fired.
+///
+/// Safe before a logger exists (the chained hook is what prints to stderr) and
+/// safe *in* a panic: every extraction below has a fallback, so the hook
+/// cannot panic on its way to reporting one.
+pub fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string();
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        log::error!("panic at {location} thread={thread}: {message}");
+        previous(info);
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,6 +567,75 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, body).unwrap();
         path
+    }
+
+    /// What the `log` facade receives, so the writers can be exercised without
+    /// a Tauri app: the writers emit through the facade, and the facade is
+    /// what the plugin's file sink records.
+    static CAPTURED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    struct CapturingLogger;
+
+    impl log::Log for CapturingLogger {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            CAPTURED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(record.args().to_string());
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn take_captured() -> Vec<String> {
+        std::mem::take(&mut *CAPTURED.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    // The determination line is written *after* the `session start` of the run
+    // that logs it, so the next launch's scanner reads it back. Driving the
+    // real writers (not copies of their strings, as
+    // `parse_markers_ignores_the_determination_lines` does) means a rewording
+    // that ends a marker on a space — the change that turns a crash into a
+    // phantom exit intent — fails here.
+    #[test]
+    fn session_boundary_writers_emit_lines_the_scanner_reads_back() {
+        log::set_boxed_logger(Box::new(CapturingLogger)).expect("no logger in unit tests");
+        log::set_max_level(log::LevelFilter::Trace);
+
+        write_session_start(4242, "0.0.1");
+        note_clean_exit();
+        let clean_quit = take_captured().join("\n");
+        assert_eq!(
+            classify(&parse_markers(&clean_quit)),
+            PreviousExit::Clean,
+            "got {clean_quit:?}"
+        );
+
+        for outcome in [
+            PreviousExit::Clean,
+            PreviousExit::Interrupted,
+            PreviousExit::Abnormal,
+            PreviousExit::Unknown,
+        ] {
+            log_previous_exit(outcome);
+            let run = format!(
+                "{}\n{}\n",
+                session_start_line(4242, "0.0.1"),
+                take_captured().join("\n")
+            );
+            assert_eq!(
+                parse_markers(&run),
+                vec![Marker {
+                    kind: MarkerKind::Start,
+                    clean: false,
+                }],
+                "{outcome:?} logged a line the scanner reads as a marker"
+            );
+        }
     }
 
     #[test]
@@ -733,5 +925,55 @@ mod tests {
             scan_previous_session(dir.path(), "oh-my-md"),
             PreviousExit::Unknown
         );
+    }
+
+    #[test]
+    fn previous_exit_levels_match_the_spec_table() {
+        assert_eq!(level_for_exit(PreviousExit::Clean), None);
+        assert_eq!(
+            level_for_exit(PreviousExit::Interrupted),
+            Some(log::Level::Info)
+        );
+        assert_eq!(
+            level_for_exit(PreviousExit::Abnormal),
+            Some(log::Level::Warn)
+        );
+        assert_eq!(
+            level_for_exit(PreviousExit::Unknown),
+            Some(log::Level::Info)
+        );
+    }
+
+    #[test]
+    fn session_start_line_carries_pid_version_and_mode() {
+        let line = session_start_line(4242, "0.0.1");
+        assert!(line.contains("pid=4242"));
+        assert!(line.contains("version=0.0.1"));
+        assert!(line.starts_with(SESSION_START_MARKER));
+    }
+
+    // Writer and reader are two halves of one contract, so a format change
+    // the scanner no longer recognizes must fail here instead of silently
+    // degrading every later determination.
+    #[test]
+    fn session_start_line_round_trips_through_the_scanner() {
+        let text = format!("{}\n", session_start_line(4242, "0.0.1"));
+        assert_eq!(
+            parse_markers(&text),
+            vec![Marker {
+                kind: MarkerKind::Start,
+                clean: false,
+            }]
+        );
+    }
+
+    // The flag is the only in-memory evidence that a teardown was intended,
+    // and spec §3.4.4's termination hook exists to read it.
+    #[test]
+    fn exiting_state_starts_clear_and_stays_marked() {
+        let state = ExitingState::default();
+        assert!(!state.is_exiting());
+        state.mark();
+        assert!(state.is_exiting());
     }
 }
