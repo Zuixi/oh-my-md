@@ -1,3 +1,4 @@
+import React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { installGlobalErrorHandlers } from "../src/globalErrorHandlers"
@@ -124,6 +125,42 @@ describe("global error handlers", () => {
     expect(calls.every(message => message.includes("unhandled rejection"))).toBe(true)
   })
 
+  it("reports a revoked Proxy rejection reason instead of throwing", () => {
+    const { logger, calls } = fakeLogger()
+    install(logger)
+    // Any trap on a revoked Proxy throws; `instanceof` invokes [[GetPrototypeOf]]
+    // and used to be the first unguarded step in `describeThrown`.
+    const { proxy, revoke } = Proxy.revocable({}, {})
+    revoke()
+    expect(() => dispatchRejection(proxy)).not.toThrow()
+    expect(calls).toHaveLength(1)
+    expect(calls.some(message => message.includes("unhandled rejection"))).toBe(true)
+  })
+
+  it("reports a revoked Proxy on an error event instead of throwing", () => {
+    const { logger, calls } = fakeLogger()
+    install(logger)
+    const { proxy, revoke } = Proxy.revocable({}, {})
+    revoke()
+    expect(() => dispatchError("boom", proxy)).not.toThrow()
+    expect(calls).toHaveLength(1)
+    expect(calls.some(message => message.includes("uncaught: boom"))).toBe(true)
+  })
+
+  it("reports a Proxy-wrapped Error whose property reads throw", () => {
+    const { logger, calls } = fakeLogger()
+    install(logger)
+    // `instanceof Error` passes (the target is an Error, and the default
+    // [[GetPrototypeOf]] forwards to it); reading `.message` is what throws.
+    const hostile = new Proxy(new Error("hidden"), {
+      get: () => { throw new Error("get trap exploded") },
+    })
+    expect(() => dispatchError("boom", hostile)).not.toThrow()
+    expect(() => dispatchRejection(hostile)).not.toThrow()
+    expect(calls).toHaveLength(2)
+    expect(calls.some(message => message.includes("uncaught: boom"))).toBe(true)
+  })
+
   it("never throws into the listener when the logger itself throws", () => {
     const hostile: Logger = {
       error: () => { throw new Error("logger exploded") },
@@ -179,6 +216,73 @@ describe("error boundary", () => {
     expect(calls.some(message => message.includes("render failed"))).toBe(true)
     expect(flushes()).toBeGreaterThan(0)
     expect(screen.getByRole("alert")).toBeTruthy()
+  })
+
+  it("renders its recovery surface when a commit-phase lifecycle throws a revoked Proxy", () => {
+    const { logger, calls } = fakeLogger()
+    const restore = silenceReactReporter()
+    // A revoked `Proxy` makes every trap throw. React's render loop reads
+    // `thrownValue.then` from a *render-phase* throw, so React itself dies
+    // there before any boundary can see it (verified: react-dom
+    // `handleThrow`). The commit-phase path delivers the raw value straight to
+    // `componentDidCatch`, which is the blank-window case this module owns.
+    const { proxy, revoke } = Proxy.revocable({}, {})
+    revoke()
+    class Boom extends React.Component {
+      componentDidMount(): void { throw proxy }
+      render(): React.ReactNode { return null }
+    }
+    try {
+      render(
+        <ErrorBoundary logger={logger}>
+          <Boom />
+        </ErrorBoundary>,
+        // React's default `onCaughtError` reads `.environmentName` off the
+        // rejected value, which throws for a revoked `Proxy` and escapes as an
+        // uncaught exception. The boundary is the unit under test, not that
+        // reporter.
+        { onCaughtError: () => {} },
+      )
+    } finally {
+      restore()
+    }
+    // A throw inside `componentDidCatch` has no boundary above it: React would
+    // tear down the root, so the user would get a blank window instead of this
+    // surface — the one thing the boundary exists to prevent.
+    expect(screen.getByRole("alert")).toBeTruthy()
+    expect(calls.some(message => message.includes("react error boundary"))).toBe(true)
+  })
+
+  it("renders its recovery surface for a Proxy-wrapped Error whose reads throw", () => {
+    const { logger, calls } = fakeLogger()
+    const restore = silenceReactReporter()
+    // `instanceof Error` passes and React's own `thrownValue.then` probe
+    // survives (the trap throws only for `message`/`stack`), but the property
+    // read inside `componentDidCatch` throws.
+    const target = new Error("hidden")
+    const hostile = new Proxy(target, {
+      get: (inner, property, receiver) => {
+        if (property === "message" || property === "stack") {
+          throw new Error("get trap exploded")
+        }
+        return Reflect.get(inner, property, receiver)
+      },
+    })
+    const Boom = () => { throw hostile }
+    try {
+      render(
+        <ErrorBoundary logger={logger}>
+          <Boom />
+        </ErrorBoundary>,
+        // Same reason as above: React's default reporter reads the value it is
+        // told about.
+        { onCaughtError: () => {} },
+      )
+    } finally {
+      restore()
+    }
+    expect(screen.getByRole("alert")).toBeTruthy()
+    expect(calls.some(message => message.includes("react error boundary"))).toBe(true)
   })
 
   it("offers Export Diagnostics and Reload actions", () => {

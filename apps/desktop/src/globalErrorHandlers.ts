@@ -28,10 +28,33 @@ const CAPTURE_TARGET = "window"
  * `unknown` at runtime — string, number, `undefined`, or an object that may be
  * circular (where `JSON.stringify` throws) and whose `toString` may throw too.
  * Nothing in here may throw.
+ *
+ * Every step is guarded, including the `Error` branch. `instanceof` walks the
+ * prototype chain and `.message` is a property read, so a `Proxy` can make
+ * both throw: a revoked `Proxy` throws from `instanceof` itself, and a
+ * `Proxy`-wrapped `Error` passes `instanceof` and then throws on the read.
+ * The consequence of an escape is not a lost log line — inside
+ * `componentDidCatch` it has no boundary above it, so React unmounts the root
+ * and the user gets a blank window instead of the recovery surface. A value
+ * that fails the `Error` branch therefore falls through to the coarse forms
+ * below, each of which is guarded on its own.
  */
 export function describeThrown(value: unknown): string {
-  if (value instanceof Error) {
-    return `${value.message}\n${value.stack ?? ""}`.trim()
+  let isError = false
+  try {
+    isError = value instanceof Error
+  } catch {
+    // A revoked `Proxy`, or one whose `getPrototypeOf` trap throws.
+    isError = false
+  }
+  if (isError) {
+    try {
+      const error = value as Error
+      return `${error.message}\n${error.stack ?? ""}`.trim()
+    } catch {
+      // `instanceof` passed, but a `Proxy` `get` trap threw on the read. Fall
+      // through to the coarse forms below rather than escaping.
+    }
   }
   if (value === undefined || value === null) return ""
   if (typeof value === "string") return value
