@@ -909,8 +909,11 @@ Add `.manage(logging::ExitingState::default())` to the builder chain.
 In the setup closure, immediately after `logging::install`:
 
 ```rust
-            logging::write_session_start(std::process::id(), env!("CARGO_PKG_VERSION"));
+            // Scan BEFORE writing our own `session start`. Writing first makes
+            // the scan find a start with no end and report an abnormal exit on
+            // every single launch (spec §3.12 step 5).
             let previous = logging::scan_previous_session(&log_state.dir, &log_state.file_stem);
+            logging::write_session_start(std::process::id(), env!("CARGO_PKG_VERSION"));
             logging::log_startup_header(logging::effective_level(), &log_state);
             logging::log_previous_exit(previous);
             app.manage(PreviousExitState(previous));
@@ -2208,4 +2211,82 @@ Expected: PASS.
 ```bash
 git add docs apps/desktop/AGENTS.md
 git commit -m "docs: add troubleshooting guidance and file the logging gotchas"
+```
+
+---
+
+### Task 14: macOS webview-termination hook (spec §3.4.4)
+
+**Files:**
+- Modify: `apps/desktop/src-tauri/src/lib.rs` (`run()`, builder chain)
+- Modify: `apps/desktop/src-tauri/src/logging.rs` (remove `#[allow(dead_code)]` from `is_exiting`)
+
+**Interfaces:**
+- Consumes: Task 4's `ExitingState` (`mark()`, `is_exiting()`).
+- Produces: no new public surface.
+
+**This task is gated on an observation, not on code.** Spec §8 open question 1 is
+unresolved: nobody has confirmed whether `on_web_content_process_terminate` fires
+during a *normal* quit. WebKit tears the content process down on ordinary
+teardown, so an ungated hook would report a crash on **every** clean exit. The
+hook is therefore only correct if the `is_exiting()` gate actually suppresses
+those.
+
+- [ ] **Step 1: Observe before implementing**
+
+Temporarily log unconditionally from the hook and run the app three times: a
+normal Cmd+Q, a Cmd+W with another window open, and a forced webview kill. Record
+for each whether the hook fired and whether it fired before or after the
+`session exit intent=user` line.
+
+- [ ] **Step 2: Rule on the observation**
+
+If the hook fires after the intent line on normal quits, the gate is load-bearing
+and the hook ships as written below. If it never fires on normal quits, the gate
+is defensive only and the hook may log at `Warn` unconditionally. If it fires
+*before* the intent line on normal quits, **do not ship the hook** — the gate
+cannot work, and the finding goes back to the spec as a design defect.
+
+- [ ] **Step 3: Implement, gated**
+
+```rust
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn install_webview_termination_hook(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder.on_web_content_process_terminate(|webview| {
+        // WebKit tears the content process down on an ordinary quit, so an
+        // ungated hook reports a crash on every clean exit.
+        let exiting = webview
+            .app_handle()
+            .state::<logging::ExitingState>()
+            .is_exiting();
+        if exiting {
+            log::info!("webview process terminated label={}", webview.label());
+        } else {
+            log::error!(
+                "webview process terminated unexpectedly label={}",
+                webview.label()
+            );
+        }
+    })
+}
+```
+
+Wrap the builder chain in `run()` so the call is `#[cfg]`-gated for
+macOS/iOS only — the method does not exist on Windows or Linux, so it must not
+be referenced there.
+
+- [ ] **Step 4: Verify**
+
+Run: `cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features`
+Expected: PASS with **no** dead-code warning for `is_exiting`.
+Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+Expected: PASS.
+Re-run Step 1's three scenarios and confirm the gate produces `Info` on clean
+quits and `Error` on a forced kill.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/desktop/src-tauri/src
+git commit -m "feat: report an unexpected webview termination as an error"
 ```
