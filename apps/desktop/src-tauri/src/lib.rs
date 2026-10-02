@@ -973,22 +973,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: None,
-                    }),
-                ])
-                .build(),
-        )
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
         .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
         .setup(|app| {
+            // Logging first: the probe needs the AppHandle, and Tauri turns a
+            // setup error into a panic, so install() swallows its own failures.
+            app.manage(logging::install(app.handle()));
             // Launch argv: the registry is empty and the config-declared main
             // window does not exist yet, so routing would spawn a duplicate
             // editor window. Queue straight for "main" and emit targeted at
@@ -1186,6 +1179,7 @@ pub fn run() {
             create_editor_window,
             take_pending_open_files,
             diagnostics::export_diagnostics,
+            logging::log_state,
             menu::set_menu_locale,
             export::export_preview,
             fonts::list_system_fonts
