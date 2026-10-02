@@ -82,3 +82,61 @@ export const SAFE_MODE_BYTES = OPEN_STREAM_THRESHOLD_BYTES
  * file" into a permanent silent hang because the queue entry never settles.
  */
 export const OPEN_SAVE_QUEUE_TIMEOUT_MS = 3000
+
+/**
+ * Application logging (spec
+ * docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md §3.10).
+ * Cross-layer values are drift-guarded in test/crossLayerConstants.test.ts
+ * against `src-tauri/src/logging.rs`.
+ */
+
+/** Application log file name stem. Rust derives this from the package name
+ *  (`logging.rs::log_file_stem`), so there is no Rust const to guard against. */
+export const LOG_FILE_STEM = "oh-my-md"
+
+/** Rotation ceiling per file; must match Rust `LOG_MAX_FILE_BYTES`. */
+export const LOG_MAX_FILE_BYTES = 2 * 1024 * 1024
+
+/** Archived generations kept; must match Rust `LOG_KEEP_FILES`. */
+export const LOG_KEEP_FILES = 5
+
+/** Runtime level override; must match Rust `LOG_LEVEL_ENV_VAR`. */
+export const LOG_LEVEL_ENV_VAR = "OMD_LOG"
+
+/** IPC command for frontend records; must match Rust `LOG_FRONTEND_COMMAND`. */
+export const LOG_FRONTEND_COMMAND = "log_frontend"
+
+/** Diagnostics bundle format. Task 12 adds the Rust writer, so there is no
+ *  drift assertion yet — one that throws on a missing Rust const would break
+ *  the suite. */
+export const DIAGNOSTICS_BUNDLE_FORMAT_VERSION = 1
+
+/** Rust-side per-window budget (§3.9 layer 4). Must stay above
+ *  LOG_RATE_LIMIT_PER_SEC, or the Rust net silently truncates legitimate logs. */
+export const LOG_FRONTEND_BUDGET_PER_SEC = 200
+
+/** Log tail the session scanner reads; must match Rust `LOG_TAIL_READ_BYTES`. */
+export const LOG_TAIL_READ_BYTES = 64 * 1024
+
+/** Structured path-field markers. Task 9 adds the shared Rust helper, so there
+ *  is no drift assertion yet — one that throws on a missing Rust const would
+ *  break the suite. */
+export const LOG_PATH_FIELD_HELPERS = ["path=", "paths="] as const
+
+// Frontend-only rate control (§3.9 layers 1–3): nothing on the Rust side reads
+// these, so they have no drift guard.
+
+/** Records offered to the IPC per second. */
+export const LOG_RATE_LIMIT_PER_SEC = 50
+
+/** Drops within the window that trip the breaker. */
+export const LOG_BREAKER_DROPS = 1000
+
+/** Breaker measurement window. */
+export const LOG_BREAKER_WINDOW_MS = 5000
+
+/** How long the breaker stays open. */
+export const LOG_BREAKER_COOLDOWN_MS = 30000
+
+/** Level that always bypasses rate limiting and the breaker. */
+export const LOG_ALWAYS_PASS_LEVEL = "error"

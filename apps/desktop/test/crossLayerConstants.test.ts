@@ -5,6 +5,13 @@ import {
   ASSETS_DIR_NAME,
   CONTENT_MAX_WIDTH,
   LARGE_DOC_LINES,
+  LOG_FRONTEND_BUDGET_PER_SEC,
+  LOG_FRONTEND_COMMAND,
+  LOG_KEEP_FILES,
+  LOG_LEVEL_ENV_VAR,
+  LOG_MAX_FILE_BYTES,
+  LOG_RATE_LIMIT_PER_SEC,
+  LOG_TAIL_READ_BYTES,
   MARKDOWN_EXTENSIONS,
   MARKDOWN_FILE_EXTENSION,
   MAX_IMAGE_BYTES,
@@ -28,10 +35,13 @@ import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SA
 const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf8")
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
+const LOGGING_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
 
 function rustConstNumber(source: string, name: string): number {
-  const match = new RegExp(`const ${name}: (?:usize|u64) = ([^;]+);`).exec(source)
+  // `u32` is here for LOG_FRONTEND_BUDGET_PER_SEC; the `*`-factor arithmetic
+  // below already covers LOG_TAIL_READ_BYTES's `64 * 1024`.
+  const match = new RegExp(`const ${name}: (?:usize|u64|u32) = ([^;]+);`).exec(source)
   if (!match) throw new Error(`missing Rust const ${name}`)
   return match[1]
     .split("*")
@@ -88,6 +98,37 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
     expect(SESSION_FLUSH_EVENT).toBe(
       rustConstString(SESSION_FLUSH_RS, "SESSION_FLUSH_EVENT"),
     )
+  })
+
+  it("log rotation ceiling matches logging.rs LOG_MAX_FILE_BYTES", () => {
+    expect(LOG_MAX_FILE_BYTES).toBe(rustConstNumber(LOGGING_RS, "LOG_MAX_FILE_BYTES"))
+  })
+
+  it("log archive retention matches logging.rs LOG_KEEP_FILES", () => {
+    expect(LOG_KEEP_FILES).toBe(rustConstNumber(LOGGING_RS, "LOG_KEEP_FILES"))
+  })
+
+  it("log level env var matches logging.rs LOG_LEVEL_ENV_VAR", () => {
+    expect(LOG_LEVEL_ENV_VAR).toBe(rustConstString(LOGGING_RS, "LOG_LEVEL_ENV_VAR"))
+  })
+
+  it("frontend log command name matches logging.rs LOG_FRONTEND_COMMAND", () => {
+    expect(LOG_FRONTEND_COMMAND).toBe(rustConstString(LOGGING_RS, "LOG_FRONTEND_COMMAND"))
+  })
+
+  it("Rust frontend budget matches logging.rs LOG_FRONTEND_BUDGET_PER_SEC", () => {
+    expect(LOG_FRONTEND_BUDGET_PER_SEC).toBe(
+      rustConstNumber(LOGGING_RS, "LOG_FRONTEND_BUDGET_PER_SEC"),
+    )
+  })
+
+  it("log tail read size matches logging.rs LOG_TAIL_READ_BYTES", () => {
+    expect(LOG_TAIL_READ_BYTES).toBe(rustConstNumber(LOGGING_RS, "LOG_TAIL_READ_BYTES"))
+  })
+
+  it("Rust frontend budget stays above the frontend rate limit", () => {
+    // Otherwise layer 4 silently truncates records the facade considers legitimate.
+    expect(LOG_FRONTEND_BUDGET_PER_SEC).toBeGreaterThan(LOG_RATE_LIMIT_PER_SEC)
   })
 
   it("uses the approved 900px readable column width", () => {

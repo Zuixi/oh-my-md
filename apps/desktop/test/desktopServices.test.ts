@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { toDocumentCommandError } from "../src/desktopServices"
+import type { LogRecord } from "../src/logger"
 
 const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -54,6 +55,16 @@ describe("revealInFinder", () => {
     await defaultServices.revealInFinder?.("/tmp/notes.md")
     expect(revealItemInDir).toHaveBeenCalledWith("/tmp/notes.md")
     expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("logRecords", () => {
+  it("invokes log_frontend with the record batch", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce(undefined)
+    const records: LogRecord[] = [{ level: "warn", target: "save", message: "retrying" }]
+    await defaultServices.logRecords?.(records)
+    expect(invoke).toHaveBeenCalledWith("log_frontend", { records })
   })
 })
 

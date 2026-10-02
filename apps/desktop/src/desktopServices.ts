@@ -7,12 +7,14 @@ import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
 import { parseRecents } from "./recents"
 import {
+  LOG_FRONTEND_COMMAND,
   MARKDOWN_EXTENSIONS,
   SESSION_FLUSH_EVENT,
   STORAGE_KEY_RECENTS,
   STORAGE_KEY_SESSION,
   STORAGE_KEY_SETTINGS,
 } from "./constants"
+import type { LogRecord } from "./logger"
 import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
@@ -185,6 +187,8 @@ export interface DesktopServices {
   setRecentMenu?: (paths: string[]) => Promise<void>
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
+  /** Frontend log transport (Task 6): one batched IPC call per flush. */
+  logRecords?: (records: LogRecord[]) => Promise<void>
   setMenuLocale?: (locale: string) => Promise<void>
   setWindowTheme?: (theme: "light" | "dark" | null) => Promise<void>
   quitApp?: () => Promise<void>
@@ -356,6 +360,10 @@ export const defaultServices: DesktopServices = {
     const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
     await invoke("export_diagnostics", { path })
+  },
+  logRecords: async records => {
+    // Rejects by design: the facade swallows and counts the failed batch.
+    await invoke(LOG_FRONTEND_COMMAND, { records })
   },
   setMenuLocale: async locale => {
     await invoke("set_menu_locale", { locale })
