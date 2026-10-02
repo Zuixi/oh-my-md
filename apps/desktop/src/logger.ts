@@ -11,15 +11,19 @@
  * Layer 1 still applies to it, so a fatal error in a render loop is not an
  * unbounded flood.
  *
- * The facade never schedules its own delivery — callers decide when a batch is
- * worth an IPC round trip and await `flush()`. The guaranteed path is the exit
- * flush that rides the existing session-flush round (Task 8).
+ * The facade schedules its own delivery: the first queued record arms a
+ * `setTimeout` for `LOG_FLUSH_INTERVAL_MS`, and the callback runs the same
+ * internal flush path as `flush()`. That is what keeps a crash from losing the
+ * session's tail and what drains layers 1–3 during a long session. `flush()`
+ * stays the guaranteed exit path that rides the existing session-flush round
+ * (Task 8).
  */
 import {
   LOG_ALWAYS_PASS_LEVEL,
   LOG_BREAKER_COOLDOWN_MS,
   LOG_BREAKER_DROPS,
   LOG_BREAKER_WINDOW_MS,
+  LOG_FLUSH_INTERVAL_MS,
   LOG_RATE_LIMIT_PER_SEC,
 } from "./constants"
 
@@ -46,6 +50,12 @@ export interface LoggerDeps {
   now: () => number
   /** Mirrors to the console in dev; defaults to `import.meta.env.DEV`. */
   mirrorToConsole?: boolean
+  /**
+   * Arms the facade's one-shot delivery timer; defaults to a real
+   * `setTimeout(run, LOG_FLUSH_INTERVAL_MS)`. Injected so tests reach the timer
+   * path deterministically instead of by sleeping.
+   */
+  scheduleFlush?: (run: () => void) => void
 }
 
 /** The open run of identical records, before its repeat count is materialized. */
@@ -78,9 +88,18 @@ function mirrorRecord(record: LogRecord): void {
 
 export function createLogger(deps: LoggerDeps): Logger {
   const mirror = deps.mirrorToConsole ?? Boolean(import.meta.env?.DEV)
+  const scheduleFlush =
+    deps.scheduleFlush
+    ?? ((run: () => void) => {
+      setTimeout(run, LOG_FLUSH_INTERVAL_MS)
+    })
   const queue: LogRecord[] = []
   let pending: PendingRun | null = null
   let inFlight: Promise<void> | null = null
+  // At most one delivery timer is armed at a time; the generation invalidates a
+  // timer whose queue already drained, so a late callback is a no-op.
+  let flushTimerArmed = false
+  let flushTimerGeneration = 0
 
   let bucketStart = deps.now()
   let bucketUsed = 0
@@ -90,6 +109,34 @@ export function createLogger(deps: LoggerDeps): Logger {
 
   function breakerOpen(): boolean {
     return deps.now() < openUntil
+  }
+
+  /**
+   * Arms the one-shot delivery timer the first time a record lands in an empty
+   * queue; further records in the same batch reuse it. Nothing is armed while
+   * nothing is queued.
+   */
+  function armFlushTimer(): void {
+    if (flushTimerArmed) return
+    flushTimerArmed = true
+    const generation = ++flushTimerGeneration
+    try {
+      scheduleFlush(() => {
+        if (!flushTimerArmed || generation !== flushTimerGeneration) return
+        flushTimerArmed = false
+        void flush()
+      })
+    } catch {
+      // A scheduler that refuses to arm must not wedge delivery: stay unarmed
+      // so the next record can try again.
+      if (generation === flushTimerGeneration) clearFlushTimer()
+    }
+  }
+
+  /** Forgets the armed timer; the queue drained, so a late fire must not send. */
+  function clearFlushTimer(): void {
+    flushTimerArmed = false
+    flushTimerGeneration += 1
   }
 
   /**
@@ -136,6 +183,8 @@ export function createLogger(deps: LoggerDeps): Logger {
       target: "logger",
       message: `logging suppressed for ${LOG_BREAKER_COOLDOWN_MS}ms after ${LOG_BREAKER_DROPS} drops`,
     })
+    // The summary is queued outside `emit`, so it needs its own arming.
+    armFlushTimer()
   }
 
   /**
@@ -180,6 +229,9 @@ export function createLogger(deps: LoggerDeps): Logger {
         }
       }
       push({ level, target, message })
+      // The first record in an empty queue arms delivery; repeats just extend
+      // the run the armed timer will seal.
+      armFlushTimer()
     } catch {
       // Logging must never break its caller (spec §3.9).
     }
@@ -189,9 +241,17 @@ export function createLogger(deps: LoggerDeps): Logger {
     if (inFlight) await inFlight
     sealPending()
     if (queue.length === 0) return
+    clearFlushTimer()
     const batch = queue.splice(0, queue.length)
     if (mirror) {
-      for (const record of batch) mirrorRecord(record)
+      // A patched or mocked `console.*` must not make `flush()` reject.
+      for (const record of batch) {
+        try {
+          mirrorRecord(record)
+        } catch {
+          // Mirroring is best-effort; the record is already in the batch.
+        }
+      }
     }
     // The async wrapper catches a synchronous throw from `send` as well as a
     // rejection, so `flush()` can never reject.
@@ -199,9 +259,14 @@ export function createLogger(deps: LoggerDeps): Logger {
       await deps.send(batch)
     })()
       .catch(() => {
-        // A lost batch must never reach the caller. Count it as drops so a
-        // dead IPC trips the breaker instead of being hammered every flush.
-        noteDrops(batch.length)
+        // A lost batch must never reach the caller. Count it as drops so a dead
+        // IPC trips the breaker instead of being hammered every flush — but a
+        // bypassed `error` is the green channel and must never count, or 1000
+        // queued fatal records would silence logging for the whole cooldown.
+        // The suppression `warn` is the one record counted here that never
+        // consumed a token (it is queued directly, not through `emit`); that is
+        // unavoidable under this mechanism.
+        noteDrops(batch.filter(record => record.level !== LOG_ALWAYS_PASS_LEVEL).length)
       })
       .finally(() => {
         inFlight = null

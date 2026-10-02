@@ -140,3 +140,8 @@ export const LOG_BREAKER_COOLDOWN_MS = 30000
 
 /** Level that always bypasses rate limiting and the breaker. */
 export const LOG_ALWAYS_PASS_LEVEL = "error"
+
+/** How long the facade buffers before delivering its own batch (§3.9). Long
+ *  enough to coalesce a burst, short enough that the log survives a crash.
+ *  Frontend-only: no Rust const reads it, so it has no drift guard. */
+export const LOG_FLUSH_INTERVAL_MS = 250

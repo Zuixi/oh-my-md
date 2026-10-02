@@ -10,6 +10,7 @@ import {
   LOG_BREAKER_COOLDOWN_MS,
   LOG_BREAKER_DROPS,
   LOG_BREAKER_WINDOW_MS,
+  LOG_FLUSH_INTERVAL_MS,
   LOG_RATE_LIMIT_PER_SEC,
 } from "../src/constants"
 
@@ -18,6 +19,13 @@ interface Harness {
   batches: LogRecord[][]
   sent: () => LogRecord[]
   now: { t: number }
+}
+
+interface ScheduledHarness extends Harness {
+  /** Every callback handed to the injected scheduler, in order. */
+  runs: (() => void)[]
+  /** Runs the scheduled delivery callbacks, as a fired `setTimeout` would. */
+  fireTimers: () => void
 }
 
 /** Time and the transport are injected, so every layer-2/3 boundary is reached
@@ -34,6 +42,34 @@ function harness(): Harness {
     },
   })
   return { logger, batches, sent: () => batches.flat(), now }
+}
+
+/** Delivery is driven by the injected scheduler, so the timer path is exercised
+ *  without real time passing and without leftover timers between tests. */
+function scheduledHarness(): ScheduledHarness {
+  const now = { t: 0 }
+  const batches: LogRecord[][] = []
+  const runs: (() => void)[] = []
+  const logger = createLogger({
+    now: () => now.t,
+    mirrorToConsole: false,
+    scheduleFlush: run => {
+      runs.push(run)
+    },
+    send: async records => {
+      batches.push(records)
+    },
+  })
+  return {
+    logger,
+    batches,
+    sent: () => batches.flat(),
+    now,
+    runs,
+    fireTimers: () => {
+      for (const run of runs.splice(0, runs.length)) run()
+    },
+  }
 }
 
 /** One window's allowance of accepted records, then enough distinct records to
@@ -178,6 +214,29 @@ describe("logger facade", () => {
     await expect(logger.flush()).resolves.toBeUndefined()
   })
 
+  it("never rejects when the console mirror throws", async () => {
+    // `console.*` can be patched or mocked; a mirror failure is not a delivery
+    // failure, and `flush()` must never reject (spec §3.9).
+    const mirror = vi.spyOn(console, "error").mockImplementation(() => {
+      throw new Error("console patched")
+    })
+    try {
+      const batches: LogRecord[][] = []
+      const logger = createLogger({
+        now: () => 0,
+        mirrorToConsole: true,
+        send: async records => {
+          batches.push(records)
+        },
+      })
+      logger.error("boot", "mirrored")
+      await expect(logger.flush()).resolves.toBeUndefined()
+      expect(batches.flat().map(record => record.message)).toEqual(["mirrored"])
+    } finally {
+      mirror.mockRestore()
+    }
+  })
+
   it("counts a rejected batch toward the breaker instead of hammering a dead IPC", async () => {
     const now = { t: 0 }
     const batches: LogRecord[][] = []
@@ -202,6 +261,26 @@ describe("logger facade", () => {
     expect(batches.flat().some(r => r.message === "after the failed batch")).toBe(false)
   })
 
+  it("does not count bypassed errors in a rejected batch toward the breaker", async () => {
+    const now = { t: 0 }
+    const batches: LogRecord[][] = []
+    const logger = createLogger({
+      now: () => now.t,
+      mirrorToConsole: false,
+      send: async records => {
+        batches.push(records)
+        throw new Error("ipc down")
+      },
+    })
+    // A dead transport must not let the `error` green channel trip the breaker
+    // and silence every non-error record for the whole cooldown.
+    for (let i = 0; i < LOG_BREAKER_DROPS; i += 1) logger.error("boom", `e-${i}`)
+    await logger.flush()
+    logger.info("late", "still offered")
+    await logger.flush()
+    expect(batches.flat().some(r => r.message === "still offered")).toBe(true)
+  })
+
   it("does not send an empty batch", async () => {
     const { logger, batches } = harness()
     await logger.flush()
@@ -216,6 +295,96 @@ describe("logger facade", () => {
     await h.logger.flush()
     expect(h.batches).toHaveLength(2)
     expect(h.sent().map(r => r.message)).toEqual(["one", "two"])
+  })
+
+  it("delivers a queued record on its own timer, without an explicit flush", async () => {
+    const h = scheduledHarness()
+    h.logger.warn("save", "queued")
+    expect(h.runs).toHaveLength(1)
+    h.fireTimers()
+    await Promise.resolve()
+    expect(h.sent().map(record => record.message)).toEqual(["queued"])
+  })
+
+  it("does not schedule delivery when nothing was logged", async () => {
+    const h = scheduledHarness()
+    await h.logger.flush()
+    expect(h.runs).toHaveLength(0)
+  })
+
+  it("arms one timer per batch and re-arms once the queue drains", () => {
+    const h = scheduledHarness()
+    h.logger.error("boot", "first")
+    h.logger.error("boot", "second")
+    h.logger.error("boot", "third")
+    // Three records are one batch, so they share one pending timer.
+    expect(h.runs).toHaveLength(1)
+
+    h.fireTimers()
+    expect(h.sent().map(record => record.message)).toEqual(["first", "second", "third"])
+
+    // A drained queue lets the next record arm a fresh timer.
+    h.logger.error("boot", "fourth")
+    expect(h.runs).toHaveLength(1)
+  })
+
+  it("keeps delivering when the injected scheduler refuses to arm", async () => {
+    let refuse = true
+    const batches: LogRecord[][] = []
+    const runs: (() => void)[] = []
+    const logger = createLogger({
+      now: () => 0,
+      mirrorToConsole: false,
+      scheduleFlush: run => {
+        if (refuse) throw new Error("no timers")
+        runs.push(run)
+      },
+      send: async records => {
+        batches.push(records)
+      },
+    })
+    // A throwing scheduler must not wedge delivery for the whole session.
+    expect(() => logger.warn("save", "first")).not.toThrow()
+    refuse = false
+    logger.warn("save", "second")
+
+    expect(runs).toHaveLength(1)
+    runs.splice(0, runs.length).forEach(run => run())
+    await Promise.resolve()
+    expect(batches.flat().map(record => record.message)).toEqual(["first", "second"])
+  })
+
+  it("makes a late timer a no-op once the queue drained", async () => {
+    const h = scheduledHarness()
+    h.logger.warn("save", "early")
+    await h.logger.flush()
+    expect(h.batches).toHaveLength(1)
+
+    // The timer armed before the explicit flush still fires; it must not send
+    // an empty batch or duplicate the record.
+    h.fireTimers()
+    await Promise.resolve()
+    expect(h.batches).toHaveLength(1)
+  })
+
+  it("defaults to a real timer that delivers after LOG_FLUSH_INTERVAL_MS", async () => {
+    vi.useFakeTimers()
+    try {
+      const batches: LogRecord[][] = []
+      const logger = createLogger({
+        now: () => 0,
+        mirrorToConsole: false,
+        send: async records => {
+          batches.push(records)
+        },
+      })
+      logger.warn("save", "timed")
+      expect(batches).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(LOG_FLUSH_INTERVAL_MS)
+      expect(batches.flat().map(record => record.message)).toEqual(["timed"])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("mirrors to the console only when the dev flag is set", async () => {
