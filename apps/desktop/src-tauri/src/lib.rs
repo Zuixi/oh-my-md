@@ -2,6 +2,7 @@ mod diagnostics;
 mod documents;
 mod export;
 mod fonts;
+mod logging;
 mod menu;
 mod session_flush;
 mod watcher;
