@@ -927,16 +927,28 @@ mod tests {
             .collect()
     }
 
-    /// Just this sink's records. Other tests in the binary log through the same
-    /// process-global facade (the `ignore` crate is chatty at debug) and cargo
-    /// runs them in parallel, so an unfiltered assertion on the captured set
-    /// would be flaky. Frontend records carry the `frontend` target.
-    fn frontend_records(records: &[CapturedRecord]) -> Vec<CapturedRecord> {
+    /// The captured records whose target starts with `prefix`: the records the
+    /// calling test logged, and only those.
+    ///
+    /// Other tests in the binary log through the same process-global facade
+    /// (the `ignore` crate is chatty at debug) and cargo runs them in parallel,
+    /// so an unfiltered assertion on the captured set is flaky. But the filter
+    /// has to name the target *that test* used: a helper with a hard-coded
+    /// target returns nothing at all for a test that logged somewhere else,
+    /// which is how two boundary tests came to assert on empty strings and stay
+    /// green with `neutralize_boundary_markers` deleted. Callers must assert
+    /// the prefix matched something.
+    fn records_for_target(records: &[CapturedRecord], prefix: &str) -> Vec<CapturedRecord> {
         records
             .iter()
-            .filter(|record| record.target == "frontend")
+            .filter(|record| record.target.starts_with(prefix))
             .cloned()
             .collect()
+    }
+
+    /// The tests that drive the sink with the frontend's own target and level.
+    fn frontend_records(records: &[CapturedRecord]) -> Vec<CapturedRecord> {
+        records_for_target(records, "frontend")
     }
 
     fn frontend_messages(records: &[CapturedRecord]) -> Vec<String> {
@@ -946,13 +958,25 @@ mod tests {
             .collect()
     }
 
-    /// One written line per record, the way the file sink renders them: target
-    /// and message share a physical line, which is what a forged boundary
-    /// escapes out of.
+    /// The lines the file sink writes for `records`, in the sink's real
+    /// envelope.
+    ///
+    /// `tauri-plugin-log` 2.9.0's default fern dispatch formats every record as
+    /// `{timestamp}[{target}][{LEVEL}] {message}` (its `impl Default for
+    /// Builder`, `src/lib.rs`; the timestamp renders as `[YYYY-MM-DD][HH:MM:SS]`).
+    /// Target and message therefore share one physical line and the scanner
+    /// reads both. An earlier form rendered only `"{target} {message}"` and so
+    /// under-modelled what a forged boundary has to escape out of; the fixed
+    /// timestamp keeps the output deterministic.
     fn written_lines(records: &[CapturedRecord]) -> String {
         records
             .iter()
-            .map(|record| format!("{} {}", record.target, record.message))
+            .map(|record| {
+                format!(
+                    "[2026-10-03][12:00:00][{}][{}] {}",
+                    record.target, record.level, record.message
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1535,7 +1559,19 @@ mod tests {
             &budget,
         );
 
-        let written = written_lines(&frontend_records(&take_captured_records()));
+        // Filter on the target *this* test logged, and prove the filter found
+        // it: with a filter the record does not match, `written` is empty and
+        // both assertions below pass without the sink doing anything.
+        let records = records_for_target(&take_captured_records(), "windows/open.rs");
+        assert_eq!(records.len(), 1, "the test's own record must be captured");
+        let written = written_lines(&records);
+
+        // Witness: the forged vocabulary really did reach the rendered line, so
+        // "no marker" cannot come from rendering nothing.
+        assert!(
+            written.contains("session") && written.contains("clean=true"),
+            "the forged vocabulary must reach the rendered line: {written:?}"
+        );
         assert!(
             parse_markers(&written).is_empty(),
             "a message must not parse as a boundary marker: {written:?}"
@@ -1563,7 +1599,16 @@ mod tests {
             &budget,
         );
 
-        let written = written_lines(&frontend_records(&take_captured_records()));
+        // Same discipline as the message test: this test's own target, and a
+        // hard assertion that the filter matched rather than everything being
+        // filtered away.
+        let records = records_for_target(&take_captured_records(), "notes");
+        assert_eq!(records.len(), 1, "the test's own record must be captured");
+        let written = written_lines(&records);
+        assert!(
+            written.contains("session") && written.contains("clean=true"),
+            "the forged vocabulary must reach the rendered line: {written:?}"
+        );
         assert!(
             parse_markers(&written).is_empty(),
             "a target must not parse as a boundary marker: {written:?}"
