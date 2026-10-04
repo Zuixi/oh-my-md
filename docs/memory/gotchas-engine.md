@@ -534,3 +534,40 @@ unknown-lang | error` and `.omd-block-body[data-omd-render]` = `placeholder |
 svg | katex | error` (mermaid/math) — and log the swallowed error once via
 `console.debug`. This is what turned the doc-start quoted fence into a failing
 e2e assertion (`Received: "placeholder"`, 14 retries) instead of a mystery.
+
+## 块 tile 会在挂载稳定期被重建 —— 同一个 widget 实例会收到 destroy + 二次 toDOM
+
+实测（文档首块是「引用内的围栏」时，widget DOM 在挂载期被插入 3 次；前面有段落的同样
+块只插入 1 次）。插桩得到的更新序列：
+
+```
+update#1  doc=false sel=true effects=(none) ranges=0-8,29-34   ← 宿主把光标从 0 移到文末
+update#2  doc=false sel=true effects=measure ranges=
+```
+
+- `rebuildRanges` 的**选择分支**会为旧选区和新区各扩出一段
+  （`expandRange(..., SELECTION_BLOCKS)`）。初始光标在 0，于是重建区间是 `0-8`；而该块的
+  replace 区间是 `2-27` —— 二者相交，移除范围必须覆盖整块（新块 widget 可能从脏区内开始
+  却吞并后续旧块），于是这个块在同一次更新里被丢弃并重建。
+- 重建后 CodeMirror 丢弃旧 tile 并重新构建 DOM（调用栈：`CodeWidget.toDOM` ←
+  `_WidgetTile.of` ← `Object.point`，即 CM 自己的内容构建，**不是引擎直接调用 toDOM**）。
+  由于引擎的 spec 身份复用会把**同一个 widget 对象**交回给新 tile，这个实例会先收到
+  `destroy(旧 dom)`、再收到第二次 `toDOM`。这正是上面「`alive` 是实例级、destroy 是 tile 级」
+  那条 gotcha 的触发源。
+- 这是**设计使然**，不是缺陷：邻域重建用于重新评估 `blockSelected`（光标进入块必须卸载
+  widget）。不要为了消除重建去改这条路径。
+
+两个被实测否掉的"顺手优化"，记下来避免重复走：
+
+1. **`measureBlockWidget` 的连线不是原因**：临时切断"measure 效果 → 重建该块"后，
+   挂载期插入次数仍是 3（挂载期第 3 次插入来自 CM 自身的首次布局）。
+2. **"等价 widget spec 不删不增"也是无效的**：在 `updateLiveDecorations` 里对脏区内的
+   等价 block widget 做保留（跳过 filter-remove + add）后，插入次数不变 —— 因为 CM 重建
+   tile 是因为**与块相交的行被重建**，与 deco 对象的身份无关（reuse pass 早已保证身份一致）。
+
+要真正减少这次重建，只能改 `rebuildRanges` 的选择分支（例如只在块的 `blockSelected`
+真正翻转时才重建该块）—— 那是核心热路径，需单独设计并配 `blockSelected` 全套回归。
+
+回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
+bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
+最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。
