@@ -626,6 +626,14 @@ is the same "do not guess structure from an incomplete tree" rule as
 does not violate the complete-tree rule; keep it on the marker branch only, so T1
 brackets/quotes stay tree-free.
 
+Suppression is deliberate, and one boundary is easy to misread: `syntaxTreeAvailable` *is*
+`ParseContext.isDone`, which requires the parse to have started at 0. A document whose
+parse context began at a skipped/restored position therefore reports the tree as
+unavailable for the whole viewport, turning D9 into silent suppression of the four
+Markdown markers (`*`, `_`, `` ` ``, `$`); brackets and quotes are unaffected. Do not
+"fix" that by scanning backwards for markers — the manual-qa auto-pair block records the
+matching caret-at-the-end-boundary case (see "verbatim 结束边界").
+
 ## The engine and desktop tsconfigs disagree about dead code
 
 `packages/engine/tsconfig.json` sets `strict` but neither `noUnusedLocals` nor

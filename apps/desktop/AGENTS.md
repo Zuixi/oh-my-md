@@ -195,6 +195,11 @@ Do not silently overwrite in-memory content after a failed read/write. Preserve 
   no Tauri). Run it for any change touching rendered appearance or editor geometry;
   it is the only automated net for zero-height rows, container seams, and collapsed
   blank lines. Extend `apps/desktop/e2e/` whenever a new visual bug class ships a fix.
+- Set `PW_PORT=<free port>` when running e2e in a worktree that may have a concurrent
+  session (`PW_PORT=9431 pnpm --filter @omd/desktop test:e2e`). `reuseExistingServer`
+  otherwise reuses a sibling worktree's Vite server on the default 9420 and silently
+  asserts that worktree's `src/` — this actually happened while building the auto pair
+  branch.
 
 For TypeScript/React/CSS changes:
 
