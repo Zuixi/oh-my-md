@@ -12,6 +12,12 @@ import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
+import {
+  autoPairCompartment,
+  autoPairExtension,
+  DEFAULT_AUTO_PAIR,
+  type AutoPairOptions,
+} from "./format/autoPair"
 
 // Spec 05：>30k 行提示大文档；>50k 行进入安全模式（desktop 镜像于 constants.ts，
 // crossLayerConstants.test.ts 漂移守护）。归 engine 所有：装饰/渲染档位由语义方定义。
@@ -108,6 +114,9 @@ export {
   safeModeRenderingEnabled,
   setSafeModeRendering,
 } from "./safeModeRendering"
+// 自动配对对 desktop 只暴露这两个（Task 2 从此处导入）；Compartment 与 extension
+// 留在 format/autoPair.ts，不经 barrel 导出。
+export { setAutoPair, type AutoPairOptions } from "./format/autoPair"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
@@ -115,6 +124,8 @@ export interface EngineOptions {
   imageBrokenLabel?: (src: string) => string
   /** When false, construct the editor already in Source (no live decorations). */
   defaultLivePreview?: boolean
+  /** Markdown-aware auto pairing toggles (three independent switches per §4.1). */
+  autoPair?: AutoPairOptions
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
@@ -143,6 +154,10 @@ export function editorExtensions(options: EngineOptions = {}) {
     caretClampKeymap,
     caretClampHandlers,
     htmlPaste(),
+    // 引擎自研的 Markdown 感知配对（禁止 stock closeBrackets）：inputHandler 覆盖全部
+    // 选区（D10），Backspace 用 Prec.high 抢在 defaultKeymap 的 deleteCharBackward 之前。
+    // 三个开关经 compartment 热切换（desktop: setAutoPair）。
+    autoPairCompartment.of(autoPairExtension(options.autoPair ?? DEFAULT_AUTO_PAIR)),
     renderBudgetFlush(),
     markdownKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.

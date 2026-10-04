@@ -11,6 +11,7 @@ import {
   outdentList,
   toggleBold,
 } from "../src/index"
+import { autoPairSpec, deletePairSpec, type AutoPairOptions } from "../src/format/autoPair"
 
 // Task 6 修复回归：readOnly facet 是建议性的 —— typed input 被 view 层忽略，
 // 但 keymap 命令与 ViewPlugin 直接 dispatch 事务。HUGE 档只读 Live 文档挂满
@@ -200,5 +201,47 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     await settle()
     expect(view.state.doc.toString()).toContain("**bold**")
     cleanup()
+  })
+})
+
+// 自动配对：键入路径由 @codemirror/view 的 readOnly 拦截，但 Backspace 的成对删除是
+// Prec.high 的 keymap 命令、直接 dispatch —— 必须自己看 readOnly；两个 spec 同理。
+describe("auto pair refuses to mutate readonly docs", () => {
+  const ALL: AutoPairOptions = { brackets: true, quotes: true, markdownSyntax: true }
+  // 大文档（~33k 字符，不触发解析推进）+ 只读：spec 必须在碰文档之前就放弃。
+  const HUGE_DOC = `${"lorem ipsum dolor sit amet ".repeat(1_200)}()`
+
+  it("returns null specs on a large readonly doc", () => {
+    const head = HUGE_DOC.length - 1
+    const readonly = EditorState.create({
+      doc: HUGE_DOC,
+      selection: { anchor: head },
+      extensions: [EditorState.readOnly.of(true)],
+    })
+    expect(deletePairSpec(readonly, ALL)).toBeNull()
+    expect(autoPairSpec(readonly, head, head, "(", ALL)).toBeNull()
+    // 非只读对照：同一位置两个 spec 都成立（唯一变量是 readOnly）。
+    const editable = EditorState.create({ doc: HUGE_DOC, selection: { anchor: head } })
+    expect(deletePairSpec(editable, ALL)).not.toBeNull()
+    expect(autoPairSpec(editable, head, head, "(", ALL)).not.toBeNull()
+  })
+
+  it("Backspace between a pair leaves a readonly view untouched", () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "()",
+        selection: { anchor: 1 },
+        extensions: [EditorState.readOnly.of(true), editorExtensions()],
+      }),
+      parent,
+    })
+    view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Backspace", bubbles: true, cancelable: true,
+    }))
+    expect(view.state.doc.toString()).toBe("()")
+    view.destroy()
+    parent.remove()
   })
 })
