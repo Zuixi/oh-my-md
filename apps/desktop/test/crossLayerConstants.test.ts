@@ -10,6 +10,7 @@ import {
   LOG_KEEP_FILES,
   LOG_LEVEL_ENV_VAR,
   LOG_MAX_FILE_BYTES,
+  LOG_PATH_FIELD_HELPERS,
   LOG_RATE_LIMIT_PER_SEC,
   LOG_TAIL_READ_BYTES,
   MARKDOWN_EXTENSIONS,
@@ -124,6 +125,22 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("log tail read size matches logging.rs LOG_TAIL_READ_BYTES", () => {
     expect(LOG_TAIL_READ_BYTES).toBe(rustConstNumber(LOGGING_RS, "LOG_TAIL_READ_BYTES"))
+  })
+
+  it("path-field markers match the shared fixture the redactor parses", () => {
+    // §3.7's grammar is one fixture consumed by the Rust and TS tests alike.
+    // The constant's "no drift assertion yet" note is what this replaces: the
+    // marker is now asserted against the fixture and against the literal the
+    // Rust helper formats, so a rename on either side cannot pass silently.
+    const fixture = JSON.parse(
+      readFileSync(resolve(process.cwd(), "test/fixtures/logPathCases.json"), "utf8"),
+    ) as { single: { field: string }[]; multi: { field: string }[] }
+
+    const [singlePrefix, pathsPrefix] = LOG_PATH_FIELD_HELPERS
+    expect(fixture.single[0].field.startsWith(singlePrefix)).toBe(true)
+    expect(fixture.multi[0].field.startsWith(pathsPrefix)).toBe(true)
+    expect(LOGGING_RS).toContain(`format!("${singlePrefix}{}`)
+    expect(LOGGING_RS).toContain(`format!("${pathsPrefix.slice(0, -1)}`)
   })
 
   it("Rust frontend budget stays above the frontend rate limit", () => {

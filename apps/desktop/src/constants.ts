@@ -118,9 +118,9 @@ export const LOG_FRONTEND_BUDGET_PER_SEC = 200
 /** Log tail the session scanner reads; must match Rust `LOG_TAIL_READ_BYTES`. */
 export const LOG_TAIL_READ_BYTES = 64 * 1024
 
-/** Structured path-field markers. Task 9 adds the shared Rust helper, so there
- *  is no drift assertion yet — one that throws on a missing Rust const would
- *  break the suite. */
+/** Structured path-field markers. Drift-guarded in `crossLayerConstants.test.ts`
+ *  against the shared fixture the Rust and TS helpers both answer to
+ *  (`test/fixtures/logPathCases.json`), not against a Rust const. */
 export const LOG_PATH_FIELD_HELPERS = ["path=", "paths="] as const
 
 // Frontend-only rate control (§3.9 layers 1–3): nothing on the Rust side reads

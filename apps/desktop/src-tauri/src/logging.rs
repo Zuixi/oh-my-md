@@ -632,29 +632,103 @@ impl FrontendBudget {
     }
 }
 
-/// Replaces LF and CR with the literal two-character sequences `\n` / `\r`.
+/// Escapes a value for use inside a `path=<…>` / `paths=[…]` field (§3.7).
 ///
-/// The log file is line-oriented, so an unescaped line break in a record's
-/// target or message writes a second physical line. Escaping mirrors §3.7's
-/// LF/CR rule for structured path fields; that grammar's shared helper arrives
-/// with the path-field task, so this sink carries its own.
-fn escape_line_breaks(raw: &str) -> String {
-    let mut escaped = String::with_capacity(raw.len());
+/// This is the one implementation of the field grammar: `\`, the field-closing
+/// `>` and `]`, the `paths` separator `;`, and the record-splitting LF/CR. A
+/// path carrying any of them is otherwise indistinguishable from the grammar
+/// around it, so the field would truncate early and leak its remainder past the
+/// export redactor.
+///
+/// Hand-written concatenation is forbidden for the same reason; the field
+/// markers themselves are `LOG_PATH_FIELD_HELPERS` on the TS side and the
+/// shared fixture is the cross-language contract.
+///
+/// [`escape_record_text`] routes record targets and messages through this too:
+/// the log file is line-oriented, so an unescaped line break in either writes a
+/// second physical line.
+pub fn escape_path_field(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
         match ch {
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            _ => escaped.push(ch),
+            '\\' => out.push_str("\\\\"),
+            '>' => out.push_str("\\>"),
+            ']' => out.push_str("\\]"),
+            ';' => out.push_str("\\;"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            other => out.push(other),
         }
     }
-    escaped
+    out
+}
+
+/// The exact inverse of [`escape_path_field`]: collapse each `\x` pair back to
+/// the character it escaped, and treat a trailing lone `\` as a literal.
+///
+/// The redactor unescapes a located field with this before deciding what to
+/// remove, so it must be total — an input the writer never produced still
+/// answers a `String` rather than panicking mid-export.
+///
+/// `allow(dead_code)`: Task 12's redactor is the production reader; until it
+/// lands only the tests below call this.
+#[allow(dead_code)]
+pub fn unescape_path_field(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('>') => out.push('>'),
+            Some(']') => out.push(']'),
+            Some(';') => out.push(';'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            // Not an escape this grammar produces; keep both characters so a
+            // hand-built or future-extended input is not silently mangled.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Renders one path as a `path=<escaped>` field.
+///
+/// `allow(dead_code)`: the fence is the API boundary, not this task's call
+/// sites. Task 10's boundary instrumentation is the first consumer; until it
+/// lands only the tests call these two, and the guard test below asserts they
+/// exist. Do not fold either into `log_records`.
+#[allow(dead_code)]
+pub fn path_field(path: &Path) -> String {
+    format!("path={}", escape_path_field(&path.to_string_lossy()))
+}
+
+/// Renders a list as a `paths=[<escaped>;<escaped>]` field. `;` is escaped
+/// inside each element, so the separator is unambiguous for a path containing
+/// one. `allow(dead_code)` for the same reason as [`path_field`].
+#[allow(dead_code)]
+pub fn paths_field(paths: &[PathBuf]) -> String {
+    let joined = paths
+        .iter()
+        .map(|p| escape_path_field(&p.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(";");
+    format!("paths=[{joined}]")
 }
 
 /// Removes the session-boundary vocabulary from record text, by escaping the
 /// space inside every marker token [`has_marker`] would accept
 /// (`session end` → `session\ end`).
 ///
-/// [`escape_line_breaks`] alone does **not** make a forged boundary impossible.
+/// [`escape_path_field`] alone does **not** make a forged boundary impossible.
 /// `has_marker` scans a whole line — it is mid-line matching that keeps the
 /// determination lines ("previous session ended abnormally") from parsing — and
 /// anchors on the character *after* the token. So
@@ -704,8 +778,11 @@ fn first_anchored_marker(text: &str) -> Option<(usize, &'static str)> {
 
 /// Makes one frontend-supplied field safe to write into the line-oriented log:
 /// one physical line, and no session-boundary vocabulary.
+///
+/// The line-break half is [`escape_path_field`], shared with the structured
+/// path fields rather than reimplemented here (§3.7).
 fn escape_record_text(raw: &str) -> String {
-    neutralize_boundary_markers(&escape_line_breaks(raw))
+    neutralize_boundary_markers(&escape_path_field(raw))
 }
 
 /// The record loop behind [`log_frontend`], split out so tests can drive the
@@ -1509,8 +1586,122 @@ mod tests {
 
     #[test]
     fn record_text_escapes_line_breaks_losslessly() {
-        assert_eq!(escape_line_breaks("a\nb\rc"), "a\\nb\\rc");
+        assert_eq!(escape_path_field("a\nb\rc"), "a\\nb\\rc");
         assert_eq!(escape_record_text("笔记.md"), "笔记.md");
+    }
+
+    /// The escaped grammar is finite and decidable here, so assert the whole
+    /// rule rather than one example.
+    #[test]
+    fn escaped_path_fields_close_every_delimiter() {
+        // Every delimiter doubled-and-prefixed, and every backslash doubled.
+        assert_eq!(
+            escape_path_field("/tmp/a\\b>c]d;e\nf\rg"),
+            "/tmp/a\\\\b\\>c\\]d\\;e\\nf\\rg"
+        );
+
+        // Round trip over the full grammar, not just a clean path. This is the
+        // property §3.7 calls for and the one the fixture alone cannot state.
+        for case in [
+            "/tmp/a\\b>c]d;e\nf\rg",
+            "/tmp/back\\",
+            "/tmp/we\\nird.md",
+            "/Volumes/My Vault/笔记.md",
+        ] {
+            assert_eq!(
+                unescape_path_field(&escape_path_field(case)),
+                case,
+                "round trip for {case:?}"
+            );
+        }
+
+        // A path ending in an odd backslash run must not swallow the closing
+        // delimiters when the field is parsed.
+        let trailing = path_field(Path::new("/tmp/back\\"));
+        assert!(trailing.ends_with("\\\\"), "{trailing:?}");
+        assert_eq!(
+            unescape_path_field(&trailing["path=".len()..]),
+            "/tmp/back\\"
+        );
+    }
+
+    /// The redactor is Rust and some producers are TS, so the field grammar is
+    /// a cross-language contract read from one shared fixture by this test and
+    /// `apps/desktop/test/logPath.test.ts`. `CARGO_MANIFEST_DIR` is
+    /// `apps/desktop/src-tauri`, so the path below resolves to
+    /// `apps/desktop/test/fixtures/logPathCases.json`; the read is unwrapped on
+    /// purpose — a silently skipped fixture would make this test vacuous.
+    #[test]
+    fn path_fields_round_trip_the_shared_fixture() {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../test/fixtures/logPathCases.json"
+        ))
+        .unwrap();
+        let cases: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for case in cases["single"].as_array().unwrap() {
+            let input = case["raw"].as_str().unwrap();
+            let expected = case["field"].as_str().unwrap();
+            assert_eq!(path_field(Path::new(input)), expected, "raw {input:?}");
+            assert_eq!(unescape_path_field(input), input, "raw {input:?}");
+
+            // `path=` is the whole field prefix, so what follows it must
+            // unescape back to the original. This is the property Task 12's
+            // redactor relies on.
+            let value = expected.strip_prefix("path=").unwrap();
+            assert_eq!(unescape_path_field(value), input, "field {expected:?}");
+        }
+        for case in cases["multi"].as_array().unwrap() {
+            let inputs: Vec<PathBuf> = case["raw"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| PathBuf::from(v.as_str().unwrap()))
+                .collect();
+            let expected = case["field"].as_str().unwrap();
+            assert_eq!(paths_field(&inputs), expected, "raw {inputs:?}");
+
+            // `paths=[…]` splits on `;` only where the separator is unescaped,
+            // so each element must round trip on its own. Splitting on every
+            // `;` is exactly the bug the escape exists to prevent: `/a\;semi.md`
+            // is one path, not two.
+            let body = expected
+                .strip_prefix("paths=[")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .unwrap();
+            let parts = unescaped_semicolon_split(body);
+            let wanted: Vec<String> = inputs
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(parts, wanted, "field {expected:?}");
+        }
+    }
+
+    /// Splits a `paths=[…]` body on `;` separators only, mirroring how a reader
+    /// walks the escaped grammar: a `\\` pair is consumed whole (so the `;` in
+    /// `/a\\;b.md` is a separator), while `\;` is an escaped literal.
+    fn unescaped_semicolon_split(body: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut chars = body.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                ';' => {
+                    parts.push(unescape_path_field(&current));
+                    current.clear();
+                }
+                '\\' => {
+                    current.push(ch);
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                }
+                other => current.push(other),
+            }
+        }
+        parts.push(unescape_path_field(&current));
+        parts
     }
 
     // The finding assumed `\n`/`\r` escaping was enough. It is not: `has_marker`

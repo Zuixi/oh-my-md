@@ -1,0 +1,15 @@
+{
+  "single": [
+    { "raw": "/Users/alice/notes/a.md", "field": "path=/Users/alice/notes/a.md" },
+    { "raw": "C:\\Users\\alice\\a.md", "field": "path=C:\\\\Users\\\\alice\\\\a.md" },
+    { "raw": "/Volumes/My Vault/sub dir/笔记.md", "field": "path=/Volumes/My Vault/sub dir/笔记.md" },
+    { "raw": "/tmp/we>ird.md", "field": "path=/tmp/we\\>ird.md" },
+    { "raw": "/tmp/back\\slash.md", "field": "path=/tmp/back\\\\slash.md" },
+    { "raw": "/tmp/br]acket.md", "field": "path=/tmp/br\\]acket.md" },
+    { "raw": "/tmp/new\nline.md", "field": "path=/tmp/new\\nline.md" }
+  ],
+  "multi": [
+    { "raw": ["/a/b.md", "/c/d.md"], "field": "paths=[/a/b.md;/c/d.md]" },
+    { "raw": ["/a;semi.md"], "field": "paths=[/a\\;semi.md]" }
+  ]
+}
