@@ -105,3 +105,23 @@ export function continuePrefixText(prefix: BlockPrefix): string {
     return mark.text
   }).join("")
 }
+
+/**
+ * 行内容起点：行块前缀（缩进 + 每个标记 + 恰好一个后随空白）之后的位置；无标记的行
+ * 返回 `line.from`（行首缩进属于内容，例如代码块里的缩进）。
+ *
+ * 前缀是**块结构**而不是可键入文本：光标停在前缀内部会让折叠标记展开（`cursorInside`），
+ * 随后输入的字插在标记左边 —— 用户看到的是 `>` 被推着往右跑。所有把光标送进行的入口
+ * （点击 / Home / ↑↓ / 续行命令）都应经过这里，见 `navigation/caretClamp.ts`。
+ */
+export function lineContentStart(state: EditorState, line: Line): number {
+  const prefix = blockPrefixOf(state, line)
+  if (!prefix || prefix.marks.length === 0) return line.from
+  return markRemovalRange(prefix.marks[prefix.marks.length - 1], line).to
+}
+
+/** `pos` 落在行块前缀内部时钳到内容起点，否则原样返回。 */
+export function clampToContentStart(state: EditorState, pos: number): number {
+  const start = lineContentStart(state, state.doc.lineAt(pos))
+  return pos < start ? start : pos
+}

@@ -36,10 +36,13 @@ export function continueListSpec(state: EditorState): TransactionSpec | null {
   if (!found) return null
   const { line, match } = found
   if (line.text.slice(match[0].length).trim() === "") {
-    return { changes: { from: line.from, to: line.to, insert: match[2] ?? "" } }
+    const insert = match[2] ?? ""
+    return { changes: { from: line.from, to: line.to, insert }, selection: { anchor: line.from + insert.length } }
   }
   const head = state.selection.main.head
-  return { changes: { from: head, to: head, insert: `\n${nextMarker(match)}` } }
+  const insert = `\n${nextMarker(match)}`
+  // 显式 selection：否则插入点正好在光标处时，CodeMirror 的默认映射会把光标留在上一行。
+  return { changes: { from: head, to: head, insert }, selection: { anchor: head + insert.length } }
 }
 
 export function indentListSpec(state: EditorState): TransactionSpec | null {

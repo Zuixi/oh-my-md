@@ -27,6 +27,7 @@ export class MermaidWidget extends BlockWidget {
     pre.className = "omd-block-placeholder"
     pre.textContent = this.src
     el.appendChild(pre)
+    el.dataset.omdRender = "placeholder"
   }
 
   protected async renderInto(el: HTMLElement) {
@@ -37,6 +38,9 @@ export class MermaidWidget extends BlockWidget {
     const mermaid = await getMermaid()
     if (!this.isActive(el)) return
     const { svg } = await mermaid.render(`omd-mmd-${++counter}`, this.src)
-    if (this.isActive(el)) el.innerHTML = svg
+    if (this.isActive(el)) {
+      el.innerHTML = svg
+      el.dataset.omdRender = "svg"
+    }
   }
 }

@@ -416,3 +416,158 @@ plus exactly **one** following space (`markRemovalRange`; the remaining
 whitespace is content indentation, and eating it turned `  >   x` into `x`), and
 prefix-only lines exit one level by rebuilding the source up to the *second to
 last* mark's end rather than by deleting a fixed number of characters.
+
+## `markdown()` bundles its own `Prec.high` Enter keymap
+
+`@codemirror/lang-markdown`'s `markdown()` support pushes
+`Prec.high(keymap.of(markdownKeymap))` (Enter → `insertNewlineContinueMarkup`)
+into the returned support — and `markdownLanguageSupport()` is the FIRST entry of
+`editorExtensions()`. For equal precedence the earlier keymap wins, so an engine
+Enter binding left at `Prec.high` is silently shadowed: the engine's
+`continueQuote` / `continueList` only ran where upstream bails (inside fences,
+`getContext` returns early on `FencedCode`). The symptom is subtle because both
+implementations agree on the happy path (`> hello` → `> hello\n> `) — what
+differs is the prefix-only line (upstream leaves a bare `>` line, the engine
+exits one level), the `>x` (space-less) style, and in-fence caret placement.
+Engine Enter commands therefore sit at **`Prec.highest`**, ordered
+`codeLineKeymap` → `fenceKeymap` → `quoteKeymap` → `listKeymap`, each returning
+`false` for lines it does not own.
+
+The testing lesson is the reusable part: assert **ownership signatures** — an
+outcome only one implementation can produce (exit-one-level on `> `, caret moved
+onto the new code line, style-faithful `>x\n>x`) — never just the visible result
+both produce. `test/enter-ownership.test.ts` drives the real keymap chain
+(`keymap.of([...defaultKeymap, ...historyKeymap])` before `editorExtensions()`)
+for exactly this reason.
+
+## A continuation command must set an explicit selection
+
+`changes: {from: head, to: head, insert: "\n> "}` does NOT move the caret: a
+collapsed selection maps through an insertion at its own position with
+`assoc = -1`, so the caret stays on the **previous** line. Upstream's
+`insertNewlineContinueMarkup` sets the selection explicitly, which is why the
+missing `selection` in `continueQuoteSpec`/`continueListSpec` went unnoticed
+until the engine actually took Enter ownership — and why it showed up first in
+quoted code lines (the one place upstream had already bailed, so the engine's
+command was live). Every continuation spec returns
+`selection: { anchor: insertStart + insert.length }`; `test/enter-ownership.test.ts`
+asserts the caret's line and offset, not just the document text.
+
+## Line block prefixes are structural — clamp the caret, never make them atomic
+
+The folded `> ` / `> - ` / `- [ ] ` prefix is block structure, but `cursorInside`
+reveals a marker whose range contains the caret (invariant 10). Clicking the left
+edge of a quoted line (or pressing Home) resolves to `line.from` = inside the
+prefix, so the marker unfolds and the next typed character lands **before** it —
+the user sees the `>` being pushed right (`abc> `). `navigation/caretClamp.ts`
+clamps the three accidental entry points (mousedown via `posAtCoords`, Home /
+Shift-Home, ArrowUp/Down after running the host command) to
+`format/blockPrefix.ts::lineContentStart`. Two rules:
+
+- Do **not** try `EditorView.atomicRanges` for line-start prefixes: the
+  atomicRanges invariants forbid line-start and cross-line atoms (they break
+  cross-line selection and drag endpoints).
+- "Prefix" means each mark plus **exactly one** following space
+  (`markRemovalRange`). The remaining whitespace is content indentation —
+  classifying it as prefix breaks Tab/Shift-Tab on quoted code lines and makes
+  indentation inheritance accidental.
+
+## There is no indentation service inside a fence
+
+`getIndentation(new IndentContext(state, { simulateBreak: pos }), pos)` returns
+`null` at every position inside a fenced code block: `@codemirror/lang-markdown`
+only declares `indentNodeProp: { Document: () => null }`, and the nested language
+does not contribute one through the mounted tree. So `insertNewlineAndIndent`'s
+"copy the current line's leading whitespace" fallback is all CM can offer, and
+`{`-style auto-indent has to come from the engine:
+`format/codeLines.ts` (`continueCodeLineSpec`) copies the current line's content
+indentation and adds one level when the text before the caret ends with
+`{ ( [ :`. Making this language-aware means providing an `indentService` (or a
+per-language provider table) — a deliberate follow-up, not a config flag.
+
+## `alive` is instance-scoped, but CM's `destroy` is tile-scoped
+
+Async block widgets (code / mermaid / math) end their render with
+`if (this.isActive(el)) el.innerHTML = html`, and `isActive()` is
+`BlockWidget.alive`. That flag was set by `destroy()` — but CodeMirror's
+`destroy(dom)` fires when a **tile** is dropped, which is not the same event as
+"this widget instance is finished": the live-decoration rebuild reuses the same
+`Decoration`/widget object (the `removedByKey` pass in `decorations/build.ts`)
+while CM still re-creates the tile, so `toDOM` runs a second time **on the same
+instance** and the previous tile's `destroy` can arrive after it. Instrumented
+timeline in a real browser for a quoted fence that starts the document:
+
+```
+toDOM#1 pos=2 body=false     ← first tile
+toDOM#2 pos=2 body=true      ← same instance re-tiled (this.wrap already set)
+destroy#2 pos=2              ← previous tile dropped → alive = false
+render  alive=false elConnected=true elProbe=2   ← new DOM is connected and on screen
+after debounce alive=false → EARLY-RETURN dead after debounce
+```
+
+Result: the synchronous placeholder `<pre>` stayed forever — no Shiki, no
+`.line` spans, no error (the `catch {}` swallowed everything). The same block
+preceded by any paragraph built once and rendered fine, which is why the bug hid
+in "obvious" fixtures.
+
+Rules:
+
+- `toDOM` **reactivates** the instance: set `alive = true` and record the DOM it
+  produced (`BlockWidget.activateDom`). Every `toDOM` override must call it —
+  `CodeWidget` builds its own wrap and therefore calls it directly instead of
+  going through `super.toDOM`.
+- `destroy(dom)` only retires the instance when `dom` is the **current** DOM (or
+  when called without a DOM); a stale tile's destroy must never kill a widget
+  that has already been re-added. Same idea as `domOwner` in the table widget,
+  in the opposite direction.
+- Never gate the *final* DOM write on a bare connectivity check either
+  (`isConnected` is transiently false while CM diffs/measures) — after the two
+  rules above, `isActive()` is the correct predicate.
+
+## Async widgets must expose an observable degrade marker
+
+`if (!lang) return` plus a `catch {}` made "the async render never landed" a
+silent, invisible failure: the DOM simply kept the synchronous `<pre>`, and the
+only way to notice was asserting Shiki's `.line` spans. Emit an explicit marker
+instead — `.omd-code-body[data-omd-highlight]` = `placeholder | shiki |
+unknown-lang | error` and `.omd-block-body[data-omd-render]` = `placeholder |
+svg | katex | error` (mermaid/math) — and log the swallowed error once via
+`console.debug`. This is what turned the doc-start quoted fence into a failing
+e2e assertion (`Received: "placeholder"`, 14 retries) instead of a mystery.
+
+## 块 tile 会在挂载稳定期被重建 —— 同一个 widget 实例会收到 destroy + 二次 toDOM
+
+实测（文档首块是「引用内的围栏」时，widget DOM 在挂载期被插入 3 次；前面有段落的同样
+块只插入 1 次）。插桩得到的更新序列：
+
+```
+update#1  doc=false sel=true effects=(none) ranges=0-8,29-34   ← 宿主把光标从 0 移到文末
+update#2  doc=false sel=true effects=measure ranges=
+```
+
+- `rebuildRanges` 的**选择分支**会为旧选区和新区各扩出一段
+  （`expandRange(..., SELECTION_BLOCKS)`）。初始光标在 0，于是重建区间是 `0-8`；而该块的
+  replace 区间是 `2-27` —— 二者相交，移除范围必须覆盖整块（新块 widget 可能从脏区内开始
+  却吞并后续旧块），于是这个块在同一次更新里被丢弃并重建。
+- 重建后 CodeMirror 丢弃旧 tile 并重新构建 DOM（调用栈：`CodeWidget.toDOM` ←
+  `_WidgetTile.of` ← `Object.point`，即 CM 自己的内容构建，**不是引擎直接调用 toDOM**）。
+  由于引擎的 spec 身份复用会把**同一个 widget 对象**交回给新 tile，这个实例会先收到
+  `destroy(旧 dom)`、再收到第二次 `toDOM`。这正是上面「`alive` 是实例级、destroy 是 tile 级」
+  那条 gotcha 的触发源。
+- 这是**设计使然**，不是缺陷：邻域重建用于重新评估 `blockSelected`（光标进入块必须卸载
+  widget）。不要为了消除重建去改这条路径。
+
+两个被实测否掉的"顺手优化"，记下来避免重复走：
+
+1. **`measureBlockWidget` 的连线不是原因**：临时切断"measure 效果 → 重建该块"后，
+   挂载期插入次数仍是 3（挂载期第 3 次插入来自 CM 自身的首次布局）。
+2. **"等价 widget spec 不删不增"也是无效的**：在 `updateLiveDecorations` 里对脏区内的
+   等价 block widget 做保留（跳过 filter-remove + add）后，插入次数不变 —— 因为 CM 重建
+   tile 是因为**与块相交的行被重建**，与 deco 对象的身份无关（reuse pass 早已保证身份一致）。
+
+要真正减少这次重建，只能改 `rebuildRanges` 的选择分支（例如只在块的 `blockSelected`
+真正翻转时才重建该块）—— 那是核心热路径，需单独设计并配 `blockSelected` 全套回归。
+
+回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
+bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
+最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。

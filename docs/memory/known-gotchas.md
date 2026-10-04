@@ -32,6 +32,13 @@
 - **A line-start regex cannot see the real block prefix** — `>x`, `  > x`, `- > x`, `> - [x]` need the tree-driven `blockPrefixOf`; remove a mark plus exactly one space.
 - **Resolve a fence's parent from the line END** — `line.from` lands on `QuoteMark`/`QuoteIndent` and the parent walk never reaches `FencedCode`/`ListItem`.
 - **Fence tokens must resolve on both highlight paths** — a Shiki-only token loses its highlight when the caret enters the block; the alias-parity test guards the gap list.
+- **`markdown()` bundles its own `Prec.high` Enter keymap** — engine Enter commands need `Prec.highest`; assert ownership signatures (exit-one-level, caret moved onto the new line), not outcomes both implementations share.
+- **A continuation command must set an explicit selection** — inserting at a collapsed caret leaves the caret on the previous line (`assoc = -1`).
+- **Line block prefixes are structural** — clamp clicks/Home/↑↓ to the content start; never make line-start marks atomic; prefix = mark + exactly one space.
+- **There is no indentation service inside a fence** — `getIndentation` is always null there; `{`-style auto-indent is the engine's job.
+- **`alive` is instance-scoped, CM's `destroy` is tile-scoped** — a re-tiled widget gets a second `toDOM` on the same instance and may receive the old tile's `destroy` afterwards; `toDOM` must reactivate and `destroy` must only retire the current DOM.
+- **Async widgets need an observable degrade marker** — a silent `catch {}` / early return turned "render never landed" into an invisible placeholder; emit `data-omd-highlight` / `data-omd-render` and assert it in e2e.
+- **Block tiles are rebuilt during mount settling** — the selection-adjacent rebuild can intersect a widget's replace range, so the same instance gets `destroy` + a second `toDOM`; this is by design, and both "skip the measure rebuild" and "keep equivalent specs" were measured not to change it.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
 - **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.

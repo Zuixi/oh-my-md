@@ -243,6 +243,7 @@ export class CodeWidget extends BlockWidget {
       view.focus()
     })
 
+    this.activateDom(wrap)
     this.renderPlaceholder(body)
     const start = () => Promise.resolve()
       .then(() => this.renderInto(body))
@@ -310,6 +311,9 @@ export class CodeWidget extends BlockWidget {
     const pre = document.createElement("pre")
     pre.textContent = this.src
     el.appendChild(pre)
+    // 可观测降级标记：静默失败（无语言 / Shiki 抛错 / 异步被丢弃）曾经让"永远停在
+    // 占位"这类缺陷在测试里完全隐身。e2e 断言"高亮或带原因的降级"而不是只等 .line。
+    el.dataset.omdHighlight = "placeholder"
   }
 
   protected async renderInto(el: HTMLElement) {
@@ -355,11 +359,17 @@ export class CodeWidget extends BlockWidget {
     el.appendChild(pre)
     try {
       const lang = resolveCodeLanguage(this.lang)
-      if (!lang) return
+      if (!lang) {
+        el.dataset.omdHighlight = "unknown-lang"
+        return
+      }
       const cacheKey = `${lang}:${this.src}`
       const cached = htmlCache.get(cacheKey)
       if (cached !== undefined) {
-        if (this.isActive(el)) el.innerHTML = cached
+        if (this.isActive(el)) {
+          el.innerHTML = cached
+          el.dataset.omdHighlight = "shiki"
+        }
         return
       }
       await new Promise(r => setTimeout(r, RENDER_DEBOUNCE_MS))
@@ -378,9 +388,14 @@ export class CodeWidget extends BlockWidget {
         defaultColor: "light",
       })
       htmlCache.set(cacheKey, html)
-      if (this.isActive(el)) el.innerHTML = html
-    } catch {
-      // keep plain pre fallback
+      if (this.isActive(el)) {
+        el.innerHTML = html
+        el.dataset.omdHighlight = "shiki"
+      }
+    } catch (err) {
+      // 保留纯文本兜底，但留下可观测原因（不再静默）。
+      el.dataset.omdHighlight = "error"
+      console.debug(`[omd] code highlight failed: ${err instanceof Error ? err.message : err}`)
     }
   }
 

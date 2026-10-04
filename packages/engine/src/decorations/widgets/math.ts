@@ -255,10 +255,17 @@ export class MathBlockWidget extends BlockWidget {
     pre.className = "omd-block-placeholder"
     pre.textContent = this.src
     el.appendChild(pre)
+    el.dataset.omdRender = "placeholder"
   }
 
   protected renderInto(el: HTMLElement) {
     return renderMath(el, mathTexOf(this.src), true, () => this.isActive(el))
+      .then(() => { el.dataset.omdRender = "katex" })
+      .catch(err => {
+        el.dataset.omdRender = "error"
+        console.debug(`[omd] math render failed: ${err instanceof Error ? err.message : err}`)
+        throw err
+      })
   }
 }
 
