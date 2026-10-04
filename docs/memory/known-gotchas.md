@@ -38,6 +38,7 @@
 - **There is no indentation service inside a fence** — `getIndentation` is always null there; `{`-style auto-indent is the engine's job.
 - **`alive` is instance-scoped, CM's `destroy` is tile-scoped** — a re-tiled widget gets a second `toDOM` on the same instance and may receive the old tile's `destroy` afterwards; `toDOM` must reactivate and `destroy` must only retire the current DOM.
 - **Async widgets need an observable degrade marker** — a silent `catch {}` / early return turned "render never landed" into an invisible placeholder; emit `data-omd-highlight` / `data-omd-render` and assert it in e2e.
+- **Block tiles are rebuilt during mount settling** — the selection-adjacent rebuild can intersect a widget's replace range, so the same instance gets `destroy` + a second `toDOM`; this is by design, and both "skip the measure rebuild" and "keep equivalent specs" were measured not to change it.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
 - **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.
