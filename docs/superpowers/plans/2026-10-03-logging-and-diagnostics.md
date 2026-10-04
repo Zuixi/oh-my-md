@@ -16,11 +16,11 @@
 - **Archives are `{stem}_{YYYY-MM-DD_HH-MM-SS}.log`** (`rename_file_to_dated`, `lib.rs:280-301`). Zero-padded, so lexicographic order is chronological. Never numbered.
 - **Rotation:** `LOG_MAX_FILE_BYTES = 2 * 1024 * 1024`, `LOG_KEEP_FILES = 5`, `TimezoneStrategy::UseLocal`, `FileOpenStrategy::Append`. `RotationStrategy::KeepOne` is forbidden — it *deletes* the log at 40 KB.
 - **Level policy:** debug builds default to `Debug`, release to `Info`. `level_for` → `Warn` for `tao`, `wry`, `notify`, `ignore`, `hyper`, `reqwest`. `level_for` → `Info` for `tauri_runtime_wry` and `tauri_runtime`. `level_for` matches whole module-path prefixes, so a rule for `wry` does **not** cover `tauri_runtime_wry`.
-- **`OMD_LOG`** overrides the compiled level at runtime (`debug`, `trace`, or a comma-separated `target=level` list).
+- **`OMD_LOG`** overrides the compiled level at runtime. It is parsed as a single level name (`debug`, `trace`); a `target=level` list is not a level and is ignored. An unparseable value falls through to the persisted `verboseLogging` flag, then to the build default — a typo must not disable a persisted preference.
 - **Values that cross TS ↔ Rust** are defined on both sides and drift-guarded in `apps/desktop/test/crossLayerConstants.test.ts`: `LOG_MAX_FILE_BYTES` 2 MiB, `LOG_KEEP_FILES` 5, `LOG_LEVEL_ENV_VAR` `OMD_LOG`, `LOG_FRONTEND_COMMAND` `log_frontend`, `DIAGNOSTICS_BUNDLE_FORMAT_VERSION` 1, `LOG_FRONTEND_BUDGET_PER_SEC` 200, `LOG_TAIL_READ_BYTES` 65536, `LOG_PATH_FIELD_HELPERS` `path=`/`paths=`.
 - **Frontend-only limits** live in `constants.ts`: `LOG_RATE_LIMIT_PER_SEC` 50, `LOG_BREAKER_DROPS` 1000, `LOG_BREAKER_WINDOW_MS` 5000, `LOG_BREAKER_COOLDOWN_MS` 30000, `LOG_ALWAYS_PASS_LEVEL` `error`.
 - **`Error` always passes layers 2, 3 and 4.** Deduplication (layer 1) still applies to it. A bypassed `Error` does not count toward breaker thresholds.
-- **`.setup()` must never return `Err` for a logging reason.** Tauri turns that into `panic!("Failed to setup app: {e}")` (`tauri-2.11.5` `app.rs:1475-1476`).
+- **`.setup()` must never return `Err` for a logging reason.** Tauri turns that into `panic!("Failed to setup app: {e}")` (`tauri-2.11.5` `app.rs:1425-1426`).
 - **The scan must run after plugin registration and before writing our own `session start`.** Registration may rotate the file; writing first makes every launch report an abnormal exit.
 - **Never log document content.** Boundary helpers take structured fields only.
 - **Path fields are never hand-concatenated.** `format!("path={}", …)` and `` `path=${…}` `` are forbidden; use the helpers from Task 9.
@@ -163,8 +163,12 @@ pub fn default_level() -> log::LevelFilter {
 }
 
 /// The level the process actually runs at: `OMD_LOG` when it names a valid
-/// level, otherwise the build default. Anything else (a filter list, a typo)
-/// falls back rather than erroring — a bad env var must not change behaviour.
+/// level, the persisted verbose flag next, otherwise the build default.
+/// Anything else (a filter list, a typo) falls through rather than erroring —
+/// a bad env var must not change behaviour, and it must not shadow the flag
+/// either: `OMD_LOG=banana` means "I wanted a level", not "turn verbose off".
+/// (Task 11 adds `verbose_logging_enabled`; until then this is the two-step
+/// form below, and the `banana` test in Step 1 expects the build default.)
 pub fn effective_level() -> log::LevelFilter {
     std::env::var(LOG_LEVEL_ENV_VAR)
         .ok()
@@ -1779,13 +1783,16 @@ git commit -m "feat: deliver queued log records before the webview is torn down"
 
 - [ ] **Step 1: Create the shared fixture**
 
-`apps/desktop/test/fixtures/logPathCases.json` — consumed by both languages:
+`apps/desktop/test/fixtures/logPathCases.json` — consumed by both languages.
+The file on disk is authoritative; the block below is a copy of it. (The Windows
+row originally read `path=C:\\Users\\alice\\a.md` here, which is what the
+*unescaped* path collapses to, not the escaped field the helper emits.):
 
 ```json
 {
   "single": [
     { "raw": "/Users/alice/notes/a.md", "field": "path=/Users/alice/notes/a.md" },
-    { "raw": "C:\\Users\\alice\\a.md", "field": "path=C:\\Users\\alice\\a.md" },
+    { "raw": "C:\\Users\\alice\\a.md", "field": "path=C:\\\\Users\\\\alice\\\\a.md" },
     { "raw": "/Volumes/My Vault/sub dir/笔记.md", "field": "path=/Volumes/My Vault/sub dir/笔记.md" },
     { "raw": "/tmp/we>ird.md", "field": "path=/tmp/we\\>ird.md" },
     { "raw": "/tmp/back\\slash.md", "field": "path=/tmp/back\\\\slash.md" },
@@ -2148,9 +2155,16 @@ final best-effort `Path`-based sweep over free text.
 
 - [ ] **Step 4: Add the pre-export notice**
 
-In `exportDiagnostics`, show a confirmation naming what will be included and
-offering the opt-in "include full file paths" checkbox (default off), mapping to
-an extra `include_full_paths: bool` argument on the command.
+In `exportDiagnostics`, show a confirmation naming what will be included, and map
+the command's `include_full_paths: bool` argument with a caller that always
+passes `false`.
+
+There is no reachable "include full file paths" checkbox in the shipped flow.
+The only UI seam here is `window.confirm`, whose OK button cannot be labelled —
+an OK button meaning "include full paths" is the privacy-invasive answer, and
+inverting it was worse than omitting it. The parameter stays plumbed (and
+tested, by `desktopServices.test.ts`) so a labelled checkbox can drive it later
+without touching the command.
 
 - [ ] **Step 5: Run to verify pass**
 

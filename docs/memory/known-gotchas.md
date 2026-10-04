@@ -87,6 +87,10 @@
 
 ## Tooling and process
 
+- **`tauri-plugin-log` defaults destroy evidence** — `Builder::default()` is `LevelFilter::Trace` in release too, and `KeepOne` calls `fs::remove_file` at 40 KB; set level, `max_file_size`, and `KeepSome`.
+- **A plugin `setup` failure panics before any window appears** — a file-open error propagates out of `build()`'s `initialize_plugins(handle)?`; never let a filesystem-touching plugin `setup` be load-bearing for startup.
+- **The app `.setup()` hook runs on the event loop's `Ready` event, and a non-`Ok` return becomes `panic!("Failed to setup app: {e}")`** — that is what makes late plugin registration possible *and* what makes an error from setup fatal.
+
 ## Tauri updater signing keys and macOS targets are exact contracts
 
 `tauri signer generate` already writes a single-line Base64 private key. Do not Base64 it again. More subtly, Tauri's strict decoder rejects any whitespace after the final `=` padding: a valid 348-byte key ends with `==` at offsets 346–347, but a trailing space/CRLF makes the error misleadingly point at offset 346 (`Invalid symbol 61`). Release jobs therefore pass the repository secret only to `scripts/prepare-updater-key.mjs`, which trims surrounding whitespace, validates/canonicalizes the Base64, writes a mode-0600 runner-temp key file, and exports that file path as `TAURI_SIGNING_PRIVATE_KEY`. The workflow runs a small signer probe before the multi-minute package build. Never print the secret while debugging.

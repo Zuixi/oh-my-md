@@ -124,7 +124,7 @@ the remaining exposure is the environmental cases above.
 
 The same code path has a second half: an error returned from the *app-level*
 `.setup()` hook is turned into `panic!("Failed to setup app: {e}")`
-(`app.rs:1475-1476`). Any fix that moves work into setup inherits that trap —
+(`app.rs:1425-1426`). Any fix that moves work into setup inherits that trap —
 §3.12 is built around both halves at once.
 
 ## 3. Decisions
@@ -274,8 +274,13 @@ Primary path: a Settings toggle, "启用详细日志". It persists a flag, takes
 at the next launch, raises the level to `Debug`, and raises retention for that
 session.
 
-Secondary path: the `OMD_LOG` environment variable (`OMD_LOG=debug`,
-`OMD_LOG=trace`, or a comma-separated `target=level` list), for maintainers.
+Secondary path: the `OMD_LOG` environment variable, for maintainers. It is
+parsed as a single `log::LevelFilter` name (`OMD_LOG=debug`, `OMD_LOG=trace`);
+a filter list such as `tao=warn,omd=debug` is **not** a level and is ignored.
+`OMD_LOG` beats the persisted flag when it names a valid level; anything else —
+a filter list, a typo — falls through to the persisted flag and only then to the
+build default. A typo is not an instruction to disable a persisted preference
+(§3.2).
 
 The Settings toggle is not a convenience. On macOS a user launching from Finder
 cannot set an environment variable at all, so an env-var-only escape hatch is
@@ -354,10 +359,16 @@ Export-time policy, applied in this order:
    third-party lines leak. This pass is explicitly **best-effort** and carries no
    guarantee — rules 1–4 are the ones the privacy claim rests on.
 
-The bundle writer shows a pre-export notice naming what will be included, and
-offers an opt-in "include full file paths" checkbox (default off). Privacy-by-
-default matters beyond the home directory here: a Vault on an external drive or
-a NAS can carry project names in its folder names.
+The bundle writer shows a pre-export notice naming what will be included.
+There is **no** reachable "include full file paths" control in the shipped
+build. The command's `include_full_paths` parameter is plumbed and tested, and
+the TypeScript caller always passes `false`: the only UI seam available at the
+time was an unlabelled `window.confirm`, whose OK button would silently have
+meant "include full paths" — the privacy-invasive answer — so that question was
+removed instead of shipping an inverted one. The parameter stays in place for a
+labelled checkbox to drive when one exists. Privacy-by-default matters beyond
+the home directory here: a Vault on an external drive or a NAS can carry project
+names in its folder names, and paths therefore collapse on every export.
 
 Rules 1–4 are covered by a cross-platform case table, tested identically on every
 host: `C:\Users\…`, `D:\Vault\…`, `\\server\share\…`, `/Volumes/…`, paths with
@@ -373,7 +384,7 @@ Zip layout (format version recorded in `manifest.json`):
 
 | Entry | Content |
 | ----- | ------- |
-| `manifest.json` | bundle format version, generated-at, app version, OS/arch, log level in effect, per-file size + sha256, and `previous_exit` — the §3.4.5 determination as `{ state, reason, started_at, ended_at, pid, version }` |
+| `manifest.json` | bundle format version, generated-at, app version, OS/arch, log level in effect, per-file size + blake3, and `previous_exit` — the §3.4.5 determination as `{ state, reason, started_at, ended_at, pid, version }` (`started_at`/`ended_at` are `null`: no marker carries a timestamp, and a fabricated one would read as evidence) |
 | `version.txt`, `os.txt` | kept as-is; existing tests and muscle memory depend on them |
 | `diagnostics.txt` | combined redacted log; kept as-is |
 | `<log>.log` | redacted per §3.7 |
@@ -440,8 +451,10 @@ The death certificate must not be collateral damage.
 - Layer 4 cannot be bypassed in the "unbounded" sense — it is the last line of
   defence against a caller that ignores the frontend entirely. It satisfies the
   green channel by **collapsing rather than dropping**: if the budget is
-  exceeded, it emits one `N error records collapsed` line. `Error` is never
-  *silently* lost at any layer.
+  exceeded, it emits one `N log records collapsed` line. The wording is `log
+  records`, not `error records`: with the `Error` bypass above, layer 4 can no
+  longer collapse an error at all, so an `error`-worded notice would be false.
+  `Error` is never *silently* lost at any layer.
 - When the breaker closes, it emits the suppressed count, so a reader can tell
   the log is incomplete rather than assuming nothing happened.
 
@@ -468,8 +481,12 @@ The death certificate must not be collateral damage.
   keeping the `Stdout` target. A sibling fallback next to the real log directory
   is explicitly rejected: the failure modes being defended against (read-only
   directory, full or unmounted volume) are exactly the ones that make the real
-  directory unwritable. If the fallback *also* fails, the app runs with `Stdout`
-  only — degraded, but started.
+  directory unwritable. If the fallback *also* fails, the app runs with **no
+  logger attached at all** — degraded, but started. Not `Stdout` only: the
+  `Stdout` target lives inside the same plugin dispatch as the file target, so a
+  plugin that never attaches writes neither. The three states are therefore
+  `directory` / `fallback` / `disabled`, and the `disabled` copy says "this
+  session is not being logged" rather than naming a path that will never exist.
 - The probe is subject to TOCTOU between the test and the plugin's own open, so
   it reduces the risk rather than eliminating it. §3.12 is what makes the
   residual risk survivable.
@@ -528,7 +545,7 @@ builder chain.
 Tauri supplies the way out. `AppHandle::plugin()` registers a plugin at runtime
 and runs its `setup` immediately (`tauri-2.11.5` `app.rs:527-542`), and the
 app-level `.setup()` hook runs on the event loop's `Ready` event
-(`app.rs:1474-1477`) — long after `build()`'s plugin initialisation released the
+(`app.rs:1424-1427`) — long after `build()`'s plugin initialisation released the
 plugin-store lock. So the log plugin is registered **from inside `.setup()`**,
 where the `AppHandle` and therefore `app_log_dir()` are available. This is also
 what makes the residual TOCTOU from §3.9 survivable: registration returns a
@@ -544,9 +561,10 @@ The order is load-bearing at every step:
 3. **In `.setup()`, first thing:** resolve `app_log_dir()`, run the write probe,
    build the log plugin with either the real `LogDir` target or the `temp_dir`
    fallback, and call `app.handle().plugin(...)`. On error, retry once with the
-   fallback configuration; if that also fails, continue with `Stdout` only.
+   fallback configuration; if that also fails, continue with no logger attached
+   (`destination = disabled`).
 4. **Never return `Err` from `.setup()` for a logging reason.** Tauri turns a
-   setup failure into `panic!("Failed to setup app: {e}")` (`app.rs:1475-1476`),
+   setup failure into `panic!("Failed to setup app: {e}")` (`app.rs:1425-1426`),
    which is the same startup death this section exists to prevent — it would just
    have moved.
 5. **Scan for the previous session's markers** (§3.4.5) *after* registration and
@@ -643,10 +661,12 @@ the Help menu and the README. This is a `guides/` document per `docs/AGENTS.md`
 
 Settled during review on 2026-10-03, recorded here so they are not relitigated:
 
-- **Non-home absolute paths collapse by default** (§3.7 rule 3), with an opt-in
-  "include full file paths" checkbox. Privacy by default is the right posture for
-  a notes app: a Vault on an external drive or NAS can carry project names in its
-  folder names, and a checkbox is enough to serve deep debugging.
+- **Non-home absolute paths collapse by default** (§3.7 rule 3), with no
+  reachable opt-out: the shipped export flow has no labelled control for an
+  "include full file paths" choice, so every bundle collapses paths. Privacy by
+  default is the right posture for a notes app: a Vault on an external drive or
+  NAS can carry project names in its folder names, and a checkbox is enough to
+  serve deep debugging once a labelled one exists.
 - **The verbose-logging Settings toggle is Phase 1**, not deferred (§3.5). A
   macOS user launching from Finder cannot set `OMD_LOG` at all, so deferring it
   would leave the exact population that reports bugs unable to enable verbose
@@ -738,8 +758,11 @@ OS crash-report collection stays deferred (§3.8) and is not scheduled.
 
 **Rust unit tests**
 - Level policy resolves to the table in §3.2 for debug and release.
-- Rotation config equals `LOG_MAX_FILE_BYTES` / `LOG_KEEP_FILES`; a test fails if
-  anyone reintroduces `KeepOne`.
+- Rotation config equals `LOG_MAX_FILE_BYTES` / `LOG_KEEP_FILES`, and the
+  strategy is `KeepSome` rather than `KeepOne`. The size and count are asserted
+  by the TS side (`test/crossLayerConstants.test.ts` parses `logging.rs`); there
+  is no test that fails on a reintroduced `KeepOne`, so the strategy line is
+  guarded by review only.
 - Panic hook logs the panic message and `file:line`.
 - Session determination returns the right row of the §3.4.5 table for each input,
   including the `unknown` row when no `session start` is found.
@@ -753,8 +776,8 @@ OS crash-report collection stays deferred (§3.8) and is not scheduled.
 - Probe: a write test against a directory whose metadata read-only bit is clear
   but that is not writable still fails; a genuinely writable directory passes.
 - Probe failure selects the `temp_dir` fallback and the app still starts; when
-  even the fallback fails, the app starts with `Stdout` only; the degraded state
-  is reported.
+  even the fallback fails, the app starts with no logger attached (`disabled`)
+  and reports that state.
 - Plugin registration failure inside `.setup()` does **not** propagate — asserted
   by returning from setup with `Ok(())` on a forced registration error.
 - Path field helpers round-trip every case in the shared fixture, including `"`,

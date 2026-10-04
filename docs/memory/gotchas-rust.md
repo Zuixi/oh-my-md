@@ -224,3 +224,83 @@ the window open: log and destroy regardless. Accepted residual (VS Code
 parity): a **crash** can restore a window the user closed after that
 window's last flush — the shard only disappears at close time, so a crash
 before the finisher leaves the last-flushed shard on disk.
+
+## `tauri-plugin-log` defaults destroy evidence
+
+Both defaults are release-defaults, not dev-mode conveniences, and both were
+verified against the vendored `tauri-plugin-log` 2.9.0 source:
+
+- **`Builder::default()` sets `LevelFilter::Trace`, with no
+  `#[cfg(debug_assertions)]` gate.** `Builder::default()` never calls
+  `.level(...)`, and `fern::Dispatch`'s own default is `LevelFilter::Trace`
+  (`fern-0.7.1` `builders.rs:137`; the plugin documents the same default on
+  `Builder::level`, `lib.rs:557`). Nothing under `tauri-plugin-log/src/`
+  mentions `debug_assertions` at all. A shipped release build therefore logs
+  vendor TRACE traffic exactly like `tauri dev` — 295 of one month's 303 log
+  lines were `tao` TRACE records, against 0 WARN/ERROR.
+- **`DEFAULT_ROTATION_STRATEGY = RotationStrategy::KeepOne` is implemented as
+  `fs::remove_file(&self.path)`** (`const` at `lib.rs:47`, the arm at
+  `lib.rs:237-239`), with `DEFAULT_MAX_FILE_SIZE = 40_000` (`lib.rs:46`). At 40 KB
+  the previous file is **deleted**, not archived. The live file here was already
+  at 33 KB, so a busy day rotated several times and each rotation discarded the
+  only copy — "it broke yesterday" was unanswerable by construction.
+
+Always set all three explicitly: `.level(...)` (or a per-target policy via
+`.level_for`), `.max_file_size(...)`, and
+`.rotation_strategy(RotationStrategy::KeepSome(n))`. Also note `.level_for`
+matches whole module-path **prefixes**, so a rule for `wry` does not cover
+`tauri_runtime_wry`; the webview-crash signal (`web content process terminated`)
+lives under the latter and must be listed separately. This app's policy is in
+`apps/desktop/src-tauri/src/logging.rs` (`plugin()`), and
+`apps/desktop/test/crossLayerConstants.test.ts` asserts the size ceiling and
+retention count that the policy passes to the plugin.
+
+## A plugin `setup` failure panics before any window appears
+
+`tauri-plugin-log`'s `build()` runs its file open inside the plugin `setup`
+closure and propagates the error with `?` (`lib.rs:838-855`). Tauri calls that
+closure from `initialize_plugins(handle)?`, the last statement inside
+`Builder::build()` before `Ok(app)` (`tauri-2.11.5` `app.rs:2440`), and the
+app's own builder chain ends in `.expect("error while building oh-my-md")`.
+
+So an unopenable log file — antivirus or an indexer transiently holding the
+handle on Windows, a read-only log directory, a full disk, an unmounted home
+directory — is not a degraded-logging situation: it is a **startup panic with no
+window and no message**. It compiles, passes every test (none of them launch the
+app), and fails only on a user's machine.
+
+Generalise it: **never let a plugin whose `setup` touches the filesystem be
+load-bearing for startup.** Register it where the failure is catchable and give
+it a fallback. `AppHandle::plugin()` does exactly that — it runs the plugin's
+setup immediately and returns a `Result` (`tauri-2.11.5` `app.rs:527-542`), so
+`logging::install` probes first and retries against `temp_dir()`, then runs with
+no file target at all rather than dying. This app registers the log plugin from
+inside `.setup()` for that reason; see the next entry for the half that makes it
+a trap in its own right.
+
+## App `.setup()` runs on the event loop's `Ready` event, and its error is a panic
+
+Two halves, both load-bearing, and together they are why the bootstrap order in
+`logging.rs` looks the way it does:
+
+1. **The app-level `.setup()` hook does not run inside `build()`.** Tauri invokes
+   it from the `RuntimeRunEvent::Ready` arm of the event-loop closure
+   (`tauri-2.11.5` `app.rs:1424-1427`: `if let Err(e) = setup(&mut self) {
+   panic!(...) }`; the hook body starts at `app.rs:2521`). By then `build()`'s
+   plugin initialisation has returned and released the plugin-store lock. That is
+   what makes **late plugin registration possible at all**: `AppHandle` exists,
+   so `app_log_dir()` resolves, so a write probe can run before the logger is
+   attached (`AppHandle::plugin` → `plugin_boxed` → `PluginStore::initialize`,
+   which runs the plugin's `setup` immediately, `app.rs:527-542`).
+2. **A non-`Ok` return from that hook is fatal.** `if let Err(e) = setup(&mut
+   self) { panic!("Failed to setup app: {e}") }` (`app.rs:1424-1426`). Moving work
+   into `.setup()` to escape the plugin-`setup` panic above therefore inherits the
+   *same* startup death unless the hook swallows every logging error itself.
+
+Consequence for any `.setup()` that can fail: the hook must be total. If it
+calls something fallible — resolving a directory, probing, creating a directory,
+registering a plugin — catch the error, degrade, and return `Ok(())`. Returning
+`Err` is only correct when the app genuinely cannot continue, which is never true
+for logging. Corollary from the first half: work moved into `.setup()` runs later
+than the config windows are created (`app.rs:2524-2526`), so the window can exist
+marginally before the logger does.

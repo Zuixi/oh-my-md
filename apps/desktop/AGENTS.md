@@ -48,6 +48,8 @@ apps/desktop/
     ├── src/lib.rs           # File IO, image write, asset scope, workspace commands, open-file events
     ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
     ├── src/menu.rs          # Native File / Edit application menu
+    ├── src/logging.rs       # Level policy, log-dir probe + fallback, session markers, log_frontend sink
+    ├── src/diagnostics.rs   # Diagnostics bundle assembly and export redaction
     ├── src/watcher.rs       # notify watcher: workspace-changed events (hint-only)
     ├── src/workspace.rs     # workspace tree commands, search, quick-open list, snapshots, config/recovery state
     ├── capabilities/        # Tauri permissions
@@ -139,6 +141,23 @@ Current Rust commands are:
 - `quit_app()` / `app_version()` — explicit quit and About-dialog version for the in-app menubar on Windows/Linux (macOS covers both with the native app menu).
 - `update_capability()` — `{ check, install, reason? }` derived from the **actual runtime bundle type** (`tauri::utils::platform::bundle_type()`, the `__TAURI_BUNDLE_TYPE` marker): macOS inside `.app`, Windows `Nsis`, and Linux `AppImage` are install-capable; Windows `Msi` and Linux `Deb`/`Rpm` are check-only (`reason: "manualPackage"`); debug builds (`reason: "development"`) and unpackaged/unknown binaries (`reason: "unsupported"`) fail closed. MSI is deliberately never install-capable so a generic `windows-x86_64` manifest entry cannot let an MSI installation consume the NSIS updater. Pure policy + serialized-JSON tests live in `lib.rs`.
 - `prepare_update_restart()` — update-only session-flush protocol reusing the `FlushGate`/`session-flush` events; returns `{ kind: "ready" } | { kind: "timedOut" }` and — unlike ordinary quit — never exits or restarts on timeout; after its round it clears the one-shot flushed marker so the next normal quit still flushes. Must be `async` + `spawn_blocking` so the webview's `session_flush_ack` IPC is served during the wait.
+- `export_diagnostics(path, include_full_paths)` — write the support bundle (see `diagnostics.rs` and `docs/guides/troubleshooting.md` for the entry list). `async` + `spawn_blocking` because it redacts and hashes every log; the `LogState`/`PreviousExitState` facts are cloned out of managed state before the await, since a `tauri::State` guard is not `Send` and must not cross it.
+- `log_state()` — report where logging actually went: `{ degraded, dir, destination }` with `destination.kind` one of `"directory" | "fallback" | "disabled"`. Drives the Settings degradation warning; `dir` is empty in the `disabled` state.
+- `open_log_dir()` — reveal the resolved log directory in the OS file manager. Errors by design in the `disabled` state (there is no folder to open); the caller surfaces that through `reportError`.
+- `log_frontend(records)` — the frontend log sink. See "Logging ownership" below.
+
+## Logging ownership (desktop)
+
+**The desktop host owns logging; the engine stays silent.** `packages/engine` must not import the logger, the i18n store, or Tauri — the host logs at the engine's boundary on the engine's behalf (the same shape as the localized-string injection rule in Frontend Boundaries). Rust writes through the `log` facade; TypeScript writes through the `log_frontend` command; both land in the one `tauri-plugin-log` dispatch, so filtering, rotation, timestamping, and redaction have a single implementation (`src-tauri/src/logging.rs`). Never log document content: every `logger.*` / `log::*` boundary call site passes structured fields only.
+
+**The `log_frontend` IPC contract.** Payload `{ level, target, message }`, return `Result<(), String>`: `level` is one of the five names (`error`/`warn`/`info`/`debug`/`trace`, anything else falls back to `info`), `target` is a short module tag, `message` is pre-formatted text. The Rust side parses the level **before** consulting its per-window budget, so `Error` is always logged and never collapsed away — the green channel. Both `target` and `message` go through the escape/neutralization helper before being written, because the log file is line-oriented and the session-boundary scanner reads it back; never build a record by string concatenation. The command is never `Err` by design, so the TS facade swallows a rejection after counting it. Field names are single words, so the camelCase trap cannot bite here, but a Rust test still pins the serialized JSON because TS reads a renamed field as `undefined` without failing to compile.
+
+**Bootstrap is constrained, and the order is load-bearing.** The log plugin cannot be registered in the builder chain: resolving `app_log_dir()` needs an `AppHandle`. It is registered from *inside* the app `.setup()` hook via `AppHandle::plugin`, which runs a plugin's `setup` immediately and returns a catchable `Result`. Two consequences, both enforced in `logging.rs`:
+
+1. **A `.setup()` error is a startup panic.** Tauri turns a non-`Ok` return into `panic!("Failed to setup app: {e}")`, so the hook must swallow every logging failure — resolve, probe, register, retry the `temp_dir()` fallback, and run without a file target if even that fails. Never return `Err` for a logging reason.
+2. **Never let a plugin whose `setup` touches the filesystem be load-bearing for startup.** `tauri-plugin-log`'s own `build()` propagates a file-open error out of `initialize_plugins` inside `Builder::build()`, which reaches the app's `.expect(...)` — a panic with no window and no message. See the `gotchas-rust.md` entries; the write probe (`probe_writable`) exists so that failure mode is caught before registration, and it is a write test rather than a permission-bit check.
+
+The scan for the previous session's markers must run *after* registration (which may rotate the file) and *before* writing this run's `session start` (or every launch reports an abnormal exit). The resolved directory and file stem are carried forward as managed state rather than recomputed, so the writer and the scanner can never disagree.
 
 The native menu (`menu.rs`) has File / Edit / Format / View / Window top-level menus and only installs as a menubar on macOS (`rebuild_from_state` early-returns off macOS). Item clicks emit `menu-command` to the webview, except the `window-*` items which are handled natively in Rust (`handle_window_command`) and never forwarded. Do not use `PredefinedMenuItem` for window actions — their macOS selectors go through the responder chain and do not act on the Tauri window. Do not reimplement those actions as sidebar buttons.
 

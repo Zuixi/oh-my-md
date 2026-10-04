@@ -379,3 +379,14 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] **重启恢复所有窗口**：上次退出时的每个窗口逐一恢复，含位置/大小/最大化状态（按保存的物理像素几何精确还原）及各自标签内容与文件夹（每窗口恢复自己 shard 的标签/工作区，非主窗口不得回退为空白草稿）；被关闭过的窗口不恢复
 - [ ] **macOS**：关掉最后一个窗口应用驻留（Dock 图标仍在、菜单栏可用），点 Dock 图标重开一个窗口
 - [ ] **Windows**：关掉最后一个窗口应用完全退出（无残留进程；下次启动为全新会话）
+
+## 日志与诊断（Logging and diagnostics，2026-10）
+
+按平台路径见 `docs/guides/troubleshooting.md`。以下项需 `pnpm dev` 或真实打包产物交互；Windows/Linux 项需实机。
+
+- [ ] **打开日志目录**：Help 菜单「打开日志目录」/ 命令面板 Open Log Folder 在 macOS 打开 `~/Library/Logs/md.ohmy.desktop/`（**没有** `logs/` 子目录）、Windows 打开 `%LOCALAPPDATA%\md.ohmy.desktop\logs\`、Linux 打开 `~/.local/share/md.ohmy.desktop/logs\`；三个平台上都是本次运行实际使用的目录。
+- [ ] **详细日志开关**：Settings 勾选「启用详细日志」→ 重启 → 启动头部那行 `environment … log_level=debug` 记录到新的级别（取消勾选再重启回到 `info`，release 构建）；重启前不生效。
+- [ ] **异常终止与正常退出**：编辑中途 `kill -9` 进程 → 下次启动出现 `WARN previous session ended abnormally`；走正常退出（⌘Q / 应用内 Quit / 关最后一个窗口）后再启动**不出现**该 Warn（只写 debug 级 `previous session exited cleanly`）。
+- [ ] **系统打断 ≠ 崩溃**：会话进行中强制 macOS 注销（或关机）→ 下次启动判定为 interrupted（`INFO previous session was interrupted by the system`），**不得**报成 abnormal/crash。
+- [ ] **日志目录不可写仍能启动**：`chmod 500` 日志目录（Windows 用拒绝写入的 ACL，且保持只读属性为清除状态）→ 应用照常启动 → Settings 的 Logging 一节显示「日志记录已降级」并给出 `temp_dir` 下的实际路径（`destination.kind = fallback`）；恢复权限后重启回到正常目录。
+- [ ] **导出包**：导出诊断信息 → 生成的 `.zip` 能被系统解压工具正常打开（条目与 `manifest.json` 一致）→ 包内**不含**任何文档内容，也**不含**家目录之外完整绝对路径（结构化路径字段应为 `<path>/…/<文件名>`）。
