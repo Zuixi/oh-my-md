@@ -287,6 +287,8 @@ export const en: Record<string, string> = {
   "confirm.readonlyOpen": "{label} is {mb} MB — too large to edit comfortably. Open it read-only with live preview?",
   "confirm.restore": "Restore unsaved draft {label}?",
   "confirm.externalChange": "File changed on disk. Reload?",
+  "confirm.exportDiagnostics": "Export a diagnostics bundle? It contains the app version, OS and log level, the redacted logs, environment details, your settings, and the session restore state — never document content. File paths in log path fields are collapsed to their final file name.",
+  "confirm.exportDiagnosticsFullPaths": "Include full file paths in the bundle? Folder names can identify projects and clients, so choose OK only when support asked for them. Cancel keeps every path collapsed to its final file name.",
   "error.export.desktopOnly": "PDF and image export are only available in the macOS desktop app",
   "error.openFailed": "Open failed",
   "error.folderListingFailed": "Folder listing failed",

@@ -332,7 +332,9 @@ pub fn save_settings(contents: String) -> Result<(), String> {
 /// v1 flat SavedSessionState and reads as `main`'s payload; the next save
 /// persists it as a schema-2 shard (migration on first read).
 const SESSION_SCHEMA_VERSION: u64 = 2;
-const SESSION_FILE_NAME: &str = "session.json";
+/// Public because the diagnostics bundle copies the same file (Task 12): a
+/// second literal there would silently stop finding it after a rename.
+pub const SESSION_FILE_NAME: &str = "session.json";
 
 /// Serializes read-modify-write cycles over `session.json`: all windows
 /// share one file, so concurrent shard saves from different webviews must

@@ -363,9 +363,19 @@ export const defaultServices: DesktopServices = {
     await invoke("set_view_menu_state", { state })
   },
   exportDiagnostics: async () => {
+    // Pre-export notice (spec §3.7). The bundle carries logs, settings, and
+    // session state, so the user gets to see what leaves the machine before a
+    // destination is even chosen.
+    //
+    // The opt-in is a second question rather than a checkbox: this module has no
+    // UI, and the repository's confirmation pattern is `window.confirm` — which
+    // cannot render one. Dismissing the question is the default, so paths stay
+    // collapsed unless the user actively asks for them.
+    if (!window.confirm(t("confirm.exportDiagnostics"))) return
+    const includeFullPaths = window.confirm(t("confirm.exportDiagnosticsFullPaths"))
     const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
-    await invoke("export_diagnostics", { path })
+    await invoke("export_diagnostics", { path, includeFullPaths })
   },
   openLogDir: async () => {
     // Rejects by design: a disabled destination has no folder to open, and the

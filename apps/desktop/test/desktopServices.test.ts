@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { toDocumentCommandError } from "../src/desktopServices"
 import type { LogRecord } from "../src/logger"
 
-const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
+const { invoke, revealItemInDir, toast, save } = vi.hoisted(() => ({
   invoke: vi.fn(),
   revealItemInDir: vi.fn(),
   toast: { error: vi.fn(), success: vi.fn() },
+  save: vi.fn(),
 }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save }))
 vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
@@ -65,6 +67,72 @@ describe("logRecords", () => {
     const records: LogRecord[] = [{ level: "warn", target: "save", message: "retrying" }]
     await defaultServices.logRecords?.(records)
     expect(invoke).toHaveBeenCalledWith("log_frontend", { records })
+  })
+})
+
+describe("export diagnostics", () => {
+  /** Answers the notice and then the full-paths opt-in, in that order. */
+  function confirmTwice(notice: boolean, includeFullPaths: boolean) {
+    const confirm = vi.spyOn(window, "confirm")
+    confirm.mockReturnValueOnce(notice).mockReturnValueOnce(includeFullPaths)
+    return confirm
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    invoke.mockClear()
+    save.mockReset()
+  })
+
+  it("asks before exporting and maps the opt-in to the command argument", async () => {
+    save.mockResolvedValueOnce("/tmp/omd.zip")
+    invoke.mockResolvedValueOnce(undefined)
+    const confirm = confirmTwice(true, false)
+
+    await defaultServices.exportDiagnostics?.()
+
+    // Two questions: what will be included, then the full-paths opt-in. The
+    // first must name the contents, so it cannot be a bare "are you sure".
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(confirm.mock.calls[0][0]).toMatch(/diagnostics/i)
+    expect(confirm.mock.calls[0][0]).toMatch(/log/i)
+    expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
+      path: "/tmp/omd.zip",
+      includeFullPaths: false,
+    })
+  })
+
+  it("includes full file paths only after the opt-in", async () => {
+    save.mockResolvedValueOnce("/tmp/omd.zip")
+    invoke.mockResolvedValueOnce(undefined)
+    confirmTwice(true, true)
+
+    await defaultServices.exportDiagnostics?.()
+
+    expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
+      path: "/tmp/omd.zip",
+      includeFullPaths: true,
+    })
+  })
+
+  it("exports nothing when the notice is declined", async () => {
+    confirmTwice(false, true)
+
+    await defaultServices.exportDiagnostics?.()
+
+    // No destination is chosen and nothing is invoked: a declined notice must
+    // not leave the user holding a save dialog.
+    expect(save).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("exports nothing when the save dialog is cancelled", async () => {
+    save.mockResolvedValueOnce(null)
+    confirmTwice(true, false)
+
+    await defaultServices.exportDiagnostics?.()
+
+    expect(invoke).not.toHaveBeenCalled()
   })
 })
 

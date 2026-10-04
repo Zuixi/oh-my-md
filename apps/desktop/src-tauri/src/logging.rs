@@ -143,6 +143,19 @@ pub enum LogDestination {
     Disabled,
 }
 
+impl LogDestination {
+    /// The stable `kind` string: the tag `serde` puts on the wire, and the value
+    /// `environment.txt` prints. One spelling for both, so a support reader and
+    /// the Settings surface cannot disagree about the same state.
+    pub fn kind(self) -> &'static str {
+        match self {
+            LogDestination::Directory => "directory",
+            LogDestination::Fallback => "fallback",
+            LogDestination::Disabled => "disabled",
+        }
+    }
+}
+
 /// What the rest of the app needs to know about where logs went.
 pub struct LogState {
     /// True whenever `destination` is not [`LogDestination::Directory`].
@@ -320,7 +333,12 @@ pub struct LogStateView {
 }
 
 /// What the previous run did. See spec §3.4.5.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Serialized for the diagnostics manifest's `previous_exit.state`: the variant
+/// names are the stable machine-readable answer, and `previous_exit_reason`
+/// carries the sentence a human reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PreviousExit {
     /// The last session reached `session end clean=true`.
     Clean,
@@ -474,13 +492,34 @@ pub fn classify(markers: &[Marker]) -> PreviousExit {
 /// a session that outgrows `LOG_MAX_FILE_BYTES` keeps its start in the archive
 /// and its end in the active log. Only `LOG_TAIL_READ_BYTES` of each is read.
 pub fn scan_previous_session(dir: &Path, stem: &str) -> PreviousExit {
+    let Some(files) = session_scan_files(dir, stem) else {
+        return PreviousExit::Unknown;
+    };
     let mut markers = Vec::new();
-    if let Some(archive) = newest_archive(dir, stem) {
-        markers.extend(parse_markers(&read_tail(&archive, LOG_TAIL_READ_BYTES)));
+    for file in files {
+        markers.extend(parse_markers(&read_tail(&file, LOG_TAIL_READ_BYTES)));
     }
-    let active = dir.join(format!("{stem}.log"));
-    markers.extend(parse_markers(&read_tail(&active, LOG_TAIL_READ_BYTES)));
     classify(&markers)
+}
+
+/// The files a scan would read, newest archive first.
+///
+/// `None` when there is no directory to scan. That case is not hypothetical:
+/// in the `Disabled` logging state `LogState.dir` is empty *because* nothing was
+/// written anywhere, and `Path::new("").join("oh-my-md.log")` is a *relative*
+/// path — the scan would read `./oh-my-md.log` from the process's working
+/// directory and report a determination sourced from a file this run never
+/// wrote. Never accuse on evidence we did not produce.
+fn session_scan_files(dir: &Path, stem: &str) -> Option<Vec<PathBuf>> {
+    if dir.as_os_str().is_empty() || stem.is_empty() {
+        return None;
+    }
+    let mut files = Vec::new();
+    if let Some(archive) = newest_archive(dir, stem) {
+        files.push(archive);
+    }
+    files.push(dir.join(format!("{stem}.log")));
+    Some(files)
 }
 
 /// Whether the app is on its way out. Consulted by the webview-termination
@@ -540,7 +579,8 @@ pub fn note_clean_exit() {
     log::info!("{SESSION_END_MARKER} clean=true");
 }
 
-/// Reports what the previous run did, at the level `level_for_exit` picks.
+/// The sentence that describes a determination, in the one wording both the log
+/// and the diagnostics manifest use.
 ///
 /// The wording is load-bearing, not cosmetic. Every sentence here is written
 /// *after* this run's `session start`, so the next launch's scanner reads it
@@ -548,13 +588,18 @@ pub fn note_clean_exit() {
 /// marker ("session exited", "session ended" — never "session exit " /
 /// "session end "). Rewording one to end a marker on a space would invent an
 /// exit intent and suppress the abnormal-exit warning. See `has_marker`.
-pub fn log_previous_exit(outcome: PreviousExit) {
-    let text = match outcome {
+pub fn previous_exit_reason(outcome: PreviousExit) -> &'static str {
+    match outcome {
         PreviousExit::Clean => "previous session exited cleanly",
         PreviousExit::Interrupted => "previous session was interrupted by the system",
         PreviousExit::Abnormal => "previous session ended abnormally",
         PreviousExit::Unknown => "previous session outcome unknown (no markers in range)",
-    };
+    }
+}
+
+/// Reports what the previous run did, at the level `level_for_exit` picks.
+pub fn log_previous_exit(outcome: PreviousExit) {
+    let text = previous_exit_reason(outcome);
     match level_for_exit(outcome) {
         None => log::debug!("{text}"),
         Some(log::Level::Warn) => log::warn!("{text}"),
@@ -1627,6 +1672,66 @@ mod tests {
         );
     }
 
+    // The `Disabled` logging state hands the scanner an empty dir, and
+    // `Path::new("").join("oh-my-md.log")` is *relative*: a naive scan would read
+    // `./oh-my-md.log` from the process's working directory and report a
+    // determination sourced from a file this run never wrote. The scan target
+    // list is `None` there, which is what makes the CWD unreachable.
+    #[test]
+    fn scan_has_no_targets_when_the_log_directory_is_empty() {
+        assert!(session_scan_files(Path::new(""), "oh-my-md").is_none());
+        assert!(session_scan_files(Path::new("/tmp/logs"), "").is_none());
+        assert_eq!(
+            scan_previous_session(Path::new(""), "oh-my-md"),
+            PreviousExit::Unknown
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let targets = session_scan_files(dir.path(), "oh-my-md").unwrap();
+        assert_eq!(targets, vec![dir.path().join("oh-my-md.log")]);
+    }
+
+    // The destination is a three-state enum, and Task 12 prints its `kind` in
+    // `environment.txt` while serde puts the same word on the wire. Two
+    // spellings of one state is how Settings and a support reader end up
+    // disagreeing about the same run.
+    #[test]
+    fn destination_kind_matches_the_serialized_tag() {
+        for destination in [
+            LogDestination::Directory,
+            LogDestination::Fallback,
+            LogDestination::Disabled,
+        ] {
+            assert_eq!(
+                serde_json::to_value(destination).unwrap()["kind"],
+                destination.kind(),
+                "{destination:?}"
+            );
+        }
+    }
+
+    // The manifest's `previous_exit.state` is machine-read, so the variant names
+    // are a wire format, not an implementation detail.
+    #[test]
+    fn previous_exit_serializes_as_the_manifest_state_and_reason() {
+        for (outcome, state) in [
+            (PreviousExit::Clean, "clean"),
+            (PreviousExit::Interrupted, "interrupted"),
+            (PreviousExit::Abnormal, "abnormal"),
+            (PreviousExit::Unknown, "unknown"),
+        ] {
+            assert_eq!(serde_json::to_value(outcome).unwrap(), state);
+            // The reason is the sentence the log carries; it must never be
+            // empty, and it must never read as a boundary marker (see
+            // `previous_exit_reason`).
+            let reason = previous_exit_reason(outcome);
+            assert!(!reason.is_empty(), "{outcome:?}");
+            assert!(!has_marker(reason, SESSION_EXIT_MARKER), "{reason}");
+            assert!(!has_marker(reason, SESSION_END_MARKER), "{reason}");
+            assert!(!has_marker(reason, SESSION_START_MARKER), "{reason}");
+        }
+    }
+
     #[test]
     fn previous_exit_levels_match_the_spec_table() {
         assert_eq!(level_for_exit(PreviousExit::Clean), None);
@@ -1880,11 +1985,13 @@ mod tests {
             let input = case["raw"].as_str().unwrap();
             let expected = case["field"].as_str().unwrap();
             assert_eq!(path_field(Path::new(input)), expected, "raw {input:?}");
-            assert_eq!(unescape_path_field(input), input, "raw {input:?}");
 
             // `path=` is the whole field prefix, so what follows it must
             // unescape back to the original. This is the property Task 12's
-            // redactor relies on.
+            // redactor relies on, and it is the *field* form that is asserted:
+            // asserting `unescape_path_field(input) == input` on the raw path
+            // would pass coincidentally (a raw path is mostly not escaped) and
+            // prove nothing about the grammar.
             let value = expected.strip_prefix("path=").unwrap();
             assert_eq!(unescape_path_field(value), input, "field {expected:?}");
         }
