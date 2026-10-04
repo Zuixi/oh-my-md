@@ -15,6 +15,16 @@ static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 #[cfg(test)]
 static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// Held by every test that sets or removes `OMD_CONFIG_DIR` / `OMD_RECOVERY_DIR`,
+/// in this module or any other: `config_dir()` reads the env live, so a test
+/// that swaps it can change what an unrelated parallel test's `get_settings()`
+/// returns. Crate-visible because `logging`'s level tests pin the same variable
+/// to keep the persisted verbose flag out of their assertions.
+#[cfg(test)]
+pub(crate) fn config_env_guard() -> std::sync::MutexGuard<'static, ()> {
+    CONFIG_ENV_LOCK.lock().unwrap()
+}
+
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
 const MARKDOWN_FILE_EXTENSION: &str = "md";
 
@@ -936,12 +946,8 @@ mod tests {
         authorize_workspace_root(path).unwrap();
     }
 
-    /// Holds the CONFIG_ENV_LOCK so tests that set/remove OMD_CONFIG_DIR /
-    /// OMD_RECOVERY_DIR cannot race with each other in parallel runs.
-    fn config_env_guard() -> std::sync::MutexGuard<'static, ()> {
-        CONFIG_ENV_LOCK.lock().unwrap()
-    }
-
+    // `config_env_guard()` comes in via `use super::*`; it is defined at module
+    // scope so the `logging` level tests can hold the same lock.
     fn path_string(path: &Path) -> String {
         path.to_string_lossy().into_owned()
     }

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
@@ -52,6 +52,27 @@ describe("export diagnostics wiring", () => {
 })
 
 describe("open log folder wiring", () => {
+  // The palette test below reaches the command by id directly, so it cannot see
+  // `MENU_TO_COMMAND`. This drives the native menu id through the same
+  // `listenMenu` seam App wires up, so a menu id mapped to a missing or renamed
+  // command fails here instead of only in the string-level crossLayerMenu guard
+  // (a dead menu item compiles and renders fine).
+  it("runs openLogDir from the native menu id", async () => {
+    const harness = createAppHarness(editor)
+    let send: ((id: string) => void) | undefined
+    harness.services.listenMenu = handler => {
+      send = handler
+      return () => undefined
+    }
+    const openLogDir = vi.fn(async () => undefined)
+    harness.services.openLogDir = openLogDir
+
+    harness.renderApp()
+    act(() => send?.("open-log-folder"))
+
+    await waitFor(() => { expect(openLogDir).toHaveBeenCalledTimes(1) })
+  })
+
   // The whole point of the menu entry is that the user does not have to know the
   // path, so the palette command must reach the service — a label with no run
   // path compiles and renders fine while doing nothing.

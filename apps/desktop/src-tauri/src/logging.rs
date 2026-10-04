@@ -950,28 +950,60 @@ mod tests {
         capture_log, records_for_target, take_captured_records, CapturedRecord,
     };
 
-    // One sequential test rather than several: `set_var`/`remove_var` mutate
-    // process-global state and cargo runs tests on parallel threads, so two
-    // env-mutating tests interleave and fail intermittently. `OMD_CONFIG_DIR` is
-    // in here too — the persisted verbose flag is read through
-    // `workspace::get_settings()`, which resolves that directory — but only this
-    // test may write it.
+    // Serializes the tests that mutate `OMD_LOG`. Cargo runs tests on parallel
+    // threads, so without this the two level tests below interleave and fail
+    // intermittently: a `set_var` landing between another test's `set_var` and
+    // its assertion silently changes what that assertion reads.
+    static LOG_LEVEL_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn log_level_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        LOG_LEVEL_ENV_LOCK.lock().unwrap()
+    }
+
+    /// Both guards, in this order, for every test here that touches an env var
+    /// `effective_level()` reads. `OMD_CONFIG_DIR` cannot be left unpinned: the
+    /// persisted verbose flag is read through `workspace::get_settings()`, so an
+    /// unpinned run consults the developer's real `settings.json` — and the
+    /// shared `workspace` tests must not see this test's temp config dir either
+    /// (`workspace::tests::settings_and_session_roundtrip` asserts it is empty).
+    /// Lock order is config-then-level here and in the other test, so the two
+    /// never invert; `workspace`'s tests take only the first.
+    fn env_guards() -> (
+        std::sync::MutexGuard<'static, ()>,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        (crate::workspace::config_env_guard(), log_level_env_guard())
+    }
+
     #[test]
     fn effective_level_honours_the_env_var_and_ignores_nonsense() {
-        // The env override is the only input; the build default is the other.
+        let (_config_guard, _level_guard) = env_guards();
+        // An empty config dir means no settings file, so `verbose_logging_enabled`
+        // is provably false and the fallthrough below can only be the *build
+        // default* — never the persisted flag. It also stops this test from
+        // reading the developer's real settings (the persisted-flag path returns
+        // `Debug`, which a release-profile run would misread as a failure).
+        let config = tempfile::tempdir().unwrap();
+        std::env::set_var("OMD_CONFIG_DIR", config.path());
+        assert!(
+            !verbose_logging_enabled(),
+            "an empty config dir must not report the verbose flag"
+        );
+
         std::env::set_var(LOG_LEVEL_ENV_VAR, "trace");
         assert_eq!(effective_level(), log::LevelFilter::Trace);
         std::env::set_var(LOG_LEVEL_ENV_VAR, "warn");
         assert_eq!(effective_level(), log::LevelFilter::Warn);
+        // The flag is off (asserted above), so this is the build default. The
+        // other test pins the flag-on case, where the same nonsense value must
+        // resolve to `Debug` instead; together the pair tells the two fallbacks
+        // apart even though they coincide under `debug_assertions`.
         std::env::set_var(LOG_LEVEL_ENV_VAR, "banana");
-        let expected = if cfg!(debug_assertions) {
-            log::LevelFilter::Debug
-        } else {
-            log::LevelFilter::Info
-        };
-        assert_eq!(effective_level(), expected);
+        assert_eq!(effective_level(), default_level());
         std::env::remove_var(LOG_LEVEL_ENV_VAR);
-        assert_eq!(effective_level(), expected);
+        assert_eq!(effective_level(), default_level());
+
+        std::env::remove_var("OMD_CONFIG_DIR");
     }
 
     // `OMD_LOG` must keep winning over the persisted flag: it is the
@@ -980,11 +1012,9 @@ mod tests {
     // `OMD_LOG=banana` is not a level, so it must fall through to the flag
     // rather than pinning the build default — a typo must not silently disable
     // verbose logging any more than it may change the level.
-    //
-    // Sequential for the same reason as the test above: this is the single test
-    // that owns both env vars.
     #[test]
     fn effective_level_lets_the_env_var_beat_the_persisted_verbose_flag() {
+        let (_config_guard, _level_guard) = env_guards();
         let config = tempfile::tempdir().unwrap();
         std::env::set_var("OMD_CONFIG_DIR", config.path());
         std::fs::write(
@@ -992,6 +1022,13 @@ mod tests {
             format!(r#"{{"{VERBOSE_LOGGING_SETTINGS_KEY}":true}}"#),
         )
         .unwrap();
+        // The flag-on precondition that makes the `banana` case below
+        // unambiguous: the value it resolves to is the flag's, not the build
+        // default's (the two only coincide under `debug_assertions`).
+        assert!(
+            verbose_logging_enabled(),
+            "the pinned settings file must report the verbose flag"
+        );
 
         std::env::set_var(LOG_LEVEL_ENV_VAR, "warn");
         assert_eq!(
