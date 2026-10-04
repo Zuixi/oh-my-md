@@ -8,8 +8,9 @@ import { defineConfig } from "@playwright/test"
 // serving `pnpm dev` of the first one — and since the harness page plus the whole
 // `src/` tree are served from that Vite root, the suite would silently assert against
 // foreign code. Overriding the port makes each worktree serve its own sources; the
-// default stays 9420, so the plain command is unchanged.
-const PORT = Number(process.env.PW_PORT ?? 9420)
+// default stays 9420, so the plain command is unchanged. A malformed value falls back
+// to 9420 (a bare `Number(...)` would yield NaN and `baseURL: http://localhost:NaN`).
+const PORT = Number.parseInt(process.env.PW_PORT ?? "", 10) || 9420
 
 export default defineConfig({
   testDir: "./e2e",

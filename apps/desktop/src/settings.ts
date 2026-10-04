@@ -1,4 +1,4 @@
-import type { AutoPairOptions } from "@omd/engine"
+import { DEFAULT_AUTO_PAIR, type AutoPairOptions } from "@omd/engine"
 import type { StoredLocale } from "./i18n"
 
 export type AppTheme = "system" | "light" | "dark"
@@ -45,7 +45,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   tabSize: 2,
   defaultMode: "live",
   spellcheck: false,
-  autoPair: { brackets: true, quotes: true, markdownSyntax: true },
+  // 引擎默认值的单一来源（packages/engine/src/format/autoPair.ts）；此处只做浅拷贝，
+  // 避免 desktop 侧再维护一份必须与引擎一致的字面量。
+  autoPair: { ...DEFAULT_AUTO_PAIR },
   locale: "auto",
 }
 
@@ -77,14 +79,15 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
 
   // settings.json written before the toggles existed has no `autoPair` (and a
   // hand-edited file may carry only some of the three): booleanize every flag
-  // so `undefined` never reaches the engine's compartment.
+  // so `undefined` never reaches the engine's compartment. The fallback for each
+  // flag is the engine constant — one source of truth for the defaults.
   const storedAutoPair: Partial<AutoPairOptions> = raw.autoPair ?? {}
   const flag = (value: boolean | undefined, fallback: boolean): boolean =>
     typeof value === "boolean" ? value : fallback
   const autoPair: AutoPairOptions = {
-    brackets: flag(storedAutoPair.brackets, DEFAULT_SETTINGS.autoPair.brackets),
-    quotes: flag(storedAutoPair.quotes, DEFAULT_SETTINGS.autoPair.quotes),
-    markdownSyntax: flag(storedAutoPair.markdownSyntax, DEFAULT_SETTINGS.autoPair.markdownSyntax),
+    brackets: flag(storedAutoPair.brackets, DEFAULT_AUTO_PAIR.brackets),
+    quotes: flag(storedAutoPair.quotes, DEFAULT_AUTO_PAIR.quotes),
+    markdownSyntax: flag(storedAutoPair.markdownSyntax, DEFAULT_AUTO_PAIR.markdownSyntax),
   }
 
   const locale: StoredLocale =
@@ -104,11 +107,13 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
 }
 
 /** Change detection for the hot-apply path: a settings save only reconfigures
- * mounted views when one of the three toggles actually flipped. */
+ * mounted views when a toggle actually flipped. Derived from the engine
+ * constant's declared keys, so a fourth toggle cannot silently skip the hot
+ * apply (it would still need a UI field, but it can no longer be forgotten here). */
+const AUTO_PAIR_KEYS = Object.keys(DEFAULT_AUTO_PAIR) as ReadonlyArray<keyof AutoPairOptions>
+
 export function sameAutoPair(a: AutoPairOptions, b: AutoPairOptions): boolean {
-  return a.brackets === b.brackets
-    && a.quotes === b.quotes
-    && a.markdownSyntax === b.markdownSyntax
+  return AUTO_PAIR_KEYS.every(key => a[key] === b[key])
 }
 
 export function parseSettings(json: string): UserSettings {

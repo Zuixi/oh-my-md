@@ -31,10 +31,12 @@ function mount(doc: string, selection?: EditorSelection, extra: Extension[] = []
 }
 
 /**
- * 引擎在 editorExtensions 里注册的 inputHandler **不是 facet[0]**：`markdownCodeLanguages()`
- * 带来的 @codemirror/lang-html `autoCloseTags` 先注册。facet 本身是无 combine 的数组，
- * @codemirror/view 的 applyDOMChangeInner 用 `.some(...)` 依次询问（第一个返回 true 的赢），
- * 所以这里照抄那条链路，而不是假设下标。
+ * 引擎在 editorExtensions 里注册的 inputHandler **不是 facet[0]**：`markdown()` 默认挂载的
+ * `htmlTagLanguage`（模块级 `html({ matchClosingTags: false })`）自带的
+ * `@codemirror/lang-html` `autoCloseTags` 先注册。`markdownCodeLanguages()` 不是来源 ——
+ * 它只返回惰性 `LanguageDescription`，代码语言的 support 从不挂到 view 上。
+ * facet 本身是无 combine 的数组，@codemirror/view 的 applyDOMChangeInner 用 `.some(...)`
+ * 依次询问（第一个返回 true 的赢），所以这里照抄那条链路，而不是假设下标。
  */
 function input(view: EditorView, from: number, to: number, text: string, insert: () => Transaction): boolean {
   return view.state.facet(EditorView.inputHandler).some(h => h(view, from, to, text, insert))

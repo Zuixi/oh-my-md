@@ -83,6 +83,21 @@ function activeClosers(options: AutoPairOptions, verbatim: boolean): Set<string>
   return closers
 }
 
+/**
+ * D12 的两个候选集，在 `options` 固定的地方一次算好（`autoPairExtension` 闭包持有）——
+ * 逐键路径不再为每个字符新建 Set。
+ * `all`：T1 + 启用中的 T2 标记（非 verbatim range，也是成对删除的集合）；
+ * `textOnly`：仅 T1 —— verbatim 上下文里仍然生效的闭合符。语义与 D12 完全一致。
+ */
+interface CloserSets {
+  readonly all: Set<string>
+  readonly textOnly: Set<string>
+}
+
+function closerSets(options: AutoPairOptions): CloserSets {
+  return { all: activeClosers(options, false), textOnly: activeClosers(options, true) }
+}
+
 /** 括号：`BRACKET_PAIRS[prev] === next`；引号与标记：`prev === next`；均需对应开关开启。 */
 function isMatchingOpen(prev: string, next: string, options: AutoPairOptions): boolean {
   if (options.brackets && BRACKET_PAIRS[prev] === next) return true
@@ -144,7 +159,15 @@ export function autoPairSpec(
     }
   })
   if (bailed) return null  // 交回默认插入：所有光标都拿到裸字符（D10）
-  return { changes: spec.changes, selection: spec.selection, userEvent: "input.type" }
+  // scrollIntoView 对齐 CM 自家 handleOpen：默认输入管线（`input.ts` 的
+  // `startState.update(tr, { userEvent, scrollIntoView: true })`）会在插入后把光标滚进视口，
+  // 被我们拦截后这条不能再丢 —— 视口底边敲配对符、或插入闭合符让行变高时尤其可见。
+  return {
+    changes: spec.changes,
+    selection: spec.selection,
+    userEvent: "input.type",
+    scrollIntoView: true,
+  }
 }
 
 /**
@@ -158,10 +181,21 @@ export function autoPairTypeOverSpec(
   text: string,
   options: AutoPairOptions,
 ): TransactionSpec | null {
+  return typeOverSpec(state, from, to, text, closerSets(options))
+}
+
+/** 同 `autoPairTypeOverSpec`，但复用调用方预先算好的 D12 候选集（逐键路径）。 */
+function typeOverSpec(
+  state: EditorState,
+  from: number,
+  to: number,
+  text: string,
+  closers: CloserSets,
+): TransactionSpec | null {
   if (state.readOnly || text.length !== 1) return null
   const main = state.selection.main
   if (main.from !== from || main.to !== to) return null
-  if (!activeClosers(options, false).has(text)) return null
+  if (!closers.all.has(text)) return null
   const isMarker = !!MARKER_PAIRS[text]
   let bailed = false
   const spec = state.changeByRange(range => {
@@ -171,7 +205,7 @@ export function autoPairTypeOverSpec(
     }
     // D12：verbatim 里的标记不是配对符 —— 插入路径把它当普通字符，跳越也不许吞掉它。
     const verbatim = isMarker && inVerbatim(state, range.from)
-    if (!activeClosers(options, verbatim).has(text)) {
+    if (!(verbatim ? closers.textOnly : closers.all).has(text)) {
       bailed = true
       return { range }
     }
@@ -187,7 +221,7 @@ export function autoPairTypeOverSpec(
     return { range: EditorSelection.cursor(range.from + 1) }
   })
   if (bailed) return null
-  return { selection: spec.selection, userEvent: "input.type" }
+  return { selection: spec.selection, userEvent: "input.type", scrollIntoView: true }
 }
 
 /**
@@ -214,7 +248,12 @@ export function deletePairSpec(state: EditorState, options: AutoPairOptions): Tr
     }
   })
   if (bailed) return null
-  return { changes: spec.changes, selection: spec.selection, userEvent: "delete.backward" }
+  return {
+    changes: spec.changes,
+    selection: spec.selection,
+    userEvent: "delete.backward",
+    scrollIntoView: true,
+  }
 }
 
 /** 三开关的热切换槽；装配点见 `packages/engine/src/index.ts`（不经 barrel 导出）。 */
@@ -222,10 +261,12 @@ export const autoPairCompartment = new Compartment()
 
 /** 输入层适配：inputHandler（跳越优先于插入）+ Prec.high Backspace。 */
 export function autoPairExtension(options: AutoPairOptions): Extension {
+  // D12 的两个候选集按 options 只算一次（reconfigure 时重建），逐键路径零 Set 分配。
+  const closers = closerSets(options)
   return [
     EditorView.inputHandler.of((view, from, to, text) => {
       if (view.composing || view.compositionStarted || view.state.readOnly) return false
-      const spec = autoPairTypeOverSpec(view.state, from, to, text, options)
+      const spec = typeOverSpec(view.state, from, to, text, closers)
         ?? autoPairSpec(view.state, from, to, text, options)
       if (!spec) return false
       view.dispatch(spec)

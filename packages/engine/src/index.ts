@@ -114,9 +114,10 @@ export {
   safeModeRenderingEnabled,
   setSafeModeRendering,
 } from "./safeModeRendering"
-// 自动配对对 desktop 只暴露这两个（Task 2 从此处导入）；Compartment 与 extension
-// 留在 format/autoPair.ts，不经 barrel 导出。
-export { setAutoPair, type AutoPairOptions } from "./format/autoPair"
+// 自动配对对 desktop 只暴露这三个（Task 2 从此处导入）；Compartment 与 extension（装配细节）
+// 留在 format/autoPair.ts，不经 barrel 导出。DEFAULT_AUTO_PAIR 是引擎默认值的单一来源，
+// desktop 的 DEFAULT_SETTINGS/sanitizeSettings 从它派生（禁止在 desktop 侧再写一份字面量）。
+export { DEFAULT_AUTO_PAIR, setAutoPair, type AutoPairOptions } from "./format/autoPair"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
