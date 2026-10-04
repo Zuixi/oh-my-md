@@ -130,6 +130,7 @@ import {
   type UserSettings,
 } from "./settings"
 import { initLocale, setLocale, t as localeT, useT } from "./i18n"
+import { getGlobalLogger } from "./logger"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
@@ -1096,6 +1097,18 @@ export default function App({
         // 落盘失败也要走完 ack——事件回调里的逃逸 rejection 只会变成
         // webview 的未处理拒绝，还拖慢退出。
       } finally {
+        // Deliver the queued log records on the same round that persists
+        // session state: the webview is about to be destroyed, and the
+        // facade's own delivery timer is exactly what never fires. Rust
+        // bounds the round at SESSION_FLUSH_TIMEOUT and proceeds on timeout,
+        // so a lost flush can never trap the user in the app. `flush()` is
+        // contractually non-rejecting; this catch only keeps a throwing
+        // logger from becoming an unhandled rejection in the quit path.
+        try {
+          await getGlobalLogger().flush()
+        } catch {
+          // A logging failure must never block the quit.
+        }
         await services.sessionFlushAck?.()
       }
     })
