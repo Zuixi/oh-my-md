@@ -384,7 +384,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 按平台路径见 `docs/guides/troubleshooting.md`。以下项需 `pnpm dev` 或真实打包产物交互；Windows/Linux 项需实机。
 
-- [ ] **打开日志目录**：Help 菜单「打开日志目录」/ 命令面板 Open Log Folder 在 macOS 打开 `~/Library/Logs/md.ohmy.desktop/`（**没有** `logs/` 子目录）、Windows 打开 `%LOCALAPPDATA%\md.ohmy.desktop\logs\`、Linux 打开 `~/.local/share/md.ohmy.desktop/logs\`；三个平台上都是本次运行实际使用的目录。
+- [ ] **打开日志目录**：macOS 走**应用菜单（oh-my-md）→ 打开日志目录**（原生菜单栏没有 Help），Windows/Linux 走窗口内菜单栏 **Help → 打开日志目录**；或命令面板 Open Log Folder。macOS 打开 `~/Library/Logs/md.ohmy.desktop/`（**没有** `logs/` 子目录）、Windows 打开 `%LOCALAPPDATA%\md.ohmy.desktop\logs\`、Linux 打开 `$XDG_DATA_HOME/md.ohmy.desktop/logs/`（未设置 `XDG_DATA_HOME` 时是 `~/.local/share/md.ohmy.desktop/logs/`）；三个平台上都是本次运行实际使用的目录。
 - [ ] **详细日志开关**：Settings 勾选「启用详细日志」→ 重启 → 启动头部那行 `environment … log_level=debug` 记录到新的级别（取消勾选再重启回到 `info`，release 构建）；重启前不生效。
 - [ ] **异常终止与正常退出**：编辑中途 `kill -9` 进程 → 下次启动出现 `WARN previous session ended abnormally`；走正常退出（⌘Q / 应用内 Quit / 关最后一个窗口）后再启动**不出现**该 Warn（只写 debug 级 `previous session exited cleanly`）。
 - [ ] **系统打断 ≠ 崩溃**：会话进行中强制 macOS 注销（或关机）→ 下次启动判定为 interrupted（`INFO previous session was interrupted by the system`），**不得**报成 abnormal/crash。

@@ -10,11 +10,11 @@ oh-my-md 把诊断信息写进一个本地日志文件和一个可导出的诊�
 | --- | --- |
 | macOS | `~/Library/Logs/md.ohmy.desktop/`（没有 `logs/` 子目录） |
 | Windows | `%LOCALAPPDATA%\md.ohmy.desktop\logs\` |
-| Linux | `~/.local/share/md.ohmy.desktop/logs/` |
+| Linux | `$XDG_DATA_HOME/md.ohmy.desktop/logs/`（未设置时才是 `~/.local/share/md.ohmy.desktop/logs/`） |
 
 路径由 `TargetKind::LogDir` 的平台表决定（`tauri-plugin-log`）。只有 macOS 的位置是普通用户翻得到的，所以别让用户自己去找：
 
-- 菜单 **Help → 打开日志目录**（Windows/Linux 是窗口内的横向菜单栏）会直接在文件管理器里打开该目录。
+- macOS：**应用菜单（oh-my-md）→ 打开日志目录**——原生菜单栏只有应用/文件/编辑/格式/显示/窗口，没有 Help，这一项在应用子菜单里。Windows/Linux：窗口内横向菜单栏的 **Help → 打开日志目录**。两者都会直接在文件管理器里打开该目录。
 - 命令面板（⇧⌘P）里的 **Open Log Folder** 是同一个入口。
 - 两者最终都调用 Rust 的 `open_log_dir`，它打开的是**本次运行实际使用的目录**，而不是按平台表重新算出来的路径。日志降级时（见下）打开的可能是临时目录。
 
@@ -40,7 +40,7 @@ Settings 里的开关不是可选项：macOS 用户从 Finder 双击启动时**�
 
 ## 导出诊断信息包
 
-菜单 **Help → 导出诊断信息…**（或命令面板里的 Export Diagnostics）→ 确认对话框说明将要包含什么 → 选择 `.zip` 保存位置。
+菜单 **应用菜单（oh-my-md）→ 导出诊断信息…**（macOS；Windows/Linux 是 **Help → 导出诊断信息…**），或命令面板里的 Export Diagnostics → 确认对话框说明将要包含什么 → 选择 `.zip` 保存位置。
 
 包的内容（`manifest.json` 记录格式版本与每个文件的 blake3）：
 
@@ -93,5 +93,5 @@ Settings 里的开关不是可选项：macOS 用户从 Finder 双击启动时**�
 
 1. 打开 **Settings → 日志**，确认没有出现「日志记录已降级」。若已降级，请把提示里给出的实际路径一并说明。
 2. 如果是可复现的问题，先勾选 **启用详细日志**，重启，复现一次，再导出诊断包——详细日志记录了更多边界细节。
-3. **Help → 导出诊断信息…** 导出 `.zip`，用一句话说明"发生了什么、期望什么、大概什么时间"，和包一起发出。
+3. **应用菜单（oh-my-md）→ 导出诊断信息…**（macOS；Windows/Linux 是 **Help → 导出诊断信息…**）导出 `.zip`，用一句话说明"发生了什么、期望什么、大概什么时间"，和包一起发出。
 4. 如果怀疑是崩溃，先说清上次是怎么退出的（点了退出 / 直接关机 / 强制结束进程）——`session` 行的结论能对上，也能帮维护者确认要读哪一段日志。

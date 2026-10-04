@@ -108,7 +108,7 @@ state, the webview's state, or any record of a crash.
 `tauri-plugin-log`'s `build()` runs its file open inside the plugin `setup`
 closure and propagates the error with `?` (`lib.rs:840-855`). Tauri calls that
 closure from `initialize_plugins(handle)?`, the last statement inside
-`Builder::build()` (`tauri-2.11.5` `app.rs:2440`), and `lib.rs:1198` is
+`Builder::build()` (`tauri-2.11.5` `app.rs:2440`), and `lib.rs:1215` is
 `.expect("error while building oh-my-md")`.
 
 So an unopenable log file is not a degraded-logging situation the user can live
@@ -271,8 +271,10 @@ only if OS-level crash reports have to be symbolicated (see §8).
 ### 3.5 Verbose logging is reachable by a non-technical user
 
 Primary path: a Settings toggle, "启用详细日志". It persists a flag, takes effect
-at the next launch, raises the level to `Debug`, and raises retention for that
-session.
+at the next launch, and raises the level to `Debug`. It does **not** raise
+retention: rotation is an unconditional `KeepSome(LOG_KEEP_FILES)` and
+`effective_level()` never feeds it, so the retention boost described in earlier
+drafts of this section was designed but not implemented.
 
 Secondary path: the `OMD_LOG` environment variable, for maintainers. It is
 parsed as a single `log::LevelFilter` name (`OMD_LOG=debug`, `OMD_LOG=trace`);
@@ -522,14 +524,14 @@ drift guard, because nothing on the Rust side reads it:
 | `LOG_BREAKER_COOLDOWN_MS` | 30000 |
 | `LOG_ALWAYS_PASS_LEVEL` | `error` |
 
-The Settings UI displays the resulting retention ("保留约 10 MB"), which is why
-the size and count cross the boundary at all.
+`LOG_MAX_FILE_BYTES` and `LOG_KEEP_FILES` cross the boundary only for the
+`crossLayerConstants.test.ts` drift guard; no UI reads them today (§7.2).
 
 ### 3.11 The `log_frontend` IPC contract
 
-Payload: `{ level, target, message }` — `level` is one of the five level names,
-`target` is a short module tag, `message` is pre-formatted text. Return:
-`Result<(), String>`.
+Payload: `{ records: [{ level, target, message }, …] }` — batched, one round trip
+per batch; `level` is one of the five level names, `target` is a short module tag,
+`message` is pre-formatted text. Return: `Result<(), String>`.
 
 Per the root `AGENTS.md` IPC rules, a Rust test asserts the serialized JSON of
 the payload: field casing drift compiles cleanly on both sides and only fails at
@@ -634,11 +636,18 @@ paths are buried in AppData and XDG data directories, which is why §7.2 exists.
 
 ## 7. User-facing surface
 
-### 7.1 Menu additions (Help)
+### 7.1 Menu additions
 
 - "打开日志目录" — reveal the log directory in Finder / Explorer / the Linux file
   manager. This is the single most-requested support action.
 - "导出诊断信息…" — existing; unchanged entry point, richer bundle.
+
+Placement is per platform, not a single "Help" home. On macOS the native menubar
+is app/File/Edit/Format/View/Window only (`menu.rs:371-380`), and both items live
+in the app submenu ("oh-my-md"), between "Check for Updates" and Settings
+(`menu.rs:468-481`). Off macOS the in-app menubar has no app submenu, so the
+`menuTree.ts` Help section carries them. User-facing wording:
+`docs/guides/troubleshooting.md`.
 
 Both also get command palette entries; `export-diagnostics` already has one in
 `App.tsx`.
@@ -647,15 +656,22 @@ Both also get command palette entries; `export-diagnostics` already has one in
 
 - "启用详细日志" toggle, with a one-line explanation of when to use it and that
   it takes effect after a restart.
-- The displayed retention figure, sourced from the §3.10 constants.
 - A visible warning when the log file could not be opened (§3.9).
+
+The retention figure described in earlier drafts is **not** implemented:
+`SettingsModal.tsx` renders only the toggle and the degradation warning, and
+`LOG_KEEP_FILES` has no UI consumer (it exists on both sides solely for the
+`crossLayerConstants.test.ts` drift guard).
 
 ### 7.3 Documentation
 
 `docs/guides/troubleshooting.md` — per-platform log locations, how to enable
-verbose logging, how to export a bundle, and what to expect to see. Linked from
-the Help menu and the README. This is a `guides/` document per `docs/AGENTS.md`
-(user-facing operation), not a spec.
+verbose logging, how to export a bundle, and what to expect to see. This is a
+`guides/` document per `docs/AGENTS.md` (user-facing operation), not a spec.
+Today it is reachable only from `docs/manual-qa.md` and the specs/plans that
+cite it: the planned menu link and the README link were never added (on macOS
+there is no Help menu to hang one on — §7.1), and that gap is a follow-up, not
+shipped behaviour.
 
 ## 8. Resolved decisions and remaining questions
 
@@ -749,8 +765,8 @@ the facade.
 
 Bundle enrichment and the manifest `previous_exit` summary (§3.8), export
 redaction with its cross-platform case table and best-effort second pass (§3.7),
-the pre-export notice, `docs/guides/troubleshooting.md` (§7.3), and Help-menu
-links.
+the pre-export notice, `docs/guides/troubleshooting.md` (§7.3), and menu
+entry points.
 
 OS crash-report collection stays deferred (§3.8) and is not scheduled.
 

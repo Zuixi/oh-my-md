@@ -147,7 +147,7 @@ pub const LOG_KEEP_FILES: usize = 5;
 /// not grow if retention is reconfigured. See spec §3.4.5.
 pub const LOG_TAIL_READ_BYTES: u64 = 64 * 1024;
 
-/// Runtime level override, e.g. `OMD_LOG=debug` or `OMD_LOG=tao=warn,omd=debug`.
+/// Runtime level override: a single level name, e.g. `OMD_LOG=debug`.
 pub const LOG_LEVEL_ENV_VAR: &str = "OMD_LOG";
 
 /// Probe file created inside the target directory and removed immediately.
