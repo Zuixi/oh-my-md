@@ -96,7 +96,6 @@ function rangeAccepts(
   range: SelectionRange,
   text: string,
   isMarker: boolean,
-  options: AutoPairOptions,
 ): boolean {
   if (!range.empty) return false  // v1 不做选区包裹（D7 / Task 4）
   const prev = range.from > 0 ? state.doc.sliceString(range.from - 1, range.from) : ""
@@ -135,7 +134,7 @@ export function autoPairSpec(
   const close = BRACKET_PAIRS[text] ?? text
   let bailed = false
   const spec = state.changeByRange(range => {
-    if (!rangeAccepts(state, range, text, isMarker, options)) {
+    if (!rangeAccepts(state, range, text, isMarker)) {
       bailed = true
       return { range }
     }

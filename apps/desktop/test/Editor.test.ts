@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { undo } from "@codemirror/commands"
-import { RectangleMarker } from "@codemirror/view"
+import { EditorView, RectangleMarker } from "@codemirror/view"
 import {
   acceptOrderedListNormalization,
   getPendingOrderedListNormalization,
@@ -16,9 +16,11 @@ import {
   activateLink,
   makeImageResolver,
   resetEditorDocument,
+  setEditorAutoPair,
   type CreateEditorOptions,
   type EditorDocumentUpdate,
 } from "../src/Editor"
+import { sanitizeSettings } from "../src/settings"
 import { NUB_PX, tightSelectionMarkers } from "../src/tightSelection"
 import { pastePlainText } from "../src/pastePlainText"
 import { isMacOS } from "../src/platform"
@@ -47,6 +49,17 @@ function editorOptions(
 /** Lets the engine's queued preview-entry normalization reach the update listener. */
 function tick(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+/**
+ * Drives the input handlers the way CodeMirror's DOM pipeline does: the first
+ * handler returning true claims the keystroke and prevents the default insert.
+ * Mirrors the engine's own `autoPairView.test.ts` adapter probe.
+ */
+function typeChar(view: EditorView, text: string): boolean {
+  const main = view.state.selection.main
+  const insert = () => { throw new Error("the default insert callback must not run") }
+  return view.state.facet(EditorView.inputHandler).some(h => h(view, main.from, main.to, text, insert))
 }
 
 describe("desktop editor lifecycle", () => {
@@ -343,6 +356,63 @@ describe("desktop editor lifecycle", () => {
     )
     expect(view.contentDOM.getAttribute("spellcheck")).toBe("true")
     view.destroy()
+  })
+
+  it("pairs through the engine handler and honors the autoPair option", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+
+    expect(typeChar(view, "(")).toBe(true)
+    expect(view.state.doc.toString()).toBe("()")
+    // quotes off: the engine handler declines, so this probe would fall back to
+    // CodeMirror's bare insert (the stub throws instead of writing the char).
+    expect(typeChar(view, '"')).toBe(false)
+    expect(view.state.doc.toString()).toBe("()")
+    view.destroy()
+  })
+
+  it("reconfigures auto pair on a mounted view without a reopen", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+    expect(typeChar(view, '"')).toBe(false)
+
+    setEditorAutoPair(view, { brackets: true, quotes: true, markdownSyntax: true })
+
+    expect(typeChar(view, '"')).toBe(true)
+    expect(view.state.doc.toString()).toBe('""')
+    view.destroy()
+  })
+
+  it("honors a changed autoPair when the document is reset", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+    expect(typeChar(view, '"')).toBe(false)
+
+    resetEditorDocument(view, {
+      ...editorOptions(vi.fn(), "second"),
+      autoPair: { brackets: false, quotes: true, markdownSyntax: true },
+    })
+
+    expect(view.state.doc.toString()).toBe("second")
+    view.dispatch({ selection: { anchor: view.state.doc.length } })
+    expect(typeChar(view, '"')).toBe(true)
+    expect(view.state.doc.toString()).toBe('second""')
+    expect(typeChar(view, "(")).toBe(false)
+    view.destroy()
+  })
+
+  it("defaults the auto pair toggles on for settings saved before they existed", () => {
+    expect(sanitizeSettings({}).autoPair).toEqual({
+      brackets: true,
+      quotes: true,
+      markdownSyntax: true,
+    })
   })
 
   it("configures line wrapping on the editor view", () => {

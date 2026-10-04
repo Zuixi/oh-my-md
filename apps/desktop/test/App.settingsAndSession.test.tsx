@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { screen, fireEvent, waitFor, act } from "@testing-library/react"
 import type { EditorView } from "@codemirror/view"
+import type { AutoPairOptions } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
-import type { UserSettings } from "../src/settings"
+import { DEFAULT_SETTINGS, type UserSettings } from "../src/settings"
 import type { SavedSessionState } from "../src/sessionRestore"
 
 vi.mock("@omd/engine", async importOriginal => {
@@ -31,6 +32,7 @@ const { editor } = vi.hoisted(() => ({
   editor: {
     create: vi.fn(),
     reset: vi.fn(),
+    setAutoPair: vi.fn(),
   },
 }))
 
@@ -42,12 +44,15 @@ vi.mock("../src/Editor", async importOriginal => {
       editor.create(parent, options),
     resetEditorDocument: (view: EditorView, options: CreateEditorOptions) =>
       editor.reset(view, options),
+    setEditorAutoPair: (view: EditorView, options: AutoPairOptions) =>
+      editor.setAutoPair(view, options),
   }
 })
 
 describe("App Settings & Session Restore integration", () => {
   beforeEach(() => {
     vi.useRealTimers()
+    editor.setAutoPair.mockClear()
   })
 
   afterEach(() => {
@@ -64,6 +69,7 @@ describe("App Settings & Session Restore integration", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
     }
 
@@ -102,6 +108,54 @@ describe("App Settings & Session Restore integration", () => {
       )
       expect(screen.queryByRole("dialog", { name: "Preferences" })).toBeNull()
     })
+  })
+
+  it("hot-applies an auto pair toggle to every mounted editor view", async () => {
+    const harness = createAppHarness(editor)
+    harness.renderApp()
+    await act(async () => { await Promise.resolve() })
+    await harness.openInNewTab("/notes/second.md", "second")
+
+    const views = harness.allEditors().map(handle => handle.view)
+    expect(views.length).toBe(2)
+
+    fireEvent.keyDown(window, { key: ",", metaKey: true })
+    fireEvent.click(screen.getByLabelText("Auto pair quotes"))
+
+    const expected: AutoPairOptions = { brackets: true, quotes: false, markdownSyntax: true }
+    await waitFor(() => {
+      for (const view of views) {
+        expect(editor.setAutoPair).toHaveBeenCalledWith(view, expected)
+      }
+    })
+    // The store persists what the editor actually received.
+    await waitFor(() => {
+      expect(harness.services.saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ autoPair: expected }),
+      )
+    })
+  })
+
+  it("pushes settings loaded at startup into already mounted editors", async () => {
+    const harness = createAppHarness(editor)
+    const saved: UserSettings = {
+      ...DEFAULT_SETTINGS,
+      autoPair: { brackets: false, quotes: true, markdownSyntax: true },
+    }
+    vi.mocked(harness.services.getSettings!).mockResolvedValue(saved)
+
+    harness.renderApp()
+
+    const view = harness.allEditors()[0].view
+    await waitFor(() => {
+      expect(editor.setAutoPair).toHaveBeenCalledWith(view, saved.autoPair)
+    })
+
+    // A tab opened later is constructed with the toggles already applied, and
+    // the restored/loaded document keeps them without a reopen.
+    const created = harness.allEditors().length
+    await harness.openInNewTab("/notes/later.md", "later")
+    expect(harness.allEditors()[created].getOptions().autoPair).toEqual(saved.autoPair)
   })
 
   it("restores saved workspace folder and tabs from session state on startup", async () => {

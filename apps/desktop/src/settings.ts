@@ -1,3 +1,4 @@
+import type { AutoPairOptions } from "@omd/engine"
 import type { StoredLocale } from "./i18n"
 
 export type AppTheme = "system" | "light" | "dark"
@@ -31,6 +32,8 @@ export interface UserSettings {
   tabSize: TabSize
   defaultMode: DefaultEditorMode
   spellcheck: boolean
+  /** Engine-owned auto pairing toggles; persisted as one nested settings field. */
+  autoPair: AutoPairOptions
   locale: StoredLocale
 }
 
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   tabSize: 2,
   defaultMode: "live",
   spellcheck: false,
+  autoPair: { brackets: true, quotes: true, markdownSyntax: true },
   locale: "auto",
 }
 
@@ -71,6 +75,18 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
 
   const spellcheck = Boolean(raw.spellcheck)
 
+  // settings.json written before the toggles existed has no `autoPair` (and a
+  // hand-edited file may carry only some of the three): booleanize every flag
+  // so `undefined` never reaches the engine's compartment.
+  const storedAutoPair: Partial<AutoPairOptions> = raw.autoPair ?? {}
+  const flag = (value: boolean | undefined, fallback: boolean): boolean =>
+    typeof value === "boolean" ? value : fallback
+  const autoPair: AutoPairOptions = {
+    brackets: flag(storedAutoPair.brackets, DEFAULT_SETTINGS.autoPair.brackets),
+    quotes: flag(storedAutoPair.quotes, DEFAULT_SETTINGS.autoPair.quotes),
+    markdownSyntax: flag(storedAutoPair.markdownSyntax, DEFAULT_SETTINGS.autoPair.markdownSyntax),
+  }
+
   const locale: StoredLocale =
     raw.locale === "auto" || raw.locale === "en" || raw.locale === "zh" ? raw.locale : "auto"
 
@@ -82,8 +98,17 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     tabSize,
     defaultMode,
     spellcheck,
+    autoPair,
     locale,
   }
+}
+
+/** Change detection for the hot-apply path: a settings save only reconfigures
+ * mounted views when one of the three toggles actually flipped. */
+export function sameAutoPair(a: AutoPairOptions, b: AutoPairOptions): boolean {
+  return a.brackets === b.brackets
+    && a.quotes === b.quotes
+    && a.markdownSyntax === b.markdownSyntax
 }
 
 export function parseSettings(json: string): UserSettings {

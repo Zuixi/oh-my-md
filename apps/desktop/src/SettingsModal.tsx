@@ -205,6 +205,51 @@ export function SettingsModal(props: SettingsModalProps) {
                 onChange={e => update({ spellcheck: e.target.checked })}
               />
             </div>
+
+            <div className="settings-row">
+              <label htmlFor="setting-auto-pair-brackets" className="settings-label">
+                {t("settings.label.autoPairBrackets")}
+              </label>
+              <input
+                id="setting-auto-pair-brackets"
+                type="checkbox"
+                className="settings-checkbox"
+                checked={settings.autoPair.brackets}
+                onChange={e => update({
+                  autoPair: { ...settings.autoPair, brackets: e.target.checked },
+                })}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label htmlFor="setting-auto-pair-quotes" className="settings-label">
+                {t("settings.label.autoPairQuotes")}
+              </label>
+              <input
+                id="setting-auto-pair-quotes"
+                type="checkbox"
+                className="settings-checkbox"
+                checked={settings.autoPair.quotes}
+                onChange={e => update({
+                  autoPair: { ...settings.autoPair, quotes: e.target.checked },
+                })}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label htmlFor="setting-auto-pair-markdown" className="settings-label">
+                {t("settings.label.autoPairMarkdown")}
+              </label>
+              <input
+                id="setting-auto-pair-markdown"
+                type="checkbox"
+                className="settings-checkbox"
+                checked={settings.autoPair.markdownSyntax}
+                onChange={e => update({
+                  autoPair: { ...settings.autoPair, markdownSyntax: e.target.checked },
+                })}
+              />
+            </div>
           </div>
 
           {/* Language Section */}
