@@ -534,3 +534,101 @@ unknown-lang | error` and `.omd-block-body[data-omd-render]` = `placeholder |
 svg | katex | error` (mermaid/math) — and log the swallowed error once via
 `console.debug`. This is what turned the doc-start quoted fence into a failing
 e2e assertion (`Received: "placeholder"`, 14 retries) instead of a mystery.
+
+## Auto pair: decide type-over before insertion, or the closing marker doubles
+
+Hand-typing `*bold*` only converges if the closing keystroke is compared against the
+character after the caret **before** the insertion gate runs. Insertion first turns that
+final `*` into a fresh pair (`*bold**`, caret parked between the two new markers); the
+type-over check first sees the marker the extension already inserted, steps the caret
+over it, and the document stays `*bold*`. `format/autoPair.ts::autoPairExtension` only
+ever tries `autoPairTypeOverSpec` and *then* `autoPairSpec` — swapping those two lines is
+silent one-character source corruption on the most common Markdown gesture, and no
+happy-path test notices. The adapter's dispatch order is mirrored and pinned by
+`test/autoPair.test.ts` (`typeAll`, the character-by-character `**bold**` case); the same
+rule covers the folded-emphasis path in the editor.
+
+## Auto pair: a pair-delete Backspace binding must `return false` when it does not apply
+
+`deletePairSpec` is bound at `Prec.high` because desktop's `defaultKeymap`
+(`deleteCharBackward`) is registered first and would otherwise always win. But a
+high-priority binding that claims *every* Backspace steals the key from `skipAtomic`'s
+whole-atom delete at folded marker boundaries. With the caret at the right edge of the
+folded `**` in `foo **bold** baz`, `deletePairSpec` returns `null` (prev is `*`, next is
+`b`); the binding must `return false` so `deleteCharBackward` removes the whole atom
+(→ `foo bold** baz`), not one character (→ `foo *bold** baz`). Pinned by
+`test/autoPairView.test.ts` ("yields to skipAtomic at a folded mid-line marker
+boundary"), which drives the real keymap chain — a spec-only test cannot see precedence.
+
+## Auto pair: on an empty line `*` and `$` are block structure, not typing convenience
+
+Rule 2b (`EMPTY_LINE_MARKERS` in `format/autoPair.ts`) suppresses pairing for exactly `*`
+and `$` when the caret's line is empty before the caret:
+
+- `*` plus a space would become `* *`, which Lezer parses as an unordered **list item**
+  whose content is a literal `*` (muya carries a dedicated special case for the same
+  trap).
+- `$` would pair into `$$`, and `parse/math.ts` claims `rest.startsWith("$$")` as a
+  **MathBlock**; an unclosed one swallows to EOF (KaTeX error widget plus the whole rest
+  of the document inside one block).
+
+`` ` `` and `_` are deliberately **not** suppressed: a single line-start backtick has no
+block semantics (and `` `npm run build` `` at line start is the highest-frequency case),
+and `_` has no block meaning at all. The recorded cost is that a suppressed `*`/`$`
+becomes a manually closed marker, so the closing keystroke may still pair once (one extra
+character to delete) — a known limitation, not something to "fix" with marker-parity
+tracking. Covered by `test/autoPair.test.ts` (the 2b matrix) and `e2e/auto-pair.spec.ts`
+(asserts the document text *and* that no `.omd-math` widget appears, with a real `$$`
+control that must mount one).
+
+## `EditorView.inputHandler` returning `true` is `preventDefault` — and you are not the only handler
+
+`@codemirror/view` asks the facet with `.some(...)`: the first handler returning `true`
+wins and the default DOM-change pipeline is skipped entirely. Two consequences for the
+auto pair adapter (`format/autoPair.ts::autoPairExtension`):
+
+- **The facet is not ours alone.** `markdownCodeLanguages()` pulls in
+  `@codemirror/lang-html`, whose `autoCloseTags` handler registers first, so
+  `state.facet(EditorView.inputHandler)[0]` is *not* the auto pair handler even for a
+  plain Markdown document. Tests must mirror CM's dispatch
+  (`facet(...).some(h => h(view, from, to, text, insert))`) instead of indexing.
+- **`from`/`to` always describe the focused (main) range.** The other cursors' DOM diffs
+  never reach the handler, so returning `true` after handling only the main range silently
+  drops every character the other cursors typed. Every path (insert, type-over, and the
+  pair-delete keymap) therefore runs through `state.changeByRange(...)` and bails out
+  *entirely* (`null` → `return false` → CM's default pipeline inserts the bare character
+  for every range) when any range fails its gates (D10). No partial dispatch is allowed.
+
+`test/autoPairView.test.ts` drives the real facet chain for exactly this (its `input()`
+helper), including the "bail out without any side effect" case. The e2e specs add no
+multi-cursor case on purpose: the host never enables
+`EditorState.allowMultipleSelections`, so CM6 collapses multi-range selections and such a
+test would assert nothing.
+
+## An unparsed tree makes `resolveInner` lie — marker gating must fail safe
+
+`inVerbatim()` walks `syntaxTree().resolveInner(pos, -1)` up to find
+`InlineCode`/`FencedCode`/`CodeBlock`/`InlineMath`/`MathBlock`/`FrontMatter`. On a large
+document, or right after open/paste, the tree is not parsed up to the caret and
+`resolveInner` resolves the position inside whatever ancestor *is* known — frequently the
+wrong one — so a purely tree-based marker gate would pair `*`/`$` inside a code block.
+`format/autoPair.ts` checks `syntaxTreeAvailable(state, pos + 1)` first and returns `true`
+(suppress) when the tree is not there: the failure directions are asymmetric (a missing
+pair costs one keystroke; a wrong pair inserts characters the user never asked for), which
+is the same "do not guess structure from an incomplete tree" rule as
+`format/blockPrefix.ts`. `syntaxTreeAvailable` is O(1) and does not force parsing, so it
+does not violate the complete-tree rule; keep it on the marker branch only, so T1
+brackets/quotes stay tree-free.
+
+## The engine and desktop tsconfigs disagree about dead code
+
+`packages/engine/tsconfig.json` sets `strict` but neither `noUnusedLocals` nor
+`noUnusedParameters`, while `apps/desktop/tsconfig.json` sets both — and type-checks the
+engine sources transitively, because the workspace `@omd/engine` import resolves to
+`packages/engine/src/index.ts`. A dead parameter or unused local added inside the engine
+therefore passes `pnpm test` (engine `tsc --noEmit` + Vitest) and fails
+`pnpm --filter @omd/desktop build`. This blocked a whole round on the auto pair work:
+`rangeAccepts` kept an `options: AutoPairOptions` argument it no longer read, and only the
+desktop build caught it. When touching engine sources, run the desktop build (or
+`pnpm verify`) before concluding — the engine's own green gate is not sufficient
+evidence.
