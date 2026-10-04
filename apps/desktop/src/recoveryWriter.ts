@@ -85,12 +85,15 @@ function surfaceFailure(
 ): void {
   const message = errorMessage(t("error.recoveryWriteFailed"), error)
   if (reported.has(draft.tabId)) {
-    // The key is the only identity an untitled tab has: its `path` is null, so
-    // a path-only record would leave exactly that tab unidentifiable.
-    getGlobalLogger().error(
-      "recovery",
-      `${message} ${pathField(draft.path ?? "")} ${keyField(draft.key)}`,
-    )
+    // `path=` carries the location for a named tab. The key is emitted only for
+    // a tab with no path: there `untitled_<id>` is the tab's only identity,
+    // while for a named tab `recoveryKey` would repeat the path in a
+    // separator-substituted form the export redactor cannot collapse.
+    const identity =
+      draft.path === null
+        ? `${pathField("")} ${keyField(draft.key)}`
+        : pathField(draft.path)
+    getGlobalLogger().error("recovery", `${message} ${identity}`)
     return
   }
   reported.add(draft.tabId)

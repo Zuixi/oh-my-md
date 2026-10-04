@@ -52,12 +52,18 @@ export function pathsField(paths: readonly string[]): string {
 /**
  * Renders a recovery key as a `key=<escaped>` field.
  *
- * A recovery key is not a path: it is the tab identity (`recoveryKey` in
- * `session.ts` — an untitled tab's key is `untitled_<id>`), and it is the only
- * identity an untitled tab has, since its `path` is `null`. It shares the
- * escape grammar so a key can never break the record, but it stays out of
- * `LOG_PATH_FIELD_HELPERS` and out of the export redactor: a key is a
- * sanitized stem, not a location, so redacting it would only lose the record.
+ * A recovery key is the tab identity (`recoveryKey` in `session.ts`), and it is
+ * emitted **only** for a tab whose `path` is `null`, where `untitled_<id>` is
+ * the tab's only identity. That is the invariant that makes it location-free by
+ * construction, and it is deliberate: for a named tab `recoveryKey` is the
+ * document path with `[/\\: ]` replaced by `_`, so a key there would repeat the
+ * location `path=<…>` already carries — and it would do so without a separator,
+ * which is what the export redactor's rule 3 collapses. `key=` therefore
+ * deliberately does not participate in the field-redaction contract and stays
+ * out of `LOG_PATH_FIELD_HELPERS`. It still shares the escape grammar so a key
+ * can never break the record. If a producer ever emits a key for a named tab,
+ * the invariant is broken and the redactor — not this comment — is where it has
+ * to be caught.
  */
 export function keyField(key: string): string {
   return `key=${escapePathField(key)}`

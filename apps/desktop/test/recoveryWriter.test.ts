@@ -52,21 +52,28 @@ describe("recovery writer", () => {
     const logged = vi.mocked(useSpyLogger().error)
     const { host, reportError } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
     const writer = createRecoveryWriter()
+    // `/notes/1.md` — a tab with a path, so `path=` already identifies it.
+    const named = draftFor(1)
 
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
 
     expect(reportError).toHaveBeenCalledOnce()
     expect(reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
     expect(logged).toHaveBeenCalledTimes(2)
-    expect(logged.mock.calls[0]).toEqual([
-      "recovery",
-      `${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md key=notes_1_md`,
-    ])
+    const [target, message] = logged.mock.calls[0]
+    expect(target).toBe("recovery")
+    expect(message).toBe(`${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md`)
+    // `path=` identifies a named tab, and `recoveryKey` is derived from that path
+    // (`notes_1_md`) — a separator-substituted copy the export redactor's
+    // separator rule cannot collapse. So the record must carry no key, in any
+    // form; a regression that re-adds it fails here.
+    expect(message).not.toContain("key=")
+    expect(message).not.toContain(named.key)
   })
 
   it("keeps the key for an untitled tab, whose only identity is the key", async () => {
