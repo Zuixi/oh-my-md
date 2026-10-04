@@ -832,7 +832,11 @@ fn environment_text(context: &BundleContext<'_>, include_full_paths: bool) -> St
             "locale={}",
             settings_string(context.settings_json, "locale").unwrap_or_else(|| "unknown".into())
         ),
-        format!("log_level={}", crate::logging::effective_level()),
+        // The level the process actually ran at, carried on the managed state.
+        // Never `effective_level()`: that re-reads the persisted verbose flag,
+        // which the Settings toggle writes immediately, so an export after a
+        // mid-session change would name a level this run never used (§3.2).
+        format!("log_level={}", state.level),
         format!("log_destination={}", state.destination.kind()),
         log_dir_line(state),
         format!("degraded={}", state.degraded),
@@ -870,16 +874,35 @@ fn redact_environment_text(text: &str, home: &str, include_full_paths: bool) -> 
         .join("\n")
 }
 
-/// The `*.log` files of a directory, in a stable order.
-fn log_files(log_dir: &Path) -> Vec<PathBuf> {
+/// The `*.log` files of `log_dir` that belong to `stem`: the active
+/// `{stem}.log` and its `{stem}_<timestamp>.log` rotation archives, in a stable
+/// order.
+///
+/// The stem filter is the privacy boundary, not tidiness. In
+/// [`LogDestination::Fallback`] the directory is `std::env::temp_dir()` —
+/// `/tmp` on Linux — so a stem-less sweep packs every unrelated application's
+/// log, and whatever secrets it holds, into the user's support bundle. The
+/// bundle's contract is privacy by default; only this writer's own files may
+/// ship. The match is on the writer's own naming (`newest_archive`'s
+/// `{stem}_` prefix and the plugin's `{stem}.log`), so a same-prefix foreign
+/// name like `{stem}-notes.log` stays out too.
+fn log_files(log_dir: &Path, stem: &str) -> Vec<PathBuf> {
     let mut log_files: Vec<PathBuf> = Vec::new();
-    if log_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(log_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|extension| extension.to_str()) == Some("log") {
-                    log_files.push(path);
-                }
+    if stem.is_empty() || !log_dir.is_dir() {
+        return log_files;
+    }
+    if let Ok(entries) = std::fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !name.ends_with(".log") {
+                continue;
+            }
+            let is_own = name == format!("{stem}.log") || name.starts_with(&format!("{stem}_"));
+            if is_own {
+                log_files.push(path);
             }
         }
     }
@@ -911,7 +934,9 @@ fn manifest_json(
         "app_version": env!("CARGO_PKG_VERSION"),
         "os": os_summary(),
         "arch": std::env::consts::ARCH,
-        "log_level": crate::logging::effective_level().to_string(),
+        // The level carried on the managed state, not a fresh read of the
+        // persisted flag — see `environment_text`.
+        "log_level": context.log_state.level.to_string(),
         "files": files,
         // §3.4.5's determination, and the facts of the start line it keyed off.
         // The scanner retains the pid and version in the same traversal that
@@ -947,7 +972,7 @@ fn write_diagnostics_bundle(
     entries.push(("os.txt".to_string(), os_summary().into_bytes()));
 
     let mut combined = String::new();
-    for log_path in log_files(log_dir) {
+    for log_path in log_files(log_dir, &context.log_state.file_stem) {
         let contents = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
         let name = log_path
             .file_name()
@@ -1028,13 +1053,14 @@ pub async fn export_diagnostics(
     // Capture everything the zipper needs before leaving the IPC thread: a
     // `tauri::State` guard is not `Send`, and a command must not hold managed
     // state across the await.
-    let (log_dir, destination, degraded, file_stem) = {
+    let (log_dir, destination, degraded, file_stem, level) = {
         let state = app.state::<LogState>();
         (
             state.dir.clone(),
             state.destination,
             state.degraded,
             state.file_stem.clone(),
+            state.level,
         )
     };
     // A `PreviousSession` is not `Copy`, and a `tauri::State` guard must not be
@@ -1055,6 +1081,7 @@ pub async fn export_diagnostics(
             dir: log_dir.clone(),
             file_stem,
             destination,
+            level,
         };
         let settings_json = crate::workspace::get_settings().unwrap_or_else(|_| "{}".to_string());
         let session_json = session_json();
@@ -1081,12 +1108,17 @@ mod tests {
     use std::io::Read;
 
     /// A `LogState` in the healthy case: this run's records landed in `dir`.
+    ///
+    /// The level is a fixed value, not `effective_level()`: the bundle must
+    /// report what `install()` resolved, and a helper that recomputed it could
+    /// not tell the two apart.
     fn directory_state(dir: &Path) -> LogState {
         LogState {
             degraded: false,
             dir: dir.to_path_buf(),
             file_stem: "oh-my-md".to_string(),
             destination: LogDestination::Directory,
+            level: log::LevelFilter::Info,
         }
     }
 
@@ -1097,6 +1129,7 @@ mod tests {
             dir: PathBuf::new(),
             file_stem: String::new(),
             destination: LogDestination::Disabled,
+            level: log::LevelFilter::Info,
         }
     }
 
@@ -1387,7 +1420,55 @@ mod tests {
         assert_eq!(manifest["app_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             manifest["log_level"],
-            crate::logging::effective_level().to_string()
+            log::LevelFilter::Info.to_string(),
+            "the manifest reports the level carried on LogState"
+        );
+    }
+
+    // The finding: `environment_text`/`manifest_json` called `effective_level()`
+    // at *export* time, which re-reads the persisted `verboseLogging` flag the
+    // Settings toggle writes immediately. Enabling verbose mid-session and then
+    // exporting produced a bundle claiming `Debug` while the process was still
+    // filtering at `Info` — defeating §3.2's "a reader never has to guess what
+    // was filtered". The level is resolved once in `install()` and carried on
+    // `LogState`; flip the persisted setting after that and the bundle must not
+    // move.
+    #[test]
+    fn bundle_reports_the_level_resolved_at_install_not_a_later_setting_change() {
+        let _config_guard = crate::workspace::config_env_guard();
+        let config = tempfile::tempdir().unwrap();
+        std::env::set_var("OMD_CONFIG_DIR", config.path());
+
+        // What install() resolved and handed to the plugin. Deliberately not a
+        // value the fallback rules below can answer, so a recomputation is
+        // observable rather than coincidentally equal.
+        let resolved = log::LevelFilter::Trace;
+        let mut state = directory_state(Path::new("/tmp/logs"));
+        state.level = resolved;
+
+        // The toggle persists immediately; this is the settings file a fresh
+        // read at export time would see.
+        crate::workspace::save_settings(format!(
+            r#"{{"{}":true}}"#,
+            crate::logging::VERBOSE_LOGGING_SETTINGS_KEY
+        ))
+        .unwrap();
+        assert_ne!(
+            crate::logging::effective_level(),
+            resolved,
+            "the premise: a fresh read answers a different level than install resolved"
+        );
+
+        let fixture = Fixture::new(&[]);
+        let entries = fixture.write_state(&state, PreviousExit::Clean, false, "{}", "{}");
+        let environment = text_entry(&entries, "environment.txt");
+        assert!(
+            environment.contains(&format!("log_level={resolved}")),
+            "environment.txt must report the level the process ran at: {environment}"
+        );
+        assert_eq!(
+            json_entry(&entries, "manifest.json")["log_level"],
+            resolved.to_string()
         );
     }
 
@@ -1581,23 +1662,91 @@ mod tests {
         assert!(fixture.bundle.exists());
     }
 
+    // The finding: the bundle collected every `*.log` in the log directory, and
+    // in the `Fallback` state that directory is `std::env::temp_dir()` — `/tmp`
+    // on Linux. Unrelated applications' logs, and any secrets in them, shipped
+    // inside the one artifact whose contract is privacy by default. The sweep is
+    // now bounded by the resolved `file_stem`; this drives both destinations
+    // through the real writer and reads the archive back.
     #[test]
-    fn export_diagnostics_collects_and_redacts_logs_from_dir() {
+    fn export_diagnostics_collects_only_the_resolved_stem_and_redacts_it() {
         let fixture = Fixture::new(&[]);
         let contents = format!(
             "opened {}/notes/a.md asset file:///{}/notes/a.png",
             fixture.home, fixture.home
         );
-        fixture.log("app.log", &contents);
+        fixture.log("oh-my-md.log", &contents);
+        // A rotation archive is this writer's own file and ships too.
+        fixture.log(
+            "oh-my-md_2026-10-01_09-30-00.log",
+            "session end clean=true\n",
+        );
+        // Foreign logs in the same directory, and one that merely shares the
+        // stem's prefix.
+        fixture.log("app.log", "SECRET=ghp_foreign_app\n");
+        fixture.log(
+            "other-app_2026-01-01_00-00-00.log",
+            "SECRET=ghp_foreign_other\n",
+        );
+        fixture.log("oh-my-md-notes.log", "SECRET=ghp_foreign_prefix\n");
+
         let entries = fixture.write(PreviousExit::Clean, false);
         let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(names.contains(&"app.log"));
-        assert!(names.contains(&"diagnostics.txt"));
+        assert!(names.contains(&"oh-my-md.log"), "{names:?}");
+        assert!(
+            names.contains(&"oh-my-md_2026-10-01_09-30-00.log"),
+            "a rotation archive belongs to the same writer: {names:?}"
+        );
+        for foreign in [
+            "app.log",
+            "other-app_2026-01-01_00-00-00.log",
+            "oh-my-md-notes.log",
+        ] {
+            assert!(
+                !names.contains(&foreign),
+                "a foreign log must not ship: {foreign} in {names:?}"
+            );
+        }
 
+        // The writer's own file is still redacted as before.
         let diagnostics = text_entry(&entries, "diagnostics.txt");
         assert!(diagnostics.contains("a.md"));
         assert!(diagnostics.contains("<home>/notes"));
         assert!(!diagnostics.contains(&fixture.home));
+        assert!(
+            !diagnostics.contains("ghp_foreign"),
+            "no foreign bytes may reach the combined log: {diagnostics}"
+        );
+
+        // The fallback destination is the case the finding is about: its
+        // directory is shared, so a *second instance's* file and an unrelated
+        // application's must both stay out while this run's pid-suffixed stem
+        // ships.
+        fixture.log(
+            "oh-my-md-1234.log",
+            "session start pid=1234 version=0.0.1 mode=release\n",
+        );
+        fixture.log("oh-my-md-9999.log", "SECRET=ghp_other_instance\n");
+        let fallback = LogState {
+            degraded: true,
+            dir: fixture.logs.clone(),
+            file_stem: "oh-my-md-1234".to_string(),
+            destination: LogDestination::Fallback,
+            level: log::LevelFilter::Info,
+        };
+        let entries = fixture.write_state(&fallback, PreviousExit::Clean, false, "{}", "{}");
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"oh-my-md-1234.log"), "{names:?}");
+        for foreign in ["oh-my-md-9999.log", "app.log", "oh-my-md.log"] {
+            assert!(
+                !names.contains(&foreign),
+                "the fallback directory is shared; {foreign} must not ship: {names:?}"
+            );
+        }
+        assert!(
+            !text_entry(&entries, "diagnostics.txt").contains("ghp_other_instance"),
+            "a sibling instance's secrets must not ship"
+        );
     }
 
     #[test]

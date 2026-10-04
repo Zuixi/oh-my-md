@@ -35,8 +35,18 @@ pub const VERBOSE_LOGGING_SETTINGS_KEY: &str = "verboseLogging";
 /// Probe file created inside the target directory and removed immediately.
 pub const PROBE_FILE_PREFIX: &str = ".write_test_";
 
-/// Session-boundary lines, written by the exit lifecycle and matched as whole
-/// tokens when a log tail is scanned back. See spec §3.4.5.
+/// Session-boundary lines, written by the exit lifecycle.
+///
+/// [`has_marker`] matches them anchored on their **right** boundary only: the
+/// marker must be followed by a space or by the end of the line. There is
+/// deliberately no left anchor. The scanner reads whole physical lines, whose
+/// envelope (timestamp, target, level) precedes the message and is not this
+/// module's to fix, so a left boundary would make the determination depend on
+/// formatting we do not own. That means a left-adjacent occurrence matches too
+/// (`xsession exit intent=user`), and it is why every producer that can carry
+/// foreign text — the frontend sink and the structured path fields — runs it
+/// through [`neutralize_boundary_markers`], which removes the token at *every*
+/// position rather than trusting a left boundary. See spec §3.4.5.
 pub const SESSION_START_MARKER: &str = "session start";
 pub const SESSION_EXIT_MARKER: &str = "session exit";
 pub const SESSION_END_MARKER: &str = "session end";
@@ -171,6 +181,16 @@ pub struct LogState {
     pub file_stem: String,
     /// The three-state destination, projected to the frontend as `{ kind }`.
     pub destination: LogDestination,
+    /// The level this process actually runs at, resolved **once** by
+    /// [`install`] and carried from there.
+    ///
+    /// [`effective_level`] re-reads the persisted `verboseLogging` flag, and the
+    /// Settings toggle writes that file immediately. Anything that asked again
+    /// later — the startup header, the diagnostics manifest, `environment.txt`
+    /// — would name a level this run never ran at (§3.2: "a reader never has to
+    /// guess what was filtered"). Carrying the resolved value is what makes
+    /// that promise true.
+    pub level: log::LevelFilter,
 }
 
 /// The stem `tauri-plugin-log` would derive on its own
@@ -180,9 +200,13 @@ pub fn log_file_stem(app: &tauri::AppHandle) -> String {
     app.package_info().name.clone()
 }
 
-fn plugin(stem: &str, dir: &Path) -> tauri::plugin::TauriPlugin<tauri::Wry> {
+fn plugin(
+    stem: &str,
+    dir: &Path,
+    level: log::LevelFilter,
+) -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_log::Builder::new()
-        .level(effective_level())
+        .level(level)
         // Framework noise. `level_for` matches whole module-path prefixes, so
         // `wry` does not cover `tauri_runtime_wry`.
         .level_for("tao", log::LevelFilter::Warn)
@@ -210,11 +234,16 @@ fn plugin(stem: &str, dir: &Path) -> tauri::plugin::TauriPlugin<tauri::Wry> {
 /// The decision half of [`install`], split out so the three-way result can be
 /// tested without an `AppHandle` (which cannot be built outside a running app).
 ///
+/// `level` is the value [`install`] already resolved; it travels into every
+/// state this returns, because the diagnostics bundle reads it back rather than
+/// calling [`effective_level`] again.
+///
 /// `register` is the seam: production passes a closure that runs
 /// `AppHandle::plugin`, tests pass one that succeeds or fails on command.
 fn prepare_file_logging(
     stem: &str,
     real_dir: &Path,
+    level: log::LevelFilter,
     mut register: impl FnMut(&str, &Path) -> Result<(), String>,
 ) -> LogState {
     if probe_writable(real_dir) {
@@ -225,6 +254,7 @@ fn prepare_file_logging(
                     dir: real_dir.to_path_buf(),
                     file_stem: stem.to_string(),
                     destination: LogDestination::Directory,
+                    level,
                 }
             }
             Err(e) => eprintln!("omd: log plugin failed in {real_dir:?}: {e}"),
@@ -232,7 +262,7 @@ fn prepare_file_logging(
     } else {
         eprintln!("omd: log directory {real_dir:?} is not writable; falling back");
     }
-    install_into_fallback(register)
+    install_into_fallback(level, register)
 }
 
 /// Registers the temp-dir fallback, or reports that no logger could be attached.
@@ -240,7 +270,10 @@ fn prepare_file_logging(
 /// Both the directory *and* the stem must name the fallback: registering the
 /// fallback directory under the real stem would make the session scanner and the
 /// writer disagree about the file they are talking about.
-fn install_into_fallback(mut register: impl FnMut(&str, &Path) -> Result<(), String>) -> LogState {
+fn install_into_fallback(
+    level: log::LevelFilter,
+    mut register: impl FnMut(&str, &Path) -> Result<(), String>,
+) -> LogState {
     let fallback = fallback_dir();
     let fallback_stem = fallback_file_stem();
     match register(&fallback_stem, &fallback) {
@@ -249,6 +282,7 @@ fn install_into_fallback(mut register: impl FnMut(&str, &Path) -> Result<(), Str
             dir: fallback,
             file_stem: fallback_stem,
             destination: LogDestination::Fallback,
+            level,
         },
         Err(e) => {
             // No logger is attached at all. The app still starts; Settings
@@ -261,6 +295,7 @@ fn install_into_fallback(mut register: impl FnMut(&str, &Path) -> Result<(), Str
                 dir: PathBuf::new(),
                 file_stem: String::new(),
                 destination: LogDestination::Disabled,
+                level,
             }
         }
     }
@@ -278,8 +313,16 @@ fn install_into_fallback(mut register: impl FnMut(&str, &Path) -> Result<(), Str
 /// setup error into `panic!("Failed to setup app: {e}")`.
 pub fn install(app: &tauri::AppHandle) -> LogState {
     let stem = log_file_stem(app);
-    let register =
-        |stem: &str, dir: &Path| app.plugin(plugin(stem, dir)).map_err(|e| e.to_string());
+    // Resolve the level exactly once, here, and let `LogState` carry it. The
+    // plugin is configured with this value and so are the startup header and
+    // the diagnostics bundle; a second `effective_level()` anywhere downstream
+    // would re-read the persisted verbose flag and could name a level this run
+    // never ran at (§3.2).
+    let level = effective_level();
+    let register = |stem: &str, dir: &Path| {
+        app.plugin(plugin(stem, dir, level))
+            .map_err(|e| e.to_string())
+    };
 
     // An unresolvable log directory is the same class of failure as an
     // unwritable one: the real destination is unusable. Treating it as
@@ -291,13 +334,13 @@ pub fn install(app: &tauri::AppHandle) -> LogState {
     // same place through `probe_writable` returning false.
     let Ok(real_dir) = app.path().app_log_dir() else {
         eprintln!("omd: could not resolve a log directory; falling back");
-        return install_into_fallback(register);
+        return install_into_fallback(level, register);
     };
     if let Err(e) = std::fs::create_dir_all(&real_dir) {
         eprintln!("omd: could not create log directory {real_dir:?}: {e}");
     }
 
-    prepare_file_logging(&stem, &real_dir, register)
+    prepare_file_logging(&stem, &real_dir, level, register)
 }
 
 /// Reveals the resolved log directory in the OS file manager.
@@ -409,7 +452,14 @@ pub struct Marker {
 ///
 /// Seeking to `End(-limit)` can land inside a multi-byte UTF-8 sequence —
 /// log lines contain CJK file paths, so this is not hypothetical. Decoding is
-/// therefore lossy *and* the first (partial) line is dropped.
+/// therefore lossy *and* the first line is dropped **when it is partial**: the
+/// window is kept whole when the read started at offset 0, and also when the
+/// byte just before the window is a newline, because then the window opens
+/// exactly on a line boundary and its first line is complete. Dropping that
+/// line unconditionally discarded the archive's `session start` (→ `Unknown`)
+/// and, for a session split across the rotation boundary, its
+/// `session end clean=true` (→ `Abnormal`) — the very outcome the design says
+/// must never be reported on missing evidence. See spec §3.4.5.
 pub fn read_tail(path: &Path, limit: u64) -> String {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -418,15 +468,29 @@ pub fn read_tail(path: &Path, limit: u64) -> String {
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     let start = len.saturating_sub(limit);
-    if file.seek(SeekFrom::Start(start)).is_err() {
+    // Include the byte before the window, when there is one: whether it is a
+    // newline is what distinguishes a complete first line from a partial one.
+    let read_from = if start == 0 { 0 } else { start - 1 };
+    if file.seek(SeekFrom::Start(read_from)).is_err() {
         return String::new();
     }
     let mut bytes = Vec::new();
     if file.read_to_end(&mut bytes).is_err() {
         return String::new();
     }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    if start == 0 {
+    let (first_line_is_complete, window): (bool, &[u8]) = if start == 0 {
+        (true, &bytes)
+    } else {
+        match bytes.split_first() {
+            Some((&b'\n', rest)) => (true, rest),
+            Some((_, rest)) => (false, rest),
+            // The file shrank between `metadata` and the read; there is no
+            // window to salvage either way.
+            None => (true, &[]),
+        }
+    };
+    let text = String::from_utf8_lossy(window).into_owned();
+    if first_line_is_complete {
         return text;
     }
     match text.find('\n') {
@@ -453,13 +517,14 @@ pub fn newest_archive(dir: &Path, stem: &str) -> Option<PathBuf> {
     candidates.pop()
 }
 
-/// Whether `marker`, found at `index` in `line`, is a whole token: followed by
-/// a space or by the end of the line.
+/// Whether `marker`, found at `index` in `line`, is anchored on its right: the
+/// character after it is a space or there is none.
 ///
-/// This is the single definition of "anchored", shared by [`has_marker`] (which
-/// classifies lines) and by the record-text escaper below (which must remove
-/// exactly what `has_marker` accepts). Two copies of this predicate could drift
-/// apart and silently reopen the forgery it exists to close.
+/// Deliberately *not* left-anchored — see [`SESSION_START_MARKER`]. This is the
+/// single definition of "anchored", shared by [`has_marker`] (which classifies
+/// lines) and by the record-text escaper below (which must remove exactly what
+/// `has_marker` accepts). Two copies of this predicate could drift apart and
+/// silently reopen the forgery it exists to close.
 fn marker_anchored_at(line: &str, index: usize, marker: &str) -> bool {
     line[index + marker.len()..]
         .chars()
@@ -467,12 +532,13 @@ fn marker_anchored_at(line: &str, index: usize, marker: &str) -> bool {
         .is_none_or(|ch| ch == ' ')
 }
 
-/// Whether `line` contains `marker` as a whole token.
+/// Whether `line` contains `marker` anchored on its right (see
+/// [`marker_anchored_at`]).
 ///
-/// The boundary is load-bearing, not defensive. Task 4 logs the human-readable
-/// determination lines *after* `session start`: "previous session exited
-/// cleanly" and "previous session ended abnormally" contain
-/// `SESSION_EXIT_MARKER` / `SESSION_END_MARKER` as bare substrings. A
+/// The right boundary is load-bearing, not defensive. Task 4 logs the
+/// human-readable determination lines *after* `session start`: "previous session
+/// exited cleanly" and "previous session ended abnormally" contain
+/// `SESSION_EXIT_MARKER` / `SESSION_END_MARKER` as bare prefixes. A
 /// `line.contains(marker)` match turns those into an invented exit intent, so a
 /// run that died with no exit intent at all (SIGKILL, segfault, force-kill)
 /// gets reported as `Interrupted` — a system shutdown — and the `Abnormal`
@@ -703,13 +769,17 @@ pub fn log_previous_exit(outcome: PreviousExit) {
 
 /// Version, OS, arch and the resolved logging destination. One line each so
 /// the header is greppable.
-pub fn log_startup_header(level: log::LevelFilter, state: &LogState) {
+///
+/// The level is read from `state`, never re-resolved: the header must report
+/// what the process is filtering at, and `state.level` is the one value the
+/// plugin was configured with (see [`LogState::level`]).
+pub fn log_startup_header(state: &LogState) {
     log::info!("app started {}", env!("CARGO_PKG_VERSION"));
     log::info!(
         "environment os={} arch={} log_level={} log_dir={:?} degraded={} destination={:?}",
         os_info::get(),
         std::env::consts::ARCH,
-        level,
+        state.level,
         state.dir,
         state.degraded,
         state.destination
@@ -952,6 +1022,13 @@ pub fn unescape_path_field(raw: &str) -> String {
 
 /// Renders one path as a `path=<escaped>` field.
 ///
+/// Two layers, and both are needed: [`escape_path_field`] keeps the path out of
+/// the field/record grammar, and [`neutralize_boundary_markers`] keeps its
+/// *content* from being read as a session boundary. A file named
+/// `session end clean=true.md` is ordinary, and `parse_markers` scans every
+/// physical line — without the second layer that filename alone forges a clean
+/// quit and suppresses §3.4.5's abnormal-exit warning.
+///
 /// `allow(dead_code)`: the fence is the API boundary, not the call sites. The
 /// save, export, and diagnostics lines consume [`path_field`] directly, while
 /// [`paths_field`] is reached only where a watcher reconciles a path set; the
@@ -959,12 +1036,14 @@ pub fn unescape_path_field(raw: &str) -> String {
 /// `log_records`.
 #[allow(dead_code)]
 pub fn path_field(path: &Path) -> String {
-    format!("path={}", escape_path_field(&path.to_string_lossy()))
+    let escaped = escape_path_field(&path.to_string_lossy());
+    format!("path={}", neutralize_boundary_markers(&escaped))
 }
 
 /// Renders a list as a `paths=[<escaped>;<escaped>]` field. `;` is escaped
 /// inside each element, so the separator is unambiguous for a path containing
-/// one. `allow(dead_code)` for the same reason as [`path_field`].
+/// one. Boundary vocabulary is neutralized exactly as in [`path_field`].
+/// `allow(dead_code)` for the same reason as [`path_field`].
 #[allow(dead_code)]
 pub fn paths_field(paths: &[PathBuf]) -> String {
     let joined = paths
@@ -972,7 +1051,7 @@ pub fn paths_field(paths: &[PathBuf]) -> String {
         .map(|p| escape_path_field(&p.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(";");
-    format!("paths=[{joined}]")
+    format!("paths=[{}]", neutralize_boundary_markers(&joined))
 }
 
 /// Removes the session-boundary vocabulary from record text, by escaping the
@@ -1307,7 +1386,10 @@ mod tests {
     #[test]
     fn prepare_file_logging_uses_the_real_directory_when_it_registers() {
         let dir = tempfile::tempdir().unwrap();
-        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| Ok(()));
+        let state =
+            prepare_file_logging("oh-my-md", dir.path(), log::LevelFilter::Debug, |_, _| {
+                Ok(())
+            });
         assert_eq!(state.destination, LogDestination::Directory);
         assert!(!state.degraded);
         assert_eq!(state.dir, dir.path());
@@ -1323,13 +1405,14 @@ mod tests {
         // Only the real directory's registration fails; the fallback accepts, so
         // the file really is carried by the temp directory in this state.
         let mut first = true;
-        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| {
-            if std::mem::take(&mut first) {
-                Err("nope".to_string())
-            } else {
-                Ok(())
-            }
-        });
+        let state =
+            prepare_file_logging("oh-my-md", dir.path(), log::LevelFilter::Debug, |_, _| {
+                if std::mem::take(&mut first) {
+                    Err("nope".to_string())
+                } else {
+                    Ok(())
+                }
+            });
         assert_eq!(state.destination, LogDestination::Fallback);
         assert!(state.degraded);
         assert_eq!(state.dir, fallback_dir());
@@ -1346,10 +1429,11 @@ mod tests {
     fn prepare_file_logging_reports_disabled_when_both_registrations_fail() {
         let dir = tempfile::tempdir().unwrap();
         let mut attempts = 0;
-        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| {
-            attempts += 1;
-            Err("both registrations fail".to_string())
-        });
+        let state =
+            prepare_file_logging("oh-my-md", dir.path(), log::LevelFilter::Debug, |_, _| {
+                attempts += 1;
+                Err("both registrations fail".to_string())
+            });
         assert_eq!(
             attempts, 2,
             "the real directory and the temp fallback must both have been tried"
@@ -1358,6 +1442,41 @@ mod tests {
         assert!(state.degraded);
         assert_eq!(state.dir, PathBuf::new());
         assert!(state.file_stem.is_empty());
+    }
+
+    // `install()` cannot be built without an `AppHandle`, so the seam is
+    // `prepare_file_logging`: whatever level it is handed must travel into the
+    // state in all three destinations. The diagnostics bundle reads it back
+    // instead of re-resolving, which is what keeps the manifest from naming a
+    // level a mid-session Settings toggle changed underneath it.
+    #[test]
+    fn prepare_file_logging_carries_the_resolved_level_into_every_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let level = log::LevelFilter::Trace;
+
+        let directory = prepare_file_logging("oh-my-md", dir.path(), level, |_, _| Ok(()));
+        assert_eq!(directory.level, level);
+
+        let mut first = true;
+        let fallback = prepare_file_logging("oh-my-md", dir.path(), level, |_, _| {
+            if std::mem::take(&mut first) {
+                Err("nope".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(fallback.destination, LogDestination::Fallback);
+        assert_eq!(fallback.level, level);
+
+        let disabled =
+            prepare_file_logging(
+                "oh-my-md",
+                dir.path(),
+                level,
+                |_, _| Err("both".to_string()),
+            );
+        assert_eq!(disabled.destination, LogDestination::Disabled);
+        assert_eq!(disabled.level, level);
     }
 
     fn write_log(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -1555,6 +1674,44 @@ mod tests {
         assert!((body.len() as u64) < LOG_TAIL_READ_BYTES);
         let path = write_log(dir.path(), "oh-my-md.log", body);
         assert_eq!(read_tail(&path, LOG_TAIL_READ_BYTES), body);
+    }
+
+    // The finding: the first line was dropped on *every* read that started above
+    // offset 0, including one whose 64 KiB boundary landed exactly on a line
+    // start. For a session split across the rotation boundary that silently
+    // discards the archive's `session start` (→ `Unknown`) — or its
+    // `session end clean=true` (→ `Abnormal`), the one outcome the design says
+    // must never happen on missing evidence. Offset 0 and a preceding `\n` both
+    // mean the first line is whole.
+    #[test]
+    fn read_tail_keeps_a_complete_first_line_at_a_line_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let limit = LOG_TAIL_READ_BYTES as usize;
+        let head = format!("{}\n", "x".repeat(9));
+        let first = "session start pid=7 version=0.0.1 mode=release\n";
+        let filler = "y".repeat(limit - first.len());
+        let body = format!("{head}{first}{filler}");
+        let start = body.len() - limit;
+        assert!(start > 0, "the premise: the read must start above offset 0");
+        assert_eq!(
+            body.as_bytes()[start - 1],
+            b'\n',
+            "the premise: the boundary must land exactly on a line start"
+        );
+
+        let path = write_log(dir.path(), "oh-my-md.log", &body);
+        let tail = read_tail(&path, LOG_TAIL_READ_BYTES);
+        assert_eq!(
+            tail,
+            format!("{first}{filler}"),
+            "the complete first line must survive a boundary that lands on a line start"
+        );
+        assert!(
+            parse_markers(&tail)
+                .iter()
+                .any(|marker| marker.kind == MarkerKind::Start),
+            "the archived `session start` is the point of the window: {tail:?}"
+        );
     }
 
     // Task 4 logs these human-readable determination lines into the same file,
@@ -2271,6 +2428,64 @@ mod tests {
             PreviousExit::Abnormal,
             "the forged clean end must not suppress the crash warning: {run:?}"
         );
+    }
+
+    // Task 3's `parse_markers` scans *every* physical line, and only the
+    // frontend sink routed its text through `neutralize_boundary_markers`. The
+    // structured path fields did not, so an ordinary filename could forge a
+    // boundary: `save ok path=/tmp/session end clean=true.md` reads as a clean
+    // end and suppresses §3.4.5's abnormal-exit warning, a `session exit` in a
+    // path downgrades a crash to `Interrupted`, and a `session start` fabricates
+    // a start — taking over `previous_exit.pid`/`version`. Drive the helpers
+    // directly: going through `log_records` would let the sink's own escaping
+    // hide a missing fix in the producer.
+    #[test]
+    fn a_path_field_cannot_forge_a_session_boundary() {
+        let start = session_start_line(4242, "0.0.1");
+        let cases: [(&str, &str, String); 3] = [
+            (
+                "a trailing `session end clean=true` used to suppress the crash warning",
+                SESSION_END_MARKER,
+                path_field(Path::new("/tmp/notes/session end clean=true.md")),
+            ),
+            (
+                "a `session exit` in a path used to downgrade a crash to Interrupted",
+                SESSION_EXIT_MARKER,
+                path_field(Path::new("/tmp/notes/session exit intent=user.md")),
+            ),
+            (
+                "a `session start` in a path used to fabricate a start and null pid/version",
+                SESSION_START_MARKER,
+                paths_field(&[PathBuf::from("/tmp/notes/session start notes.md")]),
+            ),
+        ];
+        for (why, marker, field) in cases {
+            let line = format!("save ok {field}");
+            // Witness: the forged vocabulary really reached the rendered line —
+            // in its neutralized spelling — so "no marker" cannot come from
+            // rendering nothing.
+            assert!(
+                line.contains(&marker.replace(' ', "\\ ")),
+                "{why}: the neutralized marker must still be in the line: {line:?}"
+            );
+            assert!(
+                parse_markers(&line).is_empty(),
+                "{why}: a path field must not parse as a boundary marker: {line:?}"
+            );
+            let run = format!("{start}\n{line}");
+            assert_eq!(
+                classify(&parse_markers(&run)),
+                PreviousExit::Abnormal,
+                "{why}: only the real start may determine the outcome: {run:?}"
+            );
+            // The same forgery would have been the *last* start, which is the
+            // one the manifest's facts are read from.
+            assert_eq!(
+                PreviousSession::from_markers(&parse_markers(&run)).pid,
+                Some(4242),
+                "{why}: a forged start must not replace the real one's pid: {run:?}"
+            );
+        }
     }
 
     #[test]
