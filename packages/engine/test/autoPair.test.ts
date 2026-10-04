@@ -327,7 +327,7 @@ describe("rule 3: stateless type-over", () => {
   })
 
   it("abandons entirely when one cursor cannot skip (D10)", () => {
-    // 光标 2 后面就是 ")"（可跳越），光标 5 后面是行尾（不能）→ 整体放弃，
+    // 光标 2 后面就是 ")"（可跳越），光标 5 后面是 "d" 而不是 ")"（不可跳越）→ 整体放弃，
     // 否则返回 true 会让 preventDefault 吞掉光标 5 的那次输入。
     const state = multiCursorState("ab)\ncd", 2, 5)
     expect(state.selection.main.head).toBe(5)

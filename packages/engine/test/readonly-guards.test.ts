@@ -14,7 +14,7 @@ import {
 import { autoPairSpec, deletePairSpec, type AutoPairOptions } from "../src/format/autoPair"
 
 // Task 6 修复回归：readOnly facet 是建议性的 —— typed input 被 view 层忽略，
-// 但 keymap 命令与 ViewPlugin 直接 dispatch 事务。HUGE 档只读 Live 文档挂满
+// 但 keymap 命令与 ViewPlugin 直接 dispatch 事务。只读 Live 文档挂满
 // 引擎扩展，引擎自己的命令/重编号入口必须拒绝一切文档改写。
 
 function readonlyState(doc: string, head: number) {
@@ -208,22 +208,22 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
 // Prec.high 的 keymap 命令、直接 dispatch —— 必须自己看 readOnly；两个 spec 同理。
 describe("auto pair refuses to mutate readonly docs", () => {
   const ALL: AutoPairOptions = { brackets: true, quotes: true, markdownSyntax: true }
-  // 大文档（~33k 字符，不触发解析推进）+ 只读：spec 必须在碰文档之前就放弃。
-  const HUGE_DOC = `${"lorem ipsum dolor sit amet ".repeat(1_200)}()`
 
-  it("returns null specs on a large readonly doc", () => {
-    const head = HUGE_DOC.length - 1
+  // 两个判定都在第一行对 state.readOnly 短路，且 `(`/`)` 从不查语法树 —— 文档有多大
+  // 对结果毫无影响，所以这里用最小文档把「只读 → null、可编辑 → 非 null」钉死，
+  // 而不是摆一个大文件假装覆盖了性能。
+  it("a readonly state rejects pairing at a position an editable one accepts", () => {
     const readonly = EditorState.create({
-      doc: HUGE_DOC,
-      selection: { anchor: head },
+      doc: "()",
+      selection: { anchor: 1 },
       extensions: [EditorState.readOnly.of(true)],
     })
     expect(deletePairSpec(readonly, ALL)).toBeNull()
-    expect(autoPairSpec(readonly, head, head, "(", ALL)).toBeNull()
+    expect(autoPairSpec(readonly, 1, 1, "(", ALL)).toBeNull()
     // 非只读对照：同一位置两个 spec 都成立（唯一变量是 readOnly）。
-    const editable = EditorState.create({ doc: HUGE_DOC, selection: { anchor: head } })
+    const editable = EditorState.create({ doc: "()", selection: { anchor: 1 } })
     expect(deletePairSpec(editable, ALL)).not.toBeNull()
-    expect(autoPairSpec(editable, head, head, "(", ALL)).not.toBeNull()
+    expect(autoPairSpec(editable, 1, 1, "(", ALL)).not.toBeNull()
   })
 
   it("Backspace between a pair leaves a readonly view untouched", () => {

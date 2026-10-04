@@ -4,6 +4,8 @@ import { EditorSelection, EditorState, type Extension, type Transaction } from "
 import { EditorView, keymap } from "@codemirror/view"
 import { describe, expect, it } from "vitest"
 import { editorExtensions, setAutoPair } from "../src/index"
+import { DEFAULT_AUTO_PAIR, deletePairSpec } from "../src/format/autoPair"
+import { drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
 
 // 真实 EditorView（happy-dom）下的适配层验证：inputHandler 一旦返回 true，@codemirror/view
 // 就 preventDefault，未覆盖的 range 一个字符都收不到（D10）。纯 spec 测不到这一层，
@@ -137,6 +139,27 @@ describe("auto pair Backspace through the real keymap chain", () => {
     const { view, cleanup } = mount("()", EditorSelection.single(1))
     press(view, "Backspace")
     expect(view.state.doc.toString()).toBe("")
+    cleanup()
+  })
+
+  // 验收 §6.11：折叠标记的原子边界上，Backspace 必须仍然整原子删除。这条走的是
+  // 「Prec.high 绑定先 return false → 默认管线 skipAtomic」—— 不是我们自己的成对删除。
+  it("yields to skipAtomic at a folded mid-line marker boundary", () => {
+    const original = "foo **bold** baz"
+    const { view, cleanup } = mount(original, EditorSelection.single(6))
+    // 行中 `**`（4..6）必须是原子区间；行首标记刻意不原子（engine AGENTS 不变量 10）。
+    drainPendingLiveBuild(view)
+    const ranges: [number, number][] = []
+    view.state.field(livePreviewField).atomic
+      .between(0, original.length, (from: number, to: number) => { ranges.push([from, to]) })
+    expect(ranges).toContainEqual([4, 6])
+    // 光标 6 处 prev = "*"、next = "b" → 我们的成对删除不适用（适用的话 next 得是 "*"），
+    // 所以绑定必须让位，由 deleteCharBackward 的 skipAtomic 删掉整个原子。
+    expect(deletePairSpec(view.state, DEFAULT_AUTO_PAIR)).toBeNull()
+    press(view, "Backspace")
+    expect(view.state.doc.toString()).toBe("foo bold** baz")  // 不是 "foo *bold** baz"
+    expect(view.state.doc.length).toBe(original.length - 2)
+    expect(view.state.selection.main.head).toBe(4)
     cleanup()
   })
 
