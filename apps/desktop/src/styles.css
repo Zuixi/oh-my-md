@@ -1615,6 +1615,40 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   height: 16px;
   cursor: pointer;
 }
+/* Verbose-logging note: the restart requirement sits under the checkbox row as
+   its own line rather than inside the label, so `getByLabelText` keeps matching
+   the row's own wording. */
+.settings-note {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  color: var(--omd-muted);
+}
+/* Degradation row. Uses the shared error palette (light and dark) rather than a
+   new variable: a degraded log directory is a real failure the user is being
+   asked to fix. */
+.settings-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--omd-error-border);
+  border-radius: 6px;
+  background: var(--omd-error-bg);
+  font-size: 12px;
+}
+.settings-warning-title {
+  font-weight: 600;
+  color: var(--omd-error-fg);
+}
+.settings-warning-note {
+  color: var(--omd-fg);
+}
+.settings-warning-path {
+  font-family: ui-monospace, Menlo, Monaco, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+  color: var(--omd-fg);
+}
 /* Font Family picker (Typora-style trigger + popover) */
 .font-picker {
   position: relative;

@@ -65,6 +65,7 @@ describe("App Settings & Session Restore integration", () => {
       defaultMode: "source",
       spellcheck: true,
       locale: "auto",
+      verboseLogging: false,
     }
 
     vi.mocked(harness.services.getSettings!).mockResolvedValue(customSettings)

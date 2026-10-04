@@ -22,8 +22,10 @@ import {
   SAFE_MODE_LINES,
   SESSION_FLUSH_EVENT,
   SIDEBAR_DEFAULT_WIDTH,
+  VERBOSE_LOGGING_SETTINGS_KEY,
 } from "../src/constants"
 import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
+import { DEFAULT_SETTINGS } from "../src/settings"
 
 /**
  * Drift guard for constants that must agree across the TS and Rust sides of
@@ -111,6 +113,17 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("log level env var matches logging.rs LOG_LEVEL_ENV_VAR", () => {
     expect(LOG_LEVEL_ENV_VAR).toBe(rustConstString(LOGGING_RS, "LOG_LEVEL_ENV_VAR"))
+  })
+
+  // The verbose toggle is a JSON key, not a typed field: Rust parses the blob
+  // this side serializes, so a rename on one side leaves the checkbox writing a
+  // key nothing reads and the level unchanged. Nothing else would catch it.
+  it("verbose-logging settings key matches logging.rs VERBOSE_LOGGING_SETTINGS_KEY", () => {
+    expect(VERBOSE_LOGGING_SETTINGS_KEY).toBe(
+      rustConstString(LOGGING_RS, "VERBOSE_LOGGING_SETTINGS_KEY"),
+    )
+    // And the key must be the name the settings shape actually serializes.
+    expect(Object.keys(DEFAULT_SETTINGS)).toContain(VERBOSE_LOGGING_SETTINGS_KEY)
   })
 
   it("frontend log command name matches logging.rs LOG_FRONTEND_COMMAND", () => {

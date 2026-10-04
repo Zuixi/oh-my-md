@@ -103,6 +103,12 @@ export const LOG_KEEP_FILES = 5
 /** Runtime level override; must match Rust `LOG_LEVEL_ENV_VAR`. */
 export const LOG_LEVEL_ENV_VAR = "OMD_LOG"
 
+/** Persisted Settings key that turns on verbose logging; must match Rust
+ *  `VERBOSE_LOGGING_SETTINGS_KEY`. Rust has no typed settings struct — it parses
+ *  the raw JSON blob this TypeScript shape serializes — so the key itself is the
+ *  contract, and a rename on one side would silently leave the toggle inert. */
+export const VERBOSE_LOGGING_SETTINGS_KEY = "verboseLogging"
+
 /** IPC command for frontend records; must match Rust `LOG_FRONTEND_COMMAND`. */
 export const LOG_FRONTEND_COMMAND = "log_frontend"
 

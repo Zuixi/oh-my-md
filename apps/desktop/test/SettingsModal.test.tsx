@@ -35,6 +35,99 @@ describe("SettingsModal", () => {
     expect(screen.getByLabelText("Tab Size")).toBeTruthy()
     expect(screen.getByLabelText("Default Mode")).toBeTruthy()
     expect(screen.getByLabelText("Spellcheck")).toBeTruthy()
+    expect(screen.getByLabelText("Enable verbose logging")).toBeTruthy()
+  })
+
+  it("saves the verbose-logging toggle", () => {
+    const onSave = vi.fn()
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByLabelText("Enable verbose logging"))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ verboseLogging: true }),
+    )
+  })
+
+  // The restart note is the honest half of the toggle: `effective_level()` runs
+  // once, when the plugin is built during startup, so flipping the checkbox
+  // cannot change this session's level.
+  it("tells the user the verbose toggle applies after a restart", () => {
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(
+      screen.getByText("Takes effect after restarting oh-my-md."),
+    ).toBeTruthy()
+  })
+
+  // The real directory answered the probe: there is nothing to warn about, and
+  // a warning here would be noise on every normal launch.
+  it("shows no logging warning when logging writes to the real directory", () => {
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        logState={{ degraded: false, dir: "/Users/me/Library/Logs/oh-my-md", destination: { kind: "directory" } }}
+      />,
+    )
+    expect(screen.queryByText("Logging is degraded")).toBeNull()
+  })
+
+  // Fallback: records really do land in the temp directory, so the copy names
+  // it — and says why, since the fix is usually filesystem permissions on the
+  // real log directory.
+  it("names the temp directory when logging degraded to the fallback", () => {
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        logState={{ degraded: true, dir: "/tmp", destination: { kind: "fallback" } }}
+      />,
+    )
+    expect(screen.getByText("Logging is degraded")).toBeTruthy()
+    expect(
+      screen.getByText("The log folder was not writable; logs are going to:"),
+    ).toBeTruthy()
+    expect(screen.getByText("/tmp")).toBeTruthy()
+  })
+
+  // Both registrations failed, so there is no file and — because the `Stdout`
+  // target lives inside the same plugin dispatch — no console stream either.
+  // Promising a directory here would send the user to a path nothing writes, so
+  // the warning must say so and must not print a path at all.
+  it("warns that nothing is being logged when file logging is disabled", () => {
+    const { container } = render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        logState={{ degraded: true, dir: "", destination: { kind: "disabled" } }}
+      />,
+    )
+    expect(screen.getByText("Logging is degraded")).toBeTruthy()
+    expect(
+      screen.getByText(
+        "No log file could be opened, so this session is not being logged.",
+      ),
+    ).toBeTruthy()
+    expect(container.querySelector(".settings-warning-path")).toBeNull()
   })
 
   it("calls onSave when changing settings", () => {
@@ -84,6 +177,7 @@ describe("SettingsModal", () => {
       defaultMode: "source",
       spellcheck: true,
       locale: "auto",
+      verboseLogging: false,
     }
 
     render(
@@ -110,6 +204,7 @@ describe("SettingsModal", () => {
       defaultMode: "source",
       spellcheck: true,
       locale: "auto",
+      verboseLogging: false,
     }
 
     render(

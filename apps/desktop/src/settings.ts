@@ -32,6 +32,12 @@ export interface UserSettings {
   defaultMode: DefaultEditorMode
   spellcheck: boolean
   locale: StoredLocale
+  /**
+   * Persisted flag that raises the log level to `debug` on the next launch
+   * (Rust reads the key out of this JSON blob; see `constants.ts`
+   * `VERBOSE_LOGGING_SETTINGS_KEY`). The `OMD_LOG` env var still wins.
+   */
+  verboseLogging: boolean
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -43,6 +49,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   defaultMode: "live",
   spellcheck: false,
   locale: "auto",
+  verboseLogging: false,
 }
 
 export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
@@ -74,6 +81,11 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
   const locale: StoredLocale =
     raw.locale === "auto" || raw.locale === "en" || raw.locale === "zh" ? raw.locale : "auto"
 
+  // Strictly `=== true`: the value can arrive from hand-edited JSON or an older
+  // build, and Rust's `as_bool()` rejects the string "true" the same way. A
+  // truthy coercion here would let TS and Rust disagree about the same file.
+  const verboseLogging = raw.verboseLogging === true
+
   return {
     theme,
     fontSize,
@@ -83,6 +95,7 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     defaultMode,
     spellcheck,
     locale,
+    verboseLogging,
   }
 }
 

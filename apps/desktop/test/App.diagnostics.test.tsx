@@ -50,3 +50,33 @@ describe("export diagnostics wiring", () => {
     await waitFor(() => { expect(exportDiagnostics).toHaveBeenCalledTimes(1) })
   })
 })
+
+describe("open log folder wiring", () => {
+  // The whole point of the menu entry is that the user does not have to know the
+  // path, so the palette command must reach the service — a label with no run
+  // path compiles and renders fine while doing nothing.
+  it("runs openLogDir from the palette", async () => {
+    const harness = createAppHarness(editor)
+    const openLogDir = vi.fn(async () => undefined)
+    harness.services.openLogDir = openLogDir
+
+    harness.renderApp()
+    openPaletteAndRun("log folder")
+
+    await waitFor(() => { expect(openLogDir).toHaveBeenCalledTimes(1) })
+  })
+
+  // A rejected invoke must surface through reportError rather than vanish as an
+  // unhandled rejection: the interesting case is exactly the one where the
+  // folder does not exist (file logging disabled).
+  it("reports a failed open instead of swallowing the rejection", async () => {
+    const harness = createAppHarness(editor)
+    const failure = new Error("no log folder")
+    harness.services.openLogDir = vi.fn(async () => { throw failure })
+
+    harness.renderApp()
+    openPaletteAndRun("log folder")
+
+    await waitFor(() => { expect(harness.services.reportError).toHaveBeenCalled() })
+  })
+})

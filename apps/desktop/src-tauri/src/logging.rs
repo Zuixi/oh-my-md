@@ -25,6 +25,13 @@ pub const LOG_TAIL_READ_BYTES: u64 = 64 * 1024;
 /// Runtime level override, e.g. `OMD_LOG=debug` or `OMD_LOG=tao=warn,omd=debug`.
 pub const LOG_LEVEL_ENV_VAR: &str = "OMD_LOG";
 
+/// The persisted Settings key that turns on verbose logging. Owned by the
+/// TypeScript settings shape (`UserSettings.verboseLogging` in `settings.ts`);
+/// Rust only reads it. A bare literal on either side would let a rename silently
+/// stop the toggle from working, so both sides name it and the cross-layer
+/// constants guard tests the pair.
+pub const VERBOSE_LOGGING_SETTINGS_KEY: &str = "verboseLogging";
+
 /// Probe file created inside the target directory and removed immediately.
 pub const PROBE_FILE_PREFIX: &str = ".write_test_";
 
@@ -44,13 +51,42 @@ pub fn default_level() -> log::LevelFilter {
 }
 
 /// The level the process actually runs at: `OMD_LOG` when it names a valid
-/// level, otherwise the build default. Anything else (a filter list, a typo)
-/// falls back rather than erroring — a bad env var must not change behaviour.
+/// level, the persisted verbose flag next, otherwise the build default.
+///
+/// Anything else (a filter list, a typo) falls through rather than erroring — a
+/// bad env var must not change behaviour, and it must not shadow the flag
+/// either: `OMD_LOG=banana` means "I wanted a level", not "turn verbose off".
 pub fn effective_level() -> log::LevelFilter {
-    std::env::var(LOG_LEVEL_ENV_VAR)
+    if let Some(level) = std::env::var(LOG_LEVEL_ENV_VAR)
         .ok()
         .and_then(|raw| raw.trim().parse::<log::LevelFilter>().ok())
-        .unwrap_or_else(default_level)
+    {
+        return level;
+    }
+    if verbose_logging_enabled() {
+        return log::LevelFilter::Debug;
+    }
+    default_level()
+}
+
+/// Whether the persisted Settings blob turned on verbose logging.
+///
+/// The settings shape lives in TypeScript and Rust has no typed settings
+/// struct, so this reads the raw JSON `get_settings()` returns and looks for the
+/// one key. Read-only and total: an unreadable file, non-JSON contents, a
+/// missing key, or a value that is not the boolean `true` all answer `false`.
+/// Logging must never fail to configure because a preference file is odd.
+pub fn verbose_logging_enabled() -> bool {
+    let Ok(raw) = crate::workspace::get_settings() else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    parsed
+        .get(VERBOSE_LOGGING_SETTINGS_KEY)
+        .and_then(|v| v.as_bool())
+        == Some(true)
 }
 
 /// Where logging falls back to when the real log directory is unusable.
@@ -87,18 +123,41 @@ pub fn probe_writable(dir: &Path) -> bool {
     wrote
 }
 
+/// Which of the three mutually exclusive places this run's records go.
+///
+/// The distinction is load-bearing for the Settings copy. A boolean cannot
+/// express it: the fallback case writes to a real file in the temp directory,
+/// while the both-failed case writes nowhere at all — and the `Stdout` target
+/// lives inside the same plugin dispatch as the file target, so when the plugin
+/// never attaches, nothing reaches stdout either. Telling that user "your logs
+/// are at <temp dir>" points at a file that is never created.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum LogDestination {
+    /// The configured log directory, which answered the write probe and
+    /// accepted the plugin.
+    Directory,
+    /// The real directory was unusable; the temp-dir fallback carries the file.
+    Fallback,
+    /// Both registrations failed. No logger is attached: no file, no stdout.
+    Disabled,
+}
+
 /// What the rest of the app needs to know about where logs went.
 pub struct LogState {
-    /// True when the real log directory was unusable and the temp-dir
-    /// fallback (or stdout only) is in effect. Surfaced in Settings and in
-    /// the diagnostics bundle's `environment.txt`.
+    /// True whenever `destination` is not [`LogDestination::Directory`].
+    /// Surfaced in Settings and in the diagnostics bundle's `environment.txt`.
     pub degraded: bool,
     /// Resolved directory. The session scanner must read *this*, not a
-    /// recomputed path — see spec §3.12.
+    /// recomputed path — see spec §3.12. Empty when `destination` is
+    /// [`LogDestination::Disabled`]: no directory holds this run's logs.
     pub dir: PathBuf,
     /// Resolved file stem, passed explicitly to the plugin so the writer and
-    /// the scanner cannot disagree.
+    /// the scanner cannot disagree. Empty when `destination` is
+    /// [`LogDestination::Disabled`].
     pub file_stem: String,
+    /// The three-state destination, projected to the frontend as `{ kind }`.
+    pub destination: LogDestination,
 }
 
 /// The stem `tauri-plugin-log` would derive on its own
@@ -135,6 +194,65 @@ fn plugin(stem: &str, dir: &Path) -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+/// The decision half of [`install`], split out so the three-way result can be
+/// tested without an `AppHandle` (which cannot be built outside a running app).
+///
+/// `register` is the seam: production passes a closure that runs
+/// `AppHandle::plugin`, tests pass one that succeeds or fails on command.
+fn prepare_file_logging(
+    stem: &str,
+    real_dir: &Path,
+    mut register: impl FnMut(&str, &Path) -> Result<(), String>,
+) -> LogState {
+    if probe_writable(real_dir) {
+        match register(stem, real_dir) {
+            Ok(()) => {
+                return LogState {
+                    degraded: false,
+                    dir: real_dir.to_path_buf(),
+                    file_stem: stem.to_string(),
+                    destination: LogDestination::Directory,
+                }
+            }
+            Err(e) => eprintln!("omd: log plugin failed in {real_dir:?}: {e}"),
+        }
+    } else {
+        eprintln!("omd: log directory {real_dir:?} is not writable; falling back");
+    }
+    install_into_fallback(register)
+}
+
+/// Registers the temp-dir fallback, or reports that no logger could be attached.
+///
+/// Both the directory *and* the stem must name the fallback: registering the
+/// fallback directory under the real stem would make the session scanner and the
+/// writer disagree about the file they are talking about.
+fn install_into_fallback(mut register: impl FnMut(&str, &Path) -> Result<(), String>) -> LogState {
+    let fallback = fallback_dir();
+    let fallback_stem = fallback_file_stem();
+    match register(&fallback_stem, &fallback) {
+        Ok(()) => LogState {
+            degraded: true,
+            dir: fallback,
+            file_stem: fallback_stem,
+            destination: LogDestination::Fallback,
+        },
+        Err(e) => {
+            // No logger is attached at all. The app still starts; Settings
+            // reports `disabled` and names no directory, because none holds this
+            // run's records — and the plugin also owns the `Stdout` target, so
+            // there is no console stream to fall back to either.
+            eprintln!("omd: fallback logging failed in {fallback:?}: {e}");
+            LogState {
+                degraded: true,
+                dir: PathBuf::new(),
+                file_stem: String::new(),
+                destination: LogDestination::Disabled,
+            }
+        }
+    }
+}
+
 /// Register the log plugin, probing first and degrading instead of failing.
 ///
 /// This runs from `.setup()`, not the builder chain, because the probe needs
@@ -147,58 +265,49 @@ fn plugin(stem: &str, dir: &Path) -> tauri::plugin::TauriPlugin<tauri::Wry> {
 /// setup error into `panic!("Failed to setup app: {e}")`.
 pub fn install(app: &tauri::AppHandle) -> LogState {
     let stem = log_file_stem(app);
+    let register =
+        |stem: &str, dir: &Path| app.plugin(plugin(stem, dir)).map_err(|e| e.to_string());
 
     // An unresolvable log directory is the same class of failure as an
     // unwritable one: the real destination is unusable. Treating it as
     // "usable, just at the fallback path" would register the fallback
     // directory under the *real* stem and report `degraded: false`, naming a
     // directory the real configuration never chose — §3.9 defines degraded
-    // logging as `temp_dir()/<app>-{pid}.log`.
-    match app.path().app_log_dir() {
-        Ok(real_dir) => {
-            if let Err(e) = std::fs::create_dir_all(&real_dir) {
-                eprintln!("omd: could not create log directory {real_dir:?}: {e}");
-            }
-
-            if probe_writable(&real_dir) {
-                match app.plugin(plugin(&stem, &real_dir)) {
-                    Ok(()) => {
-                        return LogState {
-                            degraded: false,
-                            dir: real_dir,
-                            file_stem: stem,
-                        }
-                    }
-                    Err(e) => eprintln!("omd: log plugin failed in {real_dir:?}: {e}"),
-                }
-            } else {
-                eprintln!("omd: log directory {real_dir:?} is not writable; falling back");
-            }
-        }
-        Err(e) => eprintln!("omd: could not resolve a log directory ({e}); falling back"),
+    // logging as `temp_dir()/<app>-{pid}.log`. A directory that cannot be
+    // created, or that disappears between the create and the probe, reaches the
+    // same place through `probe_writable` returning false.
+    let Ok(real_dir) = app.path().app_log_dir() else {
+        eprintln!("omd: could not resolve a log directory; falling back");
+        return install_into_fallback(register);
+    };
+    if let Err(e) = std::fs::create_dir_all(&real_dir) {
+        eprintln!("omd: could not create log directory {real_dir:?}: {e}");
     }
 
-    let fallback = fallback_dir();
-    let fallback_stem = fallback_file_stem();
-    if let Err(e) = app.plugin(plugin(&fallback_stem, &fallback)) {
-        // Degraded to stdout only. The app still starts; the user is not
-        // silently logging into the void — Settings reports this.
-        eprintln!("omd: fallback logging failed in {fallback:?}: {e}");
-    }
-
-    LogState {
-        degraded: true,
-        dir: fallback,
-        file_stem: fallback_stem,
-    }
+    prepare_file_logging(&stem, &real_dir, register)
 }
 
-/// Reports whether logging degraded, for the Settings surface.
+/// Reveals the resolved log directory in the OS file manager.
+///
+/// Reports the both-failed state as an error instead of opening a path that does
+/// not exist: `LogState.dir` is empty there, and "Open Log Folder" has nothing
+/// honest to open.
+#[tauri::command]
+pub fn open_log_dir(state: tauri::State<'_, LogState>) -> Result<(), String> {
+    if state.destination == LogDestination::Disabled {
+        return Err("file logging is disabled; there is no log folder to open".to_string());
+    }
+    tauri_plugin_opener::open_path(state.dir.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Reports where logging went, for the Settings surface.
 #[tauri::command]
 pub fn log_state(state: tauri::State<'_, LogState>) -> LogStateView {
     LogStateView {
         degraded: state.degraded,
         dir: state.dir.to_string_lossy().into_owned(),
+        destination: state.destination,
     }
 }
 
@@ -207,6 +316,7 @@ pub fn log_state(state: tauri::State<'_, LogState>) -> LogStateView {
 pub struct LogStateView {
     pub degraded: bool,
     pub dir: String,
+    pub destination: LogDestination,
 }
 
 /// What the previous run did. See spec §3.4.5.
@@ -457,12 +567,13 @@ pub fn log_previous_exit(outcome: PreviousExit) {
 pub fn log_startup_header(level: log::LevelFilter, state: &LogState) {
     log::info!("app started {}", env!("CARGO_PKG_VERSION"));
     log::info!(
-        "environment os={} arch={} log_level={} log_dir={:?} degraded={}",
+        "environment os={} arch={} log_level={} log_dir={:?} degraded={} destination={:?}",
         os_info::get(),
         std::env::consts::ARCH,
         level,
         state.dir,
-        state.degraded
+        state.degraded,
+        state.destination
     );
 }
 
@@ -839,9 +950,12 @@ mod tests {
         capture_log, records_for_target, take_captured_records, CapturedRecord,
     };
 
-    // One sequential test rather than two: `set_var`/`remove_var` mutate
+    // One sequential test rather than several: `set_var`/`remove_var` mutate
     // process-global state and cargo runs tests on parallel threads, so two
-    // env-mutating tests interleave and fail intermittently.
+    // env-mutating tests interleave and fail intermittently. `OMD_CONFIG_DIR` is
+    // in here too — the persisted verbose flag is read through
+    // `workspace::get_settings()`, which resolves that directory — but only this
+    // test may write it.
     #[test]
     fn effective_level_honours_the_env_var_and_ignores_nonsense() {
         // The env override is the only input; the build default is the other.
@@ -858,6 +972,72 @@ mod tests {
         assert_eq!(effective_level(), expected);
         std::env::remove_var(LOG_LEVEL_ENV_VAR);
         assert_eq!(effective_level(), expected);
+    }
+
+    // `OMD_LOG` must keep winning over the persisted flag: it is the
+    // per-invocation escape hatch a maintainer reaches for on a support call,
+    // and the flag is a durable preference that must not be able to shadow it.
+    // `OMD_LOG=banana` is not a level, so it must fall through to the flag
+    // rather than pinning the build default — a typo must not silently disable
+    // verbose logging any more than it may change the level.
+    //
+    // Sequential for the same reason as the test above: this is the single test
+    // that owns both env vars.
+    #[test]
+    fn effective_level_lets_the_env_var_beat_the_persisted_verbose_flag() {
+        let config = tempfile::tempdir().unwrap();
+        std::env::set_var("OMD_CONFIG_DIR", config.path());
+        std::fs::write(
+            config.path().join("settings.json"),
+            format!(r#"{{"{VERBOSE_LOGGING_SETTINGS_KEY}":true}}"#),
+        )
+        .unwrap();
+
+        std::env::set_var(LOG_LEVEL_ENV_VAR, "warn");
+        assert_eq!(
+            effective_level(),
+            log::LevelFilter::Warn,
+            "the env var must beat verboseLogging: true"
+        );
+        std::env::set_var(LOG_LEVEL_ENV_VAR, "banana");
+        assert_eq!(
+            effective_level(),
+            log::LevelFilter::Debug,
+            "an unparseable env var must fall through to the persisted flag, not to the build default"
+        );
+        std::env::remove_var(LOG_LEVEL_ENV_VAR);
+        assert_eq!(
+            effective_level(),
+            log::LevelFilter::Debug,
+            "with no env var the persisted verbose flag is what raises the level"
+        );
+
+        // The persisted flag is a JSON key the TypeScript settings shape owns;
+        // Rust only reads it. Missing, malformed, or non-boolean values must all
+        // answer `false` rather than erroring — only a real boolean `true` may
+        // change the level.
+        std::fs::write(config.path().join("settings.json"), "{not json").unwrap();
+        assert!(
+            !verbose_logging_enabled(),
+            "corrupt JSON must not enable verbose logging"
+        );
+        std::fs::write(
+            config.path().join("settings.json"),
+            format!(r#"{{"{VERBOSE_LOGGING_SETTINGS_KEY}":"true"}}"#),
+        )
+        .unwrap();
+        assert!(
+            !verbose_logging_enabled(),
+            "the string \"true\" is not the boolean true"
+        );
+        std::fs::write(
+            config.path().join("settings.json"),
+            format!(r#"{{"{VERBOSE_LOGGING_SETTINGS_KEY}":false}}"#),
+        )
+        .unwrap();
+        assert!(!verbose_logging_enabled(), "explicit false is not verbose");
+
+        std::env::remove_var("OMD_CONFIG_DIR");
     }
 
     #[test]
@@ -904,14 +1084,104 @@ mod tests {
     // The `log_state` payload is consumed by TypeScript, which cannot catch
     // wire-format drift: a renamed field still compiles and reads `undefined`
     // at runtime. Pin the serialized shape instead of trusting the derive.
+    //
+    // The destination is an enum, so the casing trap applies twice: the
+    // *variant* name is camelCased by the container attribute, and the `kind`
+    // tag has to survive as its own field. A frontend reading `dest.kind`
+    // compiles fine while getting `undefined` if any of that drifts.
     #[test]
-    fn log_state_view_serializes_degraded_and_dir() {
+    fn log_state_view_serializes_degraded_dir_and_destination() {
         let json = serde_json::to_string(&LogStateView {
             degraded: true,
             dir: "/tmp/logs".to_string(),
+            destination: LogDestination::Fallback,
         })
         .unwrap();
-        assert_eq!(json, r#"{"degraded":true,"dir":"/tmp/logs"}"#);
+        assert_eq!(
+            json,
+            r#"{"degraded":true,"dir":"/tmp/logs","destination":{"kind":"fallback"}}"#
+        );
+
+        // The both-registrations-failed state must be distinguishable on the
+        // wire, or Settings cannot avoid promising a directory nothing writes.
+        let json = serde_json::to_string(&LogStateView {
+            degraded: true,
+            dir: "/tmp/logs".to_string(),
+            destination: LogDestination::Disabled,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"degraded":true,"dir":"/tmp/logs","destination":{"kind":"disabled"}}"#
+        );
+
+        let json = serde_json::to_string(&LogStateView {
+            degraded: false,
+            dir: "/tmp/logs".to_string(),
+            destination: LogDestination::Directory,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"degraded":false,"dir":"/tmp/logs","destination":{"kind":"directory"}}"#
+        );
+    }
+
+    // The real directory answered the probe and the plugin attached there.
+    #[test]
+    fn prepare_file_logging_uses_the_real_directory_when_it_registers() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| Ok(()));
+        assert_eq!(state.destination, LogDestination::Directory);
+        assert!(!state.degraded);
+        assert_eq!(state.dir, dir.path());
+        assert_eq!(state.file_stem, "oh-my-md");
+    }
+
+    // The real registration failed, so the fallback carried the file. Both the
+    // directory *and* the stem must name the fallback: a reader that recomputed
+    // either would look in the wrong place.
+    #[test]
+    fn prepare_file_logging_falls_back_to_temp_when_the_real_dir_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        // Only the real directory's registration fails; the fallback accepts, so
+        // the file really is carried by the temp directory in this state.
+        let mut first = true;
+        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| {
+            if std::mem::take(&mut first) {
+                Err("nope".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(state.destination, LogDestination::Fallback);
+        assert!(state.degraded);
+        assert_eq!(state.dir, fallback_dir());
+        assert_eq!(state.file_stem, fallback_file_stem());
+    }
+
+    // Both registrations failed: no logger is attached at all. `dir` and
+    // `file_stem` stay empty, so Settings cannot print "your logs are here" over
+    // a path that receives nothing — the state the old
+    // `degraded: true`-for-everything return could not express. The `Stdout`
+    // target lives inside the same plugin dispatch as the file target, so in
+    // this state the facade's records do not reach stdout either.
+    #[test]
+    fn prepare_file_logging_reports_disabled_when_both_registrations_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut attempts = 0;
+        let state = prepare_file_logging("oh-my-md", dir.path(), |_, _| {
+            attempts += 1;
+            Err("both registrations fail".to_string())
+        });
+        assert_eq!(
+            attempts, 2,
+            "the real directory and the temp fallback must both have been tried"
+        );
+        assert_eq!(state.destination, LogDestination::Disabled);
+        assert!(state.degraded);
+        assert_eq!(state.dir, PathBuf::new());
+        assert!(state.file_stem.is_empty());
     }
 
     fn write_log(dir: &Path, name: &str, body: &str) -> PathBuf {

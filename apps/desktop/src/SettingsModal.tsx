@@ -12,6 +12,7 @@ import {
   type UserSettings,
 } from "./settings"
 import { localeOptions, useT, type StoredLocale } from "./i18n"
+import type { LogStateView } from "./logging"
 import { FontFamilyPicker } from "./FontFamilyPicker"
 
 export interface SettingsModalProps {
@@ -20,10 +21,46 @@ export interface SettingsModalProps {
   onSave: (settings: UserSettings) => void
   onClose: () => void
   listSystemFonts?: () => Promise<string[] | null>
+  /** Resolved logging destination; `null` while it has not loaded yet. */
+  logState?: LogStateView | null
+}
+
+/**
+ * The degradation row. Three destinations, three honest sentences:
+ *
+ * - `fallback` really is writing to the named temp directory, so naming it is
+ *   useful and the reason is what makes the fix obvious (usually permissions on
+ *   the real log directory).
+ * - `disabled` attached no logger at all. Naming `dir` there would point at a
+ *   path nothing writes — and because the `Stdout` target lives inside the same
+ *   plugin dispatch, there is no console stream to suggest either.
+ * - `directory` is the healthy case; the caller does not render this row.
+ */
+function LoggingWarning({ logState }: { logState: LogStateView }) {
+  const t = useT()
+  const fallback = logState.destination.kind === "fallback"
+  return (
+    <div className="settings-warning" role="status">
+      <span className="settings-warning-title">
+        {t("settings.logging.degraded.title")}
+      </span>
+      {fallback ? (
+        <span className="settings-warning-note">
+          {t("settings.logging.degraded.fallback")}
+          {" "}
+          <code className="settings-warning-path">{logState.dir}</code>
+        </span>
+      ) : (
+        <span className="settings-warning-note">
+          {t("settings.logging.degraded.disabled")}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function SettingsModal(props: SettingsModalProps) {
-  const { isOpen, settings, onSave, onClose, listSystemFonts } = props
+  const { isOpen, settings, onSave, onClose, listSystemFonts, logState } = props
   const modalRef = useRef<HTMLDivElement>(null)
   const t = useT()
   // System font families: fetched once on the first picker open, then cached
@@ -205,6 +242,27 @@ export function SettingsModal(props: SettingsModalProps) {
                 onChange={e => update({ spellcheck: e.target.checked })}
               />
             </div>
+          </div>
+
+          {/* Logging Section */}
+          <div className="settings-section">
+            <h3 className="settings-section-title">{t("settings.section.logging")}</h3>
+            <div className="settings-row">
+              <label htmlFor="setting-verbose-logging" className="settings-label">
+                {t("settings.label.verboseLogging")}
+              </label>
+              <input
+                id="setting-verbose-logging"
+                type="checkbox"
+                className="settings-checkbox"
+                checked={settings.verboseLogging}
+                onChange={e => update({ verboseLogging: e.target.checked })}
+              />
+            </div>
+            {/* `effective_level()` runs once at startup, so the toggle cannot
+                change this session's level; the note is the honest half. */}
+            <p className="settings-note">{t("settings.note.verboseLogging")}</p>
+            {logState?.degraded ? <LoggingWarning logState={logState} /> : null}
           </div>
 
           {/* Language Section */}

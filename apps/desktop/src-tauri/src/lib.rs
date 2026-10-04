@@ -1204,6 +1204,7 @@ pub fn run() {
             take_pending_open_files,
             diagnostics::export_diagnostics,
             logging::log_state,
+            logging::open_log_dir,
             logging::log_frontend,
             menu::set_menu_locale,
             export::export_preview,

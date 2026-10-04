@@ -7,6 +7,7 @@ import {
   sanitizeSettings,
   type UserSettings,
 } from "../src/settings"
+import { VERBOSE_LOGGING_SETTINGS_KEY } from "../src/constants"
 
 describe("settings model", () => {
   it("provides sensible default settings", () => {
@@ -19,7 +20,18 @@ describe("settings model", () => {
       defaultMode: "live",
       spellcheck: false,
       locale: "auto",
+      verboseLogging: false,
     })
+  })
+
+  // Rust reads this key out of the raw settings JSON with no typed struct, so
+  // the literal is the whole contract. Renaming the property without renaming
+  // the key Rust looks for would leave the toggle silently inert: the checkbox
+  // would save, the file would contain the value, and the level would never
+  // change.
+  it("names the verbose-logging key Rust reads from the JSON blob", () => {
+    expect(VERBOSE_LOGGING_SETTINGS_KEY).toBe("verboseLogging")
+    expect(Object.keys(DEFAULT_SETTINGS)).toContain(VERBOSE_LOGGING_SETTINGS_KEY)
   })
 
   it("sanitizes invalid or out-of-bound settings", () => {
@@ -38,6 +50,19 @@ describe("settings model", () => {
     expect(sanitized.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily)
   })
 
+  // The persisted flag is a boolean, but it arrives from JSON a user or an older
+  // build can hand-edit, so only a real `true` may win. `"true"` is a string
+  // that Rust's `as_bool()` also refuses, which keeps both sides agreeing.
+  it("coerces verboseLogging to a boolean, defaulting to false", () => {
+    expect(sanitizeSettings(undefined).verboseLogging).toBe(false)
+    expect(sanitizeSettings(null).verboseLogging).toBe(false)
+    expect(sanitizeSettings({}).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: "true" as never }).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: 1 as never }).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: true }).verboseLogging).toBe(true)
+    expect(sanitizeSettings({ verboseLogging: false }).verboseLogging).toBe(false)
+  })
+
   it("parses valid JSON into UserSettings", () => {
     const json = JSON.stringify({
       theme: "dark",
@@ -48,6 +73,7 @@ describe("settings model", () => {
       defaultMode: "source",
       spellcheck: true,
       locale: "auto",
+      verboseLogging: true,
     } satisfies UserSettings)
 
     const parsed = parseSettings(json)
@@ -60,6 +86,7 @@ describe("settings model", () => {
       defaultMode: "source",
       spellcheck: true,
       locale: "auto",
+      verboseLogging: true,
     })
   })
 

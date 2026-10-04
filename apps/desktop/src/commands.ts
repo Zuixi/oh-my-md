@@ -37,6 +37,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   preferences: "preferences",
   "check-updates": "check-updates",
   "export-diagnostics": "export-diagnostics",
+  "open-log-folder": "open-log-folder",
   undo: "undo",
   redo: "redo",
   cut: "cut",

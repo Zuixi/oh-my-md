@@ -73,6 +73,7 @@ import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
+import type { LogStateView } from "./logging"
 import {
   collectMatches,
   nextIndex,
@@ -385,6 +386,10 @@ export default function App({
   const settingsRef = useRef<UserSettings>(settings)
   const localeInitRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Resolved logging destination for the Settings degradation row. Null until
+  // the first `log_state` answer arrives; absent (no service) stays null, which
+  // renders no warning rather than a wrong one.
+  const [logState, setLogState] = useState<LogStateView | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
   // 最近一次防抖 saveSessionState 的在途 Promise。退出 flush 前先等它落定，
@@ -955,6 +960,11 @@ export default function App({
     void (async () => {
       const initial = await loadInitialSettings()
       if (mountedRef.current) setThemeSyncReady(true)
+      // Where this run's logs actually go (Task 11): fetched once at startup
+      // beside the settings, since it is fixed for the process lifetime.
+      void services.getLogState?.()
+        .then(state => { if (mountedRef.current) setLogState(state) })
+        .catch(() => undefined)
       if (!localeInitRef.current) {
         localeInitRef.current = true
         initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
@@ -2169,6 +2179,13 @@ export default function App({
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => { void updateCoordinatorRef.current?.check("manual") } },
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
+    { id: "open-log-folder", label: t("cmd.label.open-log-folder"), run: () => {
+      // A disabled destination has no folder, so Rust rejects; surface that
+      // instead of leaving an unhandled rejection (same pattern as revealInFinder).
+      void services.openLogDir?.().catch(error => {
+        services.reportError(errorMessage(t("error.openLogFolderFailed"), error))
+      })
+    } },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
     { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
     { id: "about", label: t("cmd.label.about"), run: () => setAboutOpen(true) },
@@ -2721,6 +2738,7 @@ export default function App({
         onSave={handleSaveSettings}
         onClose={() => setSettingsOpen(false)}
         listSystemFonts={services.listSystemFonts}
+        logState={logState}
       />
       <AboutDialog
         isOpen={aboutOpen}

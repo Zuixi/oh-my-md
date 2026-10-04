@@ -19,9 +19,11 @@ export interface MenuSection {
  * mirrors src-tauri/src/menu.rs (drift-tested in test/crossLayerMenu.test.ts).
  * Entry ids are the menu item ids menu.rs forwards, so the File menu uses the
  * legacy `new` id rather than its `new-tab` alias (both map to the same
- * palette command). App-menu/Help items (preferences, check-updates,
- * export-diagnostics) and the edit/quit entries have no macOS counterpart in
- * the tree because the native app menu already covers them there.
+ * palette command). The App-menu entries in `menu.rs` (preferences,
+ * check-updates, export-diagnostics, open-log-folder) appear here as Help
+ * entries so the in-app menubar exposes them off macOS; the edit/quit entries
+ * have no macOS counterpart in the tree because the native app menu already
+ * covers them there.
  */
 export const APP_MENU_TREE: readonly MenuSection[] = [
   {
@@ -96,7 +98,8 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
     labelKey: "menu.help",
     entries: [
       { id: "check-updates" },
-      { id: "export-diagnostics", separatorAfter: true },
+      { id: "export-diagnostics" },
+      { id: "open-log-folder", separatorAfter: true },
       { id: "about" },
     ],
   },

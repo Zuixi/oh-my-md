@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_SETTINGS,
 } from "./constants"
 import type { LogRecord } from "./logger"
+import type { LogStateView } from "./logging"
 import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
@@ -187,6 +188,11 @@ export interface DesktopServices {
   setRecentMenu?: (paths: string[]) => Promise<void>
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
+  /** Reveals the resolved log directory (Rust `open_log_dir`). Rejects when no
+   *  logger attached, so the caller reports it rather than opening a dead path. */
+  openLogDir?: () => Promise<void>
+  /** Where this run's records actually go, for the Settings degradation row. */
+  getLogState?: () => Promise<LogStateView>
   /** Frontend log transport (Task 6): one batched IPC call per flush. */
   logRecords?: (records: LogRecord[]) => Promise<void>
   setMenuLocale?: (locale: string) => Promise<void>
@@ -360,6 +366,14 @@ export const defaultServices: DesktopServices = {
     const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
     await invoke("export_diagnostics", { path })
+  },
+  openLogDir: async () => {
+    // Rejects by design: a disabled destination has no folder to open, and the
+    // caller reports that through reportError (same contract as revealInFinder).
+    await invoke("open_log_dir")
+  },
+  getLogState: async () => {
+    return await invoke<LogStateView>("log_state")
   },
   logRecords: async records => {
     // Rejects by design: the facade swallows and counts the failed batch.
