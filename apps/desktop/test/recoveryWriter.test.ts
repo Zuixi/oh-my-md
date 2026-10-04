@@ -4,6 +4,7 @@ import {
   createRecoveryWriter, RECOVERY_DEBOUNCE_MS,
   type RecoveryDraft, type RecoveryHost,
 } from "../src/recoveryWriter"
+import { useSpyLogger } from "./setup"
 
 function draftFor(tabId: number, contents = "body"): RecoveryDraft {
   return { tabId, key: `notes_${tabId}_md`, path: `/notes/${tabId}.md`, contents }
@@ -28,7 +29,7 @@ afterEach(() => {
 describe("recovery writer", () => {
   it("reports the first failure for a tab and only logs the later ones", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     const { host, reportError } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
     const writer = createRecoveryWriter()
 
@@ -43,15 +44,14 @@ describe("recovery writer", () => {
     expect(reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
     expect(logged).toHaveBeenCalledTimes(2)
     expect(logged.mock.calls[0]).toEqual([
-      `${t("error.recoveryWriteFailed")}: disk full`,
-      { key: "notes_1_md", path: "/notes/1.md" },
-      new Error("disk full"),
+      "recovery",
+      `${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md`,
     ])
   })
 
   it("re-arms the report after a successful write", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     const write = vi.fn()
       .mockRejectedValueOnce(new Error("first outage"))
       .mockResolvedValueOnce(undefined)
@@ -76,7 +76,7 @@ describe("recovery writer", () => {
 
   it("tracks tabs separately and re-arms a forgotten tab", async () => {
     vi.useFakeTimers()
-    vi.spyOn(console, "error").mockImplementation(() => undefined)
+    useSpyLogger()
     const { host, reportError } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
     const writer = createRecoveryWriter()
 
@@ -95,7 +95,7 @@ describe("recovery writer", () => {
 
   it("stays silent when the host cannot write recoveries", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     const { host, reportError } = makeHost(undefined)
     const writer = createRecoveryWriter()
 

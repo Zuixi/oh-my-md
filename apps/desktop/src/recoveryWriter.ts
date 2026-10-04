@@ -1,5 +1,7 @@
 import { errorMessage } from "./desktopServices"
 import { t } from "./i18n"
+import { getGlobalLogger } from "./logger"
+import { pathField } from "./logPath"
 
 export interface RecoveryDraft {
   readonly tabId: number
@@ -35,8 +37,8 @@ export interface RecoveryWriter {
  * first failure per tab reaches the user; later ones keep their detail in the log and leave editing
  * alone. A successful write re-arms the report, so a problem that comes back is announced again.
  *
- * The quiet path logs through `console.error` on purpose: the app has no logger yet, and swallowing
- * the rejection would hide a broken recovery directory entirely.
+ * The quiet path keeps the detail in the structured log: swallowing the rejection
+ * would hide a broken recovery directory entirely.
  */
 export function createRecoveryWriter(): RecoveryWriter {
   const reported = new Set<number>()
@@ -83,7 +85,7 @@ function surfaceFailure(
 ): void {
   const message = errorMessage(t("error.recoveryWriteFailed"), error)
   if (reported.has(draft.tabId)) {
-    console.error(message, { key: draft.key, path: draft.path }, error)
+    getGlobalLogger().error("recovery", `${message} ${pathField(draft.path ?? "")}`)
     return
   }
   reported.add(draft.tabId)

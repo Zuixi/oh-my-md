@@ -1,4 +1,5 @@
 import { useSyncExternalStore, useMemo } from "react"
+import { getGlobalLogger } from "../logger"
 import { en } from "./messages/en"
 import { zh } from "./messages/zh"
 
@@ -55,7 +56,7 @@ export function setLocale(stored: StoredLocale): Locale {
 function notifyMenu(): Promise<void> {
   return Promise.resolve(menuSetter(current)).catch(e => {
     // Menu rebuild failures are not on the document-correctness path; do not block the webview.
-    console.warn("[i18n] set_menu_locale failed", e)
+    getGlobalLogger().warn("i18n", `set_menu_locale failed: ${String(e)}`)
   })
 }
 
@@ -69,7 +70,9 @@ export function t(key: string, params?: Record<string, string | number>): string
   const table = messages[current]
   const template = table[key]
   if (template === undefined) {
-    if (import.meta.env?.DEV) console.warn(`[i18n] missing key: ${key}`)
+    // Dev-only: the missing key is a bug in this catalog, not a runtime event,
+    // and `t` is called per render, so production must not pay for it.
+    if (import.meta.env?.DEV) getGlobalLogger().debug("i18n", `missing key: ${key}`)
     return key
   }
   return interpolate(template, params)
@@ -82,7 +85,8 @@ function useT(): (key: string, params?: Record<string, string | number>) => stri
     return (key: string, params?: Record<string, string | number>) => {
       const template = table[key]
       if (template === undefined) {
-        if (import.meta.env?.DEV) console.warn(`[i18n] missing key: ${key}`)
+        // Dev-only, same as the module-level `t`: this runs per render.
+        if (import.meta.env?.DEV) getGlobalLogger().debug("i18n", `missing key: ${key}`)
         return key
       }
       return interpolate(template, params)

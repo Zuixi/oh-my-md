@@ -702,10 +702,11 @@ pub fn unescape_path_field(raw: &str) -> String {
 
 /// Renders one path as a `path=<escaped>` field.
 ///
-/// `allow(dead_code)`: the fence is the API boundary, not this task's call
-/// sites. Task 10's boundary instrumentation is the first consumer; until it
-/// lands only the tests call these two, and the guard test below asserts they
-/// exist. Do not fold either into `log_records`.
+/// `allow(dead_code)`: the fence is the API boundary, not the call sites. The
+/// save, export, and diagnostics lines consume [`path_field`] directly, while
+/// [`paths_field`] is reached only where a watcher reconciles a path set; the
+/// Rust and TypeScript guard tests assert both exist. Do not fold either into
+/// `log_records`.
 #[allow(dead_code)]
 pub fn path_field(path: &Path) -> String {
     format!("path={}", escape_path_field(&path.to_string_lossy()))

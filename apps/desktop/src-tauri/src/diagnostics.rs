@@ -99,7 +99,12 @@ pub fn export_diagnostics(app: tauri::AppHandle, path: String) -> Result<(), Str
     let home = dirs::home_dir()
         .map(|home| home.to_string_lossy().into_owned())
         .unwrap_or_default();
-    write_diagnostics_bundle(Path::new(&path), &log_dir, &home)
+    let target = Path::new(&path);
+    write_diagnostics_bundle(target, &log_dir, &home)?;
+    // Boundary: the support bundle was written; only a successful export is
+    // worth a line, since a failure already surfaces to the caller.
+    log::info!("diagnostics export {}", crate::logging::path_field(target));
+    Ok(())
 }
 
 #[cfg(test)]

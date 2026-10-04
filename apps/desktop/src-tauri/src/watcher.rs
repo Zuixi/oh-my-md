@@ -154,7 +154,10 @@ pub fn drop_window_watches(app: &AppHandle, label: &str) {
         return;
     }
     if let Err(e) = apply_union(app, &mut state) {
-        log::warn!("failed to reconcile watches after dropping window {label}: {e}");
+        // The watched set is the durable diagnostic: a failed reconcile is
+        // best-effort, so the field is the only record of what failed to sync.
+        let fields = crate::logging::paths_field(&state.watched);
+        log::warn!("failed to reconcile watches after dropping window {label}: {e} {fields}");
     }
 }
 

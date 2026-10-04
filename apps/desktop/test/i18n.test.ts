@@ -4,6 +4,7 @@ import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale, t } f
 import { shortcutFor } from "../src/shortcuts"
 import { en } from "../src/i18n/messages/en"
 import { zh } from "../src/i18n/messages/zh"
+import { useSpyLogger } from "./setup"
 
 describe("i18n store", () => {
   beforeEach(() => { initLocale("auto") })
@@ -39,13 +40,12 @@ describe("i18n store", () => {
 
   it("t resolves, interpolates, and never throws on missing key", () => {
     initLocale("en")
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const missingKey = vi.mocked(useSpyLogger().debug)
     const { result } = renderHook(() => useT())
     const t = result.current
     expect(t("image.broken", { src: "x.png" })).toBe("🖼 x.png (failed to load)")
     expect(t("nonexistent.key")).toBe("nonexistent.key")
-    expect(warn).toHaveBeenCalled()
-    warn.mockRestore()
+    expect(missingKey).toHaveBeenCalledWith("i18n", "missing key: nonexistent.key")
   })
 
   it("useT re-renders on locale change", () => {

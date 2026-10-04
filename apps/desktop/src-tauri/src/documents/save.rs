@@ -29,12 +29,21 @@ pub(crate) fn guarded_save_with_hook(
     let lock = coordinator.lock_for(&path_key);
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
+    // Every document write, from every route, passes through here: one begin
+    // line per attempted save, after validation and the per-path lock. The
+    // parsed buffer supplies the field so it is escaped like every other path.
+    let field = crate::logging::path_field(&path_buf);
+    log::info!("save begin {field}");
+
     let first_probe = probe_disk(&path_buf)?;
     if let VersionCheck::Conflict(result) = compare_expected(expected, &first_probe, path) {
+        // A conflict is a user-visible state transition, not a failure: the
+        // guarded write declined to overwrite and nothing was written.
+        log::info!("save conflict {field}");
         return Ok(result);
     }
 
-    match first_probe {
+    let result = match first_probe {
         DiskProbe::Missing => create_missing(&path_buf, path, contents, expected, hook),
         DiskProbe::Existing { snapshot, .. } => {
             replace_existing(&path_buf, path, &snapshot, contents, expected, hook)
@@ -42,6 +51,23 @@ pub(crate) fn guarded_save_with_hook(
         DiskProbe::DanglingSymlink => Err(DocumentError::Internal(
             "unexpected dangling symlink after a matching compare".into(),
         )),
+    };
+
+    match result {
+        Ok(SaveDocumentResult::Saved { .. }) => {
+            log::info!("save ok {field} bytes={}", contents.len());
+            result
+        }
+        // The second compare inside the write can still find a conflict; the
+        // write is abandoned with nothing published, so this is not a failure.
+        Ok(result) => {
+            log::info!("save conflict {field}");
+            Ok(result)
+        }
+        Err(error) => {
+            log::error!("save failed {field} error={error}");
+            Err(error)
+        }
     }
 }
 

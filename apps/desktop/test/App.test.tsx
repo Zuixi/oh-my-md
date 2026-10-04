@@ -9,6 +9,7 @@ import type { CreateEditorOptions } from "../src/Editor"
 import type { DiskSnapshot } from "../src/desktopServices"
 import { t } from "../src/i18n"
 import { createAppHarness, expectPathShown, normalizationId, resetMountedApps, versionFor } from "./appHarness"
+import { useSpyLogger } from "./setup"
 import * as findReplaceModule from "../src/findReplace"
 
 vi.mock("@omd/engine", async importOriginal => {
@@ -526,7 +527,7 @@ describe("App document session", () => {
 
   it("reports a failing recovery write once per tab and keeps editing", async () => {
     const harness = makeAppHarness()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     vi.mocked(harness.services.writeRecovery).mockRejectedValue(new Error("disk full"))
     harness.renderApp()
 
@@ -540,12 +541,11 @@ describe("App document session", () => {
     // Word count is debounced off the per-keystroke path; wait out the window.
     await waitFor(() => { expect(screen.getByText("3 words · 13 chars")).toBeTruthy() })
     expectPathShown("unnamed", { dirty: true })
-    logged.mockRestore()
   })
 
   it("reports a recovery failure again once a write has succeeded", async () => {
     const harness = makeAppHarness()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     vi.mocked(harness.services.writeRecovery)
       .mockRejectedValueOnce(new Error("first outage"))
       .mockResolvedValueOnce(undefined)
@@ -561,7 +561,6 @@ describe("App document session", () => {
       [`${t("error.recoveryWriteFailed")}: second outage`],
     ])
     expect(logged).not.toHaveBeenCalled()
-    logged.mockRestore()
   })
 
   it("clears dirty when undo returns to the loaded document baseline", async () => {

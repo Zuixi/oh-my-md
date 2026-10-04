@@ -11,6 +11,7 @@ import {
   type DocumentSaveHost,
 } from "./documentSaveRunner"
 import type { SaveStateByTab } from "./documentSaveState"
+import { getGlobalLogger } from "./logger"
 import type { NormalizationByTab } from "./normalizationState"
 import type { EditorSession } from "./session"
 import type { Workspace } from "./workspace"
@@ -80,7 +81,11 @@ export function createDocumentSaveAppBridge(deps: {
     enqueue,
     onDurabilityWarning: deps.onDurabilityWarning,
     incrementFocusToken: deps.incrementFocusToken,
-    logReadFailed: error => { console.error(error) },
+    logReadFailed: error => {
+      // Boundary: a pre-save read failed. The failure already decides the save
+      // outcome; this line is the only trace it leaves.
+      getGlobalLogger().error("save", String(error))
+    },
     reportStatus: deps.reportStatus,
     onSaveFailed: deps.onSaveFailed,
   }
@@ -93,7 +98,11 @@ export function createDocumentSaveAppBridge(deps: {
     setSaveStates: deps.setSaveStates,
     readDocumentVersion: path => deps.services.readDocumentVersion(path),
     readDocument: path => deps.services.readDocument(path),
-    logReadFailed: error => { console.error(error) },
+    logReadFailed: error => {
+      // Boundary: the watcher poll's version/read probe failed. Polling is
+      // best-effort and retries on the next tick, so this never reaches the UI.
+      getGlobalLogger().error("save", String(error))
+    },
   })
   return { saveFile, saveCopy, pollFileTabs }
 }

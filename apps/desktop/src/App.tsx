@@ -161,7 +161,7 @@ interface AppProps {
   docMaterializeMs?: number
   /** Automatic-update adapter; tests inject a fake, production uses the Tauri plugin adapter. */
   updateAdapter?: UpdateAdapter
-  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs to console. */
+  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs through the facade. */
   logUpdateFailure?: (failure: UpdateFailureKind) => void
 }
 
@@ -283,13 +283,13 @@ interface OutlineIdleGlobal {
 }
 
 /**
- * Startup-check failures log with no user UI (spec §10/§14). The app has no
- * structured logger yet; recoveryWriter already uses `console.error` on
- * purpose. Log only the classified product failure kind — never raw updater
- * internals or document content.
+ * Startup-check failures log with no user UI (spec §10/§14): a failed startup
+ * update check is not a user-visible failure, so it is a warning. Log only the
+ * classified product failure kind — never raw updater internals or document
+ * content.
  */
 function logUpdateStartupFailure(failure: UpdateFailureKind): void {
-  console.error(`[updates] startup check failed: ${failure}`)
+  getGlobalLogger().warn("updates", `startup check failed: ${failure}`)
 }
 
 /**
