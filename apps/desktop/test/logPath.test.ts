@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { escapePathField, pathField, pathsField } from "../src/logPath"
+import { escapePathField, keyField, pathField, pathsField } from "../src/logPath"
 
 /**
  * The field grammar is a cross-language contract: the redactor is Rust, but
@@ -165,5 +165,13 @@ describe("structured path fields", () => {
     })
 
     expect(pathsField([])).toBe("paths=[]")
+  })
+
+  it("renders a recovery key with the same escape grammar", () => {
+    expect(keyField("untitled_7")).toBe("key=untitled_7")
+    expect(keyField("_notes_My_Doc.md")).toBe("key=_notes_My_Doc.md")
+    // A key cannot break the record: the field-closing and record-splitting
+    // characters are the ones `escapePathField` owns.
+    expect(keyField("a>b]c;d\\e\nf")).toBe("key=a\\>b\\]c\\;d\\\\e\\nf")
   })
 })

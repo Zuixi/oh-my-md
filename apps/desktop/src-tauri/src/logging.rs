@@ -832,6 +832,12 @@ pub fn log_frontend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The facade capture lives at the crate root because the `documents`
+    // boundary tests need it too; these are the frontend-record helpers that
+    // only this module's sink tests use.
+    use crate::log_capture::{
+        capture_log, records_for_target, take_captured_records, CapturedRecord,
+    };
 
     // One sequential test rather than two: `set_var`/`remove_var` mutate
     // process-global state and cargo runs tests on parallel threads, so two
@@ -914,64 +920,6 @@ mod tests {
         path
     }
 
-    /// What the `log` facade receives, so the writers can be exercised without
-    /// a Tauri app: the writers emit through the facade, and the facade is
-    /// what the plugin's file sink records.
-    ///
-    /// The target is captured too: the file sink writes it into the same
-    /// physical line as the message, so a newline in *either* field can forge a
-    /// session boundary.
-    #[derive(Clone, Debug)]
-    struct CapturedRecord {
-        level: log::Level,
-        target: String,
-        message: String,
-    }
-
-    static CAPTURED: std::sync::Mutex<Vec<CapturedRecord>> = std::sync::Mutex::new(Vec::new());
-
-    /// Serializes the tests that drive the process-global facade: they share
-    /// `CAPTURED`, and `log::set_boxed_logger` can only succeed once.
-    static LOGGER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct CapturingLogger;
-
-    impl log::Log for CapturingLogger {
-        fn enabled(&self, _: &log::Metadata) -> bool {
-            true
-        }
-
-        fn log(&self, record: &log::Record) {
-            CAPTURED
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(CapturedRecord {
-                    level: record.level(),
-                    target: record.target().to_string(),
-                    message: record.args().to_string(),
-                });
-        }
-
-        fn flush(&self) {}
-    }
-
-    /// Installs the capturing logger once for the whole test binary and holds
-    /// the lock that keeps its tests from interleaving captured records. Cargo
-    /// runs tests on parallel threads, so the guard must live for the test.
-    fn capture_log() -> std::sync::MutexGuard<'static, ()> {
-        static INSTALL: std::sync::Once = std::sync::Once::new();
-        let guard = LOGGER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        INSTALL.call_once(|| {
-            log::set_boxed_logger(Box::new(CapturingLogger)).expect("no logger in unit tests");
-            log::set_max_level(log::LevelFilter::Trace);
-        });
-        guard
-    }
-
-    fn take_captured_records() -> Vec<CapturedRecord> {
-        std::mem::take(&mut *CAPTURED.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-
     fn take_captured() -> Vec<String> {
         take_captured_records()
             .into_iter()
@@ -1002,25 +950,6 @@ mod tests {
             .iter()
             .filter(|record| record.target == LOG_FRONTEND_COMMAND)
             .map(|record| record.message.clone())
-            .collect()
-    }
-
-    /// The captured records whose target starts with `prefix`: the records the
-    /// calling test logged, and only those.
-    ///
-    /// Other tests in the binary log through the same process-global facade
-    /// (the `ignore` crate is chatty at debug) and cargo runs them in parallel,
-    /// so an unfiltered assertion on the captured set is flaky. But the filter
-    /// has to name the target *that test* used: a helper with a hard-coded
-    /// target returns nothing at all for a test that logged somewhere else,
-    /// which is how two boundary tests came to assert on empty strings and stay
-    /// green with `neutralize_boundary_markers` deleted. Callers must assert
-    /// the prefix matched something.
-    fn records_for_target(records: &[CapturedRecord], prefix: &str) -> Vec<CapturedRecord> {
-        records
-            .iter()
-            .filter(|record| record.target.starts_with(prefix))
-            .cloned()
             .collect()
     }
 

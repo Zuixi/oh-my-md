@@ -48,3 +48,17 @@ export function pathField(path: string): string {
 export function pathsField(paths: readonly string[]): string {
   return `paths=[${paths.map(escapePathField).join(";")}]`
 }
+
+/**
+ * Renders a recovery key as a `key=<escaped>` field.
+ *
+ * A recovery key is not a path: it is the tab identity (`recoveryKey` in
+ * `session.ts` — an untitled tab's key is `untitled_<id>`), and it is the only
+ * identity an untitled tab has, since its `path` is `null`. It shares the
+ * escape grammar so a key can never break the record, but it stays out of
+ * `LOG_PATH_FIELD_HELPERS` and out of the export redactor: a key is a
+ * sanitized stem, not a location, so redacting it would only lose the record.
+ */
+export function keyField(key: string): string {
+  return `key=${escapePathField(key)}`
+}

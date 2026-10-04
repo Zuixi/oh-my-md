@@ -21,6 +21,26 @@ async function settle() {
   await vi.advanceTimersByTimeAsync(RECOVERY_DEBOUNCE_MS)
 }
 
+/**
+ * 第二次失败的记录：第一次走 `reportError`，之后每次都写结构化日志。
+ * 返回那条 `error` 记录的消息，供测试断言 tab 身份字段。
+ */
+async function loggedSecondFailure(draft: RecoveryDraft): Promise<string> {
+  const logged = vi.mocked(useSpyLogger().error)
+  const { host } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
+  const writer = createRecoveryWriter()
+
+  await writer.save(draft, host)
+  await settle()
+  await writer.save(draft, host)
+  await settle()
+
+  expect(logged).toHaveBeenCalledOnce()
+  const [target, message] = logged.mock.calls[0]
+  expect(target).toBe("recovery")
+  return message
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -45,8 +65,25 @@ describe("recovery writer", () => {
     expect(logged).toHaveBeenCalledTimes(2)
     expect(logged.mock.calls[0]).toEqual([
       "recovery",
-      `${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md`,
+      `${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md key=notes_1_md`,
     ])
+  })
+
+  it("keeps the key for an untitled tab, whose only identity is the key", async () => {
+    vi.useFakeTimers()
+    // `draft.path` is null for an untitled tab (`recoveryKey` gives it
+    // `untitled_<id>`); a path-only record would leave that tab anonymous.
+    const message = await loggedSecondFailure({
+      tabId: 7,
+      key: "untitled_7",
+      path: null,
+      contents: "body",
+    })
+
+    expect(message).toBe(
+      `${t("error.recoveryWriteFailed")}: disk full path= key=untitled_7`,
+    )
+    expect(message).toContain("key=untitled_7")
   })
 
   it("re-arms the report after a successful write", async () => {

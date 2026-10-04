@@ -1,7 +1,7 @@
 import { errorMessage } from "./desktopServices"
 import { t } from "./i18n"
 import { getGlobalLogger } from "./logger"
-import { pathField } from "./logPath"
+import { keyField, pathField } from "./logPath"
 
 export interface RecoveryDraft {
   readonly tabId: number
@@ -85,7 +85,12 @@ function surfaceFailure(
 ): void {
   const message = errorMessage(t("error.recoveryWriteFailed"), error)
   if (reported.has(draft.tabId)) {
-    getGlobalLogger().error("recovery", `${message} ${pathField(draft.path ?? "")}`)
+    // The key is the only identity an untitled tab has: its `path` is null, so
+    // a path-only record would leave exactly that tab unidentifiable.
+    getGlobalLogger().error(
+      "recovery",
+      `${message} ${pathField(draft.path ?? "")} ${keyField(draft.key)}`,
+    )
     return
   }
   reported.add(draft.tabId)

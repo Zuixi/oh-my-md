@@ -134,7 +134,9 @@ pub fn set_watched_paths(
     let state_guard = app.state::<Mutex<WatcherState>>();
     let mut state = state_guard.lock().map_err(|e| e.to_string())?;
     state.sets.set(window_label, paths.to_vec());
-    apply_union(app, &mut state)
+    // The caller only needs the outcome; the target union a failure carries is
+    // `drop_window_watches`' business, where it is the logged diagnostic.
+    apply_union(app, &mut state).map_err(|(e, _)| e).map(|_| ())
 }
 
 /// Remove a destroyed window's set and reconcile: a watch is released only
@@ -153,17 +155,27 @@ pub fn drop_window_watches(app: &AppHandle, label: &str) {
         state.watched = state.sets.union();
         return;
     }
-    if let Err(e) = apply_union(app, &mut state) {
-        // The watched set is the durable diagnostic: a failed reconcile is
-        // best-effort, so the field is the only record of what failed to sync.
-        let fields = crate::logging::paths_field(&state.watched);
+    if let Err((e, target)) = apply_union(app, &mut state) {
+        // Log the *target* union, not `state.watched`: a failed reconcile
+        // returns before assigning, so `state.watched` is the previous set — it
+        // still holds the just-dropped window's paths and omits exactly the
+        // paths this reconcile failed to add. The field is therefore the
+        // desired watch set at the time of failure; the error names what failed.
+        let fields = crate::logging::paths_field(&target);
         log::warn!("failed to reconcile watches after dropping window {label}: {e} {fields}");
     }
 }
 
 /// Reconcile the OS watcher to the union of all window sets via the pure
 /// diff, then record that union as watched.
-fn apply_union(app: &AppHandle, state: &mut WatcherState) -> Result<(), String> {
+///
+/// The failure carries the target union as well as the error: `state.watched`
+/// is only advanced on full success, so on failure it is the previous set and
+/// cannot answer "what was this reconcile trying to sync?".
+fn apply_union(
+    app: &AppHandle,
+    state: &mut WatcherState,
+) -> Result<Vec<PathBuf>, (String, Vec<PathBuf>)> {
     let union = state.sets.union();
 
     if state.watcher.is_none() {
@@ -176,7 +188,7 @@ fn apply_union(app: &AppHandle, state: &mut WatcherState) -> Result<(), String> 
                     }
                 }
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| (e.to_string(), union.clone()))?;
         spawn_event_loop(app.clone(), receiver);
         state.watcher = Some(watcher);
         state.watched = Vec::new();
@@ -193,10 +205,10 @@ fn apply_union(app: &AppHandle, state: &mut WatcherState) -> Result<(), String> 
     for path in &to_watch {
         watcher
             .watch(path, RecursiveMode::Recursive)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| (e.to_string(), union.clone()))?;
     }
-    state.watched = union;
-    Ok(())
+    state.watched = union.clone();
+    Ok(union)
 }
 
 #[cfg(test)]

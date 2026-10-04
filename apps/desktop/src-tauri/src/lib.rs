@@ -2,6 +2,8 @@ mod diagnostics;
 mod documents;
 mod export;
 mod fonts;
+#[cfg(test)]
+mod log_capture;
 mod logging;
 mod menu;
 mod session_flush;
