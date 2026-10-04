@@ -1003,8 +1003,9 @@ pub fn run() {
             let previous = logging::scan_previous_session(&log_state.dir, &log_state.file_stem);
             logging::write_session_start(std::process::id(), env!("CARGO_PKG_VERSION"));
             logging::log_startup_header(logging::effective_level(), &log_state);
-            logging::log_previous_exit(previous);
-            // Carried as state for the diagnostics bundle (Task 12).
+            logging::log_previous_exit(previous.outcome);
+            // Carried as state for the diagnostics bundle (Task 12), which is
+            // also where the start line's pid/version are reported.
             app.manage(logging::PreviousExitState(previous));
             app.manage(log_state);
             // Launch argv: the registry is empty and the config-declared main

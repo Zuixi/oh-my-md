@@ -288,7 +288,6 @@ export const zh: Record<string, string> = {
   "confirm.restore": "恢复未保存草稿 {label}？",
   "confirm.externalChange": "文件已在磁盘上更改。重新加载？",
   "confirm.exportDiagnostics": "导出诊断信息包？其中包含应用版本、系统与日志级别、已脱敏的日志、环境信息、你的设置以及会话恢复状态，绝不含文档内容。日志路径字段中的文件路径会被折叠为最后的文件名。",
-  "confirm.exportDiagnosticsFullPaths": "要在信息包中保留完整文件路径吗？文件夹名可能暴露项目或客户名称，仅当支持人员要求时选择“确定”。“取消”会将所有路径折叠为最后的文件名。",
   "error.export.desktopOnly": "PDF 与图片导出目前仅在 macOS 桌面应用可用",
   "error.openFailed": "打开失败",
   "error.folderListingFailed": "文件夹列出失败",

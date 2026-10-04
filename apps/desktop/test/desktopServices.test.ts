@@ -71,10 +71,10 @@ describe("logRecords", () => {
 })
 
 describe("export diagnostics", () => {
-  /** Answers the notice and then the full-paths opt-in, in that order. */
-  function confirmTwice(notice: boolean, includeFullPaths: boolean) {
+  /** The one pre-export notice. OK proceeds; paths stay collapsed either way. */
+  function answerNotice(proceed: boolean) {
     const confirm = vi.spyOn(window, "confirm")
-    confirm.mockReturnValueOnce(notice).mockReturnValueOnce(includeFullPaths)
+    confirm.mockReturnValueOnce(proceed)
     return confirm
   }
 
@@ -84,39 +84,30 @@ describe("export diagnostics", () => {
     save.mockReset()
   })
 
-  it("asks before exporting and maps the opt-in to the command argument", async () => {
+  it("asks once, names the contents, and always exports collapsed paths", async () => {
     save.mockResolvedValueOnce("/tmp/omd.zip")
     invoke.mockResolvedValueOnce(undefined)
-    const confirm = confirmTwice(true, false)
+    const confirm = answerNotice(true)
 
     await defaultServices.exportDiagnostics?.()
 
-    // Two questions: what will be included, then the full-paths opt-in. The
-    // first must name the contents, so it cannot be a bare "are you sure".
-    expect(confirm).toHaveBeenCalledTimes(2)
+    // Exactly one question, and it names the bundle's contents rather than
+    // being a bare "are you sure". There is deliberately no second question:
+    // the full-paths opt-in is a checkbox the spec asks for, and an unlabelled
+    // `window.confirm` whose OK means "include" is a privacy hazard, so the
+    // export ships collapsed until that checkbox exists.
+    expect(confirm).toHaveBeenCalledTimes(1)
     expect(confirm.mock.calls[0][0]).toMatch(/diagnostics/i)
     expect(confirm.mock.calls[0][0]).toMatch(/log/i)
+    expect(confirm.mock.calls[0][0]).toMatch(/path/i)
     expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
       path: "/tmp/omd.zip",
       includeFullPaths: false,
     })
   })
 
-  it("includes full file paths only after the opt-in", async () => {
-    save.mockResolvedValueOnce("/tmp/omd.zip")
-    invoke.mockResolvedValueOnce(undefined)
-    confirmTwice(true, true)
-
-    await defaultServices.exportDiagnostics?.()
-
-    expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
-      path: "/tmp/omd.zip",
-      includeFullPaths: true,
-    })
-  })
-
   it("exports nothing when the notice is declined", async () => {
-    confirmTwice(false, true)
+    answerNotice(false)
 
     await defaultServices.exportDiagnostics?.()
 
@@ -128,7 +119,7 @@ describe("export diagnostics", () => {
 
   it("exports nothing when the save dialog is cancelled", async () => {
     save.mockResolvedValueOnce(null)
-    confirmTwice(true, false)
+    answerNotice(true)
 
     await defaultServices.exportDiagnostics?.()
 

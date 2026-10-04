@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::Manager;
 
-use crate::logging::{LogDestination, LogState, PreviousExit};
+use crate::logging::{LogDestination, LogState, PreviousSession};
 
 /// Layout version recorded in `manifest.json`. A support reader keys off this,
 /// not off the file list it happens to find, so it is bumped whenever an entry
@@ -28,6 +28,12 @@ const COLLAPSED_DIRECTORY: &str = "<path>/…/";
 const PATH_FIELD_PREFIX: &str = "path=";
 const PATHS_FIELD_PREFIX: &str = "paths=[";
 
+/// The prefix of `environment.txt`'s own log-directory line. Named once because
+/// two readers depend on it agreeing with `log_dir_line`: the writer builds the
+/// line with it, and `redact_environment_text` recognises the line it must not
+/// hand to rule 5's free-text sweep.
+const LOG_DIR_PREFIX: &str = "log_dir=";
+
 /// What replaces a stripped secret value (§3.7 rule 4).
 const REDACTED: &str = "<redacted>";
 
@@ -40,8 +46,9 @@ struct BundleContext<'a> {
     /// Task 11's three-state destination. `environment.txt` reports it as-is,
     /// including the `Disabled` state where no directory may be named.
     log_state: &'a LogState,
-    /// Task 4's startup determination, summarized into `manifest.json`.
-    previous_exit: PreviousExit,
+    /// Task 4's startup determination, and the pid/version of the start line it
+    /// keyed off, summarized into `manifest.json`.
+    previous_session: PreviousSession,
     /// The persisted settings blob, redacted into `settings.json`.
     settings_json: &'a str,
     /// The persisted session shards, redacted into `session.json`.
@@ -211,15 +218,26 @@ fn secret_value_end(line: &str, value_start: usize) -> usize {
 /// path by its shape, so a preserved `path=/Volumes/…` field looks exactly like
 /// leaked free text to it; running rule 5 over the whole line would re-collapse
 /// the very fields `include_full_paths` exists to keep, making the opt-in a lie.
-fn redact_paths(line: &str, home: &str, include_full_paths: bool) -> String {
+///
+/// `sweep_free_text` turns rule 5 off without reordering anything, for the one
+/// caller whose text is entirely its own (`redact_environment_text`).
+fn redact_paths(line: &str, home: &str, include_full_paths: bool, sweep_free_text: bool) -> String {
     let mut out = String::with_capacity(line.len());
     let mut cursor = 0usize;
     while let Some(field) = next_path_field(line, cursor) {
-        out.push_str(&sweep_leaked_paths(&line[cursor..field.start]));
+        if sweep_free_text {
+            out.push_str(&sweep_leaked_paths(&line[cursor..field.start]));
+        } else {
+            out.push_str(&line[cursor..field.start]);
+        }
         out.push_str(&rewrite_path_field(line, &field, home, include_full_paths));
         cursor = field.end;
     }
-    out.push_str(&sweep_leaked_paths(&line[cursor..]));
+    if sweep_free_text {
+        out.push_str(&sweep_leaked_paths(&line[cursor..]));
+    } else {
+        out.push_str(&line[cursor..]);
+    }
     out
 }
 
@@ -485,7 +503,7 @@ fn sweep_leaked_paths(text: &str) -> String {
     while index < text.len() {
         if let Some(end) = leaked_path_end(text, index) {
             let run = &text[index..end];
-            if is_absolute_path_shape(run) && !run.contains("<home>") {
+            if is_collapsible_run(run) {
                 out.push_str(&collapse_path(run));
             } else {
                 out.push_str(run);
@@ -498,6 +516,23 @@ fn sweep_leaked_paths(text: &str) -> String {
         index += ch.len_utf8();
     }
     out
+}
+
+/// Whether a run may be replaced by [`collapse_path`]'s placeholder.
+///
+/// A control character ends the question. The sweep runs on text the app did
+/// not write, and the placeholder keeps the run's basename, so a run carrying a
+/// live LF/CR/tab would be re-emitted with that character still inside and
+/// split the one-record-per-line contract `diagnostics.txt` promises. The
+/// shape test alone accepts such a run, which is how a path with a real newline
+/// reached the bundle. Refusing the collapse leaves the bytes exactly as they
+/// arrived.
+///
+/// The `<home>` carve-out is the other half of the shape test: rule 1 has
+/// already replaced the user's home with a placeholder, and re-collapsing the
+/// remainder would delete the structure rule 1 deliberately kept.
+fn is_collapsible_run(run: &str) -> bool {
+    is_absolute_path_shape(run) && !run.contains("<home>") && !run.chars().any(char::is_control)
 }
 
 /// The end of the path-shaped run starting at `index`, or `None` when no run
@@ -676,10 +711,29 @@ fn basename_of(value: &str) -> &str {
 ///   Rules 3 and 5 are one traversal (`redact_paths`), and the sweep runs last,
 ///   as §3.7 describes: "a second ... scan over the remaining free text".
 pub fn redact_line_with(line: &str, home: &str, include_full_paths: bool) -> String {
+    redact_line_impl(line, home, include_full_paths, true)
+}
+
+/// [`redact_line_with`] with rule 5's free-text sweep switched off.
+///
+/// Only `environment.txt`'s own `log_dir=` line uses this: every rule that can
+/// remove a location still runs, but the sweep cannot mistake the directory
+/// this writer is deliberately naming for a third party's leak.
+fn redact_line_fields(line: &str, home: &str, include_full_paths: bool) -> String {
+    redact_line_impl(line, home, include_full_paths, false)
+}
+
+/// The §3.7 pipeline in its one order, with rule 5 switchable.
+fn redact_line_impl(
+    line: &str,
+    home: &str,
+    include_full_paths: bool,
+    sweep_free_text: bool,
+) -> String {
     let line = strip_file_urls(line);
     let line = replace_home(&line, home);
     let line = strip_secrets(&line);
-    redact_paths(&line, home, include_full_paths)
+    redact_paths(&line, home, include_full_paths, sweep_free_text)
 }
 
 /// [`redact_line_with`] with the policy the export ships by default.
@@ -752,9 +806,9 @@ fn settings_bool(settings_json: &str, key: &str) -> bool {
 /// <nothing>", the lie Task 11's three-state destination exists to prevent.
 fn log_dir_line(state: &LogState) -> String {
     if state.destination == LogDestination::Disabled || state.dir.as_os_str().is_empty() {
-        "log_dir=<none: file logging is disabled>".to_string()
+        format!("{LOG_DIR_PREFIX}<none: file logging is disabled>")
     } else {
-        format!("log_dir={}", state.dir.display())
+        format!("{LOG_DIR_PREFIX}{}", state.dir.display())
     }
 }
 
@@ -792,6 +846,28 @@ fn environment_text(context: &BundleContext<'_>, include_full_paths: bool) -> St
         format!("full_paths_included={include_full_paths}"),
     ]
     .join("\n")
+}
+
+/// `environment.txt` with §3.7's policy applied.
+///
+/// Rule 5's free-text sweep is skipped for the writer's own `log_dir=` line.
+/// That line names the directory the bundle's logs came from — it is written
+/// here for the reader, not leaked by a third party — and the sweep reads any
+/// absolute path as a leak, so a log directory outside home came back as
+/// `log_dir=<path>/…/logs` and the one artifact whose job is to name the log
+/// directory refused to name it. Rules 1-4 still apply, so a home-relative
+/// directory stays readable as `log_dir=<home>/logs`.
+fn redact_environment_text(text: &str, home: &str, include_full_paths: bool) -> String {
+    text.lines()
+        .map(|line| {
+            if line.starts_with(LOG_DIR_PREFIX) {
+                redact_line_fields(line, home, include_full_paths)
+            } else {
+                redact_line_with(line, home, include_full_paths)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The `*.log` files of a directory, in a stable order.
@@ -837,17 +913,20 @@ fn manifest_json(
         "arch": std::env::consts::ARCH,
         "log_level": crate::logging::effective_level().to_string(),
         "files": files,
-        // §3.4.5's determination, and deliberately nothing more: the scanner
-        // classifies session markers, it does not retain the pid, version, or
-        // timestamps of the session it classified. Null is the honest value for
-        // what was never read — a fabricated one would be read as evidence.
+        // §3.4.5's determination, and the facts of the start line it keyed off.
+        // The scanner retains the pid and version in the same traversal that
+        // classified the line (`PreviousSession`), so these are read, not
+        // guessed. `started_at` / `ended_at` stay null because there genuinely
+        // is no source: the markers carry no timestamps and no time crate is a
+        // dependency. Null there reads as "not recorded", which is the truth;
+        // a fabricated value would be read as evidence.
         "previous_exit": {
-            "state": context.previous_exit,
-            "reason": crate::logging::previous_exit_reason(context.previous_exit),
+            "state": context.previous_session.outcome,
+            "reason": crate::logging::previous_exit_reason(context.previous_session.outcome),
             "started_at": serde_json::Value::Null,
             "ended_at": serde_json::Value::Null,
-            "pid": serde_json::Value::Null,
-            "version": serde_json::Value::Null,
+            "pid": context.previous_session.pid,
+            "version": context.previous_session.version,
         },
     });
     serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())
@@ -886,9 +965,11 @@ fn write_diagnostics_bundle(
 
     // Every entry carries the same redaction, including the ones this task adds:
     // a settings blob or a session shard holds the same paths the logs do.
+    // `environment.txt` goes through its own entry point because its `log_dir=`
+    // line is the writer's own statement, not third-party free text.
     entries.push((
         "environment.txt".to_string(),
-        redact_text_with(
+        redact_environment_text(
             &environment_text(context, include_full_paths),
             home,
             include_full_paths,
@@ -956,7 +1037,10 @@ pub async fn export_diagnostics(
             state.file_stem.clone(),
         )
     };
-    let previous_exit = app.state::<crate::logging::PreviousExitState>().0;
+    // A `PreviousSession` is not `Copy`, and a `tauri::State` guard must not be
+    // held across the await, so the facts are cloned out here with the rest of
+    // the managed state.
+    let previous_session = app.state::<crate::logging::PreviousExitState>().0.clone();
     let target = PathBuf::from(&path);
 
     // Redacting and hashing every log is IO-bound, and this command runs on the
@@ -976,7 +1060,7 @@ pub async fn export_diagnostics(
         let session_json = session_json();
         let context = BundleContext {
             log_state: &log_state,
-            previous_exit,
+            previous_session,
             settings_json: &settings_json,
             session_json: &session_json,
         };
@@ -993,6 +1077,7 @@ pub async fn export_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logging::PreviousExit;
     use std::io::Read;
 
     /// A `LogState` in the healthy case: this run's records landed in `dir`.
@@ -1023,7 +1108,14 @@ mod tests {
     ) -> BundleContext<'a> {
         BundleContext {
             log_state: state,
-            previous_exit,
+            // Hand-built determinations carry no session facts; the bundled
+            // end-to-end case is `bundle_manifest_carries_the_previous_session_pid_and_version`,
+            // which drives the real scanner.
+            previous_session: PreviousSession {
+                outcome: previous_exit,
+                pid: None,
+                version: None,
+            },
             settings_json,
             session_json,
         }
@@ -1082,6 +1174,30 @@ mod tests {
             session_json: &str,
         ) -> Vec<(String, Vec<u8>)> {
             let context = context_for(state, previous_exit, settings_json, session_json);
+            write_diagnostics_bundle(
+                &self.bundle,
+                &self.logs,
+                &self.home,
+                include_full_paths,
+                &context,
+            )
+            .unwrap();
+            read_entries(&self.bundle)
+        }
+
+        /// Writes with a caller-supplied session record, so a test can feed the
+        /// output of the real scanner straight into the real writer.
+        fn write_session(
+            &self,
+            previous_session: PreviousSession,
+            include_full_paths: bool,
+        ) -> Vec<(String, Vec<u8>)> {
+            let context = BundleContext {
+                log_state: &self.state,
+                previous_session,
+                settings_json: "{}",
+                session_json: "{}",
+            };
             write_diagnostics_bundle(
                 &self.bundle,
                 &self.logs,
@@ -1256,9 +1372,11 @@ mod tests {
             exit["reason"],
             crate::logging::previous_exit_reason(PreviousExit::Abnormal)
         );
-        // §3.4.5's scanner classifies markers; it does not keep the pid,
-        // version, or timestamps of the session it classified. Null is the
-        // honest value — a fabricated one would be read as evidence.
+        // `started_at`/`ended_at` have no source at all — no marker carries a
+        // timestamp and no time crate is a dependency — so they are pinned null.
+        // `pid`/`version` are null *here* because this fixture hand-builds a
+        // determination with no session line; the scanner does retain both when
+        // there is a line, which the next test drives end to end.
         assert!(exit["started_at"].is_null());
         assert!(exit["ended_at"].is_null());
         assert!(exit["pid"].is_null());
@@ -1271,6 +1389,34 @@ mod tests {
             manifest["log_level"],
             crate::logging::effective_level().to_string()
         );
+    }
+
+    // The finding this closes: §3.8's `pid`/`version` were hardcoded nulls while
+    // the line the scanner classifies already names both. Drive the *real*
+    // scanner and the *real* writer so the two are proven threaded together —
+    // a hand-built context could pass while production still dropped them.
+    #[test]
+    fn bundle_manifest_carries_the_previous_session_pid_and_version() {
+        let fixture = Fixture::new(&[(
+            "oh-my-md.log",
+            "session start pid=4242 version=9.9.9 mode=release\n",
+        )]);
+        let session = crate::logging::scan_previous_session(&fixture.logs, "oh-my-md");
+        assert_eq!(session.outcome, PreviousExit::Abnormal);
+        assert_eq!(session.pid, Some(4242));
+        assert_eq!(session.version.as_deref(), Some("9.9.9"));
+
+        let manifest = json_entry(&fixture.write_session(session, false), "manifest.json");
+        let exit = &manifest["previous_exit"];
+        assert_eq!(exit["state"], "abnormal");
+        assert_eq!(
+            exit["pid"], 4242,
+            "the manifest must carry the start line's pid, not a null"
+        );
+        assert_eq!(exit["version"], "9.9.9");
+        // Still no timestamp source, and the nulls stay deliberate.
+        assert!(exit["started_at"].is_null());
+        assert!(exit["ended_at"].is_null());
     }
 
     #[test]
@@ -1331,6 +1477,31 @@ mod tests {
         );
         assert!(environment.contains("webview_version="), "{environment}");
         assert!(environment.contains("log_level="), "{environment}");
+    }
+
+    // The one artifact whose job is to name the log directory must name it even
+    // when it is outside home. The free-text sweep used to read that line as a
+    // leaked path and answer `log_dir=<path>/…/logs`, so the bundle refused to
+    // say where its own logs came from.
+    #[test]
+    fn bundle_environment_names_a_non_home_log_directory() {
+        let fixture = Fixture::new(&[]);
+        let state = directory_state(Path::new("/Volumes/ExVault/logs"));
+        let entries = fixture.write_state(&state, PreviousExit::Unknown, false, "{}", "{}");
+        let environment = text_entry(&entries, "environment.txt");
+
+        let log_dir_line = environment
+            .lines()
+            .find(|line| line.starts_with("log_dir="))
+            .expect("environment.txt must say where the logs went");
+        assert_eq!(
+            log_dir_line, "log_dir=/Volumes/ExVault/logs",
+            "{environment}"
+        );
+        assert!(
+            !environment.contains("<path>"),
+            "the writer's own log_dir line must not be swept: {environment}"
+        );
     }
 
     #[test]
@@ -1477,23 +1648,36 @@ mod tests {
         // recognised explicitly because `Path` semantics follow the *host*:
         // `Path::new("C:\\Users\\x").is_absolute()` is false on macOS, while a
         // macOS log can legitimately carry a Windows path.
-        let cases: [(&str, &[&str], &str); 7] = [
-            (r"open C:\Users\alice\notes\a.md", &["Users\\alice"], "a.md"),
+        let cases: [(&str, &[&str], &str, bool); 8] = [
+            (
+                r"open C:\Users\alice\notes\a.md",
+                &["Users\\alice"],
+                "a.md",
+                true,
+            ),
             (
                 r"open D:\Vault\Client Work\a.md",
                 &["Vault", "Client Work"],
                 "a.md",
+                true,
             ),
-            (r"open \\server\share\a.md", &["server", "share"], "a.md"),
+            (
+                r"open \\server\share\a.md",
+                &["server", "share"],
+                "a.md",
+                true,
+            ),
             (
                 "open /Volumes/My Vault/sub/笔记.md",
                 &["My Vault", "sub"],
                 "笔记.md",
+                true,
             ),
             (
                 r#"open "C:\Users\alice\My Notes\x.md""#,
                 &["My Notes"],
                 "x.md",
+                true,
             ),
             (
                 // A `file:///` URL carries no raw spaces (they are
@@ -1504,19 +1688,37 @@ mod tests {
                 "asset file:///Users/alice/MyNotes/a.png",
                 &["MyNotes"],
                 "a.png",
+                true,
             ),
             (
                 r"C:\Users\alice\notes\a.md token=abc key=SECRET",
                 &["alice"],
                 "a.md",
+                true,
+            ),
+            (
+                // The control-character row: a raw path can carry a real
+                // newline, and the sweep refuses such a run outright rather
+                // than folding the newline into a placeholder. Nothing leaks
+                // and nothing is claimed to be redacted, so the row is
+                // `changed == false`.
+                "opened /tmp/new\nline.md",
+                &[],
+                "new\nline.md",
+                false,
             ),
         ];
-        for (line, leaked, basename) in cases {
+        for (line, leaked, basename, changed) in cases {
             let out = redact_line(line, "/Users/alice");
             for secret in leaked {
                 assert!(!out.contains(secret), "{line:?} leaked {secret:?}: {out}");
             }
             assert!(out.contains(basename), "{line:?} lost {basename:?}: {out}");
+            assert_eq!(
+                out != line,
+                changed,
+                "{line:?} -> {out:?}: the redactor changed the wrong rows"
+            );
         }
     }
 
@@ -1609,6 +1811,27 @@ mod tests {
         );
     }
 
+    // A path can carry a real newline (macOS allows one in a file name; the
+    // `logPathCases.json` newline row is that case). The writer escapes it, and
+    // the redactor's field rewrite re-escapes its placeholder, so the field form
+    // must never come back with a live LF — that would split the record.
+    #[test]
+    fn a_path_with_a_newline_round_trips_escaped_in_a_field() {
+        let path = Path::new("/tmp/new\nline.md");
+        let line = crate::logging::path_field(path);
+        assert!(
+            line.contains("\\n") && !line.contains('\n'),
+            "premise: the writer escapes the newline: {line:?}"
+        );
+
+        let out = redact_line(&line, "/Users/alice");
+        assert!(
+            !out.contains('\n'),
+            "the field must not inject a live newline into the bundle: {out:?}"
+        );
+        assert!(out.contains("\\n"), "{out:?}");
+    }
+
     // Rule 5 guesses where a path starts and ends, so it must leave text that
     // merely *begins* like a path alone: replacing it would corrupt the record
     // for the reader the bundle exists to help, and collapse nothing.
@@ -1626,5 +1849,27 @@ mod tests {
         ] {
             assert_eq!(redact_line(line, "/Users/alice"), line, "{line:?}");
         }
+    }
+
+    // Rule 5 guesses at free text, and a raw path can carry a real newline,
+    // carriage return, or tab. Collapsing such a run would fold the control
+    // character into `<path>/…/<basename>` and split the record the bundle
+    // promises, so the sweep refuses any run that carries one and leaves the
+    // bytes exactly as they arrived.
+    #[test]
+    fn the_free_text_sweep_refuses_runs_that_carry_control_characters() {
+        for line in [
+            "opened /tmp/new\nline.md",
+            "opened /tmp/new\rline.md",
+            "opened /tmp/new\tline.md",
+        ] {
+            assert_eq!(redact_line(line, "/Users/alice"), line, "{line:?}");
+        }
+        // The discriminating half: the same path without a control character is
+        // still swept, so the guard refuses the run rather than the rule.
+        assert_eq!(
+            redact_line("opened /tmp/newline.md", "/Users/alice"),
+            "opened <path>/…/newline.md"
+        );
     }
 }

@@ -358,10 +358,51 @@ pub enum MarkerKind {
     End,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The facts a `session start` line carries beyond being a marker.
+///
+/// Spec §3.8's `previous_exit` names the pid and version of the run being
+/// reported on, and the line the scanner already classifies is exactly
+/// `session start pid={pid} version={version} mode={mode}`
+/// ([`session_start_line`]). Retaining them here keeps one traversal of the log
+/// rather than a second pass that could disagree with [`classify`] about which
+/// start is the last one.
+///
+/// Both are `Option`: the writers always emit them, but a truncated or
+/// hand-edited record may not, and a missing fact must stay missing rather than
+/// become a fabricated value in a support artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionStartFacts {
+    pub pid: Option<u32>,
+    pub version: Option<String>,
+}
+
+impl SessionStartFacts {
+    /// The pid and version of one `session start` line.
+    ///
+    /// Whole whitespace-delimited tokens only, so `app_version=` on the startup
+    /// header line can never be read as this line's `version=`.
+    fn parse(line: &str) -> Self {
+        let mut facts = SessionStartFacts {
+            pid: None,
+            version: None,
+        };
+        for token in line.split_whitespace() {
+            if let Some(value) = token.strip_prefix("pid=") {
+                facts.pid = value.parse().ok();
+            } else if let Some(value) = token.strip_prefix("version=") {
+                facts.version = Some(value.to_string());
+            }
+        }
+        facts
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Marker {
     pub kind: MarkerKind,
     pub clean: bool,
+    /// Present exactly when `kind` is `Start`.
+    pub start: Option<SessionStartFacts>,
 }
 
 /// Read at most `limit` bytes from the end of `path`, lossily decoded.
@@ -449,20 +490,37 @@ fn parse_markers(text: &str) -> Vec<Marker> {
             markers.push(Marker {
                 kind: MarkerKind::Start,
                 clean: false,
+                // The line that was just classified is also the only source of
+                // the facts the diagnostics manifest reports; read them in the
+                // same traversal so the two can never name different sessions.
+                start: Some(SessionStartFacts::parse(line)),
             });
         } else if has_marker(line, SESSION_END_MARKER) {
             markers.push(Marker {
                 kind: MarkerKind::End,
                 clean: line.contains("clean=true"),
+                start: None,
             });
         } else if has_marker(line, SESSION_EXIT_MARKER) {
             markers.push(Marker {
                 kind: MarkerKind::Exit,
                 clean: false,
+                start: None,
             });
         }
     }
     markers
+}
+
+/// The index of the start marker the determination keys off: the last one.
+///
+/// One definition, because `PreviousSession::from_markers` answers for the
+/// same start line; two `rposition` calls could drift and report one session's
+/// outcome beside another session's pid.
+fn last_start(markers: &[Marker]) -> Option<usize> {
+    markers
+        .iter()
+        .rposition(|marker| marker.kind == MarkerKind::Start)
 }
 
 /// Apply the spec §3.4.5 table to a merged, chronological marker list.
@@ -472,7 +530,7 @@ fn parse_markers(text: &str) -> Vec<Marker> {
 /// so stopping at the first marker after the start would call every clean quit
 /// "interrupted" — the table's row is an intent *with no* `session end`.
 pub fn classify(markers: &[Marker]) -> PreviousExit {
-    let Some(start) = markers.iter().rposition(|m| m.kind == MarkerKind::Start) else {
+    let Some(start) = last_start(markers) else {
         return PreviousExit::Unknown;
     };
     let after = &markers[start + 1..];
@@ -485,21 +543,57 @@ pub fn classify(markers: &[Marker]) -> PreviousExit {
     }
 }
 
+/// The previous run's determination plus the facts its `session start` line
+/// carried (spec §3.8's `previous_exit`).
+///
+/// Both travel together because they answer about one session: the outcome
+/// [`classify`] derived from the last `session start` and the pid/version that
+/// very line named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviousSession {
+    pub outcome: PreviousExit,
+    /// The pid of the start line `classify` keyed off, when the line had one.
+    pub pid: Option<u32>,
+    /// That same line's version.
+    pub version: Option<String>,
+}
+
+impl PreviousSession {
+    fn from_markers(markers: &[Marker]) -> Self {
+        let facts = last_start(markers).and_then(|index| markers[index].start.as_ref());
+        PreviousSession {
+            outcome: classify(markers),
+            pid: facts.and_then(|facts| facts.pid),
+            version: facts.and_then(|facts| facts.version.clone()),
+        }
+    }
+
+    /// No start survived in range, so there is nothing to report: never accuse,
+    /// and never name a pid we did not read.
+    fn unknown() -> Self {
+        PreviousSession {
+            outcome: PreviousExit::Unknown,
+            pid: None,
+            version: None,
+        }
+    }
+}
+
 /// Reconstruct the previous run's outcome from the archive and active tails.
 ///
 /// The archive's markers are older than the active log's, so they are
 /// concatenated in that order and the rule is applied to the merged sequence:
 /// a session that outgrows `LOG_MAX_FILE_BYTES` keeps its start in the archive
 /// and its end in the active log. Only `LOG_TAIL_READ_BYTES` of each is read.
-pub fn scan_previous_session(dir: &Path, stem: &str) -> PreviousExit {
+pub fn scan_previous_session(dir: &Path, stem: &str) -> PreviousSession {
     let Some(files) = session_scan_files(dir, stem) else {
-        return PreviousExit::Unknown;
+        return PreviousSession::unknown();
     };
     let mut markers = Vec::new();
     for file in files {
         markers.extend(parse_markers(&read_tail(&file, LOG_TAIL_READ_BYTES)));
     }
-    classify(&markers)
+    PreviousSession::from_markers(&markers)
 }
 
 /// The files a scan would read, newest archive first.
@@ -540,7 +634,7 @@ impl ExitingState {
 
 /// Carries the startup determination to the diagnostics bundle (Task 12).
 #[allow(dead_code)] // Read by the diagnostics bundle, which Task 12 adds.
-pub struct PreviousExitState(pub PreviousExit);
+pub struct PreviousExitState(pub PreviousSession);
 
 /// The level a determination is logged at, per the spec §3.4.5 table. `None`
 /// means the common case (a clean exit) and is logged at `debug`.
@@ -1377,6 +1471,10 @@ mod tests {
                 vec![Marker {
                     kind: MarkerKind::Start,
                     clean: false,
+                    start: Some(SessionStartFacts {
+                        pid: Some(4242),
+                        version: Some("0.0.1".to_string()),
+                    }),
                 }],
                 "{outcome:?} logged a line the scanner reads as a marker"
             );
@@ -1492,7 +1590,8 @@ mod tests {
         assert_eq!(
             classify(&[Marker {
                 kind: Start,
-                clean: false
+                clean: false,
+                start: None
             }]),
             PreviousExit::Abnormal
         );
@@ -1500,11 +1599,13 @@ mod tests {
             classify(&[
                 Marker {
                     kind: Start,
-                    clean: false
+                    clean: false,
+                    start: None
                 },
                 Marker {
                     kind: End,
-                    clean: true
+                    clean: true,
+                    start: None
                 },
             ]),
             PreviousExit::Clean
@@ -1513,11 +1614,13 @@ mod tests {
             classify(&[
                 Marker {
                     kind: Start,
-                    clean: false
+                    clean: false,
+                    start: None
                 },
                 Marker {
                     kind: Exit,
-                    clean: false
+                    clean: false,
+                    start: None
                 },
             ]),
             PreviousExit::Interrupted
@@ -1527,7 +1630,8 @@ mod tests {
         assert_eq!(
             classify(&[Marker {
                 kind: End,
-                clean: true
+                clean: true,
+                start: None
             }]),
             PreviousExit::Unknown
         );
@@ -1544,15 +1648,18 @@ mod tests {
             classify(&[
                 Marker {
                     kind: Start,
-                    clean: false
+                    clean: false,
+                    start: None
                 },
                 Marker {
                     kind: Exit,
-                    clean: false
+                    clean: false,
+                    start: None
                 },
                 Marker {
                     kind: End,
-                    clean: true
+                    clean: true,
+                    start: None
                 },
             ]),
             PreviousExit::Clean
@@ -1570,7 +1677,7 @@ mod tests {
              session end clean=true\n",
         );
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Clean
         );
     }
@@ -1588,7 +1695,7 @@ mod tests {
         );
         write_log(dir.path(), "oh-my-md.log", "session end clean=true\n");
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Clean
         );
     }
@@ -1607,7 +1714,7 @@ mod tests {
             "session end clean=true\nsession start pid=2 version=0.0.1 mode=release\n",
         );
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Abnormal
         );
     }
@@ -1629,7 +1736,7 @@ mod tests {
              previous session exited cleanly\n",
         );
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Abnormal
         );
     }
@@ -1643,7 +1750,7 @@ mod tests {
             "session start pid=1 version=0.0.1 mode=release\nsession end clean=true\n",
         );
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Clean
         );
     }
@@ -1657,7 +1764,7 @@ mod tests {
             "session start pid=1 version=0.0.1 mode=release\nsession exit intent=shutdown\n",
         );
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Interrupted
         );
     }
@@ -1667,9 +1774,52 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_log(dir.path(), "oh-my-md.log", "session end clean=true\n");
         assert_eq!(
-            scan_previous_session(dir.path(), "oh-my-md"),
+            scan_previous_session(dir.path(), "oh-my-md").outcome,
             PreviousExit::Unknown
         );
+    }
+
+    // Spec §3.8's `previous_exit` names the previous run's pid and version, and
+    // the line the scanner already classifies carries both
+    // (`session start pid=… version=…`). They must belong to the *same* start
+    // `classify` keys off: reporting one session's outcome beside another's pid
+    // is a fabricated fact in a support artifact.
+    #[test]
+    fn scan_retains_the_last_start_lines_pid_and_version() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start pid=1 version=0.0.1 mode=release\n\
+             session end clean=true\n\
+             session start pid=4242 version=9.9.9 mode=release\n\
+             session end clean=true\n",
+        );
+        let session = scan_previous_session(dir.path(), "oh-my-md");
+        assert_eq!(session.outcome, PreviousExit::Clean);
+        assert_eq!(
+            session.pid,
+            Some(4242),
+            "the last start is the one classified"
+        );
+        assert_eq!(session.version.as_deref(), Some("9.9.9"));
+    }
+
+    // The other half of the honesty rule: a start line without pid/version (a
+    // truncated or hand-edited record) answers `None`, which the manifest writes
+    // as null rather than inventing a value.
+    #[test]
+    fn scan_reports_no_facts_when_the_start_line_carries_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_log(
+            dir.path(),
+            "oh-my-md.log",
+            "session start\nsession end clean=true\n",
+        );
+        let session = scan_previous_session(dir.path(), "oh-my-md");
+        assert_eq!(session.outcome, PreviousExit::Clean);
+        assert_eq!(session.pid, None);
+        assert_eq!(session.version, None);
     }
 
     // The `Disabled` logging state hands the scanner an empty dir, and
@@ -1682,7 +1832,7 @@ mod tests {
         assert!(session_scan_files(Path::new(""), "oh-my-md").is_none());
         assert!(session_scan_files(Path::new("/tmp/logs"), "").is_none());
         assert_eq!(
-            scan_previous_session(Path::new(""), "oh-my-md"),
+            scan_previous_session(Path::new(""), "oh-my-md").outcome,
             PreviousExit::Unknown
         );
 
@@ -1768,6 +1918,10 @@ mod tests {
             vec![Marker {
                 kind: MarkerKind::Start,
                 clean: false,
+                start: Some(SessionStartFacts {
+                    pid: Some(4242),
+                    version: Some("0.0.1".to_string()),
+                }),
             }]
         );
     }

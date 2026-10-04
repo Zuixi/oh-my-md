@@ -367,15 +367,17 @@ export const defaultServices: DesktopServices = {
     // session state, so the user gets to see what leaves the machine before a
     // destination is even chosen.
     //
-    // The opt-in is a second question rather than a checkbox: this module has no
-    // UI, and the repository's confirmation pattern is `window.confirm` — which
-    // cannot render one. Dismissing the question is the default, so paths stay
-    // collapsed unless the user actively asks for them.
+    // There is deliberately no full-paths question here. The spec asks for an
+    // opt-in checkbox (default off), which needs a labelled control this module
+    // has no UI seam for; `window.confirm` cannot label its buttons, so its OK
+    // would silently mean "include full paths" — the privacy-invasive answer.
+    // The export therefore always ships with paths collapsed, and the command's
+    // `include_full_paths` parameter stays in place for that checkbox to drive
+    // when it exists.
     if (!window.confirm(t("confirm.exportDiagnostics"))) return
-    const includeFullPaths = window.confirm(t("confirm.exportDiagnosticsFullPaths"))
     const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
-    await invoke("export_diagnostics", { path, includeFullPaths })
+    await invoke("export_diagnostics", { path, includeFullPaths: false })
   },
   openLogDir: async () => {
     // Rejects by design: a disabled destination has no folder to open, and the
