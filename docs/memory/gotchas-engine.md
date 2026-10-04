@@ -587,11 +587,17 @@ control that must mount one).
 wins and the default DOM-change pipeline is skipped entirely. Two consequences for the
 auto pair adapter (`format/autoPair.ts::autoPairExtension`):
 
-- **The facet is not ours alone.** `markdownCodeLanguages()` pulls in
-  `@codemirror/lang-html`, whose `autoCloseTags` handler registers first, so
-  `state.facet(EditorView.inputHandler)[0]` is *not* the auto pair handler even for a
-  plain Markdown document. Tests must mirror CM's dispatch
-  (`facet(...).some(h => h(view, from, to, text, insert))`) instead of indexing.
+- **The facet is not ours alone.** `markdown()` mounts the default `htmlTagLanguage` —
+  the module-level `html({ matchClosingTags: false })` — into its **own** support list
+  (`@codemirror/lang-markdown/dist/index.js:402,407,411`), and `html()` bundles
+  `autoCloseTags` (`@codemirror/lang-html/dist/index.js:604-609`, the handler itself at
+  `:627`), so `state.facet(EditorView.inputHandler)[0]` is *not* the auto pair handler
+  even for a plain Markdown document. `markdownCodeLanguages()` cannot be the source: it
+  returns lazy `LanguageDescription`s, and lang-markdown feeds a code region only
+  `found.support.language.parser` to its own parser
+  (`@codemirror/lang-markdown/dist/index.js:85-86`), so a code
+  language's `LanguageSupport` extensions are never mounted on the view. Tests must mirror
+  CM's dispatch (`facet(...).some(h => h(view, from, to, text, insert))`) instead of indexing.
 - **`from`/`to` always describe the focused (main) range.** The other cursors' DOM diffs
   never reach the handler, so returning `true` after handling only the main range silently
   drops every character the other cursors typed. Every path (insert, type-over, and the

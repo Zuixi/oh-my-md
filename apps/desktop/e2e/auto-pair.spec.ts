@@ -132,6 +132,14 @@ test("prose: typing *x* keeps the caret visible and can continue (folded-marker 
 test("fence: foo({a: \"b\"}) types with zero manual closers, and markers stay literal", async ({ page }) => {
   await open(page, "```\n\n```")
   await placeCaret(page, 4) // the empty content line
+  // One keystroke, so the exact document is readable: `(` must still produce `()` inside
+  // the fence (D5, T1 keeps its context). The full string below cannot show this on its
+  // own — "T1 pairs inside a fence and the typed closers are skipped" and "T1 is dead in
+  // fences and every closer was typed literally" both end at the same text.
+  await page.keyboard.type("(")
+  expect(await docOf(page), "D5: brackets keep pairing inside a fence").toBe("```\n()\n```")
+  await open(page, "```\n\n```")
+  await placeCaret(page, 4)
   // Brackets and quotes pair inside a fence (T1 keeps its context, D5); `}`, `"` and `)`
   // are each skipped over the auto-inserted closer, so the exact text arrives with no
   // hand-typed closer at all.
