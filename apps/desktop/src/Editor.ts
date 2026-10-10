@@ -11,6 +11,8 @@ import {
   getPendingOrderedListNormalization,
   isLivePreview,
   linkAt,
+  setAutoPair,
+  type AutoPairOptions,
   type OrderedListNormalizationNotice,
   type OutlineItem,
 } from "@omd/engine"
@@ -54,6 +56,8 @@ export interface CreateEditorOptions {
   onOpenExternalHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
+  /** Markdown-aware auto pairing toggles (engine-owned; hot-swapped per view). */
+  autoPair?: AutoPairOptions
   /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
   readOnly?: boolean
   /** Construct already in Source (no live decorations at create time). */
@@ -186,6 +190,11 @@ export function setEditorSpellcheck(view: EditorView, on: boolean): void {
   view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckAttr(on)) })
 }
 
+/** Hot-applies the engine's auto pair toggles to a mounted view (settings modal). */
+export function setEditorAutoPair(view: EditorView, options: AutoPairOptions): void {
+  view.dispatch({ effects: setAutoPair(options) })
+}
+
 function createEditorState(
   options: CreateEditorOptions,
   reportStatus: (view: EditorView) => void,
@@ -206,6 +215,7 @@ function createEditorState(
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
         defaultLivePreview: options.defaultLivePreview,
+        autoPair: options.autoPair,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],

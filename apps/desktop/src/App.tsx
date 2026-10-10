@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
-  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
+  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument,
+  setEditorAutoPair, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import { EditorView } from "@codemirror/view"
@@ -9,7 +10,8 @@ import { createEditorStatusStore } from "./editorStatusStore"
 import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
   applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
-  setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
+  setBlockRenderBudget, setSafeModeRendering,
+  type AutoPairOptions, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { pastePlainText } from "./pastePlainText"
@@ -126,6 +128,7 @@ import {
 import { SettingsModal } from "./SettingsModal"
 import {
   DEFAULT_SETTINGS,
+  sameAutoPair,
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
@@ -788,6 +791,7 @@ export default function App({
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
+      autoPair: settingsRef.current.autoPair,
       readOnly,
     }
   }
@@ -1268,10 +1272,19 @@ export default function App({
     }
   }
 
+  function applyAutoPair(next: AutoPairOptions) {
+    for (const view of viewsRef.current.values()) {
+      try { setEditorAutoPair(view, next) } catch { /* mock views */ }
+    }
+  }
+
   function handleSaveSettings(next: UserSettings) {
     const sanitized = sanitizeSettings(next)
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
+    }
+    if (!sameAutoPair(sanitized.autoPair, settingsRef.current.autoPair)) {
+      applyAutoPair(sanitized.autoPair)
     }
     const localeChanged = sanitized.locale !== settingsRef.current.locale
     setSettings(sanitized)
@@ -1289,6 +1302,9 @@ export default function App({
         if (mountedRef.current) {
           if (saved.spellcheck !== settingsRef.current.spellcheck) {
             applySpellcheck(saved.spellcheck)
+          }
+          if (!sameAutoPair(saved.autoPair, settingsRef.current.autoPair)) {
+            applyAutoPair(saved.autoPair)
           }
           setSettings(saved)
           settingsRef.current = saved

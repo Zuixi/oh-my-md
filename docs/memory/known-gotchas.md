@@ -49,6 +49,12 @@
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.
 - **`Text.append` continues the last line** — batched assembly needs an empty junction line (`docText.ts`).
 - **Pasted blocks normalize their own boundaries** — blank line before/after + opaque-end newline in `paste/blockBoundaries.ts`; never "fix" paste rendering with a decoration-layer boundary exception.
+- **Auto pair: type-over before insertion** — checking insertion first turns a hand-typed `*bold*` closer into `*bold**`; the adapter's order is the contract.
+- **Auto pair: a `Prec.high` Backspace binding must `return false` when it does not apply** — otherwise it steals `skipAtomic`'s whole-atom delete at folded marker boundaries.
+- **Auto pair: line-start `*` and `$` are block structure** — the paired `* *` becomes a list item and `$$` becomes a MathBlock that swallows to EOF; rule 2b suppresses exactly those two, never `` ` ``/`_`.
+- **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
+- **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
+- **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
 

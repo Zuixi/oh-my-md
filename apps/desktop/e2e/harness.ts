@@ -16,6 +16,15 @@ declare global {
 const params = new URLSearchParams(location.search)
 document.documentElement.dataset.theme = params.get("theme") ?? "light"
 
+// `apBrackets` / `apQuotes` / `apMarkdown` let a spec construct the editor with one
+// auto-pair toggle off (`?apQuotes=0`). Absent params keep the shipped defaults
+// (`DEFAULT_AUTO_PAIR`, all true), so every existing spec is unaffected.
+const autoPair = {
+  brackets: params.get("apBrackets") !== "0",
+  quotes: params.get("apQuotes") !== "0",
+  markdownSyntax: params.get("apMarkdown") !== "0",
+}
+
 const host = document.createElement("div")
 host.className = "editor-host"
 document.body.replaceChildren(host)
@@ -27,6 +36,7 @@ window.__view = createEditor(host, {
   documentId: 1,
   getDocPath: () => null,
   getDocumentId: () => 1,
+  autoPair,
   onDocumentUpdate: () => {},
   onError: message => { window.__harnessErrors.push(message) },
 })
