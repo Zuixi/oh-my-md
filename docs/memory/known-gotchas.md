@@ -39,6 +39,8 @@
 - **`alive` is instance-scoped, CM's `destroy` is tile-scoped** — a re-tiled widget gets a second `toDOM` on the same instance and may receive the old tile's `destroy` afterwards; `toDOM` must reactivate and `destroy` must only retire the current DOM.
 - **Async widgets need an observable degrade marker** — a silent `catch {}` / early return turned "render never landed" into an invisible placeholder; emit `data-omd-highlight` / `data-omd-render` and assert it in e2e.
 - **Block tiles are rebuilt during mount settling** — the selection-adjacent rebuild can intersect a widget's replace range, so the same instance gets `destroy` + a second `toDOM`; this is by design, and both "skip the measure rebuild" and "keep equivalent specs" were measured not to change it.
+- **Narrowing the selection rebuild ranges is a measured no-op** — the mount-time rebuild comes from CM's `DocTile.sync` reacting to the caret line's own decoration change, not from the block being in the dirty range.
+- **Block widgets leak on repeated mount/unmount** — flipping the caret in and out of a table/fence rebuilds the DOM each time and the heap keeps growing even after forced GC (2000 flips ≈ +1.8GB, not released by `view.destroy()`); engine-side state and the block registry are provably bounded, so the retention is elsewhere.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
 - **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.

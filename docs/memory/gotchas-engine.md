@@ -571,3 +571,50 @@ update#2  doc=false sel=true effects=measure ranges=
 回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
 bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
 最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。
+
+## 「缩小选择分支的重建范围」不能消除挂载期重建 —— 但沿路挖出一个真实泄漏
+
+针对上一条（块 tile 在挂载稳定期被重建），曾有一个看起来天经地义的优化：既然是邻域重建
+把块卷进去，那就**把「前后两态都没被选中」的块从选择分支的重建范围里扣掉**。实现了
+（`stableRenderedBlocks` + `selectionRebuildRanges`：只对纯选区事务、只扣块自己的 replace
+区间、块外同一行的部分仍重建）并且全量 669 条引擎测试通过 —— 但实测把假设证伪：
+
+| 量测 | 有优化 | 无优化 |
+|---|---|---|
+| 文档首块引用围栏：挂载期 widget DOM 插入次数 | 3 | 3 |
+| 目标场景（引用围栏 + 光标在前缀里往返）p50 / p95 | 0.322 / 0.738 ms | 0.334 / 0.743 ms |
+| 同场景 `toDOM` 次数 | 0 | 0 |
+
+**原因**：挂载期那几次重建来自 CM 自己的内容构建（DOM 插入栈全部落在 `DocTile.sync`），
+而光标离开块首行时该行的 QuoteMark 折叠状态**必须**改变 —— 行被重建，CM 就顺带重建了
+起始于该行的块 tile。选择分支范围窄不窄改变不了这一点；而目标场景本来就不产生重建
+（`toDOM = 0`），所以扣不扣都一样。**结论：不要为了减少 tile 重建去动 `rebuildRanges`
+的选择分支。**
+
+## 块 widget 反复挂载/卸载会持续占用内存（已确认，未修）
+
+同一次排查中撞到的**真实缺陷**：让光标在"块内（编辑态）↔ 块外（渲染态）"之间反复翻转，
+每次翻转都会重建整块 DOM（设计使然：光标进块必须卸载 widget），但**强制 GC 后堆仍线性增长**：
+
+```
+NODE_OPTIONS=--expose-gc（每轮 500 次翻转后显式 global.gc() 两次）
+round 1 ( 500 flips):  480.3MB
+round 2 (1000 flips):  927.4MB
+round 3 (1500 flips): 1374.0MB
+round 4 (2000 flips): 1820.5MB
+after view.destroy() + gc: 1820.5MB     ← 不回收 ⇒ 强引用保留，不是 GC 滞后
+```
+
+复现用的文档只需一张引用内表格（`> | a | b |` + 若干行），光标在 `0` 与文末之间往返即可。
+
+**已经排除的保留者**（这些都是有界的，别再从这儿查）：
+
+- `livePreviewField` 的 `specs` / `deco` / `pending` / `atomic`：400 次翻转后逐一相等
+  （`test/widgetChurnBounds.test.ts` 第一条用例把这条钉死）；
+- `blockSelectionOverlay` 的 `liveWraps` / `liveRanges` 注册表：`wraps=0 ranges=1` 恒定；
+- 引擎侧没有按 pos/按 transaction 累积的容器（`widgetMeasure` 只有一个 `StateEffect` 定义）。
+
+**下一步的排查方向**（按嫌疑排序）：表/代码 widget 自己在 `toDOM` 里挂的观察者或闭包、
+`decorations/widgets/*` 里的模块级缓存、以及 CM 侧 tile/DOM 是否被我们的实例字段或
+注册表间接强引用。定位手法：逐个把可疑注册/观察者改成 `WeakMap`/显式解绑后跑同一段
+复现脚本看堆是否回落；修好后把上面那段脚本变成带 `global.gc` 守卫的回归用例。
