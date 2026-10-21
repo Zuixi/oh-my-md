@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import type { EditorState, TransactionSpec } from "@codemirror/state"
 import {
   exitTableSpec, tableNextCellSpec, tableNextRowSpec, tablePrevCellSpec,
 } from "../src/format/tableKeymap"
@@ -9,6 +10,12 @@ const DOC = ["| A | B |", "| --- | --- |", "| a | b |", "", "after"].join("\n")
 function stateAt(needle: string) {
   const base = makeState(DOC)
   return base.update({ selection: { anchor: DOC.indexOf(needle) } }).state
+}
+
+function applyAt(pos: number, spec: (state: EditorState) => TransactionSpec | null) {
+  const state = makeState(DOC).update({ selection: { anchor: pos } }).state
+  const change = spec(state)
+  return change ? state.update(change).state : null
 }
 
 describe("tableNextCellSpec", () => {
@@ -71,5 +78,30 @@ describe("exitTableSpec", () => {
 
   it("returns null outside a table", () => {
     expect(exitTableSpec(stateAt("after"))).toBeNull()
+  })
+})
+
+describe("caret on the table end boundary", () => {
+  // 末行末格的 End / Cmd+→ 会把光标停在 Table.to 上（最后一行的行尾）。装饰层把两个
+  // 边界都算作在表内，所以查询层与键位必须与"边界前一字符"完全一致。
+  const BOUNDARY = DOC.indexOf("| a | b |") + "| a | b |".length
+
+  it("Tab does what it does one character earlier (appends a row)", () => {
+    const fromBoundary = applyAt(BOUNDARY, tableNextCellSpec)
+    const oneBefore = applyAt(BOUNDARY - 1, tableNextCellSpec)
+    expect(oneBefore).not.toBeNull()
+    expect(fromBoundary).not.toBeNull()
+    expect(fromBoundary!.doc.toString()).toBe(oneBefore!.doc.toString())
+    expect(fromBoundary!.selection.main.head).toBe(oneBefore!.selection.main.head)
+    expect(fromBoundary!.doc.lines).toBe(DOC.split("\n").length + 1)
+  })
+
+  it("Enter does what it does one character earlier (appends a row)", () => {
+    const fromBoundary = applyAt(BOUNDARY, tableNextRowSpec)
+    const oneBefore = applyAt(BOUNDARY - 1, tableNextRowSpec)
+    expect(oneBefore).not.toBeNull()
+    expect(fromBoundary).not.toBeNull()
+    expect(fromBoundary!.doc.toString()).toBe(oneBefore!.doc.toString())
+    expect(fromBoundary!.selection.main.head).toBe(oneBefore!.selection.main.head)
   })
 })

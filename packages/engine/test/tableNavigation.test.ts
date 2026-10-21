@@ -19,6 +19,21 @@ describe("tableAt", () => {
     const state = makeState(DOC)
     expect(tableAt(state, at("Intro"))).toBeNull()
   })
+
+  it("finds the table when the caret rests on its end boundary", () => {
+    // 表尾边界（最后一行的 to）是可达光标位（末行 End / Cmd+→）。装饰层刻意把两个
+    // 边界都算作"在表内"（blockWidget.ts::blockSelected），查询层必须一致 —— 否则
+    // 表格仍以源码网格呈现，但 Tab/Enter 全部落空。
+    const state = makeState(DOC)
+    const inside = tableAt(state, at("b"))!
+    expect(inside).not.toBeNull()
+    const boundary = tableAt(state, inside.to)
+    expect(boundary).not.toBeNull()
+    expect(boundary!.from).toBe(inside.from)
+    expect(boundary!.to).toBe(inside.to)
+    // 边界之后一格（表格后面的空行）仍然在表外：回退探测不能越过 to
+    expect(tableAt(state, inside.to + 1)).toBeNull()
+  })
 })
 
 describe("cellAt", () => {
@@ -32,6 +47,14 @@ describe("cellAt", () => {
   it("maps a caret in a body cell to its row and column", () => {
     const state = makeState(DOC)
     const hit = cellAt(state, at("b"))
+    expect(hit?.slot.row).toBe(1)
+    expect(hit?.slot.col).toBe(1)
+  })
+
+  it("maps a caret on the table end boundary to the last cell", () => {
+    const state = makeState(DOC)
+    const inside = tableAt(state, at("b"))!
+    const hit = cellAt(state, inside.to)
     expect(hit?.slot.row).toBe(1)
     expect(hit?.slot.col).toBe(1)
   })

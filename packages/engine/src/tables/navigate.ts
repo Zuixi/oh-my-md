@@ -17,12 +17,29 @@ export interface CellSlot {
   readonly to: number
 }
 
+/**
+ * 光标所在的 Table 节点。
+ *
+ * `side = 1`（向前看）会跳过任何 `to <= pos` 的节点，所以在表尾边界（`pos === Table.to`，
+ * 末行 End / Cmd+→ 可达）它直接越过整张表、返回 null —— 而装饰层刻意把两个边界都算作
+ * "在表内"（blockWidget.ts::blockSelected）。边界上退回 `side = -1`（向后看）再试一次，
+ * 让查询层与装饰层对"在表内"的判定一致。
+ */
+function tableNodeAt(state: EditorState, pos: number): SyntaxNode | null {
+  const tree = syntaxTree(state)
+  const walk = (side: -1 | 1) => {
+    let node: SyntaxNode | null = tree.resolveInner(pos, side)
+    while (node && node.name !== "Table") node = node.parent
+    return node
+  }
+  return walk(1) ?? (pos > 0 ? walk(-1) : null)
+}
+
 /** 只读查询：树未覆盖 pos 时返回 null（绝不推进解析）。 */
 export function tableAt(state: EditorState, pos: number): TableContext | null {
   const probe = Math.min(Math.max(pos, 0), state.doc.length)
   if (!syntaxTreeAvailable(state, Math.min(probe + 1, state.doc.length))) return null
-  let node: SyntaxNode | null = syntaxTree(state).resolveInner(probe, 1)
-  while (node && node.name !== "Table") node = node.parent
+  const node = tableNodeAt(state, probe)
   if (!node) return null
   const data = tableDataFromNode(node, state)
   if (!data) return null
