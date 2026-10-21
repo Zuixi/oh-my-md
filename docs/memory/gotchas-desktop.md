@@ -113,7 +113,7 @@ Since the menu gained Format/View items, macOS menu accelerators also bind engin
 `EditorState.readOnly.of(true)` only blocks typed input in the view layer.
 Keymap commands (engine format/lists `dispatchSpec`s, `markdownKeymap`),
 `orderedRenumber` normalization dispatches, widget interactions (checkbox
-click, table toolbar/cell edit), and `domEventHandlers` all dispatch
+click, the rendered and floating table toolbars), and `domEventHandlers` all dispatch
 transactions directly and sail past the view's readOnly interception. The
 `domEventHandlers` family covers more than `htmlPaste` (which runs **before**
 the builtin paste handler's readOnly branch; handlers are first-true-wins):
@@ -247,7 +247,7 @@ The fake-view harness in `apps/desktop/test/tightSelection.test.ts` originally m
 
 ## Selection colors must be driven by `--omd-selection-bg`; CM's dark flag is never set
 
-Selections are painted by two systems. Editor text is drawn by the vendored `tightSelection()` layer as `.cm-selectionLayer .cm-selectionBackground` rectangles behind the text; block-widget DOM (table cells, code blocks) and focused nested editors (the table cell `<input>`) paint through the browser's native `::selection`. The two diverge the moment either stops consuming the theme token (verified 2026-08-28: dark mode painted light lavender behind light text; light mode painted native blue inside tables/code):
+Selections are painted by two systems. Editor text is drawn by the vendored `tightSelection()` layer as `.cm-selectionLayer .cm-selectionBackground` rectangles behind the text; block-widget DOM (table cells, code blocks) and focused nested editors (the code-block title `<input>`, the math popup's CodeMirror) paint through the browser's native `::selection`. The two diverge the moment either stops consuming the theme token (verified 2026-08-28: dark mode painted light lavender behind light text; light mode painted native blue inside tables/code):
 
 - CM's `&light`/`&dark` base-theme rules key off the editor's internal dark flag (`EditorView.theme(spec, {dark: true})` → `darkTheme` facet). Nothing in the app ever sets it, and `html[data-theme]` is CSS-only, so the editor is permanently "light" as far as CM is concerned: base `#d7d4f0` (focused layer) / `#d9d9d9` behind dark-mode text `#e8e8e8` is light-on-light, contrast ~1.2:1.
 - `tightSelection.ts` vendors upstream's `.cm-content :focus ::selection → Highlight !important` rule for focused nested editors, and widget DOM outside `.cm-line` keeps native selection while dragging — both are native blue unless overridden.

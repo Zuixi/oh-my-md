@@ -1,4 +1,6 @@
-import { syntaxTree } from "@codemirror/language"
+import { forceParsing, syntaxTree } from "@codemirror/language"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
 import type { SyntaxNode } from "@lezer/common"
 import { describe, expect, it } from "vitest"
 import { collectDecorationSpecs } from "../src/decorations/build"
@@ -6,6 +8,7 @@ import { makeState } from "./helpers"
 import { TableWidget, renderTableCellContent } from "../src/decorations/widgets/table"
 import { imageResolver } from "../src/decorations/widgets/image"
 import { tableDataFromNode } from "../src/tables/model"
+import { editorExtensions } from "../src/index"
 
 const doc = "| a | b |\n|---|---|\n| 1 | 2 |"
 
@@ -287,5 +290,72 @@ describe("tables", () => {
     expect(missing.title).toBe("Missing source cell; add a column or edit Markdown source")
     expect(missing.querySelector("input")).toBeNull()
     expect((wrap.querySelectorAll("td")[0] as HTMLElement).classList.contains("omd-table-cell-missing")).toBe(false)
+  })
+})
+
+// 交叉视图隔离：渲染态工具栏的 hover 目标、以及 widget DOM 监听器的归属解析
+// （模块级 `domOwner` WeakMap）都不得跨视图串味。旧的"两个视图各开一个 cell input"
+// 泄漏测试随输入框一起删掉了（Task 8），这里是它的替身：任何"记住上次的目标"都会
+// 在另一个视图里显现成一次不该发生的改写。
+const DOC_A = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
+const DOC_B = "| x | y |\n|---|---|\n| 3 | 4 |\n\ntail"
+
+/** 真实 EditorView，光标停在文末（表格处于渲染态）。 */
+function mountLive(source: string) {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const errors: unknown[] = []
+  const view = new EditorView({
+    state: EditorState.create({
+      doc: source,
+      selection: { anchor: source.length },
+      extensions: [editorExtensions(), EditorView.exceptionSink.of(e => { errors.push(e) })],
+    }),
+    parent,
+  })
+  forceParsing(view, view.state.doc.length, 10_000)
+  return { view, errors, cleanup: () => { view.destroy(); parent.remove() } }
+}
+
+const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms))
+
+/** 装饰构建是渐进式的：等渲染态表格 DOM 出现再 hover。 */
+async function waitTable(view: EditorView, timeout = 3000): Promise<HTMLElement | null> {
+  const started = Date.now()
+  while (Date.now() - started < timeout) {
+    const match = view.dom.querySelector<HTMLElement>(".omd-table")
+    if (match) return match
+    await tick()
+  }
+  return null
+}
+
+describe("rendered toolbar targets stay inside their own view", () => {
+  it("edits only the view whose toolbar was clicked", async () => {
+    const a = mountLive(DOC_A)
+    const b = mountLive(DOC_B)
+    try {
+      const wrapA = await waitTable(a.view)
+      const wrapB = await waitTable(b.view)
+      expect(wrapA).toBeTruthy()
+      expect(wrapB).toBeTruthy()
+
+      // 只在 A 里 hover，然后点 A 自己的渲染态工具栏。
+      wrapA!.querySelector("tbody td")!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
+      const btn = wrapA!.querySelector("[data-act='insert-row']") as HTMLButtonElement
+      expect(btn.disabled).toBe(false)
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+
+      expect(a.view.state.doc.toString()).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |\n\ntail")
+      // B 的文档逐字节不变，且它的工具栏依旧是"没有目标格"（没被 A 的 hover 点亮）。
+      expect(b.view.state.doc.toString()).toBe(DOC_B)
+      expect((wrapB!.querySelector("[data-act='insert-row']") as HTMLButtonElement).disabled).toBe(true)
+      expect(a.errors.map(String)).toEqual([])
+      expect(b.errors.map(String)).toEqual([])
+    } finally {
+      a.cleanup()
+      b.cleanup()
+    }
   })
 })
