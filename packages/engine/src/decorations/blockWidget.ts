@@ -78,6 +78,8 @@ export abstract class BlockWidget extends WidgetType {
   }
   /** Live 预览代码块保持渲染以便复制；其它块仍单击进源码编辑。 */
   protected enterSourceOnClick(): boolean { return true }
+  /** 点击是否应该让光标进入源码。默认 true；表格只在 td/th 上返回 true。 */
+  protected shouldEnterSource(_event: MouseEvent): boolean { return true }
   protected nativePointerInteraction(_event: MouseEvent): boolean { return false }
   /** 点击不进源码的块（代码块、数学弹窗）由此钩子接管后续交互；默认保持聚焦编辑器。 */
   protected onWrapClick(view: EditorView, _wrap: HTMLElement): void { view.focus() }
@@ -100,6 +102,11 @@ export abstract class BlockWidget extends WidgetType {
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       if (this.nativePointerInteraction(e)) return
+      if (this.enterSourceOnClick() && !this.shouldEnterSource(e)) {
+        // 误触点（边框/padding/工具栏空隙）：既不进源码，也不把事件交给 CM。
+        e.preventDefault()
+        return
+      }
       if (!this.enterSourceOnClick()) {
         e.preventDefault()
         this.onWrapClick(view, wrap)

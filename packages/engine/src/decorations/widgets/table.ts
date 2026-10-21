@@ -10,6 +10,7 @@ import {
   type TableSourceChange,
 } from "../../tables/edit"
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
+import { tableAt } from "../../tables/navigate"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
@@ -338,10 +339,34 @@ export class TableWidget extends BlockWidget {
       || event.type === "click"
   }
 
-  // wrap（padding/边框/工具栏空隙等非单元格表面）点击不注入光标：单元格就地
-  // 编辑是主入口，误触 wrap 整表翻源码就是表格闪烁。显式源码入口只剩 `</>`
-  // 按钮（blockWidget 基类自带处理器）与键盘 ↑/↓（blockMotionKeymap 有意进源码）。
-  protected enterSourceOnClick(): boolean { return false }
+  // 单元格点击是"进源码并落在该格"的意图；wrap 的 padding/边框/工具栏空隙是误触，
+  // 由 shouldEnterSource 挡掉（整个 mousedown 被吞掉，既不翻源码也不交给 CM）。
+  protected enterSourceOnClick(): boolean { return true }
+
+  protected shouldEnterSource(event: MouseEvent): boolean {
+    const target = event.target
+    return target instanceof Element && target.closest("td, th") !== null
+  }
+
+  protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
+    const cellEl = event.target instanceof Element
+      ? event.target.closest<HTMLTableCellElement>("td, th")
+      : null
+    // 无单元格命中（padding 已被 shouldEnterSource 挡掉，剩下的是 `</>` 按钮）：直接回退，
+    // 不查表 —— 该路径的 view 可能来自没有真实 EditorState 的调用方。
+    if (!cellEl) return this.livePos()
+    const table = tableAt(view.state, this.livePos())
+    if (!table) return this.livePos()
+    // rowIndex 含 thead：表头 = 0，与 CellSlot.row 同一口径。
+    const rowIndex = cellEl.parentElement instanceof HTMLTableRowElement
+      ? cellEl.parentElement.rowIndex
+      : 0
+    const slots = [table.data.header, ...table.data.rows]
+    const cell = slots[rowIndex]?.cells[cellEl.cellIndex]
+    if (!cell) return this.livePos()
+    const leading = cell.source.length - cell.source.trimStart().length
+    return table.from + cell.from + leading
+  }
 
   protected get cssClass() { return "omd-table" }
 
