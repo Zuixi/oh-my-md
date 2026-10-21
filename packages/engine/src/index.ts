@@ -136,11 +136,14 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
-    // Enter 归属（顺序 + Prec 双重确定）：围栏代码**内容行** → continueCodeLine
+    // 键位归属（顺序 + Prec 双重确定）。表格行（源码态）→ tableNextRowSpec /
+    // tableNextCellSpec（tableKeymap，Prec.highest，本数组第一个键位）：它还独占
+    // Tab / Shift-Tab / Shift-Enter / Mod-Enter，因此表内 Tab 不再缩进代码或列表。
+    // 表格之外：围栏代码**内容行** → continueCodeLine
     // （复制行块前缀与代码缩进并把光标显式放到新行内容起点）→ 未闭合围栏行 →
     // continueFence（含引用内的围栏，按前缀补全闭合行）→ 带 QuoteMark 的行 →
-    // continueQuote → 纯列表行 → continueList / 宿主上游命令。四者条件互斥，各自
-    // 对不属于自己的行返回 false。
+    // continueQuote → 纯列表行 → continueList / 宿主上游命令。各命令只对自己
+    // 那一类行成立，其余行一律返回 false。
     //
     // 必须 Prec.highest：@codemirror/lang-markdown 的 markdown() 内部会
     // `support.push(Prec.high(keymap.of(markdownKeymap)))`（Enter →
