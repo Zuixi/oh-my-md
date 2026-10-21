@@ -25,7 +25,7 @@
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
 - **Horizontal rules are block widgets when unselected** — keep `HorizontalRule` in `SELECTION_BLOCKS`.
 - **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; cell `mousedown` stops propagation; the cell input gets a caret, never `select()`.
-- **Table edits are Lezer-range-based and per-view** — no whole-table serialize/parse revival; pending focus lives in per-view `WeakMap`s; real-`EditorView` tests are mandatory.
+- **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
 - **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
 - **Cell input is never silently discarded** — commit on `focusout`, on capture-phase `mousedown`, and hand the click-away path an explicit destination; guard IME (`isComposing`/`keyCode 229`); idempotent commit.
 - **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
