@@ -328,12 +328,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   max-width: 100%;
   padding: 0.8em 0;
 }
-/* 源码态表格：等宽 + 底色 + 左边线。不用 padding（会改变行内起始位置）。 */
+/* 源码态表格：等宽 + 底色 + 左边线。不用 padding（会改变行内起始位置）。
+   底色只能用 background-color：源码态表格行在引用里同时带 omd-blockquote 类，
+   而引用条只画在 background-image 上（见上方 .omd-blockquote 规则）——
+   background 简写会把它一并重置成 none，引用内每行表格的竖条都会断开。 */
 .editor-host .omd-table-src {
   font-family: var(--omd-font-family-mono);
   font-variant-ligatures: none;
   letter-spacing: 0;
-  background: var(--omd-code-bg);
+  background-color: var(--omd-code-bg);
   border-left: 2px solid var(--omd-border);
 }
 .editor-host .omd-table-src-head { font-weight: 600; }
@@ -1549,9 +1552,15 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
 .editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
-/* 但上面两条（以及 CodeMirror 基础主题的 activeLine）都用 background 简写，
-   会把 background-image 一起清成 none —— 光标停在引用段落上时，那一行的引用
-   竖条会缺一节。引用条必须在本规则里按同样的高优先级重画。 */
+/* 源码态表格同理，而且更致命：源码态要求光标就在表格里，所以缺了这条规则，
+   光标那一行永远丢掉网格底色。这里用 background-color 而非简写，紧挨着的
+   .omd-blockquote.cm-activeLine 规则画的引用条因此不会被清掉（同为 0,5,0，
+   它在后，background-image 照常生效）。 */
+.editor-host .cm-content .cm-line.omd-table-src.cm-activeLine { background-color: var(--omd-code-bg); }
+/* 但 .cm-activeLine 与 .cm-line.omd-codeblock.cm-activeLine（以及 CodeMirror
+   基础主题的 activeLine）都用 background 简写，会把 background-image 一起清成
+   none —— 光标停在引用段落上时，那一行的引用竖条会缺一节。引用条必须在本规则
+   里按同样的高优先级重画。 */
 .editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine {
   background-image: var(--omd-bq-image);
 }

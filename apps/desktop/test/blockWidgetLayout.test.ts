@@ -87,6 +87,21 @@ describe("block widget layout", () => {
     expect(active).toMatch(/background(?:-color)?\s*:\s*var\(--omd-code-bg\)/)
   })
 
+  it("keeps the source-mode table grid tint on the caret line without dropping the quote bar", () => {
+    // background 简写连 background-image 一起清空，而引用条只活在那条渐变上
+    //（styles.css 的 .omd-blockquote 规则）。源码态表格行同时带 omd-blockquote
+    // 类，所以这里必须只动 background-color，否则引用内每行的竖条都会断开。
+    const src = declarationBlocks(".editor-host .omd-table-src").join("\n")
+    expect(src).toMatch(/\bbackground-color\s*:\s*var\(--omd-code-bg\)\s*;/)
+    expect(src).not.toMatch(/(?:^|[;{\s])background\s*:/)
+    // highlightActiveLine 的中和规则（0,3,0）盖过 .omd-table-src（0,2,0）；而源码
+    // 态光标必须在表格里，所以缺了这条 0,5,0 规则，光标所在行永远没有网格底。
+    const active = declarationBlocks(
+      ".editor-host .cm-content .cm-line.omd-table-src.cm-activeLine",
+    ).join("\n")
+    expect(active).toMatch(/\bbackground-color\s*:\s*var\(--omd-code-bg\)\s*;/)
+  })
+
   it("gives the header tools breathing room and keeps copy hover-only", () => {
     const tools = declarationBlocks(".editor-host .omd-code-tools").join("\n")
     expect(tools).toMatch(/\bgap\s*:\s*[4-9]px\s*;/)
