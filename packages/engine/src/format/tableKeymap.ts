@@ -67,10 +67,22 @@ export function tablePrevRowSpec(state: EditorState): TransactionSpec | null {
   return above ? caret(contentStart(state, above)) : null
 }
 
+export function exitTableSpec(state: EditorState): TransactionSpec | null {
+  const table = tableAt(state, state.selection.main.head)
+  if (!table) return null
+  const at = state.doc.length === table.to ? table.to : table.to + 1
+  const insert = at >= state.doc.length ? "\n\n" : "\n"
+  return {
+    changes: { from: at, to: at, insert },
+    selection: { anchor: at + insert.length },
+  }
+}
+
 // Prec.highest 且注册在 codeLine/fence/quote/list 之前：同优先级下先注册者胜。
 export const tableKeymap = Prec.highest(keymap.of([
   { key: "Tab", run: dispatchSpec(tableNextCellSpec) },
   { key: "Shift-Tab", run: dispatchSpec(tablePrevCellSpec) },
   { key: "Enter", run: dispatchSpec(tableNextRowSpec) },
   { key: "Shift-Enter", run: dispatchSpec(tablePrevRowSpec) },
+  { key: "Mod-Enter", run: dispatchSpec(exitTableSpec) },
 ]))

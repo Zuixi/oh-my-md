@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
-  tableNextCellSpec, tableNextRowSpec, tablePrevCellSpec,
+  exitTableSpec, tableNextCellSpec, tableNextRowSpec, tablePrevCellSpec,
 } from "../src/format/tableKeymap"
 import { makeState } from "./helpers"
 
@@ -58,5 +58,18 @@ describe("tableNextRowSpec", () => {
     const state = stateAt("a")
     const next = state.update(tableNextRowSpec(state)!).state
     expect(next.doc.lines).toBe(DOC.split("\n").length + 1)
+  })
+})
+
+describe("exitTableSpec", () => {
+  it("inserts a blank paragraph after the table and moves the caret there", () => {
+    const state = stateAt("a")
+    const next = state.update(exitTableSpec(state)!).state
+    expect(next.doc.toString()).toContain("| a | b |\n\n")
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
+  })
+
+  it("returns null outside a table", () => {
+    expect(exitTableSpec(stateAt("after"))).toBeNull()
   })
 })
