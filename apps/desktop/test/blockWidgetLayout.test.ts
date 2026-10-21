@@ -43,6 +43,10 @@ describe("block widget layout", () => {
     // CodeMirror 行，任何 padding/margin 都会把行内起点推离正文网格。
     const grid = declarationBlocks(".editor-host .omd-table-src").join("\n")
     expect(grid).not.toMatch(/\b(?:margin|padding)(?:-[a-z-]+)?\s*:/)
+    // border-left 同样占布局：2px 边框会把整张源码网格（连同光标）推到正文右侧
+    // 2px，与"不用 padding"的注释自相矛盾。左边线改用 inset 阴影画，不占布局。
+    expect(grid).not.toMatch(/\bborder-left\s*:/)
+    expect(grid).toMatch(/\bbox-shadow\s*:\s*inset\s+2px\s+0\s+0\s+var\(--omd-border\)\s*;/)
     // 等宽 + 关连字：列宽只由字符数决定，光标不会在连字里跳格。
     expect(grid).toMatch(/\bfont-family\s*:\s*var\(--omd-font-family-mono\)\s*;/)
     expect(grid).toMatch(/\bfont-variant-ligatures\s*:\s*none\s*;/)
