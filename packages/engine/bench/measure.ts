@@ -69,6 +69,8 @@ export function measureTyping(
      * 窗口外归还 pending」落位（见 syncSafeWindowReady），度量窗口为界的
      * 每键装饰映射成本。 */
     safeWindow?: boolean
+    /** 逐键起点（默认文档中点，保持既有基准不变）。 */
+    caret?: number
   } = {},
 ): TypingLatency {
   const count = opts.keystrokes ?? 200
@@ -83,7 +85,7 @@ export function measureTyping(
   // 窗口化稳态：生产由 liveBuildDriver 的微任务/idle 通道推进，而 bench 的同步
   // 度量循环期间那些回调不会运行 —— 同步落位等价稳态后再逐键。
   if (opts.safeWindow) syncSafeWindowReady(view)
-  let pos = Math.floor(doc.length / 2)
+  let pos = opts.caret ?? Math.floor(doc.length / 2)
   const samples: number[] = []
   for (let i = 0; i < count; i++) {
     const t0 = performance.now()

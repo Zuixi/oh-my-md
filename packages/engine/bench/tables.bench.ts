@@ -1,7 +1,8 @@
 import { bench, describe } from "vitest"
 import {
   budgetLine, ESTIMATE_GAIN_FLOOR, fullyParsedLiveState, measureDecoRebuildMs,
-  measureTableDrawsMs, tableEstimateGain, TABLE_DRAW_BUDGET_MS,
+  measureTableDrawsMs, measureTyping, tableEstimateGain, TABLE_DRAW_BUDGET_MS,
+  TYPING_P95_BUDGET_MS,
 } from "./measure"
 import { makeTableHeavyDoc } from "./generate"
 
@@ -41,5 +42,29 @@ describe("table scroll benchmarks (advisory)", () => {
   bench("deco rebuild table-heavy 40x(20r x 8c)", () => {
     const state = fullyParsedLiveState(DOC_TABLES)
     console.info(`deco rebuild 40 tables: ${measureDecoRebuildMs(state).toFixed(2)}ms`)
+  })
+})
+
+// 表格内打字基准（advisory）：源码模式下光标进表格后，「在单元格里打字」不再是
+// 输入框内零事务的本地编辑，而是每键一次真实文档事务（增量重解析 + 表格
+// widget/装饰更新）。此为热路径变更，用基准锁住 —— 表格内 p95 应与整篇同量级，
+// 预算沿用逐键 16ms（超限告警不阻断，见 known-gotchas「Benchmark jitter is real」）。
+const TABLE_TYPE_DOC = [
+  "# 表格输入基准",
+  "",
+  "| A | B | C | D | E | F | G | H |",
+  "| --- | --- | --- | --- | --- | --- | --- | --- |",
+  ...Array.from({ length: 60 }, (_, r) =>
+    `| a${r} | b${r} | c${r} | d${r} | e${r} | f${r} | g${r} | h${r} |`),
+  "",
+].join("\n")
+const TABLE_TYPE_CARET = TABLE_TYPE_DOC.indexOf("| a30 |")
+
+describe("table typing benchmark (advisory)", () => {
+  bench("typing inside a 60r x 8c table (live, steady)", () => {
+    const r = measureTyping(TABLE_TYPE_DOC, {
+      mode: "live", tree: "steady", keystrokes: 60, caret: TABLE_TYPE_CARET,
+    })
+    console.info(budgetLine("typing p95 in-table 60r x 8c live", r.p95Ms, TYPING_P95_BUDGET_MS))
   })
 })
