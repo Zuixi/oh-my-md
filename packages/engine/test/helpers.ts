@@ -16,8 +16,12 @@ import { drainPendingLiveBuild, livePreviewField } from "../src/decorations/buil
 // 大文档剩余区间记入 pending。挂临时视图同步排空（drainPendingLiveBuild 只
 // dispatch liveBuildChunk，不推进解析 —— 解析仍由上面的 forceParsing 负责），
 // 测试拿到的仍是“全量装饰”状态；无 live 扩展的用例零影响。
-export function makeState(doc: string, extra: Extension[] = []) {
-  const state = EditorState.create({ doc, extensions: [markdownLanguageSupport(), ...extra] })
+export function makeState(
+  doc: string,
+  extra: Extension[] = [],
+  selection?: { anchor: number; head?: number },
+) {
+  const state = EditorState.create({ doc, selection, extensions: [markdownLanguageSupport(), ...extra] })
   const treeComplete = syntaxTree(state).length >= state.doc.length
   const live = state.field(livePreviewField, false)
   if (treeComplete && (!live || live.pending.length === 0)) return state
