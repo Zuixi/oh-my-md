@@ -10,6 +10,7 @@ import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
+import { tableKeymap } from "./format/tableKeymap"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
 import {
@@ -63,6 +64,7 @@ export {
   codeLineKeymap,
 } from "./format/codeLines"
 export { continueFence, continueFenceSpec, fenceKeymap, isUnclosedFenceLine } from "./format/fences"
+export { tableKeymap } from "./format/tableKeymap"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
@@ -145,6 +147,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     // insertNewlineContinueMarkup），而 markdownLanguageSupport() 是本数组第一项 ——
     // 同优先级下先注册者胜，停在 Prec.high 会让上游抢走 Enter，引擎语义（空前缀行
     // 退层、`>x` 风格保真、围栏补全、代码行缩进）在真实编辑器里全部失效。
+    tableKeymap,
     codeLineKeymap,
     codeIndentKeymap,
     fenceKeymap,
