@@ -682,3 +682,35 @@ update#2  doc=false sel=true effects=measure ranges=
 回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
 bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
 最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。
+## `coordsAtPos` throws inside `ViewPlugin.update` — read layout in `requestMeasure`
+
+任何"跟着光标/块跑的浮层"（`tables/sourceToolbar.ts` 的表格浮层工具栏就是第一例）都会
+在 `update(update: ViewUpdate)` 里算坐标。那里调 `view.coordsAtPos(pos)` 会穿到
+`readMeasured()`，而 `updateState === Updating` 时它**直接抛**
+`Reading the editor layout isn't allowed during an update`；`view.dom.getBoundingClientRect()`
+这类布局读取同样是更新期禁读的。
+
+危险之处是它安静地失败：按 Task 7 草案的写法（`update()` 里 `try { coordsAtPos } catch { hidden = true }`）
+浮层在**每一次**事务后都走 catch 分支，于是永远不显示，而引擎单元测试（happy-dom 无布局、
+且断言只看 `applyTableTool()` 的文档结果）全绿。只有真实浏览器的 e2e 才看得见。
+
+正确形状：
+
+```ts
+update(update: ViewUpdate) {
+  if (!tableAt(update.state, update.state.selection.main.head)) { this.dom.hidden = true; return } // 纯 state 查询，随时可做
+  this.view.requestMeasure<Placement | null>({
+    key: this,                          // 同一插件实例，连续 update 合并成一次测量
+    read: view => /* coordsAtPos + getBoundingClientRect，Idle 态可读 */,
+    write: placement => /* 只写 dom.hidden/style，不再读布局 */,
+  })
+}
+```
+
+`read` 在测量后、`write` 在 Updating 期执行，所以 `write` 里**不能再读布局**。`read`
+返回 `null` 时 `write` 仍会被调用（只有抛异常才是 `BadMeasure`），"算不出来就收起"可以直接
+用 `null` 表达。定位基准取 `view.dom`（`.cm-editor` 在 CM 基础主题里是 `position: relative`），
+坐标用 `coords - hostRect` 换算。
+
+回归守卫：`apps/desktop/e2e/table-toolbar.spec.ts`（光标进入表格 → 浮层可见 → 点按钮改源码 →
+光标离开 → 收起）。写这类浮层时先跑一次真实浏览器探针，别只信 happy-dom。

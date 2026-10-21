@@ -54,6 +54,7 @@
 - **Auto pair: line-start `*` and `$` are block structure** — the paired `* *` becomes a list item and `$$` becomes a MathBlock that swallows to EOF; rule 2b suppresses exactly those two, never `` ` ``/`_`.
 - **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
 - **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
+- **`coordsAtPos` throws inside `ViewPlugin.update`** — layout reads are illegal during an update; position overlays in `requestMeasure` (read coords / write DOM separately) or the toolbar silently never appears while happy-dom tests stay green.
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
