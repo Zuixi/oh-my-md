@@ -110,11 +110,13 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 表格 IME：在源码态表格里组词时按 Enter 是「确认候选」，不换行、不跳格；组词结束后的 Enter 才移动
 - [ ] 表格工具栏边界：仅剩一行时「−row」禁用、仅剩一列时「−col」禁用、只读文档全部编辑控件禁用；禁用态不改变表格布局
 - [ ] **表格浮动工具栏不贴边**：把光标留在表内后把该表滚出视口 → 浮动工具栏隐藏（不粘在编辑器顶边）；滚回来重新出现
+- [ ] **表格浮动工具栏 Source 模式**：⌘E 源码模式下光标在表内时浮动工具栏**仍出现**（Source 模式没有渲染态工具栏，它是唯一的结构操作入口；这是有意行为）；只读文档下仍然隐藏
 - [ ] 表格进度一致性：表格内的 ⌘Z 撤销上一个按键（不是整格回滚）、⌘F 能搜到表格里已提交的内容、自动保存与崩溃恢复覆盖表格输入
 - [ ] 多标签表格互不干扰：两个标签各含一个表格，在其中一个标签里点单元格/按 Tab 导航时，另一个标签的选区、焦点与滚动位置不变
 - [ ] 引用/列表内表格的行列操作保留前缀：blockquote（`> `）或列表缩进内的表格执行插行/插列/删行/删列后，新增与改动的行仍带正确前缀（`> `/缩进），外层块结构与对齐不破坏
 - [ ] 表格单元格内 Markdown 任意语法渲染：粗体/斜体/删除线/高亮/下划线/行内代码/行内公式/链接/autolink/图片/emoji/`<br>`，以及单行列表（`- item`）、引用（`> q`）、代码块（`` ``` ``）；导出 HTML 与预览一致
 - [ ] 已知限制：源码态单元格内没有行内渲染（`**粗体**`/链接显示为原始标记）
+- [ ] **表格内粘贴多行内容**：把多行文本/富文本粘贴到表格行内会破坏该行结构（可能把表拆开）——已知限制，需要时先退出表格再粘贴
 - [ ] 代码块：灰底容器（`#f8f8f8` / 暗色等价）、紧凑行号 gutter（空行保留整行高度，行号连续不断档）（无双重左距、行高约 1.45）、Shiki 高亮；顶栏默认显示（标签/fence info、语言搜索下拉可点选、Copy 图标，成功后短暂 Copied）；↑/↓ 进入块内卸载 widget、源码行可编辑且光标闪烁，无报错/卡死；光标所在源码行同样保持灰底（不被当前行透明规则抹掉，块读感连续）；标签与语言写入 fence info 第一 token + 后缀；⌘E Source 显完整 ```
 - [ ] `$$` 块公式与 `$` 行内公式渲染；错误公式显示错误+原文不白屏
 - [ ] ```mermaid 块渲染图表；语法错时显示错误+原文
@@ -324,7 +326,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 - 日期：2026-09-29（fix-table-quote-ux：表格/引用块/代码块编辑体验 + 语言覆盖）
 - 自动化已通过：`pnpm --filter @omd/engine test`（634，含 tsc）、`pnpm --filter @omd/desktop test`（799）、`pnpm --filter @omd/desktop test:e2e`（13，Playwright 真浏览器）、`pnpm --filter @omd/desktop build`、`pnpm --filter @omd/engine bench`（advisory，含新增 `bench/quotes.bench.ts`：引用块逐键 p95 ≈2.6–5.6ms、Enter 续写循环 p95 ≈11ms —— 单看 Enter 与随后的逐字插入各约 5ms —— 均低于 16ms 预算；同批 `documentStats 50k` 报 11.3ms OVER BUDGET(>8ms)，该模块不在本分支改动范围内，属既有基线/机器抖动，未处理）
-- 上表交互项（单元格 IME / 引用块 Enter / 引用块内代码块 / 编辑态语言覆盖）需 `pnpm dev` + 真实 IME 目视，本环境未执行，保持未勾选
+- 上表交互项（表格源码态 IME（旧的单元格内联输入框已退役，现行条目见 M2 的「表格 IME」）/ 引用块 Enter / 引用块内代码块 / 编辑态语言覆盖）需 `pnpm dev` + 真实 IME 目视，本环境未执行，保持未勾选
 - 日期：2026-08-14（Task 14 / Conflict-safe guarded save）
 - 自动化已通过：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`、`pnpm test`（engine 179）、`pnpm --filter @omd/desktop test`（206）、`pnpm --filter @omd/desktop build`、`rg` 计划扫描无 TBD/TODO、`git diff --check`
 - Conflict-safe GUI / VoiceOver / IME / Finder tags：本环境未执行 `pnpm dev`，上方新节交互项保持未勾选或标 **NOT RUN**
