@@ -135,393 +135,119 @@ describe("tables", () => {
     expect((dom.querySelector("td img") as HTMLImageElement).src).toContain("/facet/x.png")
   })
 
-  it("opens an omd-table-edit input on cell click and commits source on Enter (vertical jump)", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    let doc = src
-    const dispatches: unknown[] = []
+  // 渲染态（光标在表外）只有投影 + 结构工具栏：没有输入框、没有"正在编辑哪一格"。
+  // 工具栏的目标格唯一来源是鼠标 hover（td/th 的 mouseover 记录行列），动作经
+  // tables/sourceToolbar.ts::applyTableToolAt 校验偏移后改写源码。
+  type ToolChange = { from: number; to: number; insert: string }
+
+  /** 只实现 applyTableToolAt 用到的 view 表面：state.sliceDoc 校验 + dispatch 落盘。 */
+  function toolView(initial: string, tablePos = 0) {
+    let text = initial
+    const dispatches: Array<{ changes?: ToolChange | readonly ToolChange[] }> = []
     const view = {
-      state: { readOnly: false },
+      state: { readOnly: false, sliceDoc: (from: number, to: number) => text.slice(from, to) },
       requestMeasure: () => {},
       focus: () => {},
       posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string }; selection?: unknown }) => {
+      posAtDOM: () => tablePos,
+      dispatch: (spec: { changes?: ToolChange | readonly ToolChange[] }) => {
+        // toDOM 末尾还会派发一次 measureBlockWidget 测量 effect —— 只统计文档事务。
+        if (!spec.changes) return
         dispatches.push(spec)
-        if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
+        const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
+        for (const change of [...list].sort((a, b) => b.from - a.from)) {
+          text = text.slice(0, change.from) + change.insert + text.slice(change.to)
         }
       },
     }
+    return { view, dispatches, doc: () => text }
+  }
+
+  function hover(el: Element) {
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
+  }
+
+  function clickTool(wrap: HTMLElement, act: string) {
+    const btn = wrap.querySelector(`.omd-table-toolbar [data-act='${act}']`) as HTMLButtonElement
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    // 只有 hover 过格子的按钮才 enabled；disabled 的 button.click() 是 no-op，
+    // 所以这里用 dispatchEvent 让监听器无条件收到 click（等价于程序化触发）。
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+  }
+
+  /** doc 可与 widget 自己的 src 不同（模拟表格前插入内容后的 live position）。 */
+  async function mountTable(src: string, options: { tablePos?: number; doc?: string } = {}) {
+    const { view, dispatches, doc } = toolView(options.doc ?? src, options.tablePos ?? 0)
     const widget = new TableWidget(src, 0, tableData(src))
     const wrap = widget.toDOM(view as never)
     await Promise.resolve()
-    const td = wrap.querySelector("td")!
-    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    expect(input).toBeTruthy()
-    expect(input!.value).toBe("1")
-    expect(input!.selectionStart).toBe(input!.value.length)
-    expect(input!.selectionEnd).toBe(input!.value.length)
-    expect(dispatches.some(d => d !== null && typeof d === "object" && "selection" in d)).toBe(false)
-    input!.value = "x"
-    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    // Enter 改为纵向跳行：仅修改当前 cell，行 0 col 0 = "x"，下一行同列待编辑。
-    expect(doc).toBe("| a | b |\n|---|---|\n| x | 2 |\n| 3 | 4 |")
-  })
+    return { widget, wrap, dispatches, doc }
+  }
 
-  it("inserts a row below from the table toolbar", async () => {
+  it("keeps the rendered toolbar inert until a cell is hovered", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
-        if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const insertRow = wrap.querySelector(".omd-table-toolbar [data-act='insert-row']") as HTMLElement
-    expect(insertRow).toBeTruthy()
-    insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    insertRow.click()
-    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
+    const { widget, wrap, dispatches } = await mountTable(src)
+    expect(widget.hasRowCol()).toBe(false)
+    const buttons = [...wrap.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button")]
+    expect(buttons).toHaveLength(7)
+    expect(buttons.every(btn => btn.disabled)).toBe(true)
+
+    // 未 hover 就点：没有目标格，绝不猜（不改源码、不派发事务）。
+    clickTool(wrap, "insert-row")
+    expect(dispatches).toHaveLength(0)
+
+    hover(wrap.querySelectorAll("td")[0])
+    expect(widget.hasRowCol()).toBe(true)
+    expect((wrap.querySelector("[data-act='insert-row']") as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it("deletes the clicked data row, not the one below it", async () => {
+  it("inserts a row below the hovered row from the rendered toolbar", async () => {
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
+    const { wrap, doc } = await mountTable(src)
+    hover(wrap.querySelector("tbody td")!)
+    clickTool(wrap, "insert-row")
+    expect(doc()).toBe("| a | b |\n|---|---|\n| 1 | 2 |\n|  |  |")
+  })
+
+  it("deletes the hovered data row, not the one below it", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
-        if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    // 点击第一个数据行（tbody 的第一个 td）——行号 1（1-based）。
-    wrap.querySelector("tbody td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
-    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    deleteRow.click()
-    // 移除第一数据行，而不是其下方的第二行。
-    expect(doc).toBe("| a | b |\n|---|---|\n| 3 | 4 |")
+    const { wrap, doc } = await mountTable(src)
+    // 第一个数据行（行序 1）为目标 —— 删它，而不是它下面的第二行。
+    hover(wrap.querySelector("tbody td")!)
+    clickTool(wrap, "delete-row")
+    expect(doc()).toBe("| a | b |\n|---|---|\n| 3 | 4 |")
   })
 
-  it("does not delete a data row when the header cell is active", async () => {
+  it("does not delete a data row when the hovered target is the header", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
-        if (spec.changes) {
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    // 点击表头单元格（行 0）：delete-row 应被守卫为 no-op，不变化任何源码。
-    wrap.querySelector("th")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
-    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    deleteRow.click()
-    expect(doc).toBe(src)
+    const { wrap, doc, dispatches } = await mountTable(src)
+    hover(wrap.querySelector("th")!)
+    clickTool(wrap, "delete-row")
+    // 表头映射到 -1，被 deleteTableRow 的边界检查拒绝 —— 一个事务都不产生。
+    expect(doc()).toBe(src)
+    expect(dispatches).toHaveLength(0)
   })
 
-  it("does not restart editing on the detached widget after Tab", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
-        if (spec.changes) {
-          // 结构操作返回多条 table-relative change；像 CodeMirror 一样按
-          // 位置降序应用，避免先应用低位置改动使后续偏移失效。
-          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
-          for (const change of [...list].sort((a, b) => b.from - a.from)) {
-            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
-          }
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-    const deleteCol = wrap.querySelector(".omd-table-toolbar [data-act='delete-col']") as HTMLElement
-    deleteCol.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    deleteCol.click()
-    expect(doc).toBe("| b |\n|---|\n| 2 |")
-  })
-
-   it("replaces the live table range after the widget position moves", async () => {
-    // 两行表格：Enter 从首行跳到次行同列，dest 路径不进入微任务重建，mock 可断言。
+  it("applies the toolbar action at the table's live position, not its stale pos", async () => {
+    // widget 的 pos 是 0，但它在文档里已经下移了 4 个字符：动作必须落在 livePos。
     const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    let doc = `xx\n\n${src}`
-    const dispatches: Array<{ from: number; to: number; insert: string }> = []
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 4,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } }) => {
-        if (spec.changes) {
-          dispatches.push(spec.changes)
-          const { from, to, insert } = spec.changes
-          doc = doc.slice(0, from) + insert + doc.slice(to)
-        }
-      },
-    }
-    const data = tableData(src)
-    const cell = data.rows[0].cells[0]!
-    const widget = new TableWidget(src, 0, data)
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "x"
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    // Enter 改为纵向跳行：仅替换 cell 0 内容，纵向 focus row 1 col 0。
-    // mock view 的 posAtDOM 偏移 4（xx\n\n 前缀），所以 cell 0 替换偏移 = 4 + cell.from.
-    expect(dispatches[0]).toMatchObject({ from: 4 + cell.from, to: 4 + cell.to, insert: "x" })
-    expect(doc).toBe("xx\n\n| a | b |\n|---|---|\n| x | 2 |\n| 3 | 4 |")
+    const { wrap, doc } = await mountTable(src, { tablePos: 4, doc: `xx\n\n${src}` })
+    hover(wrap.querySelector("td")!)
+    clickTool(wrap, "delete-col")
+    expect(doc()).toBe("xx\n\n| b |\n|---|\n| 2 |\n| 4 |")
   })
 
-  it("keeps the cell editor when deleting the last data row fails", async () => {
-    // 单行表格：delete-row 被守卫为 no-op，doc 不变，输入框继续挂载；
-    // Enter 纵向跳行到下一行（row=2，越界末行 Enter 插行分支）→ 等价于 Excel 录入手感。
-    const src = "| a |\n|---|\n| 1 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | readonly { from: number; to: number; insert: string }[] }) => {
-        if (spec.changes) {
-          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
-          for (const change of [...list].sort((a, b) => b.from - a.from)) {
-            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
-          }
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const deleteRow = wrap.querySelector(".omd-table-toolbar [data-act='delete-row']") as HTMLElement
-    deleteRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    deleteRow.click()
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    expect(input).toBeTruthy()
-    // 单行表格删除被守卫为 no-op，doc 不变，输入框继续挂载。
-    expect(doc).toBe(src)
-    input!.value = "x"
-    input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
-    // Enter 末行录入：当前行 1 → x；末行 Enter 触发插行分支追加新行（同列聚焦）。
-    expect(doc).toBe("| a |\n|---|\n| x |\n|  |")
-  })
-
-  it("lets the edit input keep native mousedown for caret placement", async () => {
-    const src = "| a |\n|---|\n| 1 |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true })
-    input.dispatchEvent(ev)
-    expect(ev.defaultPrevented).toBe(false)
-    expect(wrap.querySelector("input.omd-table-edit")).toBe(input)
-  })
-
-  it("opens escaped cell source in the editor", async () => {
-    const src = "| a\\|b | c |\n|---|---|\n| 1 | 2 |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    wrap.querySelector("th")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    expect((wrap.querySelector("input.omd-table-edit") as HTMLInputElement).value).toBe("a\\|b")
-  })
-
-  it("does not open an editor for a synthetic ragged cell", async () => {
-    const src = "| a | b |\n|---|---|\n| only |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    wrap.querySelectorAll("td")[1]
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    expect(wrap.querySelector("input.omd-table-edit")).toBeNull()
-  })
-
-  it("does not resume Tab editing on a synthetic ragged cell after rebuild", async () => {
-    const src = "| a | b |\n|---|---|\n| only |"
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      posAtDOM: () => 0,
-      dispatch: () => {},
-    }
-    const first = new TableWidget(src, 0, tableData(src))
-    const firstWrap = first.toDOM(view as never)
-    await Promise.resolve()
-    firstWrap.querySelector("td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    firstWrap.querySelector("input.omd-table-edit")!
-      .dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-    const rebuilt = new TableWidget(src, 0, tableData(src))
-    const rebuiltWrap = rebuilt.toDOM(view as never)
-    await Promise.resolve()
-    expect(rebuiltWrap.querySelector("input.omd-table-edit")).toBeNull()
-  })
-
-  it("keeps pending table keyboard continuation scoped to its EditorView", async () => {
+  it("dispatches local structural changes, not a whole-table replacement", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const firstView = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      posAtDOM: () => 0,
-      dispatch: () => {},
-    }
-    const secondView = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      posAtDOM: () => 0,
-      dispatch: () => {},
-    }
-    const first = new TableWidget(src, 0, tableData(src))
-    const firstWrap = first.toDOM(firstView as never)
-    document.body.appendChild(firstWrap)
-    await Promise.resolve()
-    firstWrap.querySelector("td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    firstWrap.querySelector("input.omd-table-edit")!
-      .dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-    const unrelated = new TableWidget(src, 0, tableData(src))
-    const unrelatedWrap = unrelated.toDOM(secondView as never)
-    document.body.appendChild(unrelatedWrap)
-    await Promise.resolve()
-
-    expect(unrelatedWrap.querySelector("input.omd-table-edit")).toBeNull()
-    firstWrap.remove()
-    unrelatedWrap.remove()
-  })
-
-  it("opens an empty cell with a collapsed caret", async () => {
-    const src = "| a |\n|---|\n|   |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    wrap.querySelector("td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    expect(input.selectionStart).toBe(0)
-    expect(input.selectionEnd).toBe(0)
-  })
-
-  it("merges an open cell commit and an insert-row into one sorted transaction", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    let doc = src
-    const dispatches: unknown[] = []
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
-        dispatches.push(spec)
-        if (spec.changes) {
-          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
-          for (const change of [...list].sort((a, b) => b.from - a.from)) {
-            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
-          }
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    // 打开第一个数据单元格，输入新值，再点「下插一行」。
-    wrap.querySelector("tbody td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "9"
-    const insertRow = wrap.querySelector(".omd-table-toolbar [data-act='insert-row']") as HTMLElement
-    insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    insertRow.click()
-    // 单个事务同时携带单元格改动与行插入（2 个排序、非重叠的本地 change）。
+    const { wrap, dispatches } = await mountTable(src)
+    // 目标列 0（首数据格）→ 在其右侧插列。
+    hover(wrap.querySelector("tbody td")!)
+    clickTool(wrap, "insert-col")
     expect(dispatches).toHaveLength(1)
-    const changes = (dispatches[0] as { changes: Array<{ from: number; to: number; insert: string }> }).changes
-    expect(changes).toHaveLength(2)
-    expect(changes.map(c => c.from)).toEqual([...changes].sort((a, b) => a.from - b.from).map(c => c.from))
-    expect(doc).toBe("| a | b |\n|---|---|\n| 9 | 2 |\n|  |  |")
-  })
-
-  it("dispatches local structural changes, not a whole-table replacement, without an open editor", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const dispatches: Array<{ changes?: Array<{ from: number; to: number; insert: string }> }> = []
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
-        dispatches.push(spec as never)
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    // 不打开任何单元格编辑器（this.row/this.col 仍为表头默认 0）直接加一列。
-    const insertCol = wrap.querySelector(".omd-table-toolbar [data-act='insert-col']") as HTMLElement
-    insertCol.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    insertCol.click()
-    expect(dispatches).toHaveLength(1)
-    const changes = dispatches[0].changes
-    expect(changes).toBeTruthy()
+    const changes = dispatches[0].changes as readonly ToolChange[]
     // 三处本地 change（表头、分隔符、首数据行），均不覆盖整表 —— 不是全表替换。
-    expect(changes!.length).toBe(3)
-    for (const c of changes!) {
+    expect(changes.length).toBe(3)
+    for (const c of changes) {
       expect(c.from).toBeGreaterThanOrEqual(0)
       expect(c.to).toBeLessThanOrEqual(src.length)
       expect(c.from).not.toBe(0)
@@ -531,54 +257,30 @@ describe("tables", () => {
 
   it("disables delete-row when there is one data row and delete-column when there is one column", async () => {
     const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    const delRow = wrap.querySelector("[data-act='delete-row']") as HTMLButtonElement
-    const delCol = wrap.querySelector("[data-act='delete-col']") as HTMLButtonElement
-    expect(delRow.disabled).toBe(true)
-    expect(delCol.disabled).toBe(false)
+    const { wrap } = await mountTable(src)
+    hover(wrap.querySelector("td")!)
+    expect((wrap.querySelector("[data-act='delete-row']") as HTMLButtonElement).disabled).toBe(true)
+    expect((wrap.querySelector("[data-act='delete-col']") as HTMLButtonElement).disabled).toBe(false)
 
     const oneColSrc = "| a |\n|---|\n| 1 |\n| 2 |"
-    const oneCol = new TableWidget(oneColSrc, 0, tableData(oneColSrc))
-    const wrap2 = oneCol.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    const delRow2 = wrap2.querySelector("[data-act='delete-row']") as HTMLButtonElement
-    const delCol2 = wrap2.querySelector("[data-act='delete-col']") as HTMLButtonElement
-    expect(delRow2.disabled).toBe(false)
-    expect(delCol2.disabled).toBe(true)
+    const oneCol = await mountTable(oneColSrc)
+    hover(oneCol.wrap.querySelector("td")!)
+    expect((oneCol.wrap.querySelector("[data-act='delete-row']") as HTMLButtonElement).disabled).toBe(false)
+    expect((oneCol.wrap.querySelector("[data-act='delete-col']") as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("applies active row and column classes to the edited cell row and column", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
-    const bodyTds = wrap.querySelectorAll("tbody td")
-    const target = bodyTds[1] as HTMLElement  // row1 col1
-    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    expect(target.classList.contains("omd-table-row-active")).toBe(true)
-    expect(target.classList.contains("omd-table-col-active")).toBe(true)
-    // 同行的另一格只带 row-active
-    expect((bodyTds[0] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
-    expect((bodyTds[0] as HTMLElement).classList.contains("omd-table-col-active")).toBe(false)
-    // 该列的下方格子只带 col-active
-    expect((bodyTds[3] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-    expect((bodyTds[3] as HTMLElement).classList.contains("omd-table-row-active")).toBe(false)
-    // 表头同列也带 col-active
-    expect((wrap.querySelectorAll("th")[1] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-    // Escape 取消后 active 类清空
-    target.querySelector("input.omd-table-edit")!
-      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
-    expect(wrap.querySelector(".omd-table-row-active")).toBeNull()
-    expect(wrap.querySelector(".omd-table-col-active")).toBeNull()
+  it("ignores a synthetic ragged cell as a toolbar target", async () => {
+    const src = "| a | b |\n|---|---|\n| only |"
+    const { widget, wrap } = await mountTable(src)
+    // 缺失源码槽的占位格没有任何可操作的东西：hover 它不建立目标。
+    hover(wrap.querySelectorAll("td")[1])
+    expect(widget.hasRowCol()).toBe(false)
+    expect((wrap.querySelector("[data-act='insert-row']") as HTMLButtonElement).disabled).toBe(true)
   })
 
   it("renders synthetic ragged cells disabled and input-less", async () => {
     const src = "| a | b |\n|---|---|\n| only |"
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
-    await Promise.resolve()
+    const { wrap } = await mountTable(src)
     const missing = wrap.querySelectorAll("td")[1] as HTMLElement
     expect(missing.classList.contains("omd-table-cell-missing")).toBe(true)
     expect(missing.getAttribute("aria-disabled")).toBe("true")
@@ -586,76 +288,4 @@ describe("tables", () => {
     expect(missing.querySelector("input")).toBeNull()
     expect((wrap.querySelectorAll("td")[0] as HTMLElement).classList.contains("omd-table-cell-missing")).toBe(false)
   })
-
-  it("Enter in a ragged cell at the last column does not insert a new row", async () => {
-    // 单行表格且末格 ragged（缺 cell[1]）：targetRow=1 落在越界位置，
-    // 不触发末行 Enter 插行分支，等价于 no-op 提交。
-    const src = "| a | b |\n|---|---|\n| 1 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | readonly { from: number; to: number; insert: string }[] }) => {
-        if (spec.changes) {
-          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
-          for (const change of [...list].sort((a, b) => b.from - a.from)) {
-            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
-          }
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    // 点击末格 col 1（ragged），开启 cell 编辑器
-    const cell1 = wrap.querySelectorAll("td")[1] as HTMLElement
-    cell1.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    // 末格 col 1 不可用（无源码），不打开 input，直接返回
-    const inputAfterClick = wrap.querySelector("input.omd-table-edit")
-    expect(inputAfterClick).toBeNull()
-  })
-
-  it("final-cell Tab commits the cell and appends one blank row focusing its first cell", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    let doc = src
-    const view = {
-      state: { readOnly: false },
-      requestMeasure: () => {},
-      focus: () => {},
-      posAtCoords: () => 0,
-      posAtDOM: () => 0,
-      dispatch: (spec: { changes?: { from: number; to: number; insert: string } | Array<{ from: number; to: number; insert: string }> }) => {
-        if (spec.changes) {
-          const list = Array.isArray(spec.changes) ? spec.changes : [spec.changes]
-          for (const change of [...list].sort((a, b) => b.from - a.from)) {
-            doc = doc.slice(0, change.from) + change.insert + doc.slice(change.to)
-          }
-        }
-      },
-    }
-    const widget = new TableWidget(src, 0, tableData(src))
-    const wrap = widget.toDOM(view as never)
-    await Promise.resolve()
-    wrap.querySelectorAll("tbody td")[1]
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = wrap.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "x"
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-    expect(doc).toBe("| a | b |\n|---|---|\n| 1 | x |\n|  |  |")
-
-    // 重建后的 widget 消费 pending，打开新行首格。pending 的微任务要求
-    // cell.isConnected，widget 挂到 document 后再让微任务跑。
-    const rebuilt = new TableWidget(doc, 0, tableData(doc))
-    const rebuiltWrap = rebuilt.toDOM(view as never)
-    document.body.appendChild(rebuiltWrap)
-    // pending 消费的 startEdit 在微任务里执行，happy-dom 下需一次任务轮转。
-    await new Promise(resolve => setTimeout(resolve, 20))
-    const newRowCells = rebuiltWrap.querySelectorAll("tbody tr")[1].querySelectorAll("td")
-    expect(newRowCells[0].querySelector("input.omd-table-edit")).toBeTruthy()
-    rebuiltWrap.remove()
-  })
-
 })

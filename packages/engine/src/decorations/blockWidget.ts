@@ -104,7 +104,9 @@ export abstract class BlockWidget extends WidgetType {
       if (this.nativePointerInteraction(e)) return
       if (this.enterSourceOnClick() && !this.shouldEnterSource(e)) {
         // 误触点（边框/padding/工具栏空隙）：既不进源码，也不把事件交给 CM。
+        // 但焦点仍要进编辑器：D3 只禁止"翻源码"，未聚焦时点这块 padding 不该整个失效。
         e.preventDefault()
+        view.focus()
         return
       }
       if (!this.enterSourceOnClick()) {
@@ -126,8 +128,10 @@ export abstract class BlockWidget extends WidgetType {
     editBtn.title = "View source"
     editBtn.setAttribute("aria-label", "View source")
     editBtn.tabIndex = -1
-    // `</>` 按钮是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap），wrap
-    // 点击不进源码的块（表格：enterSourceOnClick=false）仍能经它进入源码编辑。
+    // `</>` 按钮是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap）。
+    // wrap 点击不进源码的块分两类：代码块/数学弹窗（enterSourceOnClick=false，
+    // 点击交给 onWrapClick），以及表格这类按目标门控的块（enterSourceOnClick=true
+    // 但 shouldEnterSource 只对 td/th 点头）。两类都能经这个按钮显式进入源码。
     editBtn.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       e.preventDefault()

@@ -43,28 +43,20 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   return null
 }
 
-async function openTableBodyCell(view: EditorView, index: number) {
-  const table = await waitFor(".omd-table", view)
-  expect(table).toBeTruthy()
-  const cell = table!.querySelectorAll("tbody td")[index] as HTMLElement | undefined
+/** 渲染态工具栏：hover 目标格后才 enabled，点击经 applyTableToolAt 改写源码。 */
+async function hoverCell(view: EditorView, selector: string, index: number) {
+  const cell = (await waitFor(selector, view)) && view.dom.querySelectorAll(selector)[index]
   expect(cell).toBeTruthy()
-  cell!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-  const input = cell!.querySelector("input.omd-table-edit") as HTMLInputElement | null
-  expect(input).toBeTruthy()
-  return input!
+  cell!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
 }
 
-async function waitForTableEdit(view: EditorView, bodyCellIndex: number) {
-  const started = Date.now()
-  while (Date.now() - started < 3000) {
-    const inputs = view.dom.querySelectorAll("input.omd-table-edit")
-    const cell = view.dom.querySelectorAll(".omd-table tbody td")[bodyCellIndex]
-    if (inputs.length === 1 && cell?.querySelector("input.omd-table-edit") === inputs[0]) {
-      return inputs[0] as HTMLInputElement
-    }
-    await tick(20)
-  }
-  return null
+function clickTool(view: EditorView, tableIndex: number, act: string) {
+  const wrap = view.dom.querySelectorAll(".omd-table")[tableIndex]
+  expect(wrap).toBeTruthy()
+  const btn = wrap!.querySelector(`.omd-table-toolbar [data-act='${act}']`) as HTMLButtonElement
+  expect(btn).toBeTruthy()
+  btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+  btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
 }
 
 describe("view smoke (real EditorView)", () => {
@@ -123,75 +115,6 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("table cell keyboard Tab and Shift-Tab restore focus after real rebuilds", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const first = await openTableBodyCell(view, 0)
-      first.value = "x"
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-      expect(view.state.doc.toString()).toContain("| x | 2 |")
-      const second = await waitForTableEdit(view, 1)
-      expect(second).toBeTruthy()
-
-      second!.value = "y"
-      second!.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "Tab",
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-      }))
-      expect(view.state.doc.toString()).toContain("| x | y |")
-      expect(await waitForTableEdit(view, 0)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally {
-      view.destroy()
-    }
-  })
-
-  it("table cell keyboard continuation follows the table live position", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      expect(await waitFor(".omd-table", view)).toBeTruthy()
-      view.dispatch({ changes: { from: 0, insert: "prefix\n\n" } })
-      const first = await openTableBodyCell(view, 0)
-      first.value = "x"
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-      expect(view.state.doc.toString()).toContain("prefix\n\n| a | b |")
-      expect(view.state.doc.toString()).toContain("| x | 2 |")
-      expect(await waitForTableEdit(view, 1)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally {
-      view.destroy()
-    }
-  })
-
-  it("table cell keyboard continuation is isolated between editor views", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const first = makeView(doc)
-    const second = makeView(doc)
-    try {
-      const input = await openTableBodyCell(first.view, 0)
-      input.value = "x"
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-      second.view.dispatch({ changes: { from: second.view.state.doc.length, insert: "\n" } })
-
-      expect(await waitForTableEdit(first.view, 1)).toBeTruthy()
-      await tick()
-      expect(second.view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
-      expect(first.errors.map(String)).toEqual([])
-      expect(second.errors.map(String)).toEqual([])
-    } finally {
-      first.view.destroy()
-      second.view.destroy()
-    }
-  })
-
-  // 表格 wrap 点击已改为保持渲染（见下方 non-cell surface 测试）；基类的
-  // “wrap 点击进源码”路径仍服务 hr/front-matter/mermaid，这里用 hr 守门。
   it("clicking an hr block widget moves the cursor into the block (source edit)", async () => {
     const doc = "intro\n\n***\n\ntail"
     const { view, errors } = makeView(doc)
@@ -207,18 +130,22 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("clicking a table's non-cell surface keeps it rendered (no source flash)", async () => {
+  it("clicking a table's non-cell surface keeps it rendered and still focuses the editor", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
     const block = view.dom.querySelector(".omd-table") as HTMLElement
     expect(block).toBeTruthy()
     const headBefore = view.state.selection.main.head
+    // 起点是"编辑器未聚焦"：D3 只禁止 padding 点击翻源码，焦点仍必须进编辑器。
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(view.hasFocus).toBe(false)
 
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
     expect(view.dom.querySelector(".omd-table")).toBeTruthy()   // wrap 点击不再注入光标
     expect(view.state.selection.main.head).toBe(headBefore)
+    expect(view.hasFocus).toBe(true)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -666,110 +593,63 @@ describe("view smoke (real EditorView)", () => {
     expect(errors.map(String)).toEqual([])
   })
 
-  it("merges an open cell edit with an insert-row into one doc-changing transaction", async () => {
+  it("inserts a row below the hovered one from the rendered toolbar in one transaction", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
     const { view, errors, count } = makeInteractView(doc)
     try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
+      await hoverCell(view, ".omd-table tbody td", 0)
       const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-row']") as HTMLElement
-      expect(btn).toBeTruthy()
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
+      clickTool(view, 0, "insert-row")
       await tick()
-      // 合并为单一 doc 变更事务；单元格新值与新插入的行一次落盘。
+      // 一次点击 = 一个文档事务（渲染态工具栏不再需要"先提交单元格、再补结构操作"）。
       expect(count() - before).toBe(1)
-      const out = view.state.doc.toString()
-      expect(out).toContain("| 9 | 2 |")
-      expect(out).toContain("|  |  |")
+      expect(view.state.doc.toString()).toContain("| 1 | 2 |\n|  |  |")
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-  it("merges an open cell edit with an insert-column into one doc-changing transaction", async () => {
+  it("inserts a column right of the hovered one from the rendered toolbar in one transaction", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
     const { view, errors, count } = makeInteractView(doc)
     try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
+      await hoverCell(view, ".omd-table tbody td", 0)
       const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-col']") as HTMLElement
-      expect(btn).toBeTruthy()
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
+      clickTool(view, 0, "insert-col")
       await tick()
-      // 合并为单一 doc 变更事务；单元格新值与新插入的列一次落盘。
       expect(count() - before).toBe(1)
-      const out = view.state.doc.toString()
-      expect(out).toContain("| a |  | b |")
-      expect(out).toContain("| 9 |  | 2 |")
+      expect(view.state.doc.toString()).toContain("| a |  | b |")
+      expect(view.state.doc.toString()).toContain("| 1 |  | 2 |")
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-
-
-  it("two-phase delete-current-row completes against the rebuilt model", async () => {
+  it("deletes the hovered row in a single transaction", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
     const { view, errors, count } = makeInteractView(doc)
     try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
+      await hoverCell(view, ".omd-table tbody td", 0)
       const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      // 两次 doc 事务：先提交单元格，重建后对 fresh 元数据删除 active 行。
-      const started = Date.now()
-      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
-      expect(count() - before).toBe(2)
-      // active 行(row 1)被删；剩余 row 2 原样保留其值。
+      clickTool(view, 0, "delete-row")
+      await tick()
+      expect(count() - before).toBe(1)
+      // 删掉的是 hover 的那一行（首数据行）；第二行原样保留。
       expect(view.state.doc.toString()).toBe("| a | b |\n|---|---|\n| 3 | 4 |\n\ntail")
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-
-  it("two-phase delete-current-column completes against the rebuilt model", async () => {
+  it("deletes the hovered column in a single transaction", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
     const { view, errors, count } = makeInteractView(doc)
     try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
+      await hoverCell(view, ".omd-table tbody td", 1)  // 第二列
       const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-col']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      const started = Date.now()
-      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
-      expect(count() - before).toBe(2)
-      // active 列被删；剩余列 b / 2 / 4 原样保留。
-      expect(view.state.doc.toString()).toBe("| b |\n|---|\n| 2 |\n| 4 |\n\ntail")
+      clickTool(view, 0, "delete-col")
+      await tick()
+      expect(count() - before).toBe(1)
+      // 删掉的是 hover 的那一列（b）；a 列原样保留。
+      expect(view.state.doc.toString()).toBe("| a |\n|---|\n| 1 |\n| 3 |\n\ntail")
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-
-  it("does not leak a deferred delete to another editor view", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const first = makeInteractView(doc)
-    const second = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(first.view, 0)
-      input.value = "9"
-      const btn = first.view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      const started = Date.now()
-      while (Date.now() - started < 3000 && first.view.state.doc.toString().includes("| 9 | 2 |")) {
-        await tick(20)
-      }
-      expect(first.view.state.doc.toString()).not.toContain("| 9 | 2 |")
-      // 第二个视图未派发任何结构删除：文档逐字节未变。
-      expect(second.view.state.doc.toString()).toBe(doc)
-      expect(first.errors.map(String)).toEqual([])
-      expect(second.errors.map(String)).toEqual([])
-    } finally { first.view.destroy(); second.view.destroy() }
-  })
-
-  it("does not run a deferred delete on a table at another position", async () => {
+  it("applies a toolbar action only to the table whose DOM owns it", async () => {
     const doc = [
       "| a | b |",
       "|---|---|",
@@ -786,67 +666,25 @@ describe("view smoke (real EditorView)", () => {
     ].join("\n")
     const { view, errors } = makeInteractView(doc)
     try {
-      const tbl = await waitFor(".omd-table", view)
-      const firstCell = tbl!.querySelectorAll("tbody td")[0] as HTMLElement
-      firstCell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      const input = firstCell.querySelector("input.omd-table-edit") as HTMLInputElement
-      expect(input).toBeTruthy()
-      input.value = "9"
-      const btn = view.dom.querySelectorAll(".omd-table .omd-table-toolbar [data-act='delete-row']")[0] as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      // 等待结构删除真正发生：带 "9" 的 active 行消失（提交后、删除前仍含 "| 9 | 2 |"）。
-      const started = Date.now()
-      while (Date.now() - started < 3000 && view.state.doc.toString().includes("| 9 | 2 |")) {
-        await tick(20)
-      }
+      // 光标在表外 → 两张表都是渲染态 widget；hover 的目标格属于第一张表。
+      await hoverCell(view, ".omd-table tbody td", 0)
+      clickTool(view, 0, "delete-row")
+      await tick()
       const out = view.state.doc.toString()
-      // 第一张表删除了 active 行；第二张表（不同位置）原样未动，pending 未串台。
       expect(out).toContain("| a | b |\n|---|---|\n| 3 | 4 |\n\nintro")
+      // 第二张表逐字节未动：按钮经 domOwner 解析出的是自己那张表的 livePos/src。
       expect(out).toContain("| c | d |\n|---|---|\n| 5 | 6 |")
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-
-  it("final-cell Tab appends one blank row and focuses its first cell", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const last = await openTableBodyCell(view, 1)
-      last.value = "x"
-      last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-      expect(view.state.doc.toString()).toContain("| 1 | x |\n|  |  |")
-      // 重建后新行首格（tbody 第 2 行的第 1 格 = td index 2）成为编辑焦点
-      expect(await waitForTableEdit(view, 2)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("Shift-Tab in the first cell commits and opens no input outside the table", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      // 线性网格的首格 = 表头第一格（row 0, col 0）。
-      const table = await waitFor(".omd-table", view)
-      const firstTh = table!.querySelector("th") as HTMLElement
-      firstTh.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      const input = firstTh.querySelector("input.omd-table-edit") as HTMLInputElement
-      expect(input).toBeTruthy()
-      input.value = "z"
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }))
-      expect(view.state.doc.toString()).toContain("| z | b |")
-      await tick()
-      // 边界提交：打开任何新输入框（含回到表尾的环绕）都不会发生。
-      expect(view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
   it("disables delete-row for a single data row and delete-column for a single column", async () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
     const { view, errors } = makeView(doc)
     try {
-      await waitFor(".omd-table", view)
+      // 未 hover 时全部 disabled（没有目标格）；hover 之后才只剩结构边界造成的禁用。
+      const buttons = [...view.dom.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button")]
+      expect(buttons.every(btn => btn.disabled)).toBe(true)
+      await hoverCell(view, ".omd-table tbody td", 0)
       const delRow = view.dom.querySelector("[data-act='delete-row']") as HTMLButtonElement
       expect(delRow.disabled).toBe(true)
       const delCol = view.dom.querySelector("[data-act='delete-col']") as HTMLButtonElement
@@ -854,26 +692,6 @@ describe("view smoke (real EditorView)", () => {
       expect(errors.map(String)).toEqual([])
     } finally { view.destroy() }
   })
-
-  it("highlights the active row and column while editing, and clears on cancel", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const input = await openTableBodyCell(view, 1)  // row1 col1
-      const tbl = view.dom.querySelector(".omd-table")
-      const tds = tbl!.querySelectorAll("tbody td")
-      expect((tds[1] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
-      expect((tds[1] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-      expect((tds[0] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
-      expect((tds[0] as HTMLElement).classList.contains("omd-table-col-active")).toBe(false)
-      expect((tds[3] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
-      expect(tbl!.querySelector(".omd-table-row-active")).toBeNull()
-      expect(tbl!.querySelector(".omd-table-col-active")).toBeNull()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
   it("renders synthetic ragged cells disabled and input-less", async () => {
     const doc = "| a | b |\n|---|---|\n| only |\n\ntail"
     const { view, errors } = makeView(doc)

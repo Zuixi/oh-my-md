@@ -33,12 +33,13 @@ function fakeView(initial: string) {
   let doc = initial
   const dispatches: unknown[] = []
   const view = {
-    state: { readOnly: false },
+    // sliceDoc：渲染态工具栏经 applyTableToolAt 校验 (from, source) 后才派发。
+    state: { readOnly: false, sliceDoc: (from: number, to: number) => doc.slice(from, to) },
     requestMeasure: () => {},
     focus: () => {},
     posAtCoords: () => 0,
     posAtDOM: () => 0,
-    dispatch: (spec: { changes?: Change | Change[]; selection?: unknown }) => {
+    dispatch: (spec: { changes?: Change | Change[]; selection?: unknown; effects?: unknown }) => {
       dispatches.push(spec)
       const list = Array.isArray(spec.changes) ? spec.changes : spec.changes ? [spec.changes] : []
       // 多 change 事务按 from 降序应用（等价于 CM 的单事务语义，用于断言最终文档）。
@@ -90,46 +91,28 @@ describe("table widget in-place updateDOM", () => {
     expect(after.updateDOM(dom, view as never, before)).toBe(false)
   })
 
-  it("keeps dispatching to the current owner across repeated pass-1 reuse", async () => {
+  it("keeps the toolbar target and the current owner across repeated pass-1 reuse", async () => {
     const src1 = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const { view } = fakeView(src1)
+    const src2 = "| a | b |\n|---|---|\n| 1 | 9 |"
+    const src3 = "| a | b |\n|---|---|\n| 8 | 9 |"
+    const { view, doc } = fakeView(src3)
     const first = new TableWidget(src1, 0, tableData(src1))
     const dom = await mount(first, view)
-    const src2 = "| a | b |\n|---|---|\n| 1 | 9 |"
+    // hover 由 first 挂的监听器记录，随后两次 pass-1 轮换都要把它迁到新 owner 上。
+    cellOf(dom, 1, 1).dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
+
     const second = new TableWidget(src2, 0, tableData(src2))
     expect(second.updateDOM(dom, view as never, first)).toBe(true)
-    const src3 = "| a | b |\n|---|---|\n| 8 | 9 |"
     const third = new TableWidget(src3, 0, tableData(src3))
     expect(third.updateDOM(dom, view as never, second)).toBe(true)
 
-    // 监听器仍是 first 挂的：必须把编辑态开在 third（最新 table）上。
-    cellOf(dom, 1, 0).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = dom.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    expect(input).toBeTruthy()
-    expect(input!.value).toBe("8")
-  })
-
-  it("consumes a pending Tab edit synchronously on the surviving DOM", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const { view, doc, dispatches } = fakeView(src)
-    const first = new TableWidget(src, 0, tableData(src))
-    const dom = await mount(first, view)
-
-    cellOf(dom, 1, 0).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = dom.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "x"
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-    expect(doc()).toBe("| a | b |\n|---|---|\n| x | 2 |")
-    // 只统计变更事务：toDOM 末尾还会 dispatch 一次 measureBlockWidget 测量 effect。
-    expect(dispatches.filter(spec => (spec as { changes?: unknown }).changes !== undefined)).toHaveLength(1)
-
-    const committed = doc()
-    const second = new TableWidget(committed, 0, tableData(committed))
-    expect(second.updateDOM(dom, view as never, first)).toBe(true)
-    // pending 同步消费：目标格（同行第 2 列）当场拿到输入框，没有 queueMicrotask 空窗。
-    const dest = cellOf(dom, 1, 1).querySelector("input.omd-table-edit") as HTMLInputElement | null
-    expect(dest).toBeTruthy()
-    expect(dest!.value).toBe("2")
+    // 监听器仍是 first 挂的：动作必须按最新 owner 的 (src/table/row/col) 派发 ——
+    // 目标列来自 hover 的 col 1，源码来自 third（不是监听器闭包里的旧 src1）。
+    const btn = dom.querySelector("[data-act='delete-col']") as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+    expect(doc()).toBe("| a |\n|---|\n| 8 |")
   })
 
   it("refreshes alignment styling and the toolbar highlight in place", async () => {
@@ -150,27 +133,4 @@ describe("table widget in-place updateDOM", () => {
     expect(dom.querySelector("[data-act='align-left']")?.classList.contains("omd-table-tool-active")).toBe(true)
   })
 
-  it("keeps editing state across a pass-1 hand-off that leaves the cell untouched", async () => {
-    const src = "| a | b |\n|---|---|\n| 1 | 2 |"
-    const { view, doc } = fakeView(src)
-    const first = new TableWidget(src, 0, tableData(src))
-    const dom = await mount(first, view)
-    cellOf(dom, 1, 0).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    const input = dom.querySelector("input.omd-table-edit") as HTMLInputElement
-    input.value = "draft"
-
-    // 表体别处变化（未触碰正在编辑的格）—— 经真实 dispatch 落到 fake view 的文档上，
-    // 保证 nextSrc 与 view 的文档一致。
-    const at = src.lastIndexOf("2")
-    view.dispatch({ changes: { from: at, to: at + 1, insert: "7" } })
-    const nextSrc = doc()
-    expect(nextSrc).toBe("| a | b |\n|---|---|\n| 1 | 7 |")
-
-    const second = new TableWidget(nextSrc, 0, tableData(nextSrc))
-    expect(second.updateDOM(dom, view as never, first)).toBe(true)
-    const kept = cellOf(dom, 1, 0).querySelector("input.omd-table-edit") as HTMLInputElement | null
-    expect(kept).toBe(input)
-    kept!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-    expect(doc()).toBe("| a | b |\n|---|---|\n| draft | 7 |")
-  })
 })

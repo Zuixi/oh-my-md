@@ -410,17 +410,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-color: var(--omd-link);
   background: color-mix(in srgb, var(--omd-link) 12%, transparent);
 }
-/* Active row/column highlight while a cell editor is open: background-only so
-   cell geometry never changes. The edited intersection honors both classes. */
-.editor-host .omd-table :is(td, th).omd-table-row-active {
-  background: color-mix(in srgb, var(--omd-link) 8%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 5%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-row-active.omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 14%, transparent);
-}
 /* Synthetic ragged cells (no source slot) read as inert placeholders. */
 .editor-host .omd-table td.omd-table-cell-missing {
   color: var(--omd-muted);
@@ -454,17 +443,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   color: var(--omd-fg);
   border-color: var(--omd-border);
   background: color-mix(in srgb, var(--omd-link) 10%, transparent);
-}
-.editor-host .omd-table-edit {
-  /* width:100% contributes the input's default 20ch intrinsic width to an
-     auto-layout table and makes the column jump on click. This equivalent
-     fill pattern keeps the input inside the already-sized cell. */
-  display: block; width: 0; min-width: 100%; box-sizing: border-box;
-  font: inherit; font-size: inherit; font-family: inherit; font-weight: inherit;
-  line-height: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
-  vertical-align: top;
-  border: none; outline: none;
-  margin: 0; padding: 0; background: transparent;
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 6px 12px 10px 10px; border-radius: 0 0 12px 12px;

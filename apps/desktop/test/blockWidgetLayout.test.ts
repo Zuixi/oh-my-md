@@ -38,22 +38,15 @@ describe("block widget layout", () => {
     expect(placeholder).toMatch(/\bmargin\s*:\s*0\s*;/)
   })
 
-  it("keeps the table cell editor visually flush without changing row geometry", () => {
-    const editor = declarationBlocks(".editor-host .omd-table-edit").join("\n")
-    expect(editor).toMatch(/\bdisplay\s*:\s*block\s*;/)
-    expect(editor).toMatch(/\bborder\s*:\s*(?:0|none)\s*;/)
-    expect(editor).toMatch(/\boutline\s*:\s*(?:0|none)\s*;/)
-    expect(editor).toMatch(/\bpadding\s*:\s*0\s*;/)
-    expect(editor).toMatch(/\bbackground\s*:\s*transparent\s*;/)
-    expect(editor).toMatch(/\bline-height\s*:\s*inherit\s*;/)
-    // 继承对齐与字体属性，消除表头和单元格点击时的文字跳动/移位
-    expect(editor).toMatch(/\btext-align\s*:\s*inherit\s*;/)
-    expect(editor).toMatch(/\bfont-weight\s*:\s*inherit\s*;/)
-    // A percentage width on an input participates in auto table intrinsic
-    // sizing and widens the column. Zero width + a percentage min-width fills
-    // the assigned cell without contributing the input's default 20ch width.
-    expect(editor).toMatch(/(?:^|[;{])\s*width\s*:\s*0\s*;/m)
-    expect(editor).toMatch(/\bmin-width\s*:\s*100%\s*;/)
+  it("keeps the source-mode table grid flush with the line box", () => {
+    // 单元格不再有 HTML 输入框盖层（表格只有渲染态与源码态）：源码态整表是普通
+    // CodeMirror 行，任何 padding/margin 都会把行内起点推离正文网格。
+    const grid = declarationBlocks(".editor-host .omd-table-src").join("\n")
+    expect(grid).not.toMatch(/\b(?:margin|padding)(?:-[a-z-]+)?\s*:/)
+    // 等宽 + 关连字：列宽只由字符数决定，光标不会在连字里跳格。
+    expect(grid).toMatch(/\bfont-family\s*:\s*var\(--omd-font-family-mono\)\s*;/)
+    expect(grid).toMatch(/\bfont-variant-ligatures\s*:\s*none\s*;/)
+    expect(grid).toMatch(/\bletter-spacing\s*:\s*0\s*;/)
   })
 
   it("uses the selected editor font in rendered code and the math popup", () => {

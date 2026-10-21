@@ -20,6 +20,7 @@ test("clicking a cell enters source at that cell; clicking padding does nothing"
   await expect(page.locator(".omd-table-src")).toHaveCount(3)
   await expect(page.locator("input.omd-table-edit")).toHaveCount(0)
 
+  // 光标必须停在**被点的那一格**（`b`），不是"表格里随便哪个位置"。
   const head = await page.evaluate(() => (window as any).__view.state.selection.main.head)
-  expect(head).toBeGreaterThan(DOC.indexOf("| a | b |"))
+  expect(head).toBe(DOC.indexOf("| a | b |") + 6)
 })
