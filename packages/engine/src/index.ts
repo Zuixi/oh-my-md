@@ -11,6 +11,7 @@ import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
 import { tableKeymap } from "./format/tableKeymap"
+import { tableSourceToolbar } from "./tables/sourceToolbar"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
 import {
@@ -170,6 +171,9 @@ export function editorExtensions(options: EngineOptions = {}) {
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
     livePreviewCompartment.of(live ? livePreviewExt() : []),
+    // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，
+    // 渲染态工具栏（住在 widget 里）不可达，这里补回鼠标入口。
+    tableSourceToolbar,
     codeSyntaxHighlighting(),
     // Replace the default field so create() starts false; keep the same
     // exported `isLivePreview` field for readers (setLivePreview / editorStatus).

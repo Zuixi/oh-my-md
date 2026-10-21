@@ -433,6 +433,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   opacity: 0.45;
   cursor: default;
 }
+/* 源码态表格浮层工具栏（引擎 tableSourceToolbar）：表格聚焦时整表以源码网格呈现、
+   没有块 widget，上面那套住在 widget 里的工具栏此时不可达。定位由引擎按
+   coordsAtPos 写成行内 top/left，这里只管外观。 */
+.editor-host .omd-table-toolbar-floating {
+  position: absolute; display: flex; gap: 2px; z-index: 6;
+  padding: 2px; border-radius: 6px;
+  background: var(--omd-chrome); border: 1px solid var(--omd-border);
+}
+/* `display: flex` 会盖掉 UA 的 [hidden] 规则，显式补回：引擎靠 dom.hidden 收起浮层。 */
+.editor-host .omd-table-toolbar-floating[hidden] { display: none; }
+.editor-host .omd-table-toolbar-floating button {
+  display: flex; align-items: center;
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 3px 5px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--omd-muted);
+  cursor: pointer;
+}
+.editor-host .omd-table-toolbar-floating button:hover {
+  color: var(--omd-fg);
+  border-color: var(--omd-border);
+  background: color-mix(in srgb, var(--omd-link) 10%, transparent);
+}
 .editor-host .omd-table-edit {
   /* width:100% contributes the input's default 20ch intrinsic width to an
      auto-layout table and makes the column jump on click. This equivalent
