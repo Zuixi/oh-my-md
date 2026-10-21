@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view"
 import { forceParsing, syntaxTree } from "@codemirror/language"
 import { markdownLanguageSupport } from "../src/parse/markdown"
 import { tableDataFromNode } from "../src/tables/model"
-import { applyTableTool, tableSourceToolbar } from "../src/tables/sourceToolbar"
+import { applyTableTool, applyTableToolAt, tableSourceToolbar } from "../src/tables/sourceToolbar"
 import { tableToolChanges } from "../src/tables/tools"
 import { makeState } from "./helpers"
 
@@ -145,6 +145,31 @@ describe("applyTableTool resolves the caret cell and refuses read-only views", (
     const doc = `${DOC}\n\nafter`
     const { view, cleanup } = mount(doc, doc.indexOf("after") + 1)
     expect(applyTableTool(view, "insert-row")).toBe(false)
+    expect(view.state.doc.toString()).toBe(doc)
+    cleanup()
+  })
+
+  it("accepts the (from, source) pair the live document actually has", () => {
+    const doc = `${DOC}\n\nafter`
+    const { view, cleanup } = mount(doc, doc.indexOf("b") + 1)
+    const { table } = model()
+    // 渲染态调用方的形状：显式 pos + widget 持有的源码。这里与活文档一致，必须放行。
+    expect(applyTableToolAt(view, 0, DOC, table, 1, 0, "insert-row")).toBe(true)
+    // "| A | B |" / "| --- | --- |" / "| a | b |" / 新行 / "" / "after"
+    expect(view.state.doc.toString().split("\n")).toHaveLength(6)
+    cleanup()
+  })
+
+  it("returns false when from no longer matches the captured source", () => {
+    // 渲染态工具栏持有的是 widget 渲染时的 pos/src：文档在那之后被编辑、偏移整体右移，
+    // 但 (from, source) 依旧长度兼容、源码也依旧自洽 —— 只有回头读活 state 才发现过期。
+    // 没有这道校验，偏移会被写到相邻内容上（或直接越界抛 invalid change range）。
+    const doc = `x${DOC}\n\nafter`
+    const { view, cleanup } = mount(doc, doc.indexOf("b") + 1)
+    const { table } = model()
+    expect(applyTableToolAt(view, 0, DOC, table, 1, 0, "insert-row")).toBe(false)
+    expect(applyTableToolAt(view, 0, DOC, table, 1, 0, "align-center")).toBe(false)
+    expect(applyTableToolAt(view, 0, DOC, table, 1, 0, "delete-col")).toBe(false)
     expect(view.state.doc.toString()).toBe(doc)
     cleanup()
   })
