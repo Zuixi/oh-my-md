@@ -35,6 +35,17 @@ function tableNodeAt(state: EditorState, pos: number): SyntaxNode | null {
   return walk(1) ?? (pos > 0 ? walk(-1) : null)
 }
 
+/**
+ * 便宜的"表格在哪"查询：只走到 `Table` 节点取起点，**不构建 `TableData`**。
+ * 浮层工具栏每次 ViewUpdate 都要判断"光标是否还在表内"，而它只需要那个起点；
+ * 走 `tableAt` 会为每个单元格做一次 sliceString —— 大表上是逐键 O(单元格数)。
+ */
+export function tableStartAt(state: EditorState, pos: number): number | null {
+  const probe = Math.min(Math.max(pos, 0), state.doc.length)
+  if (!syntaxTreeAvailable(state, Math.min(probe + 1, state.doc.length))) return null
+  return tableNodeAt(state, probe)?.from ?? null
+}
+
 /** 只读查询：树未覆盖 pos 时返回 null（绝不推进解析）。 */
 export function tableAt(state: EditorState, pos: number): TableContext | null {
   const probe = Math.min(Math.max(pos, 0), state.doc.length)

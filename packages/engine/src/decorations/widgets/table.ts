@@ -3,11 +3,11 @@ import { parseCell, type CellNode } from "../../parse/cell"
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
 import { tableAt } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
-import type { TableToolAction } from "../../tables/tools"
+import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
-import { icon, type IconName } from "../icons"
+import { icon } from "../icons"
 
 type ResolveSrc = (src: string) => string
 
@@ -328,15 +328,7 @@ export class TableWidget extends BlockWidget {
     // 仍是权威防线（disabled 只挡用户交互，程序化 click 仍会到达）。
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
-    for (const [act, iconName, title] of [
-      ["align-left", "align-left", "Align column left"],
-      ["align-center", "align-center", "Align column center"],
-      ["align-right", "align-right", "Align column right"],
-      ["insert-row", "row-insert-bottom", "Insert row below"],
-      ["insert-col", "column-insert-right", "Insert column right"],
-      ["delete-row", "row-remove", "Delete row"],
-      ["delete-col", "column-remove", "Delete column"],
-    ] as const satisfies readonly [TableToolAction, IconName, string][]) {
+    for (const [act, iconName, title] of TABLE_TOOL_BUTTONS) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act

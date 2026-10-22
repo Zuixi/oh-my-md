@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { cellAt, nextCell, tableAt } from "../src/tables/navigate"
+import { cellAt, nextCell, tableAt, tableStartAt } from "../src/tables/navigate"
 import { makeState } from "./helpers"
 
 const DOC = ["Intro.", "", "| A | B |", "| --- | --- |", "| a | b |", "", "Outro."].join("\n")
@@ -85,5 +85,17 @@ describe("nextCell", () => {
   it("returns null past the last cell", () => {
     const state = makeState(DOC)
     expect(nextCell(state, at("b"), 1)).toBeNull()
+  })
+})
+
+describe("tableStartAt", () => {
+  it("returns the table node start without building the cell model", () => {
+    const state = makeState(DOC)
+    expect(tableStartAt(state, at("a"))).toBe(DOC.indexOf("| A"))
+  })
+
+  it("returns null outside a table and when the tree cannot answer", () => {
+    const state = makeState(DOC)
+    expect(tableStartAt(state, at("Intro"))).toBeNull()
   })
 })

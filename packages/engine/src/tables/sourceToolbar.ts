@@ -1,23 +1,13 @@
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
-import { cellAt, tableAt } from "./navigate"
-import { tableToolChanges, type TableToolAction } from "./tools"
+import { cellAt, tableStartAt } from "./navigate"
+import { TABLE_TOOL_BUTTONS, tableToolChanges, type TableToolAction } from "./tools"
 import type { TableData } from "./model"
-import { icon, type IconName } from "../decorations/icons"
+import { icon } from "../decorations/icons"
 
 // 源码态表格浮层工具栏。表格聚焦时整表以源码网格呈现、没有块 widget，渲染态工具栏
 // （.omd-table-toolbar，住在 widget 里）此时不可达 —— 结构编辑入口只剩键盘。这个浮层
 // 补回鼠标入口，并且**只**改源码：行列一律由 cellAt 解析光标所在格，绝不猜。
-const BUTTONS: readonly [TableToolAction, IconName, string][] = [
-  ["align-left", "align-left", "Align column left"],
-  ["align-center", "align-center", "Align column center"],
-  ["align-right", "align-right", "Align column right"],
-  ["insert-row", "row-insert-bottom", "Insert row below"],
-  ["insert-col", "column-insert-right", "Insert column right"],
-  ["delete-row", "row-remove", "Delete row"],
-  ["delete-col", "column-remove", "Delete column"],
-]
-
 /** 浮层高度（px）：工具栏画在表格首行上方，position 用它的负偏移。 */
 const TOOLBAR_OFFSET = 28
 /**
@@ -88,7 +78,7 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
     this.dom = document.createElement("div")
     this.dom.className = "omd-table-toolbar-floating"
     this.dom.hidden = true
-    for (const [act, name, title] of BUTTONS) {
+    for (const [act, name, title] of TABLE_TOOL_BUTTONS) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act
@@ -132,7 +122,7 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
         // 锚点会把浮层重新显示在一张已经不再聚焦的表格上。
         const from = anchor && anchor.doc === state.doc && anchor.head === state.selection.main.head
           ? anchor.from
-          : tableAt(state, state.selection.main.head)?.from ?? null
+          : tableStartAt(state, state.selection.main.head)
         if (from === null) return null
         try {
           // 构造/极端布局下视图可能尚未完成首次测量：拿不到坐标就按"暂不显示"处理。
@@ -165,16 +155,22 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
   }
 
   update(update: ViewUpdate) {
-    // 光标离开表格/进入只读档：立即收起，不等下一次测量（避免残留一帧浮在半空，
-    // 也让"没有表格上下文"在 DOM 上立刻可见）。位置变化交给测量阶段。
-    const table = tableAt(update.state, update.state.selection.main.head)
-    if (!table || update.state.readOnly) {
+    // 只读档：立即收起（readOnly 是建档时固定的 facet，这里只是防御性兜底）。
+    if (update.state.readOnly) {
       this.dom.hidden = true
       return
     }
-    // 纯装饰/焦点类更新既不会移动锚点也不改变几何：不为它们付一次 tableAt + 测量。
+    // 纯装饰/焦点类更新既不会移动锚点也不改变几何：连表都不用查。
+    // 判断放在查询之前 —— 否则每次更新仍要付一次语法树遍历。
     if (!update.docChanged && !update.selectionSet && !update.viewportChanged && !update.geometryChanged) return
-    this.place({ doc: update.state.doc, head: update.state.selection.main.head, from: table.from })
+    const head = update.state.selection.main.head
+    // tableStartAt 只取 Table 节点起点，不构建 TableData：浮层定位只需要这个偏移。
+    const from = tableStartAt(update.state, head)
+    if (from === null) {
+      this.dom.hidden = true
+      return
+    }
+    this.place({ doc: update.state.doc, head, from })
   }
 
   destroy() {
