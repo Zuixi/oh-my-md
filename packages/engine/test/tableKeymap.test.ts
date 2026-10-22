@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
-import type { EditorState, TransactionSpec } from "@codemirror/state"
+import { EditorState, type TransactionSpec } from "@codemirror/state"
 import {
   exitTableSpec, tableNextCellSpec, tableNextRowSpec, tablePrevCellSpec,
 } from "../src/format/tableKeymap"
+import { markdownLanguageSupport } from "../src/parse/markdown"
 import { makeState } from "./helpers"
 
 const DOC = ["| A | B |", "| --- | --- |", "| a | b |", "", "after"].join("\n")
@@ -103,5 +104,58 @@ describe("caret on the table end boundary", () => {
     expect(fromBoundary).not.toBeNull()
     expect(fromBoundary!.doc.toString()).toBe(oneBefore!.doc.toString())
     expect(fromBoundary!.selection.main.head).toBe(oneBefore!.selection.main.head)
+  })
+})
+
+describe("exitTableSpec keeps an existing blank line idempotent", () => {
+  it("only moves the caret when the table is already followed by a blank line", () => {
+    const state = stateAt("a")
+    const spec = exitTableSpec(state)!
+    expect(spec.changes).toBeUndefined()
+    const next = state.update(spec).state
+    expect(next.doc.toString()).toBe(DOC)
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
+  })
+
+  it("still opens a blank line when the table ends the document", () => {
+    const tail = "| A | B |\n| --- | --- |\n| a | b |"
+    const state = makeState(tail).update({ selection: { anchor: tail.indexOf("a |") } }).state
+    const next = state.update(exitTableSpec(state)!).state
+    expect(next.doc.toString()).toBe(`${tail}\n\n`)
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
+  })
+})
+
+describe("unresolved syntax tree inside a table row", () => {
+  // 大文档刚打开/刚滚到未解析区时语法树还没覆盖光标：查不到 Table 节点。此时 Tab
+  // 若穿透到 defaultKeymap 的 indentMore，会把空白写进表格行首并破坏表结构。
+  function tailState(lastLine: string) {
+    const filler = Array.from({ length: 400 }, (_, i) => `paragraph ${i} with some words`).join("\n\n")
+    const doc = `${filler}\n\n${lastLine}`
+    return { doc, state: EditorState.create({ doc, extensions: [markdownLanguageSupport()] }) }
+  }
+
+  it("swallows Tab on a table row instead of falling through to indentation", () => {
+    const { doc, state } = tailState("| A | B |\n| --- | --- |\n| a | b |")
+    const pos = doc.indexOf("| a | b |") + 2
+    const withCaret = state.update({ selection: { anchor: pos } }).state
+    const spec = tableNextCellSpec(withCaret)!
+    expect(spec).toBeTruthy()
+    expect(spec.changes).toBeUndefined()
+    expect(withCaret.update(spec).state.doc.toString()).toBe(doc)
+  })
+
+  it("swallows Shift-Tab on the same row", () => {
+    const { doc, state } = tailState("| A | B |\n| --- | --- |\n| a | b |")
+    const pos = doc.indexOf("| a | b |") + 2
+    const withCaret = state.update({ selection: { anchor: pos } }).state
+    expect(tablePrevCellSpec(withCaret)?.changes).toBeUndefined()
+  })
+
+  it("does not swallow Tab on an ordinary paragraph in the same unparsed region", () => {
+    const { doc, state } = tailState("an ordinary trailing paragraph")
+    const pos = doc.indexOf("an ordinary") + 2
+    const withCaret = state.update({ selection: { anchor: pos } }).state
+    expect(tableNextCellSpec(withCaret)).toBeNull()
   })
 })
