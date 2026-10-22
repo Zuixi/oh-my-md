@@ -237,6 +237,22 @@ compositionend 与 keydown 的顺序颠倒，确认用的 Enter 因此晚到）�
 重复守卫会让输入法在 Windows 上丢候选确认（Enter 被吞，候选字永远不落格），
 而这正是已删除的 cell `<input>` 曾经需要自带守卫的原因 —— 主机级 keymap 不需要。
 
+## Table Tab must not fall through to indentation when the tree is unresolved
+
+`tables/navigate.ts::tableAt` 依赖 `syntaxTreeAvailable`：大文档刚打开、刚滚到未解析区、
+或刚粘贴时，语法树还没覆盖光标，查表一律返回 `null`。此时 `Tab` 若直接 `return null`，
+按键会落到 `defaultKeymap` 的 `indentMore` —— 它把空白写进表格行首，静默破坏表结构
+（`| a | b |` 变成 `  | a | b |`，缩进超过 3 空格 GFM 就不再认这一行）。
+
+`format/tableKeymap.ts::unresolvedTableRowSpec` 因此只在**树答不上来**时启用一条形状
+兜底：光标所在行匹配 `^[ \t]*(?:>[ \t]*)*\|` 就吞掉 Tab/Shift-Tab（返回一个
+selection-only spec），否则照常放行。树可用时一律以语法树为准，绝不把"以 `|` 开头的
+普通段落"也吞掉。Enter/Shift-Enter 刻意不套这条兜底：换行是用户可见、可撤销的常规
+编辑，吞掉它比让用户重敲一次更意外。
+
+守卫：`test/tableKeymap.test.ts`「unresolved syntax tree inside a table row」三条用例
+（构造 12KB 未解析文档，断言 Tab 被吞、Shift-Tab 被吞、普通段落仍放行）。
+
 ## Async widgets can outlive their original DOM
 
 Mermaid, Shiki, and other renderers may resolve after CodeMirror has replaced or removed a widget because the user moved the cursor or continued typing.

@@ -27,6 +27,7 @@
 - **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; the rendered table has no in-cell editor (two states only), and a per-cell `mousedown` intercept is the bug — the wrap handler owns the flip into cell-exact source.
 - **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
 - **A focused table must skip its subtree** — after emitting `line:omd-table-src*` the `Table` branch must `return true`, or `inlineRules` folds `**` inside cells and source mode renders "half a preview".
+- **Table Tab must not fall through to indentation when the tree is unresolved** — 树未覆盖光标时 `tableAt` 返回 null，放行 Tab 会让 `indentMore` 把空白写进表格行首；按行首形状吞键，Enter 不套这条兜底。
 - **Table keymap only sees non-composing keydown** — CM6 calls `ignoreDuringComposition` before the keymap; do not add a second `isComposing` guard (it drops the IME candidate confirm on Windows).
 - **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
 - **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
