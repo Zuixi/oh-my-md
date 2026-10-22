@@ -1,4 +1,5 @@
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
+import type { Text } from "@codemirror/state"
 import { cellAt, tableAt } from "./navigate"
 import { tableToolChanges, type TableToolAction } from "./tools"
 import type { TableData } from "./model"
@@ -94,6 +95,8 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
       btn.appendChild(icon(name))
       btn.title = title
       btn.setAttribute("aria-label", title)
+      // 表内 Tab 被 tableKeymap 接管，键盘永远到不了这里 —— 不要让它进 tab 序。
+      btn.tabIndex = -1
       // 按钮不抢焦点：光标离开表格会立刻让浮层消失、动作也就无目标（与渲染态
       // 工具栏同样的 mousedown 语义）。
       btn.addEventListener("mousedown", e => e.preventDefault())
@@ -118,16 +121,22 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
    *
    * key 用插件实例：连续的 update 合并成一次测量，滚动/换格不会堆请求。
    */
-  private place() {
+  private place(anchor?: { doc: Text; head: number; from: number }) {
     this.view.requestMeasure<Placement | null>({
       key: this,
       read: (view): Placement | null => {
         const state = view.state
-        const table = tableAt(state, state.selection.main.head)
-        if (!table || state.readOnly) return null
+        if (state.readOnly) return null
+        // 锚点只在「文档与光标都没变」时复用 update 阶段的结果：测量在下一帧才跑，
+        // 期间文档可能被改（打字把表格撑高）或光标可能离开表格 —— 后者若复用旧
+        // 锚点会把浮层重新显示在一张已经不再聚焦的表格上。
+        const from = anchor && anchor.doc === state.doc && anchor.head === state.selection.main.head
+          ? anchor.from
+          : tableAt(state, state.selection.main.head)?.from ?? null
+        if (from === null) return null
         try {
           // 构造/极端布局下视图可能尚未完成首次测量：拿不到坐标就按"暂不显示"处理。
-          const coords = view.coordsAtPos(table.from)
+          const coords = view.coordsAtPos(from)
           if (!coords) return null
           const host = view.dom.getBoundingClientRect()
           // 表格被滚出视野时 coordsAtPos 只给估算坐标。钳位会把浮层钉死在编辑区顶
@@ -163,7 +172,9 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
       this.dom.hidden = true
       return
     }
-    this.place()
+    // 纯装饰/焦点类更新既不会移动锚点也不改变几何：不为它们付一次 tableAt + 测量。
+    if (!update.docChanged && !update.selectionSet && !update.viewportChanged && !update.geometryChanged) return
+    this.place({ doc: update.state.doc, head: update.state.selection.main.head, from: table.from })
   }
 
   destroy() {
