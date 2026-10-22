@@ -73,6 +73,12 @@ function findWrap(widget: BlockWidget, used: Set<HTMLElement>): HTMLElement | un
 function refresh(view: EditorView) {
   const sel = view.state.selection.main
   const specs = view.state.field(livePreviewField, false)?.specs ?? []
+  // 清扫失效实例（防御性）：注册表按实例存 DOM，而注销只走 destroy()。CM 的
+  // pass-0 复用（eq 相同、不调 updateDOM）会换掉 tile.widget 却不给旧实例 destroy，
+  // 若某条路径漏了 updateDOM 里的 unregister，条目就会带着一个死键 + 活 DOM 留下来。
+  // 实测 churn 场景下 wrap 数恒为 0（见 gotchas「块 widget 反复挂载/卸载会持续占用
+  // 内存」），所以这不是那个泄漏的修法；这里只保证 Map 不因任何未覆盖路径只增不减。
+  for (const [widget, dom] of liveWraps) if (!dom.isConnected) liveWraps.delete(widget)
   const used = new Set<HTMLElement>()
   for (const spec of specs) {
     if (!spec.tag.startsWith("widget:block:")) continue

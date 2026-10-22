@@ -151,7 +151,7 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     cleanup()
   })
 
-  it("table widget disables edit affordances and toolbar clicks never dispatch", async () => {
+  it("table widget disables its toolbar and readonly clicks never dispatch", async () => {
     const doc = "intro\n\n| a | b |\n|---|---|\n| 1 | 2 |"
     const { view, cleanup } = mountDecorated(doc, true)
     await settle()  // renderInto 走微任务
@@ -159,14 +159,15 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     expect(wrap).toBeTruthy()
     expect(Array.from(wrap!.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button"))
       .every(btn => btn.disabled)).toBe(true)
-    // 单元格 mousedown 不开行内编辑器
+    // hover 到某个格给出目标行列后按钮仍 disabled（readOnly 优先），
+    // 程序化 click 绕过 disabled 的用户交互语义 —— applyTableToolAt 的只读守卫拒绝改写。
     wrap!.querySelector("td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    expect(wrap!.querySelector("input.omd-table-edit")).toBeNull()
-    // 程序化触发工具栏（disabled 只挡用户交互），源码不被改写
+      .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
     const insertRow = wrap!.querySelector<HTMLButtonElement>("[data-act='insert-row']")!
+    expect(insertRow.disabled).toBe(true)
     insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
     insertRow.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+    await settle()
     expect(view.state.doc.toString()).toBe(doc)
     cleanup()
   })

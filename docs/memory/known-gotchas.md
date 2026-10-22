@@ -24,10 +24,12 @@
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
 - **Horizontal rules are block widgets when unselected** — keep `HorizontalRule` in `SELECTION_BLOCKS`.
-- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; cell `mousedown` stops propagation; the cell input gets a caret, never `select()`.
-- **Table edits are Lezer-range-based and per-view** — no whole-table serialize/parse revival; pending focus lives in per-view `WeakMap`s; real-`EditorView` tests are mandatory.
+- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; the rendered table has no in-cell editor (two states only), and a per-cell `mousedown` intercept is the bug — the wrap handler owns the flip into cell-exact source.
+- **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
+- **A focused table must skip its subtree** — after emitting `line:omd-table-src*` the `Table` branch must `return true`, or `inlineRules` folds `**` inside cells and source mode renders "half a preview".
+- **Table Tab must not fall through to indentation when the tree is unresolved** — 树未覆盖光标时 `tableAt` 返回 null，放行 Tab 会让 `indentMore` 把空白写进表格行首；按行首形状吞键，Enter 不套这条兜底。
+- **Table keymap only sees non-composing keydown** — CM6 calls `ignoreDuringComposition` before the keymap; do not add a second `isComposing` guard (it drops the IME candidate confirm on Windows).
 - **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
-- **Cell input is never silently discarded** — commit on `focusout`, on capture-phase `mousedown`, and hand the click-away path an explicit destination; guard IME (`isComposing`/`keyCode 229`); idempotent commit.
 - **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
 - **A line-start regex cannot see the real block prefix** — `>x`, `  > x`, `- > x`, `> - [x]` need the tree-driven `blockPrefixOf`; remove a mark plus exactly one space.
 - **Resolve a fence's parent from the line END** — `line.from` lands on `QuoteMark`/`QuoteIndent` and the parent walk never reaches `FencedCode`/`ListItem`.
@@ -56,6 +58,7 @@
 - **Auto pair: line-start `*` and `$` are block structure** — the paired `* *` becomes a list item and `$$` becomes a MathBlock that swallows to EOF; rule 2b suppresses exactly those two, never `` ` ``/`_`.
 - **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
 - **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
+- **`coordsAtPos` throws inside `ViewPlugin.update`** — layout reads are illegal during an update; position overlays in `requestMeasure` (read coords / write DOM separately) or the toolbar silently never appears while happy-dom tests stay green.
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))

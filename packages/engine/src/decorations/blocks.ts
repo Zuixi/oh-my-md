@@ -199,6 +199,40 @@ function styleEditingCodeblock(
   }
 }
 
+// 源码态表格（光标在表内）：整表保持可编辑的 Markdown 源码，但按行给出
+// 等宽 + 底色 + 行级的表头/分隔行标记，让管道符纵向对齐 —— 不做任何行内折叠，
+// 否则 `**`/`|` 的半渲染让源码网格变成“半个预览”。
+function styleTableSource(
+  node: { from: number; to: number },
+  state: EditorState,
+  out: DecoSpec[],
+): void {
+  const first = state.doc.lineAt(node.from).number
+  const last = state.doc.lineAt(node.to).number
+  for (let n = first; n <= last; n++) {
+    const line = state.doc.line(n)
+    out.push({
+      from: line.from, to: line.from,
+      tag: "line:omd-table-src",
+      deco: Decoration.line({ class: "omd-table-src" }),
+    })
+    if (n === first) {
+      out.push({
+        from: line.from, to: line.from,
+        tag: "line:omd-table-src-head",
+        deco: Decoration.line({ class: "omd-table-src-head" }),
+      })
+    }
+    if (n === first + 1) {
+      out.push({
+        from: line.from, to: line.from,
+        tag: "line:omd-table-src-delim",
+        deco: Decoration.line({ class: "omd-table-src-delim" }),
+      })
+    }
+  }
+}
+
 function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   if (cursorInside(state, node.from, node.to)) return
   out.push({
@@ -383,7 +417,12 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       return true
     }
     case "Table": {
-      if (blockSelected(state, node.from, node.to)) return false
+      if (blockSelected(state, node.from, node.to)) {
+        styleTableSource(node, state, out)
+        // 必须跳过子树：否则 inlineRules 会在单元格里折叠 `**` 并加粗，
+        // 源码网格就成了“半个预览”。
+        return true
+      }
       const table = tableDataFromNode(node.node, state)
       if (!table) return false
       out.push({

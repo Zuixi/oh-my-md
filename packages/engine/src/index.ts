@@ -10,6 +10,8 @@ import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
+import { tableKeymap } from "./format/tableKeymap"
+import { tableSourceToolbar } from "./tables/sourceToolbar"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
 import {
@@ -63,6 +65,7 @@ export {
   codeLineKeymap,
 } from "./format/codeLines"
 export { continueFence, continueFenceSpec, fenceKeymap, isUnclosedFenceLine } from "./format/fences"
+export { tableKeymap } from "./format/tableKeymap"
 export { documentStats, type DocumentStats } from "./stats"
 export { buildTextFromChunks, createTextAssembler, type ChunkedTextAssembler } from "./docText"
 export {
@@ -134,17 +137,21 @@ export function editorExtensions(options: EngineOptions = {}) {
   return [
     markdownLanguageSupport(),
     emojiCompletion,
-    // Enter 归属（顺序 + Prec 双重确定）：围栏代码**内容行** → continueCodeLine
+    // 键位归属（顺序 + Prec 双重确定）。表格行（源码态）→ tableNextRowSpec /
+    // tableNextCellSpec（tableKeymap，Prec.highest，本数组第一个键位）：它还独占
+    // Tab / Shift-Tab / Shift-Enter / Mod-Enter，因此表内 Tab 不再缩进代码或列表。
+    // 表格之外：围栏代码**内容行** → continueCodeLine
     // （复制行块前缀与代码缩进并把光标显式放到新行内容起点）→ 未闭合围栏行 →
     // continueFence（含引用内的围栏，按前缀补全闭合行）→ 带 QuoteMark 的行 →
-    // continueQuote → 纯列表行 → continueList / 宿主上游命令。四者条件互斥，各自
-    // 对不属于自己的行返回 false。
+    // continueQuote → 纯列表行 → continueList / 宿主上游命令。各命令只对自己
+    // 那一类行成立，其余行一律返回 false。
     //
     // 必须 Prec.highest：@codemirror/lang-markdown 的 markdown() 内部会
     // `support.push(Prec.high(keymap.of(markdownKeymap)))`（Enter →
     // insertNewlineContinueMarkup），而 markdownLanguageSupport() 是本数组第一项 ——
     // 同优先级下先注册者胜，停在 Prec.high 会让上游抢走 Enter，引擎语义（空前缀行
     // 退层、`>x` 风格保真、围栏补全、代码行缩进）在真实编辑器里全部失效。
+    tableKeymap,
     codeLineKeymap,
     codeIndentKeymap,
     fenceKeymap,
@@ -164,6 +171,9 @@ export function editorExtensions(options: EngineOptions = {}) {
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
     livePreviewCompartment.of(live ? livePreviewExt() : []),
+    // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，
+    // 渲染态工具栏（住在 widget 里）不可达，这里补回鼠标入口。
+    tableSourceToolbar,
     codeSyntaxHighlighting(),
     // Replace the default field so create() starts false; keep the same
     // exported `isLivePreview` field for readers (setLivePreview / editorStatus).

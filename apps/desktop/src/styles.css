@@ -12,6 +12,9 @@ html[data-theme="light"] {
   --omd-link: #0969da;
   --omd-code-bg: rgba(0, 0, 0, 0.04);
   --omd-code-block-bg: #f8f8f8;
+  /* 真等宽（不跟随用户选择的编辑器字体 --omd-font-family）：表格源码网格要
+     靠等宽让管道符纵向对齐。 */
+  --omd-font-family-mono: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --omd-quote: #555555;
   --omd-bar: #d0d0d0;
   --omd-error-bg: #fff5f5;
@@ -51,6 +54,7 @@ html[data-theme="dark"] {
   --omd-link: #79b8ff;
   --omd-code-bg: rgba(255, 255, 255, 0.06);
   --omd-code-block-bg: #2d2d2d;
+  --omd-font-family-mono: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --omd-quote: #b0b0b0;
   --omd-bar: #555555;
   --omd-error-bg: #3a1f1f;
@@ -324,6 +328,21 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   max-width: 100%;
   padding: 0.8em 0;
 }
+/* 源码态表格：等宽 + 底色 + 左边线。不用 padding（会改变行内起始位置），
+   左边线也不能用 border-left：边框参与布局，2px 会把整张网格（连同光标）推到
+   正文右侧 2px。改用 inset 阴影画同一根竖条 —— 只画、不占布局。
+   底色只能用 background-color：源码态表格行在引用里同时带 omd-blockquote 类，
+   而引用条只画在 background-image 上（见上方 .omd-blockquote 规则）——
+   background 简写会把它一并重置成 none，引用内每行表格的竖条都会断开。 */
+.editor-host .omd-table-src {
+  font-family: var(--omd-font-family-mono);
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  background-color: var(--omd-code-bg);
+  box-shadow: inset 2px 0 0 var(--omd-border);
+}
+.editor-host .omd-table-src-head { font-weight: 600; }
+.editor-host .omd-table-src-delim { opacity: 0.65; }
 .editor-host .omd-table .omd-block-body {
   overflow-x: auto;
   border-radius: 6px;
@@ -393,17 +412,6 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-color: var(--omd-link);
   background: color-mix(in srgb, var(--omd-link) 12%, transparent);
 }
-/* Active row/column highlight while a cell editor is open: background-only so
-   cell geometry never changes. The edited intersection honors both classes. */
-.editor-host .omd-table :is(td, th).omd-table-row-active {
-  background: color-mix(in srgb, var(--omd-link) 8%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 5%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-row-active.omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 14%, transparent);
-}
 /* Synthetic ragged cells (no source slot) read as inert placeholders. */
 .editor-host .omd-table td.omd-table-cell-missing {
   color: var(--omd-muted);
@@ -416,16 +424,27 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   opacity: 0.45;
   cursor: default;
 }
-.editor-host .omd-table-edit {
-  /* width:100% contributes the input's default 20ch intrinsic width to an
-     auto-layout table and makes the column jump on click. This equivalent
-     fill pattern keeps the input inside the already-sized cell. */
-  display: block; width: 0; min-width: 100%; box-sizing: border-box;
-  font: inherit; font-size: inherit; font-family: inherit; font-weight: inherit;
-  line-height: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
-  vertical-align: top;
-  border: none; outline: none;
-  margin: 0; padding: 0; background: transparent;
+/* 源码态表格浮层工具栏（引擎 tableSourceToolbar）：表格聚焦时整表以源码网格呈现、
+   没有块 widget，上面那套住在 widget 里的工具栏此时不可达。定位由引擎按
+   coordsAtPos 写成行内 top/left，这里只管外观。 */
+.editor-host .omd-table-toolbar-floating {
+  position: absolute; display: flex; gap: 2px; z-index: 6;
+  padding: 2px; border-radius: 6px;
+  background: var(--omd-chrome); border: 1px solid var(--omd-border);
+}
+/* `display: flex` 会盖掉 UA 的 [hidden] 规则，显式补回：引擎靠 dom.hidden 收起浮层。 */
+.editor-host .omd-table-toolbar-floating[hidden] { display: none; }
+.editor-host .omd-table-toolbar-floating button {
+  display: flex; align-items: center;
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 3px 5px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--omd-muted);
+  cursor: pointer;
+}
+.editor-host .omd-table-toolbar-floating button:hover {
+  color: var(--omd-fg);
+  border-color: var(--omd-border);
+  background: color-mix(in srgb, var(--omd-link) 10%, transparent);
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 6px 12px 10px 10px; border-radius: 0 0 12px 12px;
@@ -1535,9 +1554,15 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
 .editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
-/* 但上面两条（以及 CodeMirror 基础主题的 activeLine）都用 background 简写，
-   会把 background-image 一起清成 none —— 光标停在引用段落上时，那一行的引用
-   竖条会缺一节。引用条必须在本规则里按同样的高优先级重画。 */
+/* 源码态表格同理，而且更致命：源码态要求光标就在表格里，所以缺了这条规则，
+   光标那一行永远丢掉网格底色。这里用 background-color 而非简写，紧挨着的
+   .omd-blockquote.cm-activeLine 规则画的引用条因此不会被清掉（同为 0,5,0，
+   它在后，background-image 照常生效）。 */
+.editor-host .cm-content .cm-line.omd-table-src.cm-activeLine { background-color: var(--omd-code-bg); }
+/* 但 .cm-activeLine 与 .cm-line.omd-codeblock.cm-activeLine（以及 CodeMirror
+   基础主题的 activeLine）都用 background 简写，会把 background-image 一起清成
+   none —— 光标停在引用段落上时，那一行的引用竖条会缺一节。引用条必须在本规则
+   里按同样的高优先级重画。 */
 .editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine {
   background-image: var(--omd-bq-image);
 }

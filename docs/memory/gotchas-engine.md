@@ -201,16 +201,57 @@ Facts to remember:
 - Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
 - Widget `eq` compares `src` + `embed` first and then the cheap lazy `tableEqualityKey` (cell `source`s + alignments + shape) — never `JSON.stringify(table)`, which serialized every cell on every rebuild pass. An unchanged table reuses its DOM; a changed cell reaches `updateDOM`, which patches only the changed cells in place (see the table in-place-refresh entry below). The model is extracted once per build by `tableDataFromNode` (Lezer-derived); never re-derive it from re-serialized strings, and never store it in a module-global.
-- Cell `mousedown` must `preventDefault` + `stopPropagation`. `BlockWidget.toDOM` moves selection into the table source on wrap `mousedown`, which unmounts the widget; without stopping the bubble, in-place `input.omd-table-edit` never stays mounted.
-- Opening the cell input must place a collapsed caret, not call `input.select()`: native selected input text is a dark-blue rectangle that looks like a selected table cell. The input chrome is intentionally transparent/borderless. With `table-layout:auto`, `input { width:100% }` also contributes its default 20ch intrinsic width and makes the column jump; use `width:0; min-width:100%` to fill the already-sized cell without changing the table's intrinsic column calculation.
+- **Rendered state has no per-cell event intercept.** `BlockWidget.toDOM` moves the selection into the table on wrap `mousedown`; that is the only path that turns a cell click into source editing (`TableWidget.clickPos` maps the clicked `td/th` to its exact source offset). A `mousedown` listener on the cells that calls `stopPropagation`/`preventDefault` swallows it — that legacy in-cell input handler is exactly what kept `e2e/table-source.spec.ts` red. Toolbar buttons are the opposite case: they must `preventDefault` + `stopPropagation` on `mousedown`, else the wrap handler unmounts the widget before the `click` lands.
+- **Do not reintroduce a cell `<input>` overlay.** The table has two states only (rendered widget / `omd-table-src` source grid); "which cell is being edited" is `state.selection`, never widget state. An in-cell input needs its own commit/cancel/pending-focus state machine (~320 lines, deleted in the table-source-editing work) and silently breaks undo, find, autosave and crash recovery for table edits.
 
-## Table edits are Lezer-range-based and per-view; ragged cells are deliberate placeholders
+## Table edits are Lezer-range-based and validated at dispatch; ragged cells are deliberate placeholders
 
-The GFM render parser accepts ragged rows (missing tail cells) and escaped pipes, while the edit model (`tables/model.ts::tableDataFromNode`) is stricter: it needs a real header + separator, and a ragged row's missing tail is a `null` cell in `TableData`. The preview grid therefore shows synthetic cells that have no source slot — they render with `omd-table-cell-missing` / `aria-disabled="true"` and cannot open an input (there is no source range to commit). That visibility-without-editability is intentional: ragged synthetic cells stay disabled, and Tab from a real cell toward a synthetic slot commits the current cell without opening it. Refining ragged cells (e.g. filling slots on Tab) is a deferred manual-check follow-up, never hidden support.
+The GFM render parser accepts ragged rows (missing tail cells) and escaped pipes, while the edit model (`tables/model.ts::tableDataFromNode`) is stricter: it needs a real header + separator, and a ragged row's missing tail is a `null` cell in `TableData`. The preview grid therefore shows synthetic cells that have no source slot — they render with `omd-table-cell-missing` / `aria-disabled="true"`, never take a toolbar hover target, and are skipped by source-mode navigation because `tables/navigate.ts::slotsOf` only emits slots that have a source range. That visibility-without-editability is intentional; refining ragged cells (e.g. filling slots on Tab) is a deferred manual-check follow-up, never hidden support.
 
-- **Never restore a whole-table `splitCells`/serialize parser for edits.** All five helpers (`replaceTableCell`, `insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`) return table-relative `TableSourceChange` ranges; the widget adds `livePos()` only at dispatch, so every source byte outside the edited cell/row/column — spacing, one-sided outer pipes, alignment markers, quote/list prefixes — stays byte-identical.
-- **Never use module-global focus continuation.** `pendingTableEdits`/`pendingTableTools` are `WeakMap<EditorView, …>` values keyed to the table's live position (`livePos()`, not a captured constructor offset), consumed in the rebuild's microtask. A module-global resume token makes one tab's Tab/Shift-Tab continuation open an input in another tab's table (two tabs "steal" each other's focus).
-- **Real `EditorView` tests are mandatory.** Mock dispatch proves the transaction shape, but only a real view rebuild proves the widget focuses the next cell, final-cell Tab appends a row, prefix insertion keeps positioning, and two views never share pending focus (`view.test.ts`); `exceptionSink` must stay empty across rebuilds.
+- **Never restore a whole-table `splitCells`/serialize parser for edits.** All structural helpers (`insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`, `setTableColumnAlignment`) return table-relative `TableSourceChange` ranges; `tables/sourceToolbar.ts::applyTableToolAt` converts them to absolute offsets, so every source byte outside the edited row/column — spacing, one-sided outer pipes, alignment markers, quote/list prefixes — stays byte-identical.
+- **Rendered-toolbar targets come from hover, never from remembered state.** `TableWidget` records row/col on `td/th` `mouseover`, keeps the buttons `disabled` until `hasRowCol()`, and each click calls `applyTableToolAt(view, livePos(), src, table, row, col, act)`. That core re-checks `(from, source)` against the live document and returns `false` on any mismatch — a widget that rendered before an unrelated edit must never write its stale offsets. Never re-add a pending-action queue: a remembered target that outlives the click is how two views "steal" each other's edits.
+- **Real `EditorView` tests are mandatory.** Mock dispatch proves the transaction shape, but only a real view proves hover → toolbar → `applyTableToolAt` lands on the right table/row/column after a widget passes through `updateDOM` instance rotation (`view.test.ts`, `tableUpdateDOM.test.ts`, and `tables.test.ts`'s two-view isolation case); `exceptionSink` must stay empty across rebuilds.
+
+## A focused table must skip its subtree after emitting source lines
+
+`decorations/blocks.ts` 的 `case "Table"` 有两个分支：`blockSelected` 为真时它调用
+`styleTableSource()` 产出 `line:omd-table-src*` 源码网格，然后**必须 `return true`**
+跳过子树。`return false` 会让 `inlineRules` 走进单元格，折叠 `**` 并加粗文字 ——
+源码态直接变成"半个预览"（用户要看的是原始标记，不是渲染效果）。渲染态分支同样
+`return true`（推完 `widget:block:table` 就返回），所以漏写这行的改动在渲染态测试里
+毫无反应，只在源码态可见。
+
+唯一守卫：`test/tableSourceDecorations.test.ts` 的 `INLINE_DOC` 用例 —— 先证明表格
+确实在源码态（三条 `line:omd-table-src`、无 `replace:`），再断言没有 `mark:omd-strong`。
+前两条断言不是凑数：删掉它们，"没有 mark"会因为"什么都没生成"而假绿。
+
+## Table keymap only sees non-composing keydown
+
+`@codemirror/view` 6.43.8（`dist/index.js:4553`）在派发 keymap **之前**调用
+`this.ignoreDuringComposition(event)`：`this.composing > 0` 的按键直接丢弃；Safari 上
+还包括 `compositionend` 之后 100ms 内的 `compositionPendingKey`（那台浏览器会把
+compositionend 与 keydown 的顺序颠倒，确认用的 Enter 因此晚到）。组词中的 Enter/Tab
+根本不会进入 `tableKeymap` —— "IME 会不会被抢键"这个问题上游已经答了。
+
+不要因为这份担心在 `format/tableKeymap.ts` 的命令里再加一层 `isComposing` 守卫：
+重复守卫会让输入法在 Windows 上丢候选确认（Enter 被吞，候选字永远不落格），
+而这正是已删除的 cell `<input>` 曾经需要自带守卫的原因 —— 主机级 keymap 不需要。
+
+## Table Tab must not fall through to indentation when the tree is unresolved
+
+`tables/navigate.ts::tableAt` 依赖 `syntaxTreeAvailable`：大文档刚打开、刚滚到未解析区、
+或刚粘贴时，语法树还没覆盖光标，查表一律返回 `null`。此时 `Tab` 若直接 `return null`，
+按键会落到 `defaultKeymap` 的 `indentMore` —— 它把空白写进表格行首，静默破坏表结构
+（`| a | b |` 变成 `  | a | b |`，缩进超过 3 空格 GFM 就不再认这一行）。
+
+`format/tableKeymap.ts::unresolvedTableRowSpec` 因此只在**树答不上来**时启用一条形状
+兜底：光标所在行匹配 `^[ \t]*(?:>[ \t]*)*\|` 就吞掉 Tab/Shift-Tab（返回一个
+selection-only spec），否则照常放行。树可用时一律以语法树为准，绝不把"以 `|` 开头的
+普通段落"也吞掉。Enter/Shift-Enter 刻意不套这条兜底：换行是用户可见、可撤销的常规
+编辑，吞掉它比让用户重敲一次更意外。
+
+守卫：`test/tableKeymap.test.ts`「unresolved syntax tree inside a table row」三条用例
+（构造 12KB 未解析文档，断言 Tab 被吞、Shift-Tab 被吞、普通段落仍放行）。
 
 ## Async widgets can outlive their original DOM
 
@@ -346,8 +387,8 @@ is the **new** widget and the third argument is the **old** one, then stores
 `new WidgetTile(tile.dom, length, widget, flags)`. So after any in-place refresh
 the DOM, its event listeners, and any closure state belong to the *previous*
 instance while CodeMirror holds the *new* one. A listener that closes over
-`this.row` / `this.editing` reads state that no longer exists once the widget is
-replaced, which is why `TableWidget` resolves its live owner through the
+`this.row` / `this.col` / `this.hovered` reads state that no longer exists once the
+widget is replaced, which is why `TableWidget` resolves its live owner through the
 module-level `domOwner` WeakMap — registered under **both** the wrap returned by
 `toDOM` and the `.omd-block-body` that `renderInto` actually hands to the
 renderer (registering only the wrap silently drops every cell/toolbar click) —
@@ -355,24 +396,11 @@ and re-registers both keys inside `updateDOM`. Never close over `this` in widget
 DOM listeners; never key that lookup on a captured position.
 
 Related: `updateDOM` may run against detached DOM (CodeMirror diffs before it
-inserts), so "migration" checks must be structural — e.g. "the live cell input is
-still inside that cell" — never `el.isConnected`.
-
-## Cell input is never silently discarded
-
-Committing one table cell used to drop the typed value whenever the user clicked
-another cell, clicked `</>`, or tabbed away: the only commit path was the input's
-own `keydown`. The contract now is that every exit path commits first —
-`focusout` commits, a capture-phase `mousedown` on the wrap commits *before* the
-block's own source-entry handler runs, and the click-away path passes the clicked
-cell as an explicit pending destination (after that dispatch the old instance is
-no longer the owner, so the pending path reopens the editor on the new one).
-Guards that make it safe: `commitPendingEdit()` is idempotent (an unchanged value
-cancels instead of dispatching an empty transaction), `Escape` clears `editing`
-so the following `focusout` is a no-op, and `keydown` returns early while
-`e.isComposing || e.keyCode === 229` so an IME candidate-confirm Enter never
-commits a half-composed cell. A test that only dispatches `keydown` proves none
-of this; drive `focusout` / `mousedown` on a real view (`tableInputCommit.test.ts`).
+inserts), so "migration" checks must be structural — `TableWidget.updateDOM`
+migrates the hover target (`row` / `col` / `hovered`) from the previous instance
+because the shape (and therefore every index) still means the same thing — never
+`el.isConnected`. There is no in-cell editor left to "still be inside that cell":
+the table's two states are the widget and `omd-table-src` source lines.
 
 ## Resolve a fence's enclosing node from the line END, not the line start
 
@@ -682,6 +710,40 @@ update#2  doc=false sel=true effects=measure ranges=
 回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
 bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
 最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。
+
+## `coordsAtPos` throws inside `ViewPlugin.update` — read layout in `requestMeasure`
+
+任何"跟着光标/块跑的浮层"（`tables/sourceToolbar.ts` 的表格浮层工具栏就是第一例）都会
+在 `update(update: ViewUpdate)` 里算坐标。那里调 `view.coordsAtPos(pos)` 会穿到
+`readMeasured()`，而 `updateState === Updating` 时它**直接抛**
+`Reading the editor layout isn't allowed during an update`；`view.dom.getBoundingClientRect()`
+这类布局读取同样是更新期禁读的。
+
+危险之处是它安静地失败：按 Task 7 草案的写法（`update()` 里 `try { coordsAtPos } catch { hidden = true }`）
+浮层在**每一次**事务后都走 catch 分支，于是永远不显示，而引擎单元测试（happy-dom 无布局、
+且断言只看 `applyTableTool()` 的文档结果）全绿。只有真实浏览器的 e2e 才看得见。
+
+正确形状：
+
+```ts
+update(update: ViewUpdate) {
+  if (!tableAt(update.state, update.state.selection.main.head)) { this.dom.hidden = true; return } // 纯 state 查询，随时可做
+  this.view.requestMeasure<Placement | null>({
+    key: this,                          // 同一插件实例，连续 update 合并成一次测量
+    read: view => /* coordsAtPos + getBoundingClientRect，Idle 态可读 */,
+    write: placement => /* 只写 dom.hidden/style，不再读布局 */,
+  })
+}
+```
+
+`read` 在测量后、`write` 在 Updating 期执行，所以 `write` 里**不能再读布局**。`read`
+返回 `null` 时 `write` 仍会被调用（只有抛异常才是 `BadMeasure`），"算不出来就收起"可以直接
+用 `null` 表达。定位基准取 `view.dom`（`.cm-editor` 在 CM 基础主题里是 `position: relative`），
+坐标用 `coords - hostRect` 换算。
+
+回归守卫：`apps/desktop/e2e/table-toolbar.spec.ts`（光标进入表格 → 浮层可见 → 点按钮改源码 →
+光标离开 → 收起）。写这类浮层时先跑一次真实浏览器探针，别只信 happy-dom。
+
 
 ## 「缩小选择分支的重建范围」不能消除挂载期重建 —— 但沿路挖出一个真实泄漏
 

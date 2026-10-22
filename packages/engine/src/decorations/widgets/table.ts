@@ -1,62 +1,13 @@
 import { EditorView } from "@codemirror/view"
 import { parseCell, type CellNode } from "../../parse/cell"
-import {
-  deleteTableColumn,
-  deleteTableRow,
-  insertTableColumn,
-  insertTableRow,
-  replaceTableCell,
-  setTableColumnAlignment,
-  type TableSourceChange,
-} from "../../tables/edit"
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
+import { tableAt } from "../../tables/navigate"
+import { applyTableToolAt } from "../../tables/sourceToolbar"
+import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
 import { BlockWidget, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
-import { icon, type IconName } from "../icons"
-
-interface PendingTableEdit {
-  readonly pos: number
-  readonly row: number
-  readonly col: number
-}
-
-const pendingTableEdits = new WeakMap<EditorView, PendingTableEdit>()
-
-/** 把对齐 action 装回为单条 marker 替换 change；列索引越界时返回 null。 */
-function alignColumnChange(
-  self: TableWidget,
-  alignment: TableAlignment,
-  col: number,
-): TableSourceChange | null {
-  return setTableColumnAlignment(self.src, self.table, col, alignment)
-}
-
-type TableToolAction =
-  | "insert-row"
-  | "insert-col"
-  | "delete-row"
-  | "delete-col"
-  | "align-left"
-  | "align-center"
-  | "align-right"
-
-const pendingTableTools = new WeakMap<
-  EditorView,
-  { readonly pos: number; readonly act: TableToolAction; readonly row: number; readonly col: number }
->()
-
-function changesNonOverlapping(changes: readonly TableSourceChange[]): boolean {
-  // changes 已按 from 升序；相邻区间不允许重叠（零宽插入允许贴边）。
-  for (let index = 1; index < changes.length; index++) {
-    if (changes[index].from < changes[index - 1].to) return false
-  }
-  return true
-}
-
-function reportViewError(view: EditorView, error: unknown): void {
-  for (const report of view.state.facet(EditorView.exceptionSink)) report(error)
-}
+import { icon } from "../icons"
 
 type ResolveSrc = (src: string) => string
 
@@ -112,7 +63,7 @@ function sameTableShape(a: TableData, b: TableData): boolean {
 function renderCellSlot(el: HTMLElement, cell: TableCellData | null, resolveSrc?: ResolveSrc): void {
   el.replaceChildren()
   if (cell === null) {
-    // ragged 行缺失源码槽的视觉填充：语义标识为不可用，不能打开输入框。
+    // ragged 行缺失源码槽的视觉填充：语义标识为不可用（没有源码可改）。
     el.classList.add("omd-table-cell-missing")
     el.setAttribute("aria-disabled", "true")
     el.title = MISSING_CELL_TITLE
@@ -124,7 +75,7 @@ function renderCellSlot(el: HTMLElement, cell: TableCellData | null, resolveSrc?
   renderTableCellContent(el, cell.text, resolveSrc)
 }
 
-/** 对齐按钮的 active 高亮必须跟着当前列的对齐方式走（渲染态与原地补丁态共用）。 */
+/** 对齐按钮的 active 高亮必须跟着目标列的对齐方式走（渲染态与原地补丁态共用）。 */
 function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): void {
   for (const act of ["align-left", "align-center", "align-right"] as const) {
     const btn = toolbar.querySelector<HTMLElement>(`[data-act='${act}']`)
@@ -215,14 +166,23 @@ export function renderTableCellContent(parent: HTMLElement, text: string, resolv
 /** 合成缺失单元格（ragged 行的视觉填充）的语义标注。 */
 const MISSING_CELL_TITLE = "Missing source cell; add a column or edit Markdown source"
 
+/**
+ * 表格的**渲染态**：光标在表外时的投影 + 结构工具栏。
+ *
+ * 表格只有两个状态（见 plan D1/D2）：光标进表即整表变源码网格（`omd-table-src`
+ * 行装饰），本 widget 连同其工具栏一起卸载。所以这里**没有**编辑态、没有输入框、
+ * 也不持有"正在编辑哪一格"——渲染态唯一需要知道的行/列来自鼠标 hover，
+ * 只为让工具栏按钮有明确目标。
+ */
 export class TableWidget extends BlockWidget {
   readonly table: TableData
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
+  /** 工具栏目标格的行列（行序与源码槽一致：0 = 表头，1 = 首数据行）。 */
   private row = 0
   private col = 0
-  private editing: { el: HTMLElement; row: number; col: number } | null = null
-  private cells: HTMLElement[][] = []
+  /** 用户是否 hover 过某个 td/th：没 hover 就没有目标，工具栏按钮保持 disabled。 */
+  private hovered = false
   private equalityKeyCache: string | undefined
 
   constructor(
@@ -257,20 +217,12 @@ export class TableWidget extends BlockWidget {
     this.view = view
     this.wrap = super.toDOM(view)
     ownDom(this, this.wrap)
-    const wrap = this.wrap
-    // `</>`（显式进源码）会在 BlockWidget 自己的 mousedown 里把光标移进块、把 widget
-    // 连同输入框一起拆掉：未提交的单元格输入必须先落地。捕获阶段先于按钮处理器执行。
-    wrap.addEventListener("mousedown", e => {
-      if (e.button !== 0) return
-      if (!(e.target instanceof Element) || !e.target.closest(".omd-block-edit")) return
-      domOwner.get(wrap)?.commitPendingEdit()
-    }, true)
     return this.wrap
   }
 
   // pass 1 原地刷新（仅 eq 失败才到这里）：CM 复用旧实例建的 DOM 与监听器，却把
   // tile.widget 换成这个新实例。这里把 DOM 重新认领为新实例的当前状态，只补丁变化的
-  // 单元格 —— 提交一个单元格不再拆毁整表 DOM（无闪烁、无焦点丢失、O(变化格)）。
+  // 单元格 —— 表格渲染不再整块重建（无闪烁、O(变化格)）。
   // 结构变化（行列数）返回 false 让 CM 走 toDOM 全量重建：结构性操作本就低频。
   override updateDOM(dom: HTMLElement, view: EditorView, prev: TableWidget): boolean {
     const before = prev.table
@@ -284,8 +236,11 @@ export class TableWidget extends BlockWidget {
 
     this.view = view
     this.wrap = dom as HTMLDivElement
-    this.cells = cells
     ownDom(this, dom)
+    // 迁移上一实例的工具栏目标：行列不变时 hover 语义延续（没有 hover 就仍是没有）。
+    this.row = prev.row
+    this.col = prev.col
+    this.hovered = prev.hovered
 
     for (let r = 0; r < cells.length; r++) {
       const beforeRow = r === 0 ? before.header : before.rows[r - 1]
@@ -302,25 +257,10 @@ export class TableWidget extends BlockWidget {
       }
     }
     const toolbar = dom.querySelector<HTMLElement>(".omd-table-toolbar")
-    if (toolbar) applyAlignActive(toolbar, after.aligns[this.col] ?? "")
-
-    // 迁移上一实例的活动态：正在编辑的输入框若仍在该格里就继续归新 owner 管。
-    // 判据只看"输入框还在不在格里"——不用 isConnected：widget DOM 在 CM 测量/差异
-    // 期间可以是 detached，而它的销毁只经 destroy()，不由脱离文档触发。
-    this.row = prev.row
-    this.col = prev.col
-    this.editing = prev.editing && prev.editing.el.querySelector("input.omd-table-edit")
-      ? prev.editing
-      : null
+    if (toolbar) this.syncToolbar(toolbar)
 
     registerBlockWidget(this, dom)
     if (prev !== this) unregisterBlockWidget(prev)
-
-    // DOM 存活 → pending 编辑同步重开：不需要 renderInto 那条 queueMicrotask 交接，
-    // Tab/Enter 连打时输入框不经历"销毁再重建"的空窗。两阶段结构操作同样要接着跑，
-    // 否则单元格提交后走原地路径会把它丢掉（结构不变 → 不经过 toDOM）。
-    this.consumePendingEdits(true)
-    this.consumePendingTool()
     return true
   }
 
@@ -329,43 +269,66 @@ export class TableWidget extends BlockWidget {
     super.destroy(dom)
   }
 
-  override ignoreEvent(event: Event) {
-    return super.ignoreEvent(event)
-      || event.type === "keydown"
-      || event.type === "keyup"
-      || event.type === "keypress"
-      || event.type === "input"
-      || event.type === "click"
+  /** 工具栏是否有可操作的目标格（用户 hover 过某个 td/th）。 */
+  hasRowCol(): boolean { return this.hovered }
+
+  // 单元格点击是"进源码并落在该格"的意图；wrap 的 padding/边框/工具栏空隙是误触，
+  // 由 shouldEnterSource 挡掉（不进源码；焦点仍进编辑器，见 blockWidget）。
+  protected enterSourceOnClick(): boolean { return true }
+
+  protected shouldEnterSource(event: MouseEvent): boolean {
+    const target = event.target
+    return target instanceof Element && target.closest("td, th") !== null
   }
 
-  // wrap（padding/边框/工具栏空隙等非单元格表面）点击不注入光标：单元格就地
-  // 编辑是主入口，误触 wrap 整表翻源码就是表格闪烁。显式源码入口只剩 `</>`
-  // 按钮（blockWidget 基类自带处理器）与键盘 ↑/↓（blockMotionKeymap 有意进源码）。
-  protected enterSourceOnClick(): boolean { return false }
+  protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
+    const cellEl = event.target instanceof Element
+      ? event.target.closest<HTMLTableCellElement>("td, th")
+      : null
+    // 无单元格命中（padding 已被 shouldEnterSource 挡掉，剩下的是 `</>` 按钮）：直接回退，
+    // 不查表 —— 该路径的 view 可能来自没有真实 EditorState 的调用方。
+    if (!cellEl) return this.livePos()
+    const table = tableAt(view.state, this.livePos())
+    if (!table) return this.livePos()
+    // rowIndex 含 thead：表头 = 0，与 CellSlot.row 同一口径。
+    const rowIndex = cellEl.parentElement instanceof HTMLTableRowElement
+      ? cellEl.parentElement.rowIndex
+      : 0
+    const slots = [table.data.header, ...table.data.rows]
+    const cell = slots[rowIndex]?.cells[cellEl.cellIndex]
+    if (!cell) return this.livePos()
+    const leading = cell.source.length - cell.source.trimStart().length
+    return table.from + cell.from + leading
+  }
 
   protected get cssClass() { return "omd-table" }
 
-  protected renderInto(el: HTMLElement) {
-    // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
-    // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
+  /**
+   * 工具栏按钮的可用性：只读、尚未 hover 到任何格、以及单行/单列的结构删除都禁用，
+   * 顺带把当前列的对齐方式高亮到对齐按钮上。
+   */
+  private syncToolbar(toolbar: HTMLElement): void {
     const readonly = this.view?.state?.readOnly ?? false
-    // 仅剩一行/一列时结构性删除无效：工具栏按当前模型禁用对应按钮，
-    // 用户在编辑状态下点 disabled 控件不会落入「先提交、后 no-op」路径。
+    // 仅剩一行/一列时结构性删除无效：按当前模型禁用对应按钮。
     const canDeleteRow = this.table.rows.length > 1
     const canDeleteCol = this.table.header.cells.length > 1
+    for (const btn of toolbar.querySelectorAll<HTMLButtonElement>("button")) {
+      const act = btn.dataset.act
+      btn.disabled = readonly
+        || !this.hovered
+        || (act === "delete-row" && !canDeleteRow)
+        || (act === "delete-col" && !canDeleteCol)
+    }
+    applyAlignActive(toolbar, this.table.aligns[this.col] ?? "")
+  }
+
+  protected renderInto(el: HTMLElement) {
+    // 渲染态结构工具栏。readOnly 建档时固定、widget 生命周期内无翻转路径，因此
+    // disabled 只在 syncToolbar 里按当前状态重算；applyTableToolAt 的 readOnly 守卫
+    // 仍是权威防线（disabled 只挡用户交互，程序化 click 仍会到达）。
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
-    // 当前活动列的对齐方式 —— 用于工具栏按钮高亮「当前状态」
-    const currentAlign: TableAlignment = this.table.aligns[this.col] ?? ""
-    for (const [act, iconName, title] of [
-      ["align-left", "align-left", "Align column left"],
-      ["align-center", "align-center", "Align column center"],
-      ["align-right", "align-right", "Align column right"],
-      ["insert-row", "row-insert-bottom", "Insert row below"],
-      ["insert-col", "column-insert-right", "Insert column right"],
-      ["delete-row", "row-remove", "Delete row"],
-      ["delete-col", "column-remove", "Delete column"],
-    ] as const satisfies readonly [string, IconName, string][]) {
+    for (const [act, iconName, title] of TABLE_TOOL_BUTTONS) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act
@@ -373,9 +336,6 @@ export class TableWidget extends BlockWidget {
       btn.title = title
       btn.setAttribute("aria-label", title)
       btn.tabIndex = -1
-      btn.disabled = readonly
-        || (act === "delete-row" && !canDeleteRow)
-        || (act === "delete-col" && !canDeleteCol)
       btn.addEventListener("mousedown", e => {
         e.preventDefault()
         e.stopPropagation()
@@ -384,402 +344,69 @@ export class TableWidget extends BlockWidget {
         e.preventDefault()
         e.stopPropagation()
         // 实例轮换后工具栏按钮仍绑在旧实例上：按 wrap 取当前 owner。
-        domOwner.get(el)?.tool(act)
+        const owner = domOwner.get(el)
+        if (!owner || !owner.hasRowCol()) return
+        const view = owner.view
+        if (!view) return
+        // 行列来自 hover；偏移与源码一律由 applyTableToolAt 校验，陈旧输入直接拒绝。
+        applyTableToolAt(view, owner.livePos(), owner.src, owner.table, owner.row, owner.col, act)
       })
       toolbar.appendChild(btn)
     }
-    applyAlignActive(toolbar, currentAlign)
+    // 未 hover 任何格：按钮全部 disabled，点击也不会到 applyTableToolAt。
+    this.syncToolbar(toolbar)
     el.appendChild(toolbar)
 
-    this.cells = []
     const table = document.createElement("table")
     const thead = document.createElement("thead")
     const hr = document.createElement("tr")
-    const head: HTMLElement[] = []
     for (const [i, c] of this.table.header.cells.entries()) {
       const th = document.createElement("th")
       renderCellSlot(th, c ?? null, this.resolveSrc)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
-      this.bindCell(el, th, 0, i)
-      head.push(th)
+      if (c) this.bindCellHover(el, th, 0, i)
       hr.appendChild(th)
     }
-    this.cells.push(head)
     thead.appendChild(hr)
     table.appendChild(thead)
     const tbody = document.createElement("tbody")
     for (const [r, row] of this.table.rows.entries()) {
       const tr = document.createElement("tr")
-      const line: HTMLElement[] = []
       for (let i = 0; i < this.table.header.cells.length; i++) {
         const cell = row.cells[i]
         const td = document.createElement("td")
         renderCellSlot(td, cell ?? null, this.resolveSrc)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
-        this.bindCell(el, td, r + 1, i)
-        line.push(td)
+        // ragged 行的合成占位格没有源码槽：不参与工具栏目标（点它无事可做）。
+        if (cell) this.bindCellHover(el, td, r + 1, i)
         tr.appendChild(td)
       }
-      this.cells.push(line)
       tbody.appendChild(tr)
     }
     table.appendChild(tbody)
     el.appendChild(table)
-
-    // 两阶段工具栏操作（删除 active 行/列与单元格提交重叠时）：单元格已先提交，
-    // 重建后的本表在此消费 pending，在微任务里对 fresh Lezer 元数据派发结构操作。
-    // Consume before scheduling：删除 entry 后再排微任务，任何后续失败都不会留下
-    // 可被其他表/视图消费的残留；位置不匹配（不同表/不同位置）则不触碰 entry。
-    this.consumePendingEdits(false)
-    this.consumePendingTool()
   }
 
   /**
-   * 消费本视图为该表排队的键盘续编（Tab/Enter 提交后的落点格）。
-   * `sync`：DOM 由 updateDOM 原地续用时同步重开（无微任务空窗，连打 Tab 不闪）；
-   * toDOM 全量重建路径仍走微任务等 DOM 挂载。
+   * 渲染态工具栏的落点来源：hover 只记录行列，不翻源码、不改选区（翻源码只由
+   * mousedown 触发的 shouldEnterSource/clickPos 决定）。
+   * 结构操作会改变行列数 → `updateDOM` 返回 false、CM 全量重建 → hover 目标清空：
+   * 旧下标在新形状里已经指向别处，宁可要求重新 hover 也不猜。
    */
-  private consumePendingEdits(sync: boolean): void {
-    const pending = this.view && pendingTableEdits.get(this.view)
-    if (!pending || pending.pos !== this.livePos()) return
-    pendingTableEdits.delete(this.view!)
-    const cell = this.cells[pending.row]?.[pending.col]
-    if (!cell || !this.cellData(pending.row, pending.col)) return
-    if (sync) this.startEdit(cell, pending.row, pending.col)
-    else queueMicrotask(() => { if (cell.isConnected) this.startEdit(cell, pending.row, pending.col) })
-  }
-
-  /**
-   * 消费两阶段工具栏操作。结构操作必然改变行列数 → 下一次装饰重建走 toDOM 全量重建，
-   * 因此这里只补派发一次结构事务。dispatch 必须等到 CM 更新周期结束：updateDOM 本身
-   * 就在更新周期内，同步 dispatch 会抛 "update is in progress"。
-   */
-  private consumePendingTool(): void {
-    const pendingTool = this.view && pendingTableTools.get(this.view)
-    if (!pendingTool || pendingTool.pos !== this.livePos()) return
-    pendingTableTools.delete(this.view!)
-    const { act, row, col } = pendingTool
-    queueMicrotask(() => {
-      try {
-        this.runPendingTool(act, row, col)
-      } catch (error) {
-        if (this.view) reportViewError(this.view, error)
-      }
-    })
-  }
-
-  private cellData(row: number, col: number) {
-    return row === 0 ? this.table.header.cells[col] : this.table.rows[row - 1]?.cells[col]
-  }
-
-  private bindCell(wrap: HTMLElement, el: HTMLElement, row: number, col: number) {
-    el.addEventListener("mousedown", e => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (e.target instanceof HTMLInputElement) return
+  private bindCellHover(wrap: HTMLElement, el: HTMLElement, row: number, col: number) {
+    el.addEventListener("mouseover", () => {
       // 监听器闭包的是建 DOM 的那个实例；CM pass-1 复用后 owner 已轮换成新实例
       // （见 domOwner 注释），所以每次事件都按 wrap 解析当前 owner。
       const owner = domOwner.get(wrap)
-      if (!owner || !owner.cellData(row, col)) return
+      if (!owner) return
+      // mouseover 在她同一格内部的子元素上也会冒泡：目标格没变就别重算工具栏。
+      if (owner.hovered && owner.row === row && owner.col === col) return
       owner.row = row
       owner.col = col
-      owner.startEdit(el, row, col)
+      owner.hovered = true
+      const toolbar = wrap.querySelector<HTMLElement>(".omd-table-toolbar")
+      if (toolbar) owner.syncToolbar(toolbar)
     })
-  }
-
-  private clearActive() {
-    for (const line of this.cells) {
-      for (const el of line) {
-        el.classList.remove("omd-table-row-active")
-        el.classList.remove("omd-table-col-active")
-      }
-    }
-  }
-
-  private applyActive(row: number, col: number) {
-    this.cells[row]?.forEach(el => el.classList.add("omd-table-row-active"))
-    for (const line of this.cells) line[col]?.classList.add("omd-table-col-active")
-  }
-
-  private startEdit(el: HTMLElement, row: number, col: number) {
-    // 只读档不开行内编辑器（开了也无法提交 —— replace() 会拒绝 dispatch）。
-    // 防御所有入口（点击与重建后的键盘续编）：合成 ragged cell 没有可写源码范围。
-    if (this.view?.state.readOnly || !this.cellData(row, col)) return
-    if (this.editing?.el === el) return
-    const previous = this.editing
-    if (previous) {
-      const input = previous.el.querySelector<HTMLInputElement>("input.omd-table-edit")
-      const cell = this.cellData(previous.row, previous.col)
-      if (input && cell && input.value !== cell.source) {
-        // 换格即提交：绝不静默丢弃已输入内容。落点格交给 pending 重建路径打开 ——
-        // dispatch 之后本实例就不再是 owner（updateDOM 轮换），不能继续在 this 上开编辑器。
-        this.commitEdit(0, undefined, { row, col })
-        return
-      }
-      // 无改动：直接收掉旧编辑器（不产生事务、不留下多余的 undo 步）。
-      this.cancelEdit()
-    }
-    this.row = row
-    this.col = col
-    this.clearActive()
-    this.applyActive(row, col)
-    const input = document.createElement("input")
-    input.type = "text"
-    input.className = "omd-table-edit"
-    input.value = this.cellData(row, col)?.source ?? ""
-    el.replaceChildren(input)
-    this.editing = { el, row, col }
-    const wrap = this.wrap
-    input.addEventListener("mousedown", e => {
-      e.stopPropagation()
-    })
-    // 点击/聚焦到表格之外（正文、其它 widget、应用外）必须把输入落地：
-    // 旧行为是 focusout 后整块重建 → 用户输入静默消失（A2）。
-    input.addEventListener("focusout", () => {
-      const owner = (wrap && domOwner.get(wrap)) ?? this
-      owner.commitPendingEdit()
-    })
-    input.addEventListener("keydown", e => {
-      // IME 组词中的 Enter/Escape 是候选确认/取消，不能当成单元格提交/放弃（A3）。
-      if (e.isComposing || e.keyCode === 229) return
-      // 同上：输入框可能由前一个实例创建，事件必须派发给当前 owner。
-      const owner = (wrap && domOwner.get(wrap)) ?? this
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault()
-        const tab = e.key === "Tab"
-        const shift = e.shiftKey
-        if (tab) {
-          // Tab 仍走横向遍历：右/左换格，末列 Tab 自动追加新行
-          owner.commitEdit(shift ? -1 : 1, shift ? "shift-tab" : "tab")
-        } else {
-          // Enter 改为纵向录入：移动到「正下方同行 / Shift+Enter 正上方同行」，
-          // 末行 Enter 自动追加新行并停留在同列，对齐 Excel / Numbers 的高频录入手感。
-          owner.commitEditVertical(shift ? -1 : 1)
-        }
-      } else if (e.key === "Escape") {
-        e.preventDefault()
-        owner.cancelEdit()
-      }
-    })
-    input.focus()
-    const caret = input.value.length
-    input.setSelectionRange(caret, caret)
-  }
-
-  private cancelEdit() {
-    const edit = this.editing
-    if (!edit) return
-    this.editing = null
-    this.clearActive()
-    edit.el.replaceChildren()
-    renderTableCellContent(edit.el, this.cellData(edit.row, edit.col)?.text ?? "", this.resolveSrc)
-  }
-
-  /**
-   * 丢掉输入框之前把未提交的值落地（失焦、显式进源码、widget 被拆之前的最后一道）。
-   * 幂等：Escape/提交路径已把 `editing` 置空，重复调用（focusout 在 DOM 替换时补发）无操作。
-   */
-  private commitPendingEdit(): void {
-    const edit = this.editing
-    if (!edit) return
-    const input = edit.el.querySelector<HTMLInputElement>("input.omd-table-edit")
-    const cell = this.cellData(edit.row, edit.col)
-    // 无输入框或源码槽已失效（陈旧元数据）：还原渲染，绝不派发越界事务。
-    if (!input || !cell) { this.cancelEdit(); return }
-    // 未改动：只收掉编辑器，不产生事务。
-    if (input.value === cell.source) { this.cancelEdit(); return }
-    this.commitEdit(0)
-  }
-
-  private commitEdit(move: 1 | -1 | 0, fromKey?: "tab" | "shift-tab" | "enter", explicitDest?: { row: number; col: number }) {
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    if (!edit || !input) return
-    const cell = this.cellData(edit.row, edit.col)
-    if (!cell) return
-    const change = replaceTableCell(this.src, cell, input.value)
-    if (!change) return
-    this.editing = null
-    this.clearActive()
-    const neighbor = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
-    let dest = explicitDest ?? (neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null)
-    let changes: TableSourceChange[] = [change]
-
-    // 末格 Tab：同一事务提交当前单元格并在表尾追加一个空行，重建后聚焦新行首格
-    // （oldRowCount + 1 行、0 列）。只有按键是 Tab 才插行 —— Enter 在末格只提交、
-    // 不扩展行；Shift-Tab 在首格只提交、不开表外输入框。绝不凭 move 推断插行意图。
-    if (!neighbor && move === 1 && fromKey === "tab") {
-      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
-      if (inserted && changesNonOverlapping([change, ...inserted])) {
-        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
-        dest = { row: this.table.rows.length + 1, col: 0 }
-      }
-    }
-    // 文本等价提交（转义后与源码同形，例如输入 "a|b" 而源码已是 "a\|b"）：事务不
-    // 改变文档 → 装饰 eq 命中、CM 既不调 toDOM 也不调 updateDOM → pending 永远没人
-    // 消费、输入框留在 DOM 里（Tab 看起来失灵）。这种情况自己收尾，不派发。
-    if (this.textNoop(changes)) {
-      this.settleTextNoop(edit.el, cell, dest)
-      return
-    }
-    this.replace(changes, dest)
-  }
-
-  // Enter 键的纵向录入：同列换行（dir=+1）/ Shift+Enter 上行（dir=-1）。
-  // 越界表尾自动追加新行并停留同列，模拟 Excel / Numbers 的高频录入手感。
-  // 失败时（首格 Shift+Enter 越界）保持输入框挂载，等价于 commitEdit 的「陈旧元数据」兜底。
-  private commitEditVertical(dir: 1 | -1) {
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    if (!edit || !input) return
-    const cell = this.cellData(edit.row, edit.col)
-    if (!cell) return
-    const change = replaceTableCell(this.src, cell, input.value)
-    if (!change) return
-    this.editing = null
-    this.clearActive()
-    const targetRow = edit.row + dir
-    const totalRows = this.table.rows.length + 1
-    let dest: { row: number; col: number } | null = null
-    let changes: TableSourceChange[] = [change]
-
-    if (targetRow === 0) {
-      // 进入表头（一般不发生；保留对称语义）。
-      if (this.table.header.cells[edit.col]) {
-        dest = { row: 0, col: edit.col }
-      }
-    } else if (targetRow > 0 && targetRow - 1 < this.table.rows.length) {
-      // 数据行实际存在：检查该行 ragged 槽可用性。
-      const rowCells = this.table.rows[targetRow - 1]?.cells
-      if (rowCells && rowCells[edit.col]) {
-        dest = { row: targetRow, col: edit.col }
-      }
-    } else if (targetRow >= totalRows && dir === 1) {
-      // 末行 Enter：同一事务追加新行并停留同列（oldRowCount + 1 行、edit.col）
-      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
-      if (inserted && changesNonOverlapping([change, ...inserted])) {
-        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
-        dest = { row: this.table.rows.length + 1, col: edit.col }
-      }
-    }
-    // dir === -1 越界到 -1（首格 Shift+Enter）或合成格不可用：等同于 no-op 提交
-    if (this.textNoop(changes)) {
-      this.settleTextNoop(edit.el, cell, dest)
-      return
-    }
-    this.replace(changes, dest)
-  }
-
-  /** 事务是否在文本上等价（转义后与源码同形）：这类 change 不改变文档，装饰 eq
-   * 会命中，CM 既不调 toDOM 也不调 updateDOM —— pending 与输入框都没人收尾。 */
-  private textNoop(changes: readonly TableSourceChange[]): boolean {
-    return changes.every(change => change.insert === this.src.slice(change.from, change.to))
-  }
-
-  /** 文本等价提交的收尾：不派发事务，自己还原该格渲染并打开落点格（等价于重建
-   * 路径里「pending 消费 + 该格重新渲染」的结果，只是没有事务可派发）。
-   * 落点格只在 DOM 仍挂载时打开 —— 与重建路径的微任务 `isConnected` 守卫同义：
-   * widget 已被替换/销毁（detached corpse）时绝不重新开编辑器。 */
-  private settleTextNoop(
-    editedCell: HTMLElement,
-    cell: TableCellData,
-    dest: { row: number; col: number } | null,
-  ): void {
-    this.editing = null
-    this.clearActive()
-    renderCellSlot(editedCell, cell, this.resolveSrc)
-    if (!dest || !this.wrap?.isConnected) return
-    const target = this.cells[dest.row]?.[dest.col]
-    if (target) this.startEdit(target, dest.row, dest.col)
-  }
-
-  private neighbor(row: number, col: number, dir: 1 | -1) {
-    const cols = this.table.header.cells.length
-    const rows = this.table.rows.length + 1
-    const i = row * cols + col + dir
-    if (i < 0 || i >= rows * cols) return null
-    return { row: Math.floor(i / cols), col: i % cols }
-  }
-
-  private tableToolChanges(act: TableToolAction, row: number, col: number) {
-    if (act === "insert-row") return insertTableRow(this.src, this.table, row)
-    if (act === "insert-col") return insertTableColumn(this.src, this.table, col)
-    if (act === "delete-row") return deleteTableRow(this.src, this.table, row - 1)
-    if (act === "delete-col") return deleteTableColumn(this.src, this.table, col)
-    if (act === "align-left") {
-      const change = alignColumnChange(this, "left", col)
-      return change ? [change] : null
-    }
-    if (act === "align-center") {
-      const change = alignColumnChange(this, "center", col)
-      return change ? [change] : null
-    }
-    if (act === "align-right") {
-      const change = alignColumnChange(this, "right", col)
-      return change ? [change] : null
-    }
-    return null
-  }
-
-  private tool(act: TableToolAction) {
-    // 只读守卫（replace() 是最终权威，此处提前拒绝主路径）。
-    if (this.view?.state.readOnly) return
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    let committed: TableSourceChange | null = null
-    if (edit && input) {
-      const cell = this.cellData(edit.row, edit.col)
-      committed = cell ? replaceTableCell(this.src, cell, input.value) : null
-      // 陈旧元数据导致提交失败：保持输入框挂载，不静默销毁用户文本。
-      if (!committed) return
-      const isNoop = committed.insert === this.src.slice(committed.from, committed.to)
-      if (!isNoop) {
-        if (act === "insert-row" || act === "insert-col") {
-          const inserted =
-            act === "insert-row"
-              ? insertTableRow(this.src, this.table, this.row)
-              : insertTableColumn(this.src, this.table, this.col)
-          // 结构插入被拒绝（越界/陈旧）→ 保留输入框。
-          if (!inserted) return
-          // 单元格提交与结构 change 互不重叠时合并为一个排序、非重叠事务。
-          const merged = [committed, ...inserted].sort((a, b) => a.from - b.from)
-          if (changesNonOverlapping(merged)) {
-            this.editing = null
-            this.replace(merged)
-            return
-          }
-          // 意外重叠：退化为两阶段（与删除路径一致）。
-        }
-        // 删除 active 行/列必然覆盖正编辑的单元格：先提交单元格，重建后补结构操作。
-        this.deferTool(act, committed, edit)
-        return
-      }
-      // 输入值未变（no-op 提交）：等效于“无编辑”。保持 this.editing 不动，
-      // 单事务结构操作失败（next === null）时输入框继续挂载。
-    }
-    // `this.row` 是 1-based（0=表头，1=首数据行），tableToolChanges 映射到
-    // deleteTableRow 的 0-based 数据行索引；表头映射到 -1，自然成为 no-op。
-    const next = this.tableToolChanges(act, this.row, this.col)
-    if (!next) return
-    this.editing = null
-    this.replace(next)
-  }
-
-  private deferTool(act: TableToolAction, committed: TableSourceChange, edit: { el: HTMLElement; row: number; col: number }) {
-    this.editing = null
-    const pos = this.livePos()
-    pendingTableTools.set(this.view!, { pos, act, row: edit.row, col: edit.col })
-    // 只派发单元格提交；结构操作等重建后的本表消费 pending 再补做。
-    this.replace([committed])
-  }
-
-  private runPendingTool(act: TableToolAction, row: number, col: number) {
-    // 检测 widget 已断开（销毁/切源码）：pending 已被消费，直接放弃补派发。
-    if (!this.view || !this.wrap?.isConnected) return
-    // 对重建后的 fresh Lezer 元数据（this.src/this.table）执行结构操作。
-    const next = this.tableToolChanges(act, row, col)
-    if (!next) return  // 目标缺失或操作被拒绝 → 不再派发。
-    this.replace(next)
   }
 
   private livePos() {
@@ -788,28 +415,5 @@ export class TableWidget extends BlockWidget {
       catch { /* widget detached */ }
     }
     return this.pos
-  }
-
-  private replace(changes: readonly TableSourceChange[], dest: { row: number; col: number } | null = null) {
-    // 权威只读守卫：commitEdit/tool 的所有源码改写都汇入此处。readOnly 是建议性
-    // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 pending edit，
-    // 微任务渲染恢复路径不会误开编辑器）。disabled 按钮只挡用户交互，程序化
-    // click 仍可到达 tool()，故此处必须显式拒绝。
-    if (changes.length === 0 || !this.view || this.view.state.readOnly) return
-    const pos = this.livePos()
-    if (dest) pendingTableEdits.set(this.view, { pos, row: dest.row, col: dest.col })
-    const translated = changes.map(change => ({
-      from: pos + change.from,
-      to: pos + change.to,
-      insert: change.insert,
-    }))
-    try {
-      this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
-    } catch (error) {
-      // 派发失败：清除本视图所有 pending（键盘续编与两阶段工具），不让其泄漏。
-      if (dest) pendingTableEdits.delete(this.view)
-      pendingTableTools.delete(this.view)
-      throw error
-    }
   }
 }
