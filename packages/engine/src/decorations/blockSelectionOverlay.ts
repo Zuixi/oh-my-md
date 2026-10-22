@@ -73,6 +73,10 @@ function findWrap(widget: BlockWidget, used: Set<HTMLElement>): HTMLElement | un
 function refresh(view: EditorView) {
   const sel = view.state.selection.main
   const specs = view.state.field(livePreviewField, false)?.specs ?? []
+  // 清扫失效实例：CM 的 pass-0 复用（eq 相同、不调 updateDOM）会把 tile.widget
+  // 换成新实例却不给旧实例 destroy，注册表里的旧条目就永远留着一个死键 + 活 DOM。
+  // 连通性检查本来就发生在 findWrap 里，这里顺手把条目删掉，别让 Map 只增不减。
+  for (const [widget, dom] of liveWraps) if (!dom.isConnected) liveWraps.delete(widget)
   const used = new Set<HTMLElement>()
   for (const spec of specs) {
     if (!spec.tag.startsWith("widget:block:")) continue
