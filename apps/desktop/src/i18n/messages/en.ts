@@ -193,6 +193,9 @@ export const en: Record<string, string> = {
   "filetree.prompt.newFile": "New file name",
   "filetree.prompt.newFolder": "New folder name",
   "filetree.prompt.rename": "Rename",
+  "filetree.rename.hint": "Enter to rename, Escape to cancel. Leaving the field keeps your draft.",
+  "filetree.rename.submitting": "Renaming...",
+  "filetree.rename.missing": "The item is no longer available. Rename was cancelled.",
 
   "diff.title": "Document differences",
   "diff.goToLine": "Go to line {line}",
@@ -290,6 +293,7 @@ export const en: Record<string, string> = {
   "error.createFileFailed": "Create file failed",
   "error.createFolderFailed": "Create folder failed",
   "error.renameFailed": "Rename failed",
+  "error.renameSyncFailed": "Renamed, but application synchronization failed",
   "error.deleteFailed": "Delete failed",
   "error.revealFailed": "Could not reveal the file in the file manager",
   "error.searchFailed": "Search failed",

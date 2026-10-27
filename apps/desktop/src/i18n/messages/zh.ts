@@ -193,6 +193,9 @@ export const zh: Record<string, string> = {
   "filetree.prompt.newFile": "新建文件名",
   "filetree.prompt.newFolder": "新建文件夹名",
   "filetree.prompt.rename": "重命名",
+  "filetree.rename.hint": "Enter 确认，Escape 取消。离开输入框会保留草稿。",
+  "filetree.rename.submitting": "正在重命名...",
+  "filetree.rename.missing": "该项目已不可用，已取消重命名。",
 
   "diff.title": "文档差异",
   "diff.goToLine": "跳转到第 {line} 行",
@@ -290,6 +293,7 @@ export const zh: Record<string, string> = {
   "error.createFileFailed": "创建文件失败",
   "error.createFolderFailed": "创建文件夹失败",
   "error.renameFailed": "重命名失败",
+  "error.renameSyncFailed": "已重命名，但应用状态同步失败",
   "error.deleteFailed": "删除失败",
   "error.revealFailed": "无法在文件管理器中显示该文件",
   "error.searchFailed": "搜索失败",

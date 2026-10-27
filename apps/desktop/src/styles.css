@@ -1486,6 +1486,24 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.filetree-item.is-renaming { cursor: default; }
+.filetree-rename-input {
+  flex: 1 1 auto; min-width: 0; width: 100%; height: 22px;
+  box-sizing: border-box; padding: 0 4px;
+  border: 1px solid var(--omd-link); border-radius: 3px;
+  outline: none; font: inherit; color: var(--omd-fg);
+  background: var(--omd-panel-bg);
+}
+.filetree-rename-input[aria-invalid="true"] { border-color: var(--omd-error-fg); }
+.filetree-rename-input[readonly] { opacity: 0.7; }
+/* 反馈不改变虚拟行高；失焦和滚动都不会隐式提交。 */
+.filetree-rename-feedback {
+  position: sticky; bottom: 0; z-index: 2;
+  padding: 6px 10px; background: var(--omd-panel-bg);
+  color: var(--omd-muted); font-size: 11px; overflow-wrap: anywhere;
+}
+.filetree-rename-feedback:empty { display: none; }
+.filetree-rename-feedback.is-error { color: var(--omd-error-fg); }
 .outline-item {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

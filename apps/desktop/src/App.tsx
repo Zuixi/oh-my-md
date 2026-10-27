@@ -215,8 +215,9 @@ function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> 
 type OpenTier = "normal" | "large" | "readonly" | "cancel"
 
 function replaceTreePrefix(path: string, from: string, to: string): string {
-  if (path === from) return to
-  return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path
+  if (!pathWithinDir(path, from)) return path
+  const suffix = path.replace(/\\/g, "/").slice(from.replace(/\\/g, "/").length)
+  return to + (to.includes("\\") ? suffix.replace(/\//g, "\\") : suffix)
 }
 
 function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
@@ -241,6 +242,7 @@ function renameTreePath(model: FileTreeModel, from: string, to: string): FileTre
       replaceTreePrefix(key, from, to),
       entries.map(entry => ({
         ...entry,
+        name: entry.path === from ? baseName(to) : entry.name,
         path: replaceTreePrefix(entry.path, from, to),
       })),
     ]),
@@ -664,12 +666,14 @@ export default function App({
 
   async function refreshTreePath(path: string): Promise<void> {
     if (!services.listDir) return
+    const folder = workspaceRef.current.folder
     try {
       const entries = await services.listDir(path)
+      if (!mountedRef.current || workspaceRef.current.folder !== folder) return
       clearTreeError(path)
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      reportTreeError(path, error)
+      if (mountedRef.current && workspaceRef.current.folder === folder) reportTreeError(path, error)
     }
   }
 
@@ -688,9 +692,9 @@ export default function App({
     const nextTabs = previousTabs.map(tab => {
       const path = sessionPath(tab)
       if (!path) return tab
-      if (path === from) return retargetSessionPath(tab, to)
-      if (isDir && path.startsWith(`${from}/`)) {
-        return retargetSessionPath(tab, `${to}${path.slice(from.length)}`)
+      const nextPath = replaceTreePrefix(path, from, to)
+      if (nextPath !== path && (isDir || path.replace(/\\/g, "/") === from.replace(/\\/g, "/"))) {
+        return retargetSessionPath(tab, nextPath)
       }
       return tab
     })
@@ -707,9 +711,11 @@ export default function App({
     const affectedPaths = nextTabs
       .map(tab => sessionPath(tab))
       .filter((path): path is string => path !== null)
-      .filter(path => path === to || (isDir && path.startsWith(`${to}/`)))
+      .filter(path => path === to || (isDir && pathWithinDir(path, to)))
     for (const path of new Set(affectedPaths)) {
-      void services.allowDocumentAssets(path)
+      void services.allowDocumentAssets(path).catch(error => {
+        services.reportError(errorMessage(t("error.renameSyncFailed"), error))
+      })
     }
   }
 
@@ -2060,27 +2066,34 @@ export default function App({
     }
   }
 
-  async function renameTreeEntry(entry: TreeEntry) {
-    if (!services.renamePath) return
-    const rawName = window.prompt(t("filetree.prompt.rename"), entry.name)
-    if (rawName === null) return
+  async function renameTreeEntry(entry: TreeEntry, rawName: string): Promise<string> {
+    if (!services.renamePath) throw new Error(t("error.renameFailed"))
     const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
-    if (name === entry.name) return
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
+    if (name === entry.name) return entry.path
+    if (invalidName(name)) throw new Error(t("error.emptyName"))
     const dir = parentDir(entry.path)
-    if (!dir) return
+    if (!dir) throw new Error(t("error.renameFailed"))
+    const folder = workspaceRef.current.folder
+    let nextPath: string
     try {
-      const nextPath = await services.renamePath(entry.path, name)
-      commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
-      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
-      await refreshTreePath(dir)
-      services.notifySuccess?.(t("notify.entryRenamed", { name }))
+      nextPath = await services.renamePath(entry.path, name)
     } catch (error) {
-      services.reportError(errorMessage(t("error.renameFailed"), error))
+      throw new Error(errorMessage(t("error.renameFailed"), error))
     }
+    if (!mountedRef.current) return nextPath
+    // 原生操作已成功：目录刷新失败不能再被当作重命名失败供用户重试。
+    try {
+      if (workspaceRef.current.folder === folder) {
+        commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
+        void refreshTreePath(dir)
+      }
+      materializer.flush()
+      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
+    } catch (error) {
+      services.reportError(errorMessage(t("error.renameSyncFailed"), error))
+    }
+    services.notifySuccess?.(t("notify.entryRenamed", { name }))
+    return nextPath
   }
 
   async function deleteTreeEntry(entry: TreeEntry) {
@@ -2493,7 +2506,7 @@ export default function App({
               onSearch={() => search.setOpen(true)}
               onNewFile={dir => void createTreeFile(dir)}
               onNewFolder={dir => void createTreeFolder(dir)}
-              onRename={entry => void renameTreeEntry(entry)}
+              onRename={services.renamePath ? renameTreeEntry : undefined}
               onDelete={entry => void deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {

@@ -131,7 +131,7 @@ describe("FileTree sidebar menu", () => {
     const harness = makeAppHarness()
     let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockReturnValue("renamed")
+    const prompt = vi.spyOn(window, "prompt")
     vi.mocked(harness.services.renamePath).mockImplementation(async (_from: string, toName: string) => {
       entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
       return `/notes/${toName}`
@@ -143,13 +143,159 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
 
     await waitFor(() => {
       expect(harness.services.renamePath).toHaveBeenCalledWith("/notes/doc.md", "renamed.md")
       expectPathShown("/notes/renamed.md")
     })
     expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
+    expect(prompt).not.toHaveBeenCalled()
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
+  })
+
+  it("校验失败保留输入，原名称不调用原生重命名", async () => {
+    const harness = makeAppHarness()
+    harness.services.listDir = vi.fn(async () => [
+      { name: "doc.md", path: "/notes/doc.md", is_dir: false },
+    ])
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "../bad" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expect(input.getAttribute("aria-invalid")).toBe("true"))
+    expect(input.value).toBe("../bad")
+    expect(harness.services.renamePath).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: "doc" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull())
+    expect(harness.services.renamePath).not.toHaveBeenCalled()
+    expect(harness.services.notifySuccess).not.toHaveBeenCalled()
+  })
+
+  it("原生失败在原地提示，不重复 toast；修改后可重试", async () => {
+    const harness = makeAppHarness()
+    let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.mocked(harness.services.renamePath)
+      .mockRejectedValueOnce(new Error("path already exists"))
+      .mockImplementationOnce(async (_path, name) => {
+        entries = [{ name, path: `/notes/${name}`, is_dir: false }]
+        return `/notes/${name}`
+      })
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "taken" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expect(input.getAttribute("aria-invalid")).toBe("true"))
+    expect(input.value).toBe("taken")
+    expect(screen.getByText(/path already exists/)).toBeTruthy()
+    expect(harness.services.reportError).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: "available" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expectPathShown("/notes/available.md"))
+    expect(harness.services.renamePath).toHaveBeenCalledTimes(2)
+  })
+
+  it("重命名成功后刷新失败，不保留可重试输入或旧文件名", async () => {
+    const harness = makeAppHarness()
+    let renamed = false
+    harness.services.listDir = vi.fn(async () => {
+      if (renamed) throw new Error("listing unavailable")
+      return [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    })
+    vi.mocked(harness.services.renamePath).mockImplementation(async () => {
+      renamed = true
+      return "/notes/renamed.md"
+    })
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expectPathShown("/notes/renamed.md"))
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull())
+    expect(screen.getByText("renamed.md", { selector: ".filetree-name" })).toBeTruthy()
+    expect(harness.services.renamePath).toHaveBeenCalledTimes(1)
+    expect(harness.services.notifySuccess).toHaveBeenCalledWith("Renamed to renamed.md")
+    expect(harness.services.reportError).toHaveBeenCalledWith(expect.stringContaining("listing unavailable"))
+  })
+
+  it("Windows 目录重命名迁移反斜杠子标签并保留最新脏内容", async () => {
+    const harness = makeAppHarness()
+    const from = "C:\\notes\\drafts"
+    const to = "C:\\notes\\ideas"
+    let renamed = false
+    harness.services.pickFolder = vi.fn(async () => "C:/notes")
+    harness.services.listDir = vi.fn(async path => {
+      if (path === "C:/notes") {
+        return [{ name: renamed ? "ideas" : "drafts", path: renamed ? to : from, is_dir: true }]
+      }
+      return [{ name: "doc.md", path: `${renamed ? to : from}\\doc.md`, is_dir: false }]
+    })
+    vi.mocked(harness.services.renamePath).mockImplementation(async () => {
+      renamed = true
+      return to
+    })
+    harness.renderApp({ docMaterializeMs: 250 })
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
+    fireEvent.change(screen.getByPlaceholderText("Run a command…"), { target: { value: "Open folder" } })
+    fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
+    await waitFor(() => expect(screen.getByText("drafts")).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "drafts" }))
+    await waitFor(() => expect(screen.getByText("doc.md", { selector: ".filetree-name" })).toBeTruthy())
+    await harness.openIntoActive(`${from}\\doc.md`, "saved")
+    const handle = harness.editorForTab(1)
+    handle.emit({ doc: "latest edit", docChanged: true, pendingNormalization: null })
+    const resets = editor.reset.mock.calls.length
+    await openTreeMenu("drafts")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "ideas" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expectPathShown(`${to}\\doc.md`, { dirty: true }))
+    expect(harness.services.renamePath).toHaveBeenCalledWith(from, "ideas")
+    expect(harness.services.allowDocumentAssets).toHaveBeenCalledWith(`${to}\\doc.md`)
+    expect(editor.reset.mock.calls.length).toBe(resets)
+    expect(harness.editorForTab(1)).toBe(handle)
+    await waitFor(() => expect(harness.services.writeRecovery).toHaveBeenCalledWith(
+      "C__notes_ideas_doc.md", "latest edit",
+    ))
+    expect(screen.getByText("doc.md", { selector: ".filetree-name" })).toBeTruthy()
+  })
+
+  it("成功后图片授权失败单独提示，不把已完成的重命名留作重试", async () => {
+    const harness = makeAppHarness()
+    let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.mocked(harness.services.renamePath).mockImplementation(async () => {
+      entries = [{ name: "renamed.md", path: "/notes/renamed.md", is_dir: false }]
+      return "/notes/renamed.md"
+    })
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    vi.mocked(harness.services.allowDocumentAssets).mockRejectedValue(new Error("asset permission denied"))
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    await waitFor(() => expectPathShown("/notes/renamed.md"))
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull())
+    expect(harness.services.reportError).toHaveBeenCalledWith(
+      "Renamed, but application synchronization failed: asset permission denied",
+    )
+    expect(harness.services.renamePath).toHaveBeenCalledTimes(1)
   })
 
   it("deletes a file after confirmation and refreshes the listing", async () => {
@@ -390,7 +536,6 @@ describe("FileTree sidebar menu", () => {
     const harness = makeAppHarness()
     let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockReturnValue("renamed")
     vi.mocked(harness.services.renamePath).mockImplementation(async (_from, toName) => {
       entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
       return `/notes/${toName}`
@@ -402,6 +547,9 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
 
     await waitFor(() => {
       expect(harness.services.clearRecovery).toHaveBeenCalledWith(
