@@ -201,6 +201,47 @@ files cost a stat, not a 50MB read), but poll still re-reads **changed** files
 in full (correctness first): a banner-without-contents divergence for huge docs
 is a recorded follow-up.
 
+## `revealItemInDir` fails on forward-slash Windows paths (Shell ITEMIDLIST)
+
+"在文件管理器显示" reported `Failed to convert path //?/E:/… to ITEMIDLIST` on Windows
+even though the file was there. Paths reaching the service mix two conventions:
+Rust `canonicalize()` yields the verbatim form `\\?\E:\…`, and `parentDir()`
+(workspace.ts) rewrites every `\` to `/` for UI display, producing `//?/E:/…` when
+that display string is later used as a native source (tree roots, tab paths).
+
+The opener plugin normalizes in this order: `dunce::simplified()` **then** its own
+`absolute()` (GetFullPathNameW, with a verbatim passthrough). Rust parses the
+forward-slash spelling as `Prefix::UNC("?", "X:")`, **not** `VerbatimDisk`, and
+`dunce::simplified` only strips the latter — so the prefix survives, `absolute()`
+emits the backslash verbatim form `\\?\X:\…`, and `ILCreateFromPathW` rejects
+**any** verbatim path (`FailedToConvertPathToItemIdList`). Existence checks stay
+healthy because `std::fs` resolves it fine — which is why this looks like "the
+file is right there but Explorer won't open".
+
+Verified 2026-10-28 by replicating the plugin's exact pipeline (dunce + its
+`absolute()`) against a real file:
+
+| input | prefix parsed as | canonical | ITEMIDLIST |
+| --- | --- | --- | --- |
+| `F:\…\AGENTS.md` | `Disk` | `F:\…` | ok |
+| `\\?\F:\…\AGENTS.md` | `VerbatimDisk` | `F:\…` (stripped) | ok |
+| `//?/F:/…/AGENTS.md` | `UNC("?", "F:")` | `\\?\F:\…` | **fails** |
+| `F:/…/AGENTS.md` | `Disk` | `F:\…` | ok |
+
+Fix: `desktopServices.revealInFinder` restores `\` for Windows before the plugin
+call, which turns the third row into the second (strip → reveal). Rows 1 and 4 are
+unaffected, so no working case changes. Guarded by the Windows/macOS cases in
+`test/desktopServices.test.ts` (the previous mock-only test asserted argument
+forwarding and could not catch this). Do not delete `\\?\` globally — it carries
+long-path and non-`MAX_PATH` semantics — and keep the path policy at this one
+shared entry point rather than re-implementing an `explorer.exe /select` command
+line.
+
+Residual limitation (upstream, not introduced here): `dunce` refuses to strip a
+verbatim path longer than `MAX_PATH`, so a >260-character target still reaches the
+Shell as `\\?\…` and fails. The Shell cannot consume verbatim paths at all, so
+"reveal" cannot be repaired from this side.
+
 ## Bounded waits on the save queue; a timed-out open races the save
 
 `runOpen` awaits the active tab's in-flight save queue through

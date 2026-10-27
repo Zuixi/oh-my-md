@@ -78,6 +78,7 @@
 - **Editing hot path owns zero O(doc) work** — no doc string on the update path; materialize on the trailing cadence.
 - **Open-path scale policy has one entry point** — `resetTabDocument` and `ensureViews`; budget/windowing globals follow the active tab only.
 - **Path containment checks must normalize separators** — use `pathWithinDir`.
+- **`revealItemInDir` fails on forward-slash Windows paths** — `\\?\C:\…` + UI `/` separators → `//?/C:/…`, which the plugin cannot simplify and the Shell cannot parse; restore `\` at the call site.
 - **Bounded waits on the save queue** — `awaitWithTimeout`; the save chain keeps running after a timeout.
 - **Stock `drawSelection` extends line ends to the content edge** — the vendored `tightSelection.ts` is the only selection layer; re-diff it on every `@codemirror/view` bump (guard test enforces).
 - **`highlightActiveLine` paints nothing but is load-bearing** — focus mode needs the class; overrides need more classes than the base theme (it is injected later); `.omd-codeblock.cm-activeLine` must repaint.

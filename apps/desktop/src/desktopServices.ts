@@ -18,6 +18,7 @@ import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
 import { t } from "./i18n"
+import { isWindows } from "./platform"
 
 export interface SearchResponse {
   readonly hits: SearchHit[]
@@ -325,7 +326,10 @@ export const defaultServices: DesktopServices = {
   revealInFinder: async path => {
     // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).
     const { revealItemInDir } = await import("@tauri-apps/plugin-opener")
-    await revealItemInDir(path)
+    // Windows：UI 展示用的 `/` 分隔符会把 `\\?\C:\…` 扩展路径变成 `//?/C:/…`，
+    // 插件因此无法简化，Shell 也解析不出 ITEMIDLIST(ILCreateFromPathW 失败)。
+    // 还原反斜杠后再交给插件的 dunce::simplified 处理。
+    await revealItemInDir(isWindows() ? path.replace(/\//g, "\\") : path)
   },
   createMarkdown: (dir, name) => invoke<string>("create_markdown", { dir, name }),
   createDir: (dir, name) => invoke<string>("create_dir", { dir, name }),

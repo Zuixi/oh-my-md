@@ -48,12 +48,45 @@ describe("listSystemFonts", () => {
 })
 
 describe("revealInFinder", () => {
+  const MACOS_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+  const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+  /** happy-dom 的默认 UA 是 X11(→ linux)，平台分支用例必须显式钉住 UA 再还原。 */
+  async function withUserAgent(userAgent: string, run: () => Promise<void>): Promise<void> {
+    const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
+    Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+    try {
+      await run()
+    } finally {
+      if (original) Object.defineProperty(window.navigator, "userAgent", original)
+      else delete (window.navigator as { userAgent?: string }).userAgent
+    }
+  }
+
   it("delegates to the official plugin-opener binding with the path", async () => {
     revealItemInDir.mockResolvedValueOnce(undefined)
     invoke.mockClear()
     await defaultServices.revealInFinder?.("/tmp/notes.md")
     expect(revealItemInDir).toHaveBeenCalledWith("/tmp/notes.md")
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("hands the Windows shell a backslash path (the plugin can then simplify \\\\?\\…)", async () => {
+    await withUserAgent(WINDOWS_UA, async () => {
+      revealItemInDir.mockClear()
+      revealItemInDir.mockResolvedValueOnce(undefined)
+      await defaultServices.revealInFinder?.("//?/E:/note/中文 文档.md")
+      expect(revealItemInDir).toHaveBeenCalledWith("\\\\?\\E:\\note\\中文 文档.md")
+    })
+  })
+
+  it("leaves non-Windows paths untouched", async () => {
+    await withUserAgent(MACOS_UA, async () => {
+      revealItemInDir.mockClear()
+      revealItemInDir.mockResolvedValueOnce(undefined)
+      await defaultServices.revealInFinder?.("//?/notes/doc.md")
+      expect(revealItemInDir).toHaveBeenCalledWith("//?/notes/doc.md")
+    })
   })
 })
 
