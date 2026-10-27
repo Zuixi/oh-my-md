@@ -205,6 +205,30 @@ describe("FileTree sidebar menu", () => {
     expect(harness.services.renamePath).toHaveBeenCalledTimes(2)
   })
 
+  it("提交中切换其他文件，原生失败仍通过 toast 报告", async () => {
+    const harness = makeAppHarness()
+    harness.services.listDir = vi.fn(async () => [
+      { name: "doc.md", path: "/notes/doc.md", is_dir: false },
+      { name: "other.md", path: "/notes/other.md", is_dir: false },
+    ])
+    harness.seedFile("/notes/other.md", "other")
+    let reject!: (error: Error) => void
+    vi.mocked(harness.services.renamePath).mockImplementation(
+      () => new Promise((_resolve, fail) => { reject = fail }),
+    )
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename" }), { target: { value: "taken.md" } })
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename" }), { key: "Enter" })
+    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    await act(async () => { reject(new Error("path already exists")) })
+    await waitFor(() => expect(harness.services.reportError)
+      .toHaveBeenCalledWith(expect.stringContaining("path already exists")))
+  })
+
   it("重命名成功后刷新失败，不保留可重试输入或旧文件名", async () => {
     const harness = makeAppHarness()
     let renamed = false

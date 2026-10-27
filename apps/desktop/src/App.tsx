@@ -2501,12 +2501,15 @@ export default function App({
               folder={workspace.folder}
               rows={treeRows}
               activePath={activeFilePath}
+              activeTabId={workspace.activeId}
+              visible={sidebarOpen}
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => search.setOpen(true)}
               onNewFile={dir => void createTreeFile(dir)}
               onNewFolder={dir => void createTreeFolder(dir)}
               onRename={services.renamePath ? renameTreeEntry : undefined}
+              onRenameError={message => services.reportError(message)}
               onDelete={entry => void deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {

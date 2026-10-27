@@ -621,6 +621,107 @@ pub fn create_dir(dir: String, name: String) -> Result<String, String> {
     Ok(target.to_string_lossy().into_owned())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_no_replace(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let from = CString::new(source.as_os_str().as_bytes())?;
+    let to = CString::new(target.as_os_str().as_bytes())?;
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let result = unsafe {
+        libc::renameatx_np(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn rename_no_replace(source: &Path, target: &Path) -> std::io::Result<()> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::MoveFileW;
+
+    unsafe { MoveFileW(&HSTRING::from(source), &HSTRING::from(target)) }
+        .map_err(|_| std::io::Error::last_os_error())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_no_replace(_source: &Path, _target: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no-overwrite rename is unavailable on this platform",
+    ))
+}
+
+fn same_entry_case_change(source: &Path, target: &Path) -> Result<bool, String> {
+    let (Some(old), Some(new)) = (
+        source.file_name().and_then(|name| name.to_str()),
+        target.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return Ok(false);
+    };
+    if old == new || !target.exists() {
+        return Ok(false);
+    }
+    // A distinct hard link or symlink at the target must remain a collision.
+    for entry in fs::read_dir(source.parent().unwrap()).map_err(|e| e.to_string())? {
+        if entry.map_err(|e| e.to_string())?.file_name() == new {
+            return Ok(false);
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let from = fs::symlink_metadata(source).map_err(|e| e.to_string())?;
+        let to = fs::symlink_metadata(target).map_err(|e| e.to_string())?;
+        Ok(from.dev() == to.dev() && from.ino() == to.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(fs::canonicalize(source).map_err(|e| e.to_string())?
+            == fs::canonicalize(target).map_err(|e| e.to_string())?)
+    }
+}
+
+fn rename_case_only(source: &Path, target: &Path) -> Result<(), String> {
+    let stage = tempfile::Builder::new()
+        .prefix(".omd-rename-")
+        .tempfile_in(source.parent().unwrap())
+        .map_err(|e| e.to_string())?;
+    let stage_path = stage.path().to_path_buf();
+    stage.close().map_err(|e| e.to_string())?;
+    rename_no_replace(source, &stage_path).map_err(|e| e.to_string())?;
+    if let Err(error) = rename_no_replace(&stage_path, target) {
+        if let Err(rollback) = rename_no_replace(&stage_path, source) {
+            return Err(format!(
+                "rename failed: {error}; original remains at {} (restore failed: {rollback})",
+                stage_path.display()
+            ));
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
     let to_name = validate_single_segment(&to_name)?;
     let (parent, current_name) = canonical_parent_and_name(Path::new(&from))?;
@@ -640,10 +741,15 @@ pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
         return Err("markdown files must keep a .md extension".into());
     }
     let target = parent.join(to_name);
-    if target.exists() {
-        return Err("path already exists".into());
+    if source == target {
+        return Ok(source.to_string_lossy().into_owned());
     }
-    fs::rename(&source, &target).map_err(|e| e.to_string())?;
+    if let Err(error) = rename_no_replace(&source, &target) {
+        if !same_entry_case_change(&source, &target)? {
+            return Err(error.to_string());
+        }
+        rename_case_only(&source, &target)?;
+    }
     Ok(target.to_string_lossy().into_owned())
 }
 
@@ -1216,6 +1322,72 @@ mod tests {
         assert_eq!(renamed, canonical_string(&root.join("renamed.md")));
         assert_eq!(fs::read_to_string(&renamed).unwrap(), "hello");
         assert!(!source.exists());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rename_path_changes_only_case_for_file_and_directory() {
+        let root = tmp("rename-case");
+        reset_dir(&root);
+        let file = root.join("draft.md");
+        fs::write(&file, "hello").unwrap();
+        let renamed = rename_path(path_string(&file), "DRAFT.md".into()).unwrap();
+        assert_eq!(
+            renamed,
+            path_string(&root.canonicalize().unwrap().join("DRAFT.md"))
+        );
+        assert_eq!(fs::read_to_string(&renamed).unwrap(), "hello");
+        assert!(fs::read_dir(&root)
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "DRAFT.md"));
+        let directory = root.join("notes");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("child.md"), "child").unwrap();
+        let renamed = rename_path(path_string(&directory), "NOTES".into()).unwrap();
+        assert_eq!(
+            fs::read_to_string(Path::new(&renamed).join("child.md")).unwrap(),
+            "child"
+        );
+        assert!(fs::read_dir(&root)
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "NOTES"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rename_path_never_replaces_a_distinct_target() {
+        let root = tmp("rename-no-replace");
+        reset_dir(&root);
+        let source = root.join("draft.md");
+        let target = root.join("taken.md");
+        fs::write(&source, "original").unwrap();
+        fs::write(&target, "keep").unwrap();
+        assert!(rename_no_replace(&source, &target).is_err());
+        assert!(rename_path(path_string(&source), "taken.md".into()).is_err());
+        assert_eq!(fs::read_to_string(&source).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+
+        let alias = root.join("DRAFT.md");
+        if fs::hard_link(&source, &alias).is_ok() {
+            assert!(rename_path(path_string(&source), "DRAFT.md".into()).is_err());
+            assert_eq!(fs::read_to_string(&alias).unwrap(), "original");
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn case_only_staging_restores_the_source_when_target_is_taken() {
+        let root = tmp("rename-case-rollback");
+        reset_dir(&root);
+        let source = root.join("source.md");
+        let target = root.join("taken.md");
+        fs::write(&source, "original").unwrap();
+        fs::write(&target, "keep").unwrap();
+
+        assert!(rename_case_only(&source, &target).is_err());
+        assert_eq!(fs::read_to_string(&source).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         fs::remove_dir_all(root).ok();
     }
 

@@ -67,6 +67,100 @@ describe("文件树原地重命名", () => {
     }
   })
 
+  it("点击其他文件或目录时关闭未提交的输入框，并执行行操作", () => {
+    const directory: VisibleRow = {
+      entry: { name: "drafts", path: "/notes/drafts", is_dir: true }, depth: 0, expanded: false,
+    }
+    const props = treeProps([file(), file("other.md"), directory])
+    render(<FileTree {...props} />)
+    fireEvent.change(startRename(), { target: { value: "draft.md" } })
+    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onOpenFile).toHaveBeenCalledWith("/notes/other.md")
+    expect(props.onRename).not.toHaveBeenCalled()
+
+    fireEvent.change(startRename(), { target: { value: "draft.md" } })
+    fireEvent.click(screen.getByRole("button", { name: "drafts" }))
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onToggleDir).toHaveBeenCalledWith("/notes/drafts")
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
+
+  it("右键另一行或从标签切换活动文件时取消草稿", () => {
+    const props = treeProps([file(), file("other.md")])
+    const view = render(<FileTree {...props} />)
+    fireEvent.change(startRename(), { target: { value: "draft.md" } })
+    fireEvent.contextMenu(screen.getByRole("button", { name: "other.md" }))
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onRename).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename" }), { target: { value: "another.md" } })
+    view.rerender(<FileTree {...props} activePath="/notes/doc.md" />)
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
+
+  it("提交期间切换文件立即退出，失败经外部反馈且不会重开旧输入框", async () => {
+    let fail!: (error: Error) => void
+    const props = treeProps([file(), file("other.md")])
+    props.onRename.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject }))
+    const onRenameError = vi.fn()
+    render(<FileTree {...props} onRenameError={onRenameError} />)
+    fireEvent.change(startRename(), { target: { value: "taken.md" } })
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename" }), { key: "Enter" })
+    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onOpenFile).toHaveBeenCalledWith("/notes/other.md")
+    await act(async () => { fail(new Error("path already exists")) })
+    expect(onRenameError).toHaveBeenCalledWith("path already exists")
+    expect(props.onRename).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+  })
+
+  it("提交期间切换文件后成功，不抢回新行焦点", async () => {
+    let complete!: (path: string) => void
+    const props = treeProps([file(), file("other.md")])
+    props.onRename.mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const onRenameError = vi.fn()
+    render(<FileTree {...props} onRenameError={onRenameError} />)
+    fireEvent.keyDown(startRename(), { key: "Enter" })
+    const nextRow = screen.getByRole("button", { name: "other.md" })
+    nextRow.focus()
+    fireEvent.click(nextRow)
+    await act(async () => { complete("/notes/renamed.md") })
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(document.activeElement).toBe(nextRow)
+    expect(onRenameError).not.toHaveBeenCalled()
+  })
+
+  it("提交期间标签切换会退出，而原文件路径更新不会提前取消成功态", async () => {
+    let complete!: (path: string) => void
+    const props = treeProps([file(), file("other.md")])
+    props.onRename.mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const view = render(<FileTree {...props} activePath="/notes/doc.md" activeTabId={1} />)
+    fireEvent.keyDown(startRename(), { key: "Enter" })
+    view.rerender(<FileTree {...props} activePath="/notes/other.md" activeTabId={2} />)
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    await act(async () => { complete("/notes/renamed.md") })
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+
+    fireEvent.keyDown(startRename(), { key: "Enter" })
+    view.rerender(<FileTree {...props} activePath="/notes/renamed.md" activeTabId={2} />)
+    expect(screen.getByRole("textbox", { name: "Rename" })).toBeTruthy()
+    await act(async () => { complete("/notes/renamed.md") })
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+  })
+
+  it("侧栏收起再展开不会恢复旧输入框", () => {
+    const props = treeProps()
+    const view = render(<FileTree {...props} visible />)
+    fireEvent.change(startRename(), { target: { value: "draft.md" } })
+    view.rerender(<FileTree {...props} visible={false} />)
+    view.rerender(<FileTree {...props} visible />)
+    expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
+
   it("组合输入的 Enter 和 Escape 不提交或取消", async () => {
     const props = treeProps()
     render(<FileTree {...props} />)

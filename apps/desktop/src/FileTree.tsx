@@ -24,12 +24,15 @@ export function FileTree(props: {
   folder: string | null
   rows: VisibleRow[]
   activePath: string | null
+  activeTabId?: number
+  visible?: boolean
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onSearch: () => void
   onNewFile?: (dir: string) => void
   onNewFolder?: (dir: string) => void
   onRename?: (entry: VisibleRow["entry"], name: string) => Promise<string>
+  onRenameError?: (message: string) => void
   onDelete?: (entry: VisibleRow["entry"]) => void
   onReveal?: (path: string) => void
   onCollapse?: () => void
@@ -75,11 +78,14 @@ export function FileTree(props: {
           rows={props.rows}
           title={title}
           activePath={props.activePath}
+          activeTabId={props.activeTabId}
+          visible={props.visible}
           onOpenFile={props.onOpenFile}
           onToggleDir={props.onToggleDir}
           onNewFile={props.onNewFile}
           onNewFolder={props.onNewFolder}
           onRename={props.onRename}
+          onRenameError={props.onRenameError}
           onDelete={props.onDelete}
           onReveal={props.onReveal}
         />
@@ -99,11 +105,14 @@ function TreeScroller(props: {
   rows: VisibleRow[]
   title: string
   activePath: string | null
+  activeTabId?: number
+  visible?: boolean
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onNewFile?: (dir: string) => void
   onNewFolder?: (dir: string) => void
   onRename?: (entry: VisibleRow["entry"], name: string) => Promise<string>
+  onRenameError?: (message: string) => void
   onDelete?: (entry: VisibleRow["entry"]) => void
   onReveal?: (path: string) => void
 }) {
@@ -130,7 +139,31 @@ function TreeScroller(props: {
     setRename(next)
   }
 
+  function dismissRename() {
+    if (!renameRef.current) return
+    focusPathRef.current = null
+    updateRename(null)
+  }
+
   useEffect(() => () => { renameRef.current = null }, [])
+
+  useEffect(() => {
+    if (props.visible === false) dismissRename()
+  }, [props.visible])
+
+  const activePathRef = useRef(props.activePath)
+  useEffect(() => {
+    if (activePathRef.current === props.activePath) return
+    activePathRef.current = props.activePath
+    if (!renameRef.current?.submitting) dismissRename()
+  }, [props.activePath])
+
+  const activeTabIdRef = useRef(props.activeTabId)
+  useEffect(() => {
+    if (activeTabIdRef.current === props.activeTabId) return
+    activeTabIdRef.current = props.activeTabId
+    dismissRename()
+  }, [props.activeTabId])
 
   useEffect(() => {
     if (!rename || rename.submitting) return
@@ -173,11 +206,15 @@ function TreeScroller(props: {
       const path = await props.onRename(edit.entry, edit.draft)
       finishRename(edit.id, path, focusedAtSubmit)
     } catch (error) {
-      if (renameRef.current?.id !== edit.id) return
+      const message = error instanceof Error ? error.message : String(error)
+      if (renameRef.current?.id !== edit.id) {
+        props.onRenameError?.(message)
+        return
+      }
       updateRename({
         ...edit,
         submitting: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       })
     }
   }
@@ -273,13 +310,20 @@ function TreeScroller(props: {
             ) : <TreeRow
               row={row}
               active={row.entry.path === props.activePath}
-              onOpenFile={props.onOpenFile}
-              onToggleDir={props.onToggleDir}
+              onOpenFile={path => {
+                dismissRename()
+                props.onOpenFile(path)
+              }}
+              onToggleDir={path => {
+                dismissRename()
+                props.onToggleDir(path)
+              }}
               onContextMenu={event => {
                 event.preventDefault()
                 event.stopPropagation()
                 const dir = row.entry.is_dir ? row.entry.path : parentDir(row.entry.path)
                 if (!dir) return
+                dismissRename()
                 setMenu({
                   entry: row.entry,
                   dir,

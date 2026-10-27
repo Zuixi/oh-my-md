@@ -59,3 +59,28 @@ test("真实滚动卸载后恢复草稿，Escape 取消且保持原名", async (
   await expect(input).toHaveCount(0)
   await expect(page.getByRole("button", { name: "中文 草稿.md", exact: true })).toBeFocused()
 })
+
+test("点击其他文件行后关闭原行输入框，不提交草稿", async ({ page }) => {
+  await page.goto("/e2e/filetree-harness.html")
+  await page.getByRole("button", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click()
+  const input = page.getByRole("textbox", { name: "Rename", exact: true })
+  await input.fill("uncommitted.md")
+  await page.getByRole("button", { name: "long-file-name-1-for-sidebar-layout.md" }).click()
+  await expect(input).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "中文 草稿.md", exact: true })).toBeVisible()
+})
+
+test("提交中切换文件立即退出输入框，随后失败仍可见", async ({ page }) => {
+  await page.goto("/e2e/filetree-harness.html")
+  await page.getByRole("button", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click()
+  const input = page.getByRole("textbox", { name: "Rename", exact: true })
+  await input.fill("delayed-error.md")
+  await input.press("Enter")
+  await page.getByRole("button", { name: "long-file-name-1-for-sidebar-layout.md" }).click()
+  await expect(input).toHaveCount(0)
+  await page.getByRole("button", { name: "Finish rename" }).click()
+  await expect(page.getByRole("alert")).toHaveText("Delayed rename failed.")
+  await expect(page.getByRole("button", { name: "中文 草稿.md", exact: true })).toBeVisible()
+})

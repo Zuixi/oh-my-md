@@ -2787,6 +2787,7 @@ dependencies = [
  "block2",
  "dirs",
  "ignore",
+ "libc",
  "log",
  "notify",
  "objc2",
