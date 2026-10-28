@@ -6,7 +6,7 @@ import type { BlockWidget } from "./blockWidget"
 // 覆盖判定用 livePreviewField.specs 的 from/to（构造期 pos 会随编辑漂移）。
 // DOM 位置只用于在多个 eq() widget 中确认当前实例，最终范围仍来自 specs。
 const liveWraps = new Map<BlockWidget, HTMLElement>()
-const liveRanges = new Map<HTMLElement, { from: number; to: number }>()
+const liveRanges = new WeakMap<HTMLElement, { from: number; to: number }>()
 
 export function registerBlockWidget(widget: BlockWidget, dom: HTMLElement) {
   liveWraps.set(widget, dom)
@@ -76,8 +76,11 @@ function refresh(view: EditorView) {
   // 清扫失效实例（防御性）：注册表按实例存 DOM，而注销只走 destroy()。CM 的
   // pass-0 复用（eq 相同、不调 updateDOM）会换掉 tile.widget 却不给旧实例 destroy，
   // 若某条路径漏了 updateDOM 里的 unregister，条目就会带着一个死键 + 活 DOM 留下来。
-  // 实测 churn 场景下 wrap 数恒为 0（见 gotchas「块 widget 反复挂载/卸载会持续占用
-  // 内存」），所以这不是那个泄漏的修法；这里只保证 Map 不因任何未覆盖路径只增不减。
+  // 这里只保证 liveWraps 不因任何未覆盖路径只增不减。注：以 DOM 为键的 liveRanges 曾是
+  // 模块级 Map，把每个卸载掉的 wrap 强引用住（见 gotchas「块 widget 反复挂载/卸载会持续
+  // 占用内存」），现已改成 WeakMap —— 那是一次**所有权**修正，不是内存问题的修复：改完后
+  // 聚合 Chromium 堆增长仍可复现且根因 inconclusive（WeakMap/ephemeron/快照的“仍可见”
+  // 不等于“仍被强引用”），所以本函数仍不管 DOM 生命周期。
   for (const [widget, dom] of liveWraps) if (!dom.isConnected) liveWraps.delete(widget)
   const used = new Set<HTMLElement>()
   for (const spec of specs) {

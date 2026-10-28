@@ -152,6 +152,20 @@ test("fence: foo({a: \"b\"}) types with zero manual closers, and markers stay li
   expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
 })
 
+test("fence: Enter between an auto-paired {} aligns the existing closer", async ({ page }) => {
+  // 配对与回车是两个独立 handler：单测各自绿过，只有真管线的组合才看得到
+  // 「`}` 被推到缩进后的内行」。断言精确文本 + 光标，因为两者都错时才看得出归属。
+  await open(page, "```cpp\n\n```")
+  await placeCaret(page, 7) // the empty content line (after ```cpp\n)
+  await page.keyboard.type("{")
+  expect(await docOf(page), "the bracket pairs inside the fence").toBe("```cpp\n{}\n```")
+  expect(await caretOf(page)).toBe(8) // between `{` and `}`
+  await page.keyboard.press("Enter")
+  expect(await docOf(page)).toBe("```cpp\n{\n  \n}\n```")
+  expect(await caretOf(page), "the caret sits on the indented inner line").toBe(11)
+  expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
+})
+
 test("fence: a marker before an existing closing marker inserts instead of skipping (D12)", async ({ page }) => {
   await open(page, "```\n`x`\n```")
   await placeCaret(page, 6) // right before the existing closing backtick

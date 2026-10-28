@@ -17,12 +17,11 @@ test("```lang + Enter mid-document creates the rendered block in place", async (
 
   await page.keyboard.type("int main() {")
   await page.keyboard.press("Enter")
-  await page.keyboard.type("  return 0;")
-  // Two content lines now; the trailing closing fence stays collapsed.
-  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(2)
+  await page.keyboard.type("return 0;")
+  // Smart Enter expands the auto-paired braces into opener / indented body / closer.
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(3)
   const text = await page.evaluate(() => window.__view.state.doc.toString())
-  expect(text).toContain("int main() {")
-  expect(text).toContain("  return 0;")
+  expect(text).toContain("```cpp\nint main() {\n  return 0;\n}\n```")
   // Fences wrap the code; existing paragraphs stay outside the block.
   const open = text.indexOf("```cpp")
   const close = text.lastIndexOf("```")

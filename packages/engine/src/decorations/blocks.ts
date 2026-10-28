@@ -15,7 +15,6 @@ import { parseFenceInfo } from "../fenceInfo"
 import { blockPrefixOf } from "../format/blockPrefix"
 
 const MAX_QUOTE_DEPTH = 4
-const MAX_LIST_DEPTH = 4
 
 // Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
 // caret is inside the mark itself — same span granularity as the inline reveal
@@ -104,9 +103,16 @@ function quoteInsideList(node: SyntaxNode): boolean {
 function blockEmbed(node: SyntaxNode): BlockEmbed {
   return {
     quoteDepth: Math.min(ancestorQuoteDepth(node), MAX_QUOTE_DEPTH),
-    listDepth: Math.min(listDepth(node), MAX_LIST_DEPTH),
+    listDepth: listDepth(node),
     quoteInList: quoteInsideList(node),
   }
+}
+
+// 列表行深度用**一个**稳定类 + 行内 `--omd-list-depth` 表达（视觉换算在 desktop
+// CSS）。tag 保留真实深度：增量装饰身份必须随深度变化，否则缩进变化时旧行装饰
+// 会被复用。
+function listDepthLine(cssClass: string, depth: number): Decoration {
+  return Decoration.line({ class: cssClass, attributes: { style: `--omd-list-depth: ${depth}` } })
 }
 
 function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
@@ -306,7 +312,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
 
 function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const depth = Math.min(Math.max(quoteDepth(node.node), 1), MAX_QUOTE_DEPTH)
-  const itemDepth = Math.min(listDepth(node.node), MAX_LIST_DEPTH)
+  const itemDepth = listDepth(node.node)
   for (let pos = node.from; pos <= node.to; ) {
     const line = state.doc.lineAt(pos)
     if (!childQuoteCoversLine(node.node, line.from, line.to)) {
@@ -319,7 +325,7 @@ function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
         out.push({
           from: line.from, to: line.from,
           tag: `line:omd-quote-in-li-${itemDepth}`,
-          deco: Decoration.line({ class: `omd-quote-in-li-${itemDepth}` }),
+          deco: listDepthLine("omd-quote-in-li", itemDepth),
         })
       }
     }
@@ -342,12 +348,11 @@ function listIndentStart(lineFrom: number, markFrom: number, state: EditorState)
 
 function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const line = state.doc.lineAt(node.from)
-  let depth = 0
-  for (let parent = node.node.parent; parent; parent = parent.parent) {
-    if (parent.name === "ListItem") depth++
-  }
-  const cls = `omd-li-${Math.min(depth, MAX_LIST_DEPTH)}`
-  out.push({ from: line.from, to: line.from, tag: `line:${cls}`, deco: Decoration.line({ class: cls }) })
+  const depth = listDepth(node.node)
+  out.push({
+    from: line.from, to: line.from, tag: `line:omd-li-${depth}`,
+    deco: listDepthLine("omd-li", depth),
+  })
 
   // 路线 A：列表符与缩进无条件折叠 —— 点击列表文本只定位光标，不闪源码；
   // 列表增删走 toggleOrderedList / toggleUnorderedList 命令。

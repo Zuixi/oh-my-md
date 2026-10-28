@@ -33,6 +33,10 @@ function click(el: Element, x = 10, y = 10) {
 
 const tick = (ms = 100) => new Promise(r => setTimeout(r, ms))
 
+/** Engine emits depth as a CSS custom property, not one class per depth. */
+const listDepthOf = (el: Element) =>
+  (el as HTMLElement).style.getPropertyValue("--omd-list-depth").trim()
+
 async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   const started = Date.now()
   while (Date.now() - started < timeout) {
@@ -289,6 +293,52 @@ describe("view smoke (real EditorView)", () => {
   })
 
 
+  it("keeps identical widgets isolated across views", async () => {
+    // 同一份字节级相同的文档挂两个 EditorView：两个视图各自建 widget 实例，但模块级
+    // 注册表（liveWraps）是进程共享的。这里锁死：点击 / 覆盖态都不得串到另一个视图。
+    const doc = "before\n\n```js\nconst x = 1\nconst y = 2\n```\n\nafter"
+    const first = makeView(doc, 0)          // 光标在块外
+    const second = makeView(doc)            // 光标在文末（块外）
+    const parents = [first.view.dom.parentElement, second.view.dom.parentElement]
+    try {
+      expect(await waitFor(".omd-code .line", first.view)).toBeTruthy()
+      expect(await waitFor(".omd-code .line", second.view)).toBeTruthy()
+      const firstHead = first.view.state.selection.main.head
+      const rows = second.view.dom.querySelectorAll<HTMLElement>(".omd-code .line")
+      expect(rows.length).toBeGreaterThanOrEqual(2)
+
+      click(rows[1])   // 只点第二个视图里的代码行
+      await tick()
+
+      // 第二个视图进入源码，光标落在被点击的那一行
+      expect(second.view.dom.querySelector(".omd-code")).toBeNull()
+      expect(second.view.state.selection.main.head).toBe(doc.indexOf("const y = 2"))
+      // 第一个视图原样不动
+      expect(first.view.dom.querySelector(".omd-code")).toBeTruthy()
+      expect(first.view.state.selection.main.head).toBe(firstHead)
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+
+      // 第二个视图移出块 → 两块都重新渲染
+      second.view.dispatch({ selection: { anchor: doc.length } })
+      await tick()
+      expect(await waitFor(".omd-code .line", second.view)).toBeTruthy()
+      expect(first.view.dom.querySelector(".omd-code")).toBeTruthy()
+
+      // 只在第一个视图做整篇选区 → 覆盖态只属于它
+      first.view.dispatch({ selection: { anchor: 0, head: doc.length } })
+      await tick()
+      expect(first.view.dom.querySelector(".omd-block-covered")).toBeTruthy()
+      expect(second.view.dom.querySelector(".omd-block-covered")).toBeNull()
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+    } finally {
+      first.view.destroy()
+      second.view.destroy()
+      for (const parent of parents) parent?.remove()
+    }
+  })
+
   it("keeps checkbox edit position correct after inserting before it", async () => {
     const doc = "before\n\n- [ ] task\n"
     const { view, errors } = makeView(doc, 0)
@@ -417,8 +467,9 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     const quoteLines = [...view.dom.querySelectorAll(".omd-blockquote-1")]
     expect(quoteLines.length).toBeGreaterThanOrEqual(2)
-    expect(quoteLines.every(el => el.classList.contains("omd-quote-in-li-1"))).toBe(true)
-    expect(quoteLines.every(el => !el.classList.contains("omd-li-1"))).toBe(true)
+    expect(quoteLines.every(el => el.classList.contains("omd-quote-in-li"))).toBe(true)
+    expect(quoteLines.every(el => !el.classList.contains("omd-li"))).toBe(true)
+    expect(quoteLines.every(el => listDepthOf(el) === "1")).toBe(true)
     expect(quoteLines.some(el => el.textContent === "菜鸟教程")).toBe(true)
     expect(quoteLines.some(el => el.textContent === "学的不仅是技术更是梦想")).toBe(true)
     expect(errors.map(String)).toEqual([])
@@ -442,10 +493,37 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     expect(view.dom.querySelectorAll(".omd-ordered-mark")).toHaveLength(2)
     expect(view.dom.querySelectorAll(".omd-bullet")).toHaveLength(3)
-    const listLines = [...view.dom.querySelectorAll(".omd-li-1")]
+    const listLines = [...view.dom.querySelectorAll(".omd-li")]
     expect(listLines.length).toBeGreaterThanOrEqual(5)
     expect(listLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
-    expect(listLines.every(el => !el.classList.contains("omd-quote-in-li-1"))).toBe(true)
+    expect(listLines.every(el => !el.classList.contains("omd-quote-in-li"))).toBe(true)
+    expect(listLines.every(el => listDepthOf(el) === "1")).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps the visual list depth past 4 as one class plus --omd-list-depth", async () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const line = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("L5"))
+    expect(line?.classList.contains("omd-li")).toBe(true)
+    expect(line ? listDepthOf(line) : null).toBe("5")
+    expect(view.dom.querySelector("[class*='omd-li-']")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders a quote nested in a depth-5 list with the quote-in-list class", async () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n          > deep quote\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const quote = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("deep quote"))
+    expect(quote?.classList.contains("omd-quote-in-li")).toBe(true)
+    expect(quote?.classList.contains("omd-li")).toBe(false)
+    expect(quote ? listDepthOf(quote) : null).toBe("5")
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

@@ -4,7 +4,7 @@ import type { TableAlignment, TableCellData, TableData } from "../../tables/mode
 import { tableAt } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
 import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
-import { BlockWidget, type BlockEmbed } from "../blockWidget"
+import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon } from "../icons"
@@ -237,6 +237,9 @@ export class TableWidget extends BlockWidget {
     this.view = view
     this.wrap = dom as HTMLDivElement
     ownDom(this, dom)
+    // 旧 DOM 上的嵌入类/深度属于上一个实例（CM pass-1 只换了 tile.widget）：
+    // 整块刷新成当前嵌入值，深度变深/离开列表/进出引用都不会留旧状态。
+    applyBlockEmbed(dom, this.embed)
     // 迁移上一实例的工具栏目标：行列不变时 hover 语义延续（没有 hover 就仍是没有）。
     this.row = prev.row
     this.col = prev.col

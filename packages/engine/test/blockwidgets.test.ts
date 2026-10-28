@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest"
 import { Decoration } from "@codemirror/view"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import { makeState } from "./helpers"
-import { BlockWidget } from "../src/decorations/blockWidget"
+import { BlockWidget, applyBlockEmbed } from "../src/decorations/blockWidget"
 import { CheckboxWidget } from "../src/decorations/widgets"
 import { ImageWidget, imageResolver } from "../src/decorations/widgets/image"
-import { CodeWidget } from "../src/decorations/widgets/code"
+import { CodeWidget, CodeChromeWidget } from "../src/decorations/widgets/code"
 import { TableWidget } from "../src/decorations/widgets/table"
 import type { TableData, TableRowData } from "../src/tables/model"
 import { MermaidWidget } from "../src/decorations/widgets/mermaid"
@@ -112,6 +112,82 @@ describe("block widget pipeline", () => {
   it("widget decorations are atomic ranges spec-able (sanity: replace deco exists)", () => {
     const deco = Decoration.replace({ widget: new ProbeWidget("x", 0), block: true })
     expect(deco).toBeTruthy()
+  })
+
+  it("carries real list depth past 4 onto a block widget and its DOM", () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n\n          ```js\n          const x = 1\n          ```\n\ntail"
+    const widget = collectDecorationSpecs(makeState(doc), 0, doc.length)
+      .find(d => d.tag === "widget:block:code")?.deco.spec.widget as CodeWidget | undefined
+    expect(widget?.embed.listDepth).toBe(5)
+    const dom = widget!.toDOM({ requestMeasure: () => {} } as never)
+    expect(dom.classList.contains("omd-li")).toBe(true)
+    expect(dom.classList.contains("omd-li-5")).toBe(false)
+    expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("5")
+    dom.remove()
+  })
+
+  it("puts the same list depth on rendered code headers and editing chrome", () => {
+    const embed = { quoteDepth: 0, listDepth: 5, quoteInList: false }
+    const view = { requestMeasure: () => {} } as never
+    const rendered = new CodeWidget({ src: "x = 1", pos: 0, lang: "js", title: "", embed }).toDOM(view)
+    const renderedHeader = rendered.querySelector(".omd-code-header") as HTMLElement
+    expect(renderedHeader.classList.contains("omd-li")).toBe(true)
+    expect(renderedHeader.style.getPropertyValue("--omd-list-depth")).toBe("5")
+
+    const chrome = new CodeChromeWidget("js", "", undefined, embed).toDOM(view) as HTMLElement
+    expect(chrome.classList.contains("omd-code-header")).toBe(true)
+    expect(chrome.classList.contains("omd-li")).toBe(true)
+    expect(chrome.style.getPropertyValue("--omd-list-depth")).toBe("5")
+    rendered.remove()
+    chrome.remove()
+  })
+
+  // updateDOM 复用的是旧实例建的 DOM（CM pass-1）：嵌入类/深度属性只写一次就会
+  // 停留在旧值（深度停在 1、'omd-li' 与 'omd-quote-in-li' 并存）。
+  describe("applyBlockEmbed synchronization", () => {
+    it("drops embed state the new embed no longer carries", () => {
+      const el = document.createElement("div")
+      el.className = "omd-block omd-math"
+      applyBlockEmbed(el, { quoteDepth: 2, listDepth: 1, quoteInList: false })
+      expect(el.classList.contains("omd-blockquote")).toBe(true)
+      expect(el.classList.contains("omd-blockquote-2")).toBe(true)
+
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 5, quoteInList: false })
+      expect(el.classList.contains("omd-blockquote")).toBe(false)
+      expect(el.classList.contains("omd-blockquote-2")).toBe(false)
+      expect(el.classList.contains("omd-li")).toBe(true)
+      expect(el.style.getPropertyValue("--omd-list-depth")).toBe("5")
+    })
+
+    it("switches between omd-li and omd-quote-in-li instead of keeping both", () => {
+      const el = document.createElement("div")
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 2, quoteInList: false })
+      applyBlockEmbed(el, { quoteDepth: 1, listDepth: 2, quoteInList: true })
+      expect(el.classList.contains("omd-li")).toBe(false)
+      expect(el.classList.contains("omd-quote-in-li")).toBe(true)
+      expect(el.classList.contains("omd-blockquote-1")).toBe(true)
+
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 2, quoteInList: false })
+      expect(el.classList.contains("omd-li")).toBe(true)
+      expect(el.classList.contains("omd-quote-in-li")).toBe(false)
+      expect(el.classList.contains("omd-blockquote-1")).toBe(false)
+    })
+
+    it("clears the list depth when the block leaves the list", () => {
+      const el = document.createElement("div")
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 3, quoteInList: false })
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 0, quoteInList: false })
+      expect(el.classList.contains("omd-li")).toBe(false)
+      expect(el.style.getPropertyValue("--omd-list-depth")).toBe("")
+    })
+
+    it("never removes widget-owned classes", () => {
+      const el = document.createElement("div")
+      el.className = "omd-block omd-code omd-code-header omd-table omd-math"
+      applyBlockEmbed(el, { quoteDepth: 1, listDepth: 1, quoteInList: false })
+      applyBlockEmbed(el, { quoteDepth: 0, listDepth: 0, quoteInList: false })
+      expect(el.className).toBe("omd-block omd-code omd-code-header omd-table omd-math")
+    })
   })
 
   it("widget equality includes every DOM behavior input", () => {

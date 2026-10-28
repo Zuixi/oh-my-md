@@ -75,11 +75,16 @@ export function tablePrevCellSpec(state: EditorState): TransactionSpec | null {
   return unresolvedTableRowSpec(state, pos)
 }
 
+/**
+ * Enter：有下一行就下移到同列；末行（含 `Table.to` 边界、末行缺列的 ragged 行）退出到
+ * 表后的空段。加行是 Tab 的专属动作 —— Enter 反复按会无限加行，而表格源码里也绝不
+ * 能落一个原始换行。退出复用 `exitTableSpec`，与 Mod-Enter 同一套幂等规则。
+ */
 export function tableNextRowSpec(state: EditorState): TransactionSpec | null {
   const pos = state.selection.main.head
   const below = cellBelow(state, pos, 1)
   if (below) return caret(contentStart(state, below))
-  return cellAt(state, pos) ? appendRowSpec(state, pos) : null
+  return cellAt(state, pos) ? exitTableSpec(state) : null
 }
 
 export function tablePrevRowSpec(state: EditorState): TransactionSpec | null {

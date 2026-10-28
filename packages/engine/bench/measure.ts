@@ -51,6 +51,34 @@ function baseState(doc: string): EditorState {
   return EditorState.create({ doc, extensions: editorExtensions() })
 }
 
+export interface TypingViewOptions {
+  mode: "live" | "source"
+  tree: "steady" | "complete"
+  /** 逐键前同步排空 pending（bench/test 专用，生产禁止调用 drainPendingLiveBuild）。
+   * 排空范围 = 当前树已覆盖的区间：与 tree:"steady" 合用时即「生产 ParseWindow
+   * 已消化完」的稳态，不会把树推到 doc.length。 */
+  drain?: boolean
+  /** 安全模式窗口化稳态（见 syncSafeWindowReady）。 */
+  safeWindow?: boolean
+}
+
+/** measureTyping 的准备段（挂 view + 解析到请求的树范围 + 可选 drain/safeWindow）。
+ * 调用方负责 `view.destroy()` 并移除其父容器（`view.dom.parentElement`）。 */
+export function prepareTypingView(doc: string, opts: TypingViewOptions): EditorView {
+  let state = baseState(doc)
+  if (opts.mode === "source") state = state.update(setLivePreview(false)).state
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({ state, parent })
+  forceParsing(view, opts.tree === "complete" ? doc.length : view.viewport.to + 100000, 60000)
+  // 树范围定了之后才排空：drain 只消化树已覆盖的区间，不推进解析。
+  if (opts.drain) drainPendingLiveBuild(view)
+  // 窗口化稳态：生产由 liveBuildDriver 的微任务/idle 通道推进，而 bench 的同步
+  // 度量循环期间那些回调不会运行 —— 同步落位等价稳态后再逐键。
+  if (opts.safeWindow) syncSafeWindowReady(view)
+  return view
+}
+
 /** 在文档中部连续逐键输入，度量每笔事务耗时（含增量重解析+装饰更新）。
  *
  * tree 口径（Spec 05a §10.4）：
@@ -69,22 +97,21 @@ export function measureTyping(
      * 窗口外归还 pending」落位（见 syncSafeWindowReady），度量窗口为界的
      * 每键装饰映射成本。 */
     safeWindow?: boolean
+    /** 逐键前同步排空当前树的 pending（见 prepareTypingView）；tree:"steady" 即
+     * 生产 ParseWindow 消化完的稳态。 */
+    drain?: boolean
     /** 逐键起点（默认文档中点，保持既有基准不变）。 */
     caret?: number
   } = {},
 ): TypingLatency {
   const count = opts.keystrokes ?? 200
-  const mode = opts.mode ?? "live"
-  const tree = opts.tree ?? "steady"
-  let state = baseState(doc)
-  if (mode === "source") state = state.update(setLivePreview(false)).state
-  const parent = document.createElement("div")
-  document.body.appendChild(parent)
-  const view = new EditorView({ state, parent })
-  forceParsing(view, tree === "complete" ? doc.length : view.viewport.to + 100000, 60000)
-  // 窗口化稳态：生产由 liveBuildDriver 的微任务/idle 通道推进，而 bench 的同步
-  // 度量循环期间那些回调不会运行 —— 同步落位等价稳态后再逐键。
-  if (opts.safeWindow) syncSafeWindowReady(view)
+  const view = prepareTypingView(doc, {
+    mode: opts.mode ?? "live",
+    tree: opts.tree ?? "steady",
+    drain: opts.drain,
+    safeWindow: opts.safeWindow,
+  })
+  const parent = view.dom.parentElement
   let pos = opts.caret ?? Math.floor(doc.length / 2)
   const samples: number[] = []
   for (let i = 0; i < count; i++) {
@@ -94,7 +121,7 @@ export function measureTyping(
     pos += 1
   }
   view.destroy()
-  parent.remove()
+  parent?.remove()
   const sorted = [...samples].sort((a, b) => a - b)
   return { p50Ms: percentile(sorted, 50), p95Ms: percentile(sorted, 95), samples: count }
 }

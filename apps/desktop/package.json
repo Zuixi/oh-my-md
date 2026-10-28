@@ -9,7 +9,8 @@
     "test": "tsc -p tsconfig.test.json && vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "audit:widget-memory": "node e2e/widget-memory-audit.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.7.1",

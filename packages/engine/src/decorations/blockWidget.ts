@@ -14,17 +14,31 @@ export interface BlockEmbed {
 }
 
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
+const EMBED_CLASS = /^omd-blockquote(-\d+)?$/
 
-function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
-  const classes = ["omd-block", cssClass]
+/**
+ * 引用/列表嵌入：把嵌入类与列表深度写到元素上（块 widget 与代码 chrome 共用一份，
+ * 不再各自复制一套类名拼接）。列表深度是语义值 —— 一个稳定类 + `--omd-list-depth`
+ * 行内自定义属性，视觉换算（padding/引用条位置）归 desktop CSS。
+ *
+ * 同步而非叠加：块 widget 的 DOM 会被 CM pass-1 复用（eq 失败 → updateDOM），旧 DOM
+ * 上还留着上一层的 `omd-li` / `omd-quote-in-li` / 引用类和深度属性。先清空嵌入自己的
+ * 状态再写入当前值，否则深度会停在旧值、`omd-li` 与 `omd-quote-in-li` 会并存。
+ * 只碰嵌入自己的类：`omd-block` / `omd-table` / `omd-math` / `omd-code` / `omd-code-header`
+ * 属于 widget 本体，删不得。
+ */
+export function applyBlockEmbed(el: HTMLElement, embed: BlockEmbed): void {
+  for (const cls of [...el.classList]) {
+    if (cls === "omd-li" || cls === "omd-quote-in-li" || EMBED_CLASS.test(cls)) el.classList.remove(cls)
+  }
+  el.style.removeProperty("--omd-list-depth")
   if (embed.quoteDepth > 0) {
-    classes.push("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
+    el.classList.add("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
   }
   if (embed.listDepth > 0) {
-    const nest = embed.quoteInList ? "omd-quote-in-li" : "omd-li"
-    classes.push(`${nest}-${embed.listDepth}`)
+    el.classList.add(embed.quoteInList ? "omd-quote-in-li" : "omd-li")
+    el.style.setProperty("--omd-list-depth", String(embed.listDepth))
   }
-  return classes.join(" ")
 }
 
 // 光标/选区与 [from, to] 重叠（含边界）且**未完整包含**→ 块处于编辑态（显示源码）。
@@ -97,7 +111,8 @@ export abstract class BlockWidget extends WidgetType {
 
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
-    wrap.className = blockWidgetClass(this.cssClass, this.embed)
+    wrap.className = `omd-block ${this.cssClass}`
+    applyBlockEmbed(wrap, this.embed)
     wrap.title = this.enterSourceOnClick() ? "Click to edit source" : ""
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return

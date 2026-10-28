@@ -311,6 +311,38 @@ describe("block syntax", () => {
     expect(t).toContain("line:omd-li-3")
   })
 
+  it("keeps the real list depth past 4 as a CSS custom property on one stable class", () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5"
+    const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
+    const lines = collectDecorationSpecs(state, 0, doc.length)
+      .filter(d => d.tag.startsWith("line:omd-li-"))
+    // tag 仍带真实深度（增量装饰身份随深度变化），class 只有一个。
+    expect(lines.map(d => d.tag)).toEqual([
+      "line:omd-li-1", "line:omd-li-2", "line:omd-li-3", "line:omd-li-4", "line:omd-li-5",
+    ])
+    for (const line of lines) {
+      const spec = line.deco.spec as { class?: string; attributes?: Record<string, string> }
+      expect(spec.class).toBe("omd-li")
+      expect(spec.attributes?.style).toBe(
+        `--omd-list-depth: ${line.tag.slice("line:omd-li-".length)}`,
+      )
+    }
+  })
+
+  it("keeps the real list depth on a quote nested in a depth-5 list", () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n          > deep quote"
+    const quoteLine = doc.lastIndexOf("\n") + 1
+    const state = makeState(doc).update({ selection: { anchor: 0 } }).state
+    const lineSpecs = collectDecorationSpecs(state, 0, doc.length)
+      .filter(d => d.from === quoteLine && d.to === quoteLine && d.tag.startsWith("line:"))
+    expect(lineSpecs.map(d => d.tag)).toEqual([
+      "line:omd-blockquote-1", "line:omd-quote-in-li-5",
+    ])
+    const nest = lineSpecs[1].deco.spec as { class?: string; attributes?: Record<string, string> }
+    expect(nest.class).toBe("omd-quote-in-li")
+    expect(nest.attributes?.style).toBe("--omd-list-depth: 5")
+  })
+
   it("hides source indent spaces when cursor is off the line", () => {
     const doc = "- outer\n  - inner\n\ntail"
     const s = makeState(doc).update({ selection: { anchor: doc.length } }).state

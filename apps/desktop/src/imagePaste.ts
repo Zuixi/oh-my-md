@@ -120,6 +120,10 @@ export function imagePasteHandler(options: ImagePasteOptions) {
       },
 
       paste(event, view) {
+        if (view.state.readOnly) {
+          contextMenuTarget = null
+          return true
+        }
         const items = Array.from(event.clipboardData?.items ?? [])
         const imageItem = items.find(i => i.type.startsWith("image/"))
 

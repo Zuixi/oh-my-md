@@ -67,6 +67,32 @@ function contentStartOf(info: CodeContentLine): number {
   return info.line.from + info.prefix.length
 }
 
+function exitCodeBlockSpec(state: EditorState, info: CodeContentLine): TransactionSpec | null {
+  if (state.selection.main.head !== info.line.to || info.content.trim() !== "") return null
+  const fence = fencedCodeAt(state, info.line)
+  if (!fence) return null
+  let closingLine: Line | null = null
+  for (let child = fence.firstChild; child; child = child.nextSibling) {
+    if (child.name !== "CodeMark") continue
+    const line = state.doc.lineAt(child.from)
+    if (line.number === info.line.number + 1) closingLine = line
+  }
+  if (!closingLine) return null
+
+  if (closingLine.number < state.doc.lines) {
+    const next = state.doc.line(closingLine.number + 1)
+    if (next.text.startsWith(info.prefix) && next.text.slice(info.prefix.length).trim() === "") {
+      return { selection: { anchor: next.to }, scrollIntoView: true }
+    }
+  }
+  const insert = `\n${info.prefix}`
+  return {
+    changes: { from: closingLine.to, to: closingLine.to, insert },
+    selection: { anchor: closingLine.to + insert.length },
+    scrollIntoView: true,
+  }
+}
+
 function dispatchSpec(spec: (state: EditorState) => TransactionSpec | null): Command {
   return target => {
     // readOnly 是建议性 facet：keymap 命令直接 dispatch 会绕过输入拦截。
@@ -85,9 +111,21 @@ function dispatchSpec(spec: (state: EditorState) => TransactionSpec | null): Com
 export function continueCodeLineSpec(state: EditorState): TransactionSpec | null {
   const info = codeContentLine(state)
   if (!info) return null
+  const exit = exitCodeBlockSpec(state, info)
+  if (exit) return exit
   const contentStart = contentStartOf(info)
   const at = Math.max(state.selection.main.head, contentStart)
   const caretInContent = Math.min(info.content.length, Math.max(0, at - contentStart))
+  // 光标正好夹在一对相邻的 `{` `}` 之间（auto-pair 的产物）：另起两行，内行再缩进
+  // 一级，闭合花括号留在与 `{` 同列的开括号行 —— 就地保留它，绝不重插/替换。
+  if (info.content[caretInContent - 1] === "{" && info.content[caretInContent] === "}") {
+    const base = /^[ \t]*/.exec(info.content)?.[0] ?? ""
+    const insert = `\n${info.prefix}${base}${INDENT_UNIT}\n${info.prefix}${base}`
+    return {
+      changes: { from: at, to: at, insert },
+      selection: { anchor: at + 1 + info.prefix.length + base.length + INDENT_UNIT.length },
+    }
+  }
   const insert = `\n${info.prefix}${nextIndent(info.content, caretInContent)}`
   return { changes: { from: at, to: at, insert }, selection: { anchor: at + insert.length } }
 }

@@ -34,6 +34,14 @@ describe("exportRichHtml", () => {
     expect(html).not.toMatch(/<code>\$\$/)
   })
 
+  it("keeps repeat math exports byte-identical", async () => {
+    const state = makeState("$x_1$\n\n$$\ny^2\n$$")
+    const first = await exportRichHtml(state)
+    const second = await exportRichHtml(state)
+    expect(second).toBe(first)
+    expect(second).toMatch(/katex|<math/)
+  })
+
   it("renders js fenced code with Shiki highlighting (style attributes or span)", async () => {
     const html = await exportRichHtml(makeState("```js\nconst x = 1\n```"))
     // Shiki output has class or inline style attributes

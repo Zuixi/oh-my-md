@@ -1,6 +1,8 @@
 /// <reference path="../types/turndown-plugin-gfm.d.ts" />
+import { language } from "@codemirror/language"
 import { EditorView } from "@codemirror/view"
-import type { Extension } from "@codemirror/state"
+import type { EditorState, Extension } from "@codemirror/state"
+import { inVerbatim } from "../parse/verbatim"
 import { normalizeBlockPaste } from "./blockBoundaries"
 
 // Rich-text paste: convert clipboard text/html to Markdown with turndown +
@@ -14,6 +16,14 @@ interface ClipboardLike {
 type HtmlToMarkdown = (html: string) => string
 
 let converterPromise: Promise<HtmlToMarkdown> | null = null
+
+function shouldPastePlainText(state: EditorState): boolean {
+  if (state.facet(language) === null) return false
+  return state.selection.ranges.some(range =>
+    inVerbatim(state, range.from) ||
+    (!range.empty && inVerbatim(state, range.to - 1)),
+  )
+}
 
 function getConverter(): Promise<HtmlToMarkdown> {
   return converterPromise ??= Promise.all([
@@ -87,6 +97,7 @@ export function htmlPaste(): Extension {
         return false
       }
       if (!clipboard.getData("text/html").trim()) return false
+      if (clipboard.getData("text/plain") && shouldPastePlainText(view.state)) return false
 
       event.preventDefault()
       const selection = view.state.selection.main

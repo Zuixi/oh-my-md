@@ -1,21 +1,11 @@
 import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete"
-import { syntaxTree } from "@codemirror/language"
 import type { EditorState } from "@codemirror/state"
 import { suggestEmoji } from "./emoji"
+import { inCode } from "./verbatim"
 
 const MAX_EMOJI_SUGGESTIONS = 40
 const QUERY = /:([a-z0-9_+-]*):?$/
 const WORD = /[A-Za-z0-9]/
-const CODE_NODES = new Set(["InlineCode", "FencedCode", "CodeBlock"])
-
-function inCode(state: EditorState, pos: number): boolean {
-  for (let node = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent!) {
-    if (CODE_NODES.has(node.name)) return true
-    if (!node.parent) break
-  }
-  return false
-}
-
 function emojiQuery(state: EditorState, pos: number): { from: number; query: string } | null {
   const line = state.doc.lineAt(pos)
   const match = QUERY.exec(line.text.slice(0, pos - line.from))
