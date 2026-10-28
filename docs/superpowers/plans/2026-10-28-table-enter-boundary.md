@@ -87,4 +87,3 @@ pnpm --filter @omd/desktop test:e2e e2e/table-navigation.spec.ts
 ```bash
 git diff --check
 ```
-

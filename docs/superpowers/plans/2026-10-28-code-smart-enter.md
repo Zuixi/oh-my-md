@@ -101,4 +101,3 @@ pnpm --filter @omd/desktop test:e2e e2e/auto-pair.spec.ts
 ```bash
 git diff --check
 ```
-

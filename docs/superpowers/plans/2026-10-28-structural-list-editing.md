@@ -197,4 +197,3 @@ combinations, repeated Tab/Shift-Tab, and two-stage empty-item exit.
 ```bash
 git diff --check
 ```
-

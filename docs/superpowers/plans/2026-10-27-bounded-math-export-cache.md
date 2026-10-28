@@ -177,4 +177,3 @@ git commit -m "fix: bound retained math export html"
 - **Why 128 entries / 8 MiB:** it uses the repository's existing rich-HTML cache budget instead of introducing an unrelated policy; the byte limit remains authoritative for large equations.
 - **Why not clear per export:** users commonly export repeatedly while editing, and KaTeX output for unchanged equations is deterministic and reusable.
 - **Why not cache failures:** a later export may run after the invalid source is fixed or after a transient module-loading problem; retaining fallback output would hide recovery.
-

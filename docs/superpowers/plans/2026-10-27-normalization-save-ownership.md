@@ -145,4 +145,3 @@ git commit -m "refactor: keep normalization persistence on guarded save path"
 - **Why delete instead of repair `createTabSaver`:** it has no production consumer. Repairing dead code creates a second state machine that can drift again.
 - **Why use a source ownership test:** TypeScript cannot fail on an exported-but-unused function under the current engine/desktop compiler settings. The test enforces the architectural invariant directly.
 - **Why not merge normalization into `documentSaveRunner`:** it is already integrated there through `prepareTabSave` and `completeAccept`; further merging would reduce cohesion.
-

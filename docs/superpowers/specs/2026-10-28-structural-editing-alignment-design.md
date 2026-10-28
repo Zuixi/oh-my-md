@@ -114,4 +114,3 @@ Each behavior requires a test-first red/green cycle with:
 - focused Playwright coverage for code pairing and table navigation;
 - full engine tests, desktop tests/build for cross-layer CSS changes, and
   `git diff --check`.
-
