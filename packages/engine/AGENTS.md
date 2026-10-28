@@ -15,24 +15,59 @@
 ```text
 packages/engine/
 ├── src/
-│   ├── index.ts                 # Public editorExtensions, collectOutline, exportHtml
+│   ├── index.ts                 # Public editorExtensions, collectOutline, exportHtml, shortcut labels, table/nav helpers
 │   ├── outline.ts               # Read-only heading outline from the Lezer tree
 │   ├── docText.ts               # Streamed-chunk → Text assembly (LARGE-tier open ingest; parity-guarded)
 │   ├── safeModeRendering.ts     # Safe-mode globals: render budget + windowed live decorations (LIVE_WINDOW_*, prune margins)
+│   ├── stats.ts                 # Word/character statistics for the status bar
+│   ├── links.ts                 # classifyLink — link / autolink / footnote classification
+│   ├── footnotesNav.ts          # Footnote reference ↔ definition positions
+│   ├── fenceInfo.ts             # Fence info-string parse / format / replace (lang + label)
 │   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
-│   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
-│   │   └── chars.ts             # Named ASCII char-code constants (no magic numbers)
-│   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
+│   ├── modes/livePreview.ts     # Live/source compartment, Mod-e keymap, toggleShortcutLabels
+│   ├── format/                  # Markdown editing commands and their keymaps
+│   │   ├── commands.ts          # markdownKeyBindings + markdownShortcutLabels (shortcut single source)
+│   │   ├── autoPair.ts          # Markdown-aware pairing (the sanctioned closeBrackets override)
+│   │   ├── blockPrefix.ts       # Tree-driven line block prefix (indent + QuoteMark/ListMark/TaskMarker)
+│   │   ├── tableKeymap.ts       # Tab/Shift-Tab/Enter/Shift-Enter/Mod-Enter, only inside a Table node
+│   │   └── codeLines.ts         # Enter inside a fence body; fences.ts / quotes.ts / lists.ts
+│   │                            # own their own block-type Enter continuation
+│   ├── tables/                  # Table model and edits, all Lezer-range based
+│   │   ├── model.ts             # tableDataFromNode — TableData with table-relative offsets
+│   │   ├── edit.ts              # Pure range edits (replaceTableCell, insert/delete row|column) + escapeTableCellValue
+│   │   ├── navigate.ts          # Read-only tableAt / cellAt / nextCell / cellBelow
+│   │   ├── sourceToolbar.ts     # applyTableToolAt — the one stale-checking edit entry point
+│   │   └── tools.ts             # tableToolChanges (pure)
+│   ├── navigation/              # caretClamp.ts (clamp folds/Home/arrows to lineContentStart) + blockEntry.ts
+│   ├── parse/                   # One focused syntax helper per file — Lezer Markdown plus:
+│   │   ├── chars.ts             # Named ASCII char-code constants (no magic numbers)
+│   │   ├── cell.ts              # The ONLY inline parser for table cells
+│   │   ├── verbatim.ts          # inCode/inVerbatim — the ONE "is this position raw text" predicate
+│   │   │                        # (code + math + front matter; true while the tree is unavailable)
+│   │   └── markdown.ts · autolink.ts · cjkUnderscore.ts · codeLanguages.ts · emoji.ts ·
+│   │                            # emojiComplete.ts · entities.ts · footnotes.ts · frontMatter.ts ·
+│   │                            # highlight.ts · math.ts · rise.ts · scan.ts
 │   ├── paste/                   # Rich-HTML paste → Markdown (htmlPaste) + block-boundary normalization (blockBoundaries)
-│   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
+│   ├── export/                  # html.ts (Document → HTML projection), styles.ts, shikiExport.ts,
+│   │                            # mathHtmlCache.ts (bounded LRU: 128 entries / 8 MiB)
+│   ├── shiki/                   # codeHighlighter.ts (lazy, single-flight getCodeHighlighter) + languages.ts
+│   ├── highlight/codeHighlight.ts  # Highlight entry used by the code widget
+│   ├── cache/boundedLru.ts      # Bounded LRU used by the code HTML cache
 │   └── decorations/
 │       ├── build.ts             # StateField live decorations (seed + pending model) and incremental updates
 │       ├── buildDriver.ts       # Idle-sliced ViewPlugin that drains LiveDeco.pending (viewport priority)
 │       ├── inline.ts            # Inline and marker decorations
 │       ├── blocks.ts            # Block detection and widget selection
 │       ├── blockWidget.ts       # Shared widget lifecycle and edit transition
+│       ├── blockSelectionOverlay.ts  # omd-block-covered overlay for a fully-covering selection
+│       ├── renderBudget.ts      # setBlockRenderBudget — line budget for block rendering
+│       ├── widgetHeights.ts     # Per-widget-type estimatedHeight (test/bench guarded)
+│       ├── widgetMeasure.ts     # Measured-height bookkeeping against the heightmap
+│       ├── types.ts             # Route A mark-folding split and shared decoration types
 │       ├── icons.ts             # Vendored inline SVG icons (lucide/Tabler — THIRD_PARTY_NOTICES.md)
-│       └── widgets/             # Code, math, table, Mermaid, and image renderers
+│       ├── widgets.ts           # Widget dispatch table
+│       └── widgets/             # code.ts · math.ts · table.ts · mermaid.ts · image.ts ·
+│                                # codeHtmlCache.ts (bounded) · codeLangPicker.ts
 ├── test/                        # Vitest tests
 └── test/fixtures/               # Markdown regression inputs
 ```
@@ -75,6 +110,7 @@ packages/engine/
 11. **Blank lines keep natural height with zero decorations**: blank lines emit zero `line:omd-empty` decorations and keep full natural height at all times; this prevents viewport jitter when the caret moves onto or off an empty line. Never hide blank lines with `display:none` — CM's line measurement and click mapping need a real box. Blank lines inside a block widget's replaced range are filtered like any other covered decoration.
 
 12. **Table edits are Lezer-range-based, dispatch-validated, and byte-minimal.** `tables/model.ts::tableDataFromNode` owns extracting `TableData` from the current `Table` node: every cell/row offset is table-relative, `lineFrom`/`lineTo` include quote/list continuation source inside the table span, an empty source-backed slot is a zero-length `TableCellData`, and only a missing ragged tail is `null`. `blocks.ts` must feed that model to `TableWidget` and never reduce an editable table to a display-only/string model — range edits would then stop addressing the document. **The table has exactly two states** (caret outside → `TableWidget` projection; caret inside → plain `omd-table-src` source lines): never add a third in-cell `<input>` overlay — it needs its own commit/cancel/pending-focus state machine and silently breaks undo/find/autosave for table input. **Rendered-state toolbar targets come from hover, never from remembered state**: `renderInto` binds `mouseover` on every real `td`/`th` to record `row`/`col` (none for ragged placeholder cells), the buttons stay `disabled` until `hasRowCol()`, and each click goes through `tables/sourceToolbar.ts::applyTableToolAt(view, livePos(), src, table, row, col, act)` — the one shared core, which rejects a mismatched `(from, source)` against the live doc instead of writing stale offsets. The widget stores table-relative offsets and only `applyTableToolAt` turns them into absolute offsets; never re-add a pending-action queue (a remembered target that outlives the click is how two views steal each other's edits). Row indices are **0-based** on BOTH sides (0 = header, 1 = first data row): hover tracking (`r + 1` for `tbody` rows) and `tableToolChanges` must agree. Cell/row/column edits preserve every source byte outside their exact ranges — spacing, one-sided outer pipes, alignment markers, and quote/list row prefixes stay untouched. **TableWidget in-place refresh (pass 1).** A rendered re-projection must not rebuild the whole table DOM: `eq` compares `src`+`embed` and then the cheap `tableEqualityKey` (cell sources + aligns + shape — never `JSON.stringify`, and computed lazily because the src change short-circuits it), and `updateDOM(dom, view, prev)` patches only cells whose `source` changed, re-syncs the toolbar (alignment highlight + disabled states), and returns `false` when the shape changed so CM falls back to `toDOM`. Because CM keeps the **new** widget instance while the DOM and its listeners belong to the **old** one (`docview` `findWidget` → `new WidgetTile(tile.dom, length, widget, flags)`), every DOM listener resolves the current owner through the module-level `domOwner` WeakMap keyed by BOTH the wrap returned by `toDOM` and the `.omd-block-body` that `renderInto` actually receives — registering only the wrap silently breaks every hover/toolbar handler; never close over `this`. `updateDOM` re-registers both keys and migrates `row`/`col`/`hovered` from `prev`. **Nothing intercepts cell `mousedown`.** The flip into source is owned by `BlockWidget.toDOM` + `TableWidget.shouldEnterSource`/`clickPos` (td/th only, cell-exact caret); a per-cell `mousedown` listener that stops propagation swallows it. `BlockWidget`'s padding path still `preventDefault`s but must also `view.focus()`, so a mis-click on table chrome focuses the editor instead of doing nothing.
+
 ## Parsing Rules
 
 - Extend Lezer Markdown instead of introducing a second Markdown parser.
@@ -119,7 +155,9 @@ pnpm --filter @omd/engine bench
 Before concluding engine work, check:
 
 - [ ] Did public engine options or exports change?
+- [ ] Did added/removed modules require a Local Structure update?
 - [ ] Did a parser or widget invariant change?
 - [ ] Does a new regression belong in `docs/memory/gotchas-engine.md` (plus an index line in `known-gotchas.md`)?
 - [ ] Do fixtures, snapshots, or `docs/manual-qa.md` need updating?
+- [ ] Did a user-visible shortcut or operation require a `docs/guides/` update?
 - [ ] Did an approved architecture decision in the product spec change?

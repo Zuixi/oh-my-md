@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,7 +50,11 @@ def run_checks(checks: tuple[str, ...], *, cwd: Path) -> int:
         for command in COMMANDS[check]:
             printable = " ".join(command)
             print(f"[pre-commit] {check}: {printable}")
-            completed = subprocess.run(command, cwd=cwd)
+            executable = shutil.which(command[0])
+            if executable is None:
+                print(f"[pre-commit] command not found: {command[0]}", file=sys.stderr)
+                return 127
+            completed = subprocess.run([executable, *command[1:]], cwd=cwd)
             if completed.returncode != 0:
                 print(
                     f"[pre-commit] {check} failed ({printable})",

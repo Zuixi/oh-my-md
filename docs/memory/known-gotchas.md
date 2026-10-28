@@ -1,7 +1,7 @@
 # Known Gotchas — Index
 
-> **How to use this file.** Before non-trivial work in a domain, read the matching domain
-> file end to end (they are targeted, ~25 entries each): engine →
+> **How to use this file.** Before non-trivial work in a domain, read the matching,
+> targeted domain file end to end: engine →
 > [`gotchas-engine.md`](./gotchas-engine.md), desktop → [`gotchas-desktop.md`](./gotchas-desktop.md),
 > Rust/IPC → [`gotchas-rust.md`](./gotchas-rust.md). Come back here to find a trap by symptom.
 > A new trap gets a full entry in the domain file plus one index line; delete entries that
@@ -119,6 +119,36 @@
 - **Session shards drop on window close, survive app exit** — removal runs in the CloseRequested finisher under `SessionFileLock`; a crash may restore a window closed after its last flush (accepted).
 
 ## Tooling and process
+
+## Playwright only cleans up processes it owns
+
+Local e2e used to set `reuseExistingServer: true`. When port 9420 was already
+occupied, Playwright reused that Vite process instead of starting it, so it did
+not own or stop the process after the suite. A concurrent worktree could also
+silently test the other worktree's served `src/`. Separately,
+`scroll-audit.mjs` and `calibrate-heights.mjs` put `browser.close()` at the end
+of the happy path; any earlier exception left system-Chrome children running.
+
+The ownership contract is now:
+
+- `test:e2e` runs in the foreground and lets Playwright own Vite. The config
+  uses `url`, `--strictPort`, and defaults `reuseExistingServer` to false.
+- Human-managed reuse is explicit: `PW_REUSE_SERVER=1`. Whoever starts that
+  server also owns stopping it.
+- Concurrent worktrees use different `PW_PORT` values. An occupied port is a
+  useful failure, not a reason to reuse an unknown server.
+- Standalone browser audits require an externally managed Vite server: start it
+  on a dedicated `PW_PORT`, retain its PID/command handle, and stop that exact
+  process after the audit. The audit itself requires `browser.close()` in
+  `finally`, so normal failures still release Chrome.
+
+No in-process cleanup can run after an unconditional kill or IDE crash. In
+that case, inspect listeners and command lines, then stop only the confirmed
+PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
+Win32_Process`; on macOS/Linux, use `lsof -i :<port>` and `ps`. Never kill all
+`chrome`/`node` processes by name: e2e deliberately uses the installed Chrome
+channel, and automation flags are also used by legitimate MCP browser
+sessions.
 
 ## Tauri updater signing keys and macOS targets are exact contracts
 

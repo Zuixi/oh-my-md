@@ -3,7 +3,7 @@
 // 「块 widget 反复挂载/卸载会持续占用内存」）在真实浏览器里可能是布局/CM tile 造成的，
 // 所以在认定引擎有泄漏、动生命周期抽象之前，先用真实浏览器 + CDP 强制 GC 量一次。
 //
-// 用法：先起 vite dev server（PW_PORT，默认 9420），再
+// 用法：先起 vite dev server（PW_PORT，默认 9420；调用方负责关闭），再
 //   PW_PORT=9420 pnpm --filter @omd/desktop audit:widget-memory
 // 输出：一个含 chromium 版本/平台 + 五个采样点 usedSize 的 JSON 对象。
 //

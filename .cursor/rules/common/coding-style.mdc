@@ -1,12 +1,15 @@
 ---
-description: Hard constraints: immutability, validation, size limits
+description: Repository-aligned coding constraints
 alwaysApply: true
 ---
 
 # Coding Style
 
-Do not mutate existing objects. Return a new copy.
+The root and nearest domain `AGENTS.md` are authoritative. Apply this rule only
+when it does not conflict with those files.
 
-Validate at system boundaries. Fail fast. Never swallow errors. User-facing messages stay friendly; logs keep detail.
+Validate at trust and IPC boundaries. Preserve established mutation and error
+handling patterns instead of imposing a repository-wide abstraction.
 
-Functions under 50 lines. Files under 800 lines. Nesting under 4 levels. Named constants instead of magic numbers.
+Prefer focused functions and modules, but treat size as a review signal rather
+than a hard limit. Use named constants instead of duplicated magic values.

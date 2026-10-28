@@ -28,7 +28,7 @@ describe("prepare-updater-key", () => {
     const result = run(` \r\n${VALID_KEY}\r\n `)
 
     expect(result.key.toString("utf8")).toBe(VALID_KEY)
-    expect(result.mode & 0o077).toBe(0)
+    if (process.platform !== "win32") expect(result.mode & 0o077).toBe(0)
     expect(result.githubEnv).toBe(`TAURI_SIGNING_PRIVATE_KEY=${result.output}\n`)
   })
 

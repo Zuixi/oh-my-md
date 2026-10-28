@@ -7,8 +7,8 @@ alwaysApply: false
 # TypeScript / JavaScript
 
 - Exported functions: explicit param and return types. No `any`; use `unknown` and narrow. `interface` for objects; `type` for unions. Prefer string unions over `enum`. Named React props; avoid `React.FC`.
-- Boundaries: Zod (or equivalent); infer types from the schema.
-- `Readonly<T>` + spread for updates. No `console.log` in production; use a logger.
+- Validate external data with the repository's existing guards and typed contracts; do not add a schema library solely to satisfy this rule.
+- Prefer readonly inputs and immutable state updates where ownership requires them. Use the existing error-reporting path; the project has no general logger abstraction.
 - Env secrets: `process.env.X`, throw if missing. Never hardcode `sk-` keys.
 - Tests: Playwright for critical E2E; keep mocks in sync with signatures.
-- APIs: `{ success, data?, error?, meta? }`. Keep consumer interfaces small.
+- Tauri APIs follow the Rust command + `desktopServices.ts` contract, including tested field casing. Keep consumer interfaces small.

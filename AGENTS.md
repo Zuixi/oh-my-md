@@ -1,6 +1,6 @@
 # oh-my-md
 
-> **What is this?** A macOS-first, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host.
+> **What is this?** A cross-platform, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host. macOS, Windows (NSIS/MSI), and Linux (AppImage/deb/rpm) are all first-class targets; the few platform-only paths go through `apps/desktop/src/platform.ts` in TS or `cfg!(target_os = …)` in Rust — never a scattered string compare. Unknown platforms are treated as macOS. One deliberate exception: native PDF/PNG export (`export_preview`) is macOS-only.
 >
 > **Progressive disclosure:** Use this file for workspace orientation and cross-layer rules. Before changing a domain, read its nearest `AGENTS.md`.
 
@@ -25,14 +25,26 @@
 ```text
 oh-my-md/
 ├── apps/desktop/          # React 19 + CodeMirror host + Tauri 2 application
-│   ├── src/               # Frontend lifecycle, editor assembly, IPC callers, CSS
-│   └── src-tauri/         # Rust commands and native application host
+│   ├── src/               # Frontend lifecycle, editor assembly, IPC callers, i18n/, CSS
+│   └── src-tauri/
+│       ├── src/           # lib.rs, documents.rs + documents/ (guarded IO), workspace.rs, menu.rs,
+│       │                  # watcher.rs, session_flush.rs, windows.rs, export.rs + export_native.rs,
+│       │                  # fonts.rs, diagnostics.rs, main.rs
+│       └── capabilities/  # Tauri permissions
 ├── packages/engine/       # Markdown language support and live-preview behavior
-│   ├── src/               # Lezer parsing, decorations, modes, widgets
+│   ├── src/               # parse/ (Lezer) · decorations/ + decorations/widgets/ · format/ (keymaps) ·
+│   │                      # tables/ · navigation/ · modes/ · export/ · shiki/ · paste/ · cache/
 │   └── test/              # Vitest tests and Markdown fixtures
-├── .github/               # CI：changes 路径过滤 + engine/desktop/rust(含 link gate)/bench；复合 action 在 .github/actions（发布流水线阻塞于 Apple 账号）
+├── scripts/               # Build/test/package/release entry points: *.sh (Unix) + *.ps1 (Windows),
+│                          # installer-bitmap generator, updater-key prep, release manifest, perf smoke
+├── .github/               # CI：changes 路径过滤 + engine/desktop/rust(含 link gate)/bench；复合 action 在 .github/actions；
+│                          # release/promote/withdraw 工作流已在位，macOS 签名与公证尚未接入（见 docs/superpowers/plans/2026-08-18-13b-release-unblock.md）
+├── .githooks/             # pre-commit（按路径跑域测试）+ commit-msg（type 前缀、剥离 Co-authored-by）
+├── .cursor/               # hooks.json 危险命令拦截（仅 Cursor 生效）+ rules/*.mdc
 └── docs/                  # Product specs, implementation plans, QA, guides, agent memory
 ```
+
+Per-domain trees are complete for `packages/engine` and `apps/desktop`; see each domain `AGENTS.md`.
 
 The repository intentionally uses plain pnpm workspaces; do not add Turborepo or Nx for the current two-package graph.
 
@@ -55,9 +67,10 @@ Use pnpm for JavaScript workspace tasks and Cargo for Rust tasks.
 pnpm dev
 pnpm test
 pnpm verify
+pnpm verify:win
+pnpm verify:unix
+pnpm perf:smoke
 pnpm --filter @omd/engine bench
-scripts/build.sh
-scripts/test.sh
 pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
 pnpm --filter @omd/desktop test:e2e
@@ -68,7 +81,7 @@ pnpm release:changelog
 
 - `pnpm test` runs engine TypeScript checking (`tsc --noEmit`) before Vitest.
 - `pnpm --filter @omd/engine bench` 跑 advisory 大文档基准（typing p95/冷解析/装饰重建/字数统计/切Live种子/open-live摄入/安全模式窗口化typing/表格滚动进入与高度估算增益）；预算超限只告警不阻断，CI 中 continue-on-error。
-- `scripts/build.sh` and `scripts/test.sh` are the standalone build/test entry points for agents and humans; `pnpm verify` runs `test.sh` then `build.sh`. `build.sh` links the Rust app binary (`cargo build --no-default-features`, matching what `tauri dev` runs); `test.sh` covers engine, desktop, and `cargo test` — but `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade. Use `pnpm verify` before a release or any multi-domain merge.
+- `pnpm verify` dispatches by host platform: Windows runs `scripts/test.ps1` then `scripts/build.ps1`; Unix runs `scripts/test.sh` then `scripts/build.sh`. `verify:win` / `verify:unix` select a path explicitly. Both build scripts link the Rust app binary (`cargo build --no-default-features`, matching what `tauri dev` runs); both test scripts cover engine, desktop, and `cargo test`. `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade. Use `pnpm verify` before a release or any multi-domain merge.
 - Use `pnpm --filter @omd/desktop tauri build` only when a packaged desktop build is relevant.
 - Run the checks matching the changed domains; cross-layer changes require both frontend/engine and Rust checks.
 - Before a release or interaction-sensitive editor change, review `docs/manual-qa.md`. Its recorded test counts are historical, not assertions about the current suite.
@@ -93,6 +106,7 @@ pnpm release:changelog
 ## Workspace Conventions
 
 - Write strict TypeScript and avoid `any`; use named exports except framework/config files that conventionally require default exports.
+- The nearest `AGENTS.md` is authoritative. `.cursor/rules/*.mdc` may add tool-specific guidance only when it does not conflict with root or domain instructions.
 - Do not enable `indentOnInput`, **stock** `closeBrackets`, or generic `autocompletion` in `createEditor`; they conflict with current live-preview behavior. Both sanctioned overrides live inside `editorExtensions`: the engine's Markdown-aware pairing (`packages/engine/src/format/autoPair.ts`) and the `:`-only gemoji completion. Do not add a second pairing layer in `createEditor`.
 - Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
 - Do not hard-code values that have a named home. Shared/cross-layer limits and storage keys live in `apps/desktop/src/constants.ts` (drift-guarded against Rust/CSS by `apps/desktop/test/crossLayerConstants.test.ts`); ASCII punctuation in the engine parsers uses the named constants in `packages/engine/src/parse/chars.ts`; shortcut labels are owned by the engine keymap and `apps/desktop/src/shortcuts.ts`; native menu wiring must match `commands.ts` `MENU_TO_COMMAND` (guarded by `apps/desktop/test/crossLayerMenu.test.ts`). If a value must agree across two sides (TS↔Rust, TS↔CSS, keymap↔palette, generator-script↔test — e.g. installer BMP layout constants in `scripts/generate_installer_images.py` ↔ `apps/desktop/test/tauriConfig.test.ts`), define it on both sides as a named constant and add a drift test — never leave one side as a bare literal.
@@ -112,10 +126,11 @@ pnpm release:changelog
 
 Before finishing a task, check whether these need updates:
 
-- [ ] Root or domain `AGENTS.md` — Did routing, ownership, constraints, or recurring pitfalls change?
+- [ ] Root or domain `AGENTS.md` — Did routing, ownership, constraints, module layout, or recurring pitfalls change?
 - [ ] `docs/memory/known-gotchas.md` (index) + the matching `gotchas-*.md` — Did you discover a reusable trap or invalidate an existing one?
 - [ ] Product spec or implementation plan — Did an approved architecture or milestone decision change?
 - [ ] `docs/manual-qa.md` — Did user-visible interaction behavior or the release verification matrix change?
+- [ ] `docs/guides/` — Did a user-visible shortcut or operation change?
 - [ ] README or changelog — Did public setup or user-visible behavior change?
 
 Add permanent agent rules only when they describe verified, recurring project constraints rather than a one-off implementation choice.

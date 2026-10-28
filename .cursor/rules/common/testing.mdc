@@ -1,10 +1,13 @@
 ---
-description: TDD and behavior-focused tests
+description: Behavior-focused tests and repository verification
 alwaysApply: true
 ---
 
 # Testing
 
-New behavior: write the test first, watch it fail, then implement. Name tests after behavior, not implementation.
+Follow the verification matrix in the root and nearest domain `AGENTS.md`.
+Name tests after behavior, not implementation. Add the smallest regression
+test that would fail without the change; use test-first development when the
+task explicitly requests it or it clarifies a non-trivial behavior.
 
 When a function signature changes, update every mock to match. Fix the code, not the test (unless the test is wrong).

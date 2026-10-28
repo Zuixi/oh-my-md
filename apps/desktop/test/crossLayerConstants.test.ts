@@ -29,6 +29,7 @@ const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
+  .replace(/\r\n/g, "\n")
 
 function rustConstNumber(source: string, name: string): number {
   const match = new RegExp(`const ${name}: (?:usize|u64) = ([^;]+);`).exec(source)

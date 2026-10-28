@@ -16,40 +16,63 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
-│   ├── editorStatusStore.ts # Cursor/mode snapshot store + useEditorStatus (StatusBar-only rerenders)
-│   ├── documentMaterializer.ts  # Trailing pull-based doc materialization (queue/flush/discard)
-│   ├── useWorkspaceSearch.ts    # Debounced folder-search state with stale-request invalidation
-│   ├── documentScaleRegistry.ts # Per-tab safe-mode/byte/read-only/stashed-Text policy registry
+│   ├── main.tsx             # React mount (+ the only react-toastify container)
+│   ├── styles.css           # App styles, theme variables, and omd-* presentation
 │   ├── constants.ts         # TS↔Rust contract values + localStorage keys (drift-tested)
-│   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
-│   ├── transientStatus.ts   # Shared transient-status timer for save/normalization status lines
-│   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
-│   ├── FileTree.tsx         # Sidebar tree with Lucide icons
-│   ├── session.ts           # EditorSession: path, dirty baseline, documentId
-│   ├── workspace.ts         # Tab list, active tab, folder root
+│   ├── desktopServices.ts   # Every Tauri invoke caller — the TS half of each IPC contract
+│   ├── platform.ts          # The ONLY platform branch in TS (unknown → macOS)
+│   ├── settings.ts · theme.ts · windowScope.ts · recents.ts
 │   ├── Editor.ts            # Generic CM6 extensions, engine assembly, base theme
+│   ├── tightSelection.ts    # Vendored selection drawing (never re-add stock drawSelection)
+│   ├── typewriter.ts · pastePlainText.ts · sidebarResize.ts
+│   ├── editorStatus.ts · editorStatusStore.ts   # Cursor/mode snapshot + StatusBar-only rerenders
+│   ├── documentMaterializer.ts  # Trailing pull-based doc materialization (queue/flush/discard)
+│   ├── documentScaleRegistry.ts # Per-tab safe-mode/byte/read-only/stashed-Text policy registry
+│   ├── transientStatus.ts   # Shared transient-status timer for save/normalization status lines
+│   ├── i18n/                # index.ts + messages/{en,zh}.ts (useT in components, module-level t elsewhere)
+│   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
+│   ├── commands.ts          # MENU_TO_COMMAND — native menu id → webview command
+│   ├── menuTree.ts          # In-app horizontal menubar tree (off macOS)
+│   ├── findReplace.ts       # Find/replace engine behind FindReplaceBar
+│   ├── exportPath.ts · appExportActions.ts      # Export path policy + App-side export actions
+│   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
+│   ├── FileTree.tsx · SidebarResizer.tsx        # Sidebar tree (Lucide icons, in-place rename) + width drag
+│   ├── session.ts           # EditorSession: path, dirty baseline, documentId
+│   ├── sessionRestore.ts · workspace.ts         # Startup restore + tab list / active tab / folder root
+│   ├── recoveryWriter.ts    # Crash-recovery draft writes (console.error by convention: no logger yet)
 │   ├── imagePaste.ts        # Clipboard image → Tauri write_image → Markdown insertion
+│   ├── useWorkspaceSearch.ts    # Debounced folder-search state with stale-request invalidation
 │   ├── normalizationState.ts    # Per-tab pending notice projection (pure reducers)
 │   ├── normalizationCoordinator.ts  # Accept/reject/save orchestration, autosave gate
-│   ├── NormalizationBanner.tsx  # Non-modal review banner + live region host
 │   ├── documentSaveState.ts     # Per-tab save lifecycle + divergence reducer
 │   ├── documentSaveCoordinator.ts  # canAutosave, topBanner, watcherIntent
 │   ├── documentSaveRunner.ts    # Guarded save queue, poll, saveCopy
 │   ├── documentSaveAppBridge.ts # App wiring for save runner
 │   ├── conflictActions.ts       # Conflict action orchestration (compare/reload/overwrite/…)
 │   ├── conflictSaveBinding.ts   # React hook: diff state + makeConflictActions deps
-│   ├── ConflictSaveRegion.tsx   # Conflict/saveFailed banner + DocumentDiffPanel host
-│   ├── SaveConflictBanner.tsx   # Non-modal conflict action buttons
-│   ├── DocumentDiffPanel.tsx    # Read-only unified diff panel
 │   ├── documentDiff.ts          # unifiedDiff for conflict compare
-│   ├── main.tsx             # React mount
-│   └── styles.css           # App styles, theme variables, and omd-* presentation
+│   ├── updateCoordinator.ts     # Updater state machine (never silent, never automatic)
+│   ├── updateRestartReadiness.ts # Document-safety classification gating install
+│   ├── updateAdapter.ts         # Adapter over tauri-plugin-updater
+│   ├── AppMenu.tsx · TopBar.tsx · StatusBar.tsx
+│   ├── CommandPalette.tsx · QuickOpenModal.tsx · SearchPanel.tsx · FindReplaceBar.tsx · OutlinePanel.tsx
+│   ├── SettingsModal.tsx · FontFamilyPicker.tsx · AboutDialog.tsx · VersionHistoryModal.tsx
+│   ├── SaveConflictBanner.tsx · ConflictSaveRegion.tsx · DocumentDiffPanel.tsx
+│   └── NormalizationBanner.tsx · UpdateBanner.tsx · LargeDocBanner.tsx · OpeningOverlay.tsx
 └── src-tauri/
     ├── src/lib.rs           # File IO, image write, asset scope, workspace commands, open-file events
-    ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
-    ├── src/menu.rs          # Native File / Edit application menu
-    ├── src/watcher.rs       # notify watcher: workspace-changed events (hint-only)
+    ├── src/main.rs          # Binary entry
+    ├── src/documents.rs     # Guarded document IO core + DocumentVersionCache (stat-first fingerprinting)
+    ├── src/documents/       # save.rs (double-compare atomic save), coordinator.rs, tests.rs
     ├── src/workspace.rs     # workspace tree commands, search, quick-open list, snapshots, config/recovery state
+    ├── src/watcher.rs       # notify watcher: workspace-changed events (hint-only)
+    ├── src/session_flush.rs # FlushGate — quit / update-restart session flush protocol
+    ├── src/windows.rs       # Multi-window registry; menu events route through its MRU
+    ├── src/menu.rs          # Native File / Edit / Format / View / Window menu
+    ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
+    ├── src/export_native.rs # Native-side export helpers
+    ├── src/fonts.rs         # CoreText font enumeration (macOS)
+    ├── src/diagnostics.rs   # Diagnostics payload for the app
     ├── capabilities/        # Tauri permissions
     └── tauri.conf.json      # Desktop application configuration
 ```
@@ -89,7 +112,7 @@ apps/desktop/
 3. While a tab has pending normalization, pause autosave to the on-disk path for that tab only; recovery writes to the crash-recovery directory continue on real document edits.
 4. Accepting normalization runs through the explicit save queue (banner **Save normalization** or Cmd+S). Successful save dispatches `acceptOrderedListNormalization`; Save As cancel and save failure leave pending and re-sync idle banner state.
 5. Reject dispatches only to the captured target view after re-validating tab, document, view, and notice id. Command completion must call `resyncNormalizationIdle` only after the same identity checks — the reducer does not validate ids itself.
-6. `normalizationCoordinator.ts` owns accept/reject/save wiring; keep `App.tsx` under the file-size budget by extending the coordinator instead of inlining orchestration.
+6. `normalizationCoordinator.ts` owns accept/reject/save wiring; extend the coordinator instead of inlining that orchestration in `App.tsx`.
 
 ## Conflict-safe guarded save (desktop)
 
@@ -196,11 +219,21 @@ Do not silently overwrite in-memory content after a failed read/write. Preserve 
   no Tauri). Run it for any change touching rendered appearance or editor geometry;
   it is the only automated net for zero-height rows, container seams, and collapsed
   blank lines. Extend `apps/desktop/e2e/` whenever a new visual bug class ships a fix.
-- Set `PW_PORT=<free port>` when running e2e in a worktree that may have a concurrent
-  session (`PW_PORT=9431 pnpm --filter @omd/desktop test:e2e`). `reuseExistingServer`
-  otherwise reuses a sibling worktree's Vite server on the default 9420 and silently
-  asserts that worktree's `src/` — this actually happened while building the auto pair
-  branch.
+- Run `test:e2e` in the foreground and let Playwright start and stop Vite; do not
+  pre-start `pnpm dev` for the normal suite. Playwright does not own an already-running
+  server and therefore cannot clean it up. Local reuse is an explicit human-only
+  opt-in (`PW_REUSE_SERVER=1`).
+- Set `PW_PORT=<free port>` for every concurrent worktree (for example 9431);
+  the default is 9420. With reuse off, an occupied port fails loudly instead of
+  silently testing another worktree's `src/`. On PowerShell set it with
+  `$env:PW_PORT=9431`; on POSIX shells use `PW_PORT=9431 <command>`.
+- Standalone browser audits are the exception: they require a separately managed
+  Vite server. Start it on a dedicated `PW_PORT`, record its PID/command handle, and
+  stop that exact server in a finally-equivalent cleanup step; the audit itself must
+  close `browser` in `finally`. If an agent/IDE is force-killed, inspect the exact PID,
+  command line, working tree, and port before stopping a leftover process. Never use
+  a name-wide kill such as `Stop-Process -Name chrome` / `pkill chrome`; e2e uses the
+  system Chrome channel.
 
 For TypeScript/React/CSS changes:
 
@@ -237,7 +270,9 @@ Use `pnpm dev` for manual interaction checks. Review the relevant sections of `d
 Before concluding desktop work, check:
 
 - [ ] Did the frontend/Rust ownership boundary or command list change?
+- [ ] Did added/removed modules require a Local Structure update?
 - [ ] Did an `omd-*` class require a coordinated engine or CSS update?
 - [ ] Did user-visible interaction require a `docs/manual-qa.md` update?
+- [ ] Did a shortcut or operation require a `docs/guides/` update?
 - [ ] Did a reusable integration trap belong in `docs/memory/gotchas-desktop.md` (plus an index line in `known-gotchas.md`)?
 - [ ] Did setup, packaging, or supported behavior require README/spec updates?

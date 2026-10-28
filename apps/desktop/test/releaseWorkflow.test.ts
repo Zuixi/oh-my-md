@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest"
 const WORKFLOW = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "workflows", "release.yml"),
   "utf8",
-)
+).replace(/\r\n/g, "\n")
 const SETUP_RUST_ACTION = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "actions", "setup-rust", "action.yml"),
   "utf8",
-)
+).replace(/\r\n/g, "\n")
 
 function jobBlock(name: string, nextName?: string): string {
   const start = WORKFLOW.indexOf(`  ${name}:\n`)

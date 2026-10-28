@@ -7,11 +7,11 @@ import { describe, expect, it } from "vitest"
 const PROMOTE = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "workflows", "promote-update.yml"),
   "utf8",
-)
+).replace(/\r\n/g, "\n")
 const WITHDRAW = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "workflows", "withdraw-update.yml"),
   "utf8",
-)
+).replace(/\r\n/g, "\n")
 
 const WORKFLOWS: ReadonlyArray<readonly [string, string]> = [
   ["promote-update.yml", PROMOTE],
