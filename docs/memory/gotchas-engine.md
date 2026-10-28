@@ -30,7 +30,7 @@ Boundary positions are intentionally different:
 - QuoteMark is the exception among block marks: it folds unless the **caret** is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Non-empty selections never count as `cursorInside` — selection is visual.
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
 - List indent inside a quote must start after the folded `> `; using `line.from` overlaps `replace:QuoteMark` and can make `Decoration.set` throw. List marks fold unconditionally (Route A) in and out of quotes.
-- A list inside a quote and a quote inside a list must not share `omd-li-N`. List-in-quote keeps `omd-blockquote-N` + `omd-li-N` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li-N` instead, which sets `--omd-bq-bar` to the list indent and disables hang. Reusing `omd-li-N` for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
+- A list inside a quote and a quote inside a list must not share `omd-li`. List-in-quote keeps `omd-blockquote-N` + `omd-li` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li` instead, which sets `--omd-bq-bar` to the list indent and disables hang. (These were numbered `omd-li-N` classes capped at four until depth became a CSS variable — see the depth entry below — so old symptoms name the numbered classes.) Reusing the list class for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
 - Fenced code splits by state, not by location: **rendered** language blocks (in or out of a quote) are a `widget:block:code`; a **rendered** language-less block stays line styles (`omd-codeblock` + quote classes) because there is nothing to highlight and an opaque widget would collapse character-level positions; the **editing** state (caret inside, any language, language-less included) replaces only the opening fence line with `CodeChromeWidget` (`styleEditingCodeblock`), which is also the only GUI path to add a language to a block that has none. Fold `CodeMark` / `CodeInfo` with `cursorInside`. Mermaid still needs a widget; put quote/list depth on `BlockWidget.embed` so its chrome aligns (that is what makes an in-quote code block render like any other block — the older "in-quote fences stay line-styled" rule is gone). Two consequences worth remembering: the opening-line replace drops that line's `line:omd-blockquote-N` decoration, so the chrome must carry its own quote classes; and `.omd-code` / `.omd-code-header` set an opaque `background` shorthand that erases the quote bar painted by `.omd-blockquote*` (see the desktop gotcha on `--omd-bq-image`).
 - HTML entities (`&#x1f4da;`, `&#128218;`, `&copy;`) are built-in Lezer `Entity` nodes. Preview-replace them with `widget:entity` when the cursor is not inside the entity; do not rewrite the source. Decode numeric references with `String.fromCodePoint` (DOMParser in happy-dom truncates supplementary-plane emoji). Do not render arbitrary HTML tags. Unicode emoji in the source are already literal text.
 - GitHub gemoji shortcodes (`:tada:`, `:+1:`) are a Lezer `Emoji` node only when the alias is in `parse/emoji.json` (unicode gemoji, no `:octocat:` images). Preview-replace with `widget:emoji` using `cursorInside`, not line-based `nearCursor`. Typing `:` opens a dedicated completion override that inserts Unicode and replaces the `:query`; do not enable generic `autocompletion()` in `createEditor`. Do not parse inside code, after a word character (`12:00`, `hello:smi`), or as `:)` emoticons.
@@ -133,6 +133,14 @@ Verified 2026-08-26 in real-browser reproductions (Chrome + `@codemirror/view` 6
 Before the fix, clicks could land on an arbitrary nearby line (depending on document layout), while arrow-key entry remained correct because `navigation/blockEntry.ts::blockEntryPosition` maps to source itself. The two required paths are: code rows map to source lines directly (skipping fences), while opaque blocks map to the current replacement range start. Every async widget must also render a synchronous placeholder and refresh the decoration StateField after its final DOM write; bare `requestMeasure()` is not sufficient.
 
 Status update (implemented): code, math, and Mermaid blocks install synchronous source placeholders during `toDOM()` before CodeMirror's first layout measurement, then refresh the owning StateField after async DOM changes. Generic opaque blocks enter source from their current `livePreviewField.specs` range instead of stale constructor offsets or quantized `posAtCoords`; code clicks additionally map rendered `.line` rows to source lines. Identity-first lookup keeps duplicate blocks separate. All block whitespace is padding inside the measured DOM, never a vertical wrapper margin.
+
+The rendered and source-editing forms can still have different per-row heights
+under WebKit or user font/line-height settings. A click on rendered row N must
+record that row's viewport top, dispatch the source selection, then use
+`requestMeasure` to read the new `.cm-line` top and adjust `scrollDOM.scrollTop`
+by the delta. Fixed pixel heights only hide the problem for one font; immediate
+DOM reads race CodeMirror's measure phase. The real-browser guard deliberately
+changes source-row line height and asserts that the clicked row stays anchored.
 
 ## Block widgets must declare `estimatedHeight` — CM assumes one line otherwise
 
@@ -253,6 +261,22 @@ selection-only spec），否则照常放行。树可用时一律以语法树为�
 守卫：`test/tableKeymap.test.ts`「unresolved syntax tree inside a table row」三条用例
 （构造 12KB 未解析文档，断言 Tab 被吞、Shift-Tab 被吞、普通段落仍放行）。
 
+## Table Enter exits on the final row; only Tab appends
+
+Enter 在表格里只做「同列下移」。到了末行（以及 `Table.to` 边界 —— 末行 End / Cmd+→ 可达）
+它必须复用 `exitTableSpec`，和 Mod-Enter 同一套幂等规则：后面已有空行就只移光标，表格
+在文末则补 `\n\n`。曾经的末行分支是 `appendRowSpec`：手指停在 Enter 上就把表无限加长
+（每按一次多一行 `|  |  |`），而这份源码增长用户完全没要。加行因此是 Tab 的专属动作
+（`tableNextCellSpec` 仍走 `appendRowSpec`），Enter 与 Shift-Enter 一行都不会加。
+
+死路一条：末行 `return null` 会落到上游 `insertNewlineContinueMarkup` / host 的
+`insertNewlineAndIndent`，那不是「不做事」而是往表格源码里写一个原始换行 —— 表被拆开。
+表格分支返回 null 和返回「什么都不做」是两件不同的事。
+
+守卫：`test/tableKeymap.test.ts`（末行两格都退出、末行文末补空段、非末行照常下移、
+`Table.to` 与前一字符等价）+ `test/tableKeymapWiring.test.ts`（真实 keymap 链下末行 Enter
+文档不变、光标落到空段，末格 Tab 仍加行）+ `apps/desktop/e2e/table-navigation.spec.ts`。
+
 ## Async widgets can outlive their original DOM
 
 Mermaid, Shiki, and other renderers may resolve after CodeMirror has replaced or removed a widget because the user moved the cursor or continued typing.
@@ -275,9 +299,9 @@ Pattern used in `parse/footnotes.ts` and `parse/math.ts`: cast `(line as unknown
 
 ## Desktop `defaultKeymap` is registered before engine keymaps
 
-CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding uses `Prec.high`.
+CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding carries an explicit `Prec`.
 
-`@codemirror/lang-markdown` already wraps its markup-continue Enter in `Prec.high`. `listKeymap` must do the same (`packages/engine/src/format/lists.ts`), or list Tab/Enter lose whenever the markdown command returns false (incomplete syntax tree, non-list markup). Spec-only `continueListSpec` tests cannot see this — instantiate a real `EditorView` with host keymaps first.
+`Prec.high` is the right level only for bindings nothing upstream competes for (`blockMotionKeymap`, `caretClampKeymap`, the auto-pair Backspace). Every structural **Enter**, list `Tab`/`Shift-Tab`, and empty top-level list Backspace must sit at **`Prec.highest`**: `@codemirror/lang-markdown` pushes its own `Prec.high` Enter (`insertNewlineContinueMarkup`) and Backspace (`deleteMarkupBackward`), and `markdownLanguageSupport()` is the first extension, so at equal precedence the upstream command wins. The upstream Backspace deliberately replaces an empty `2. ` marker with three spaces to make nesting convenient; in Live editing this means replacing `2. ` with `- ` silently produces `   - ` under item 1. The engine owns the narrower Typora-style rule: only a prefix-only, top-level list line with the caret at its end exits the list; nested items, non-empty items, and explicit marker editing still yield upstream. Spec-only tests cannot prove ownership — use the real keymap chain and browser E2E (`test/enter-ownership.test.ts`, `e2e/list-editing.spec.ts`).
 
 ## Parser character codes are named, not magic
 
@@ -318,6 +342,66 @@ Tests that need a complete build must use the exported `drainPendingLiveBuild`
 helper — the synchronous test-only drain (production must never call it; same
 guard family as `crossLayerNoFullTree.test.ts`).
 
+## 逐键基准有三种口径，不能互相替代
+
+`bench/measure.ts::measureTyping` 的 `{ tree, drain }` 组合是三个**不同**问题，报告时
+必须写明是哪一种（`prepareTypingView` 就是这段准备逻辑的导出形态，`measureTyping`
+只计时 dispatch 循环）：
+
+| 口径 | 组合 | 回答的问题 |
+|---|---|---|
+| 种子后立刻打字 | `tree:"steady"`（默认） | 挂载/切 Live 后 pending 还满着时的最坏瞬时成本 |
+| 生产窗口已消化 | `tree:"steady", drain:true` | 用户停留一瞬后逐键面对的稳态（树仍在 ParseWindow，未推到 `doc.length`） |
+| 全树 + 全量装饰 | `tree:"complete", drain:true` | 绝对上限参考；生产禁止制造该状态，**永不作为优化门禁** |
+
+本机实测（`makeBenchmarkDoc` 档位，2026-10-27，happy-dom 无布局，含增量重解析，
+不含 layout/paint；两轮完整 bench 的采样区间）。三档 steady drained 统一从
+`bench/typing.bench.ts::STEADY_DRAINED_CARET = 50_000` 起笔：
+
+| 用例 | p50 | p95 |
+|---|---|---|
+| steady drained 10k（175k 字符） | 8.03–8.88ms | 9.37–11.51ms |
+| steady drained 30k（531k 字符） | 7.98–9.34ms | 9.10–11.81ms |
+| steady drained 50k（899k 字符） | 8.08–9.06ms | 8.97–11.14ms |
+| complete drained 10k（worst case，无预算） | 12.15–13.38ms | 13.81–17.48ms |
+
+**起点必须落在已 materialize 的区间内，否则三档不可比。** 树只解析到
+`viewport.to + 100000`（happy-dom 无布局 ⇒ 约前 10 万字符），而 `measureTyping` 的默认
+起点是 `doc.length / 2`：10k 档（175k 字符）的中点还在解析窗口内，30k/50k 的中点已经在
+窗口外。只改 `drain` 不改起点时量到的「30k/50k 比 10k 快好几倍」，测的是**窗口外**的一次
+编辑（那里没有装饰要映射），不是同一稳态。固定同一 `caret` 后三档都在同一个 materialized
+生产窗口内编辑，数字基本持平（p50 8–9ms、p95 9–12ms，区间重叠）；剩下的差异只能归因于
+文档/解析器状态，而不是「窗口外的活」。
+
+门禁（本计划 Task 1，只用修正后的 steady drained 30k p95）：两轮最大 11.81ms，
+≪ `TYPING_P95_BUDGET_MS`(16ms) ⇒ **不做 always-on windowing**；complete-tree 数字再差
+也不触发生产改动。
+
+## `documentStats` 用一条全局 Unicode 词法正则，别回到逐字符测试
+
+原实现是「每个字符跑一次 CJK 脚本正则 + sticky Latin 正则」，即 175k 字符的 50k 档要做
+~90 万次单字符 `test`。改成一条 `/CJK脚本|[A-Za-z0-9]+/gu` 全量扫描（`while
+(WORD.exec(text))` 循环计数）后语义完全不变（`test/stats.test.ts` 覆盖混合 Latin/CJK/Hangul/Katakana、em dash 分词、
+front-matter 剔除），成本减半。
+
+`documentStats 50k` 本机两轮（同一命令 `vitest bench --run bench/typing.bench.ts -t
+"documentStats 50k" --reporter=verbose`，报告列为 vitest 的 mean / p75）：
+
+| | mean | p75 |
+|---|---|---|
+| 改前 run1 / run2 | 11.74 / 11.91ms | 11.93 / 11.96ms |
+| 改后 run1 / run2 | 8.15 / 8.08ms | 8.42 / 8.24ms |
+| 提升 | 30.6% / 32.1% | 29.4% / 31.1% |
+
+两轮均 ≥25% ⇒ **采纳该实现**。仍然贴着 `STATS_BUDGET_MS`(8ms) 上限：50k 档单次
+`measureStatsMs` 实测 7.7–9.2ms，`documentStats 50k` 用例会继续报 OVER BUDGET 是预期的
+advisory 结果，不要为把它压到 8ms 以内引入 StateField/worker/增量统计（纯函数 + debounce
+已经够用）。
+
+**陷阱：全局正则带 `lastIndex`，跨调用会残留。** `WORD.test()`/`exec()` 循环前必须
+`WORD.lastIndex = 0`，否则同一进程里第二次统计更长/更短的文档会从上次的偏移开始，词数
+静默偏低。sticky Latin→global 全扫描的迁移最容易漏这一行。
+
 ## Pasted blocks normalize their own boundaries — never "fix" paste rendering in the decoration layer
 
 Rich-paste (turndown HTML→Markdown) used to dispatch with the caret at
@@ -355,6 +439,20 @@ doc string is literal content. Guards: the real-view paste test in
 `test/htmlPaste.test.ts` (`.omd-table` renders with no Enter), and
 `test/tables.test.ts` "keeps a caret resting exactly on the end boundary in
 source editing" — the decoration rule must never grow a paste exception.
+
+Rich conversion must also stop before `preventDefault` when the selection is
+inside the shared verbatim set (`InlineCode`, `FencedCode`, `CodeBlock`,
+`InlineMath`, `MathBlock`, `FrontMatter`). IDEs and rendered math pages put
+styled HTML beside the plain clipboard flavor; turndown turns each HTML row
+into a paragraph and escapes identifiers/LaTeX such as `DASHCAM_CMD_NONE` or
+`\frac{a_b}{c}`, corrupting literal source with blank lines, `\_`, and doubled
+backslashes. Let CodeMirror (or the desktop right-click paste owner) insert
+`text/plain` instead. The named set and tree walk live in
+`parse/verbatim.ts`; auto-pair, emoji completion, and paste must reuse it rather
+than declaring local node sets. When Markdown is mounted but the syntax tree
+does not cover the selection yet, preserve bytes rather than guessing that rich
+conversion is safe; an isolated `htmlPaste()` extension with no language keeps
+its existing rich-conversion behavior.
 
 ## Multi-line link constructs leave a dangling empty preview row
 
@@ -481,6 +579,83 @@ command was live). Every continuation spec returns
 `selection: { anchor: insertStart + insert.length }`; `test/enter-ownership.test.ts`
 asserts the caret's line and offset, not just the document text.
 
+## List editing columns are CommonMark structure, not source offsets
+
+列表 Enter/Tab/Shift-Tab 的每一处宽度都来自树，不来自正则或源码偏移。旧实现用一条
+`LINE` 正则 + 固定两个空格：它看不到嵌套层级（空子项该退到哪层）、把 `10. ` 和
+`-\t` 当同样宽、也判不出 `> - ` 这行到底归引用还是归列表。现在 `format/lists.ts` 只
+向 `format/blockPrefix.ts::listFrameAt` 要结构：行块前缀 + 最内层 `ListItem` + 父
+`ListItem`，另加 `itemMarkAt`（父/兄弟条目**自己**的 `ListMark`）与
+`listContentColumn`（标记的 CommonMark 内容列）。四条容易踩的前提：
+
+- **同一物理行可以有多个 `ListItem`**（`- - x`、`> - - [x] x`）。父条目那一行的前缀
+  含多个列表标记，所以退层/对齐的截断点必须是 `itemMarkAt(item)` 找到的那个
+  `ListMark`，拿整行最内层标记会把子层当父层（退层变成原地不动）。
+- **引用/列表归属看最内层非任务标记**（`enterOwnerMark`）。`> - ` 的空条目归列表：
+  `continueQuote` 返回 `null`，`continueList` 退一层列表并保留 `> `；`- > x` 归引用。
+  任务框永远不是 owner（`> - [x] x` 是列表语义）。
+- **列是视觉列**：制表位每 4 列（`visualColumn`），`-\t- x` 的父层内容列是 4，不是
+  `mark.text.length` 的 2。源码偏移相减在含 tab 的行上直接把新条目写成外层兄弟。
+- **标记后的空白不全是内容缩进**：CommonMark 只有 1–4 列算 padding；0 列或 5+ 列退化
+  成一列（`-     parent` 的正文其实是缩进代码块）。`BlockPrefixMark.to` 含全部后随
+  空白，直接当内容列会让 Tab 插六格、新条目重解析成 `CodeBlock`。
+- **不同 marker 类型是相邻列表容器，不是同一组 siblings**：`1. parent` 后紧跟
+  `- child` 时，Lezer 给出相邻 `OrderedList` / `BulletList`；当前 bullet 是自己容器的
+  首项，单查 `item.prevSibling` 必然得不到 parent。Tab 只允许跨到**紧邻且物理行连续**
+  的前一列表容器末项；空行或其它块会切断关系。
+- **新建的有序子列表必须从 `1` 开始**：`1. parent\n2. child` 仅插三格会得到
+  `1. parent\n   2. child`，CommonMark/GFM 把 `2. child` 当段落，不是子列表。Tab 在
+  parent 尚无末尾 `OrderedList` 时把当前 marker 改为 `1.`/`1)`；若 parent 已以有序
+  子列表结尾，则保留 marker，作为该子列表的下一项。
+- **spec 的 `null` 不等于按键可以交还浏览器**：首项或已在目标列时不应改文档，但
+  list command 仍返回 `true` 消费 Tab；返回 `false` 会触发原生 focus navigation。
+- **空顶层条目的 Backspace 不能交给 lang-markdown**：其 `deleteMarkupBackward` 会把
+  `2. ` 替换成三个空格并把光标留在第 3 列；用户接着输入 `- ` 就得到 `   - `，被解析为
+  上一项的嵌套列表。`deleteEmptyTopLevelListSpec` 只接管“无父 `ListItem` + 前缀为空内容
+  + 光标在行末”，删除当前列表前缀并保留外层引用；嵌套项与 marker 内编辑继续 fail closed。
+
+有序标记上限 1–9 位数字（`ORDERED_MARKER_MAX`）：递增到 `999999999` 就**重复**该
+标记而不是回绕到 1 —— 回绕像列表重新开始，超限标记会重解析成段落。
+
+失败一律 fail closed：多个 range（哪怕都是空光标）或非空选区返回 `null`，树没覆盖该
+行/祖先也返回 `null`（复写选区是破坏性操作、猜层级会插错空格），绝不猜。唯一的命令层
+例外是“已确认处于列表、但没有合法 Tab rewrite”：不 dispatch、仍消费按键以保持焦点。
+其余交给上游或 host 命令。
+
+守卫都在解析层，不要只测“看起来对”：`test/list-continue.test.ts` 断言每个 spec 的精确
+文档与选区（含同一行嵌套、tab 列、padding 兜底、9 位上限、各类拒绝），
+`test/enter-ownership.test.ts` 走真实 keymap 链（`defaultKeymap` 先注册）确认同一批
+用例在 `Prec.highest` 下确实由引擎命令拿下。
+
+## Dynamic list depth crosses engine DOM reuse and desktop cascade
+
+列表深度现在是一个**值**而不是一组类：引擎发稳定类 `omd-li` / `omd-quote-in-li` +
+行内自定义属性 `--omd-list-depth`（行装饰与块 widget 都一样），视觉换算全在 desktop
+CSS。深度**不封顶**（`BlockEmbed.listDepth` 是 `ListItem` 祖先计数；`MAX_QUOTE_DEPTH`
+只管引用）。行装饰的 `tag` 仍带深度（`line:omd-li-N`）：增量装饰身份必须随深度变化，
+否则缩进变了旧行装饰会被复用。
+
+块 widget 这条路上有两个真实坑：
+
+- **`applyBlockEmbed` 必须跑在每一条成功的 `updateDOM` 路径里。** CM pass-1 复用旧 DOM
+  配新实例（`eq` 失败才调 `updateDOM`），新实例的 `embed` 才是当前深度；漏掉一次同步，
+  源码缩进已经变了、widget 还停在旧缩进。该函数同时负责**先清后写**：先移除 `omd-li` /
+  `omd-quote-in-li` / `omd-blockquote*` 与 `--omd-list-depth`，再写当前值 —— 叠加式写法
+  会留下旧深度、或让 `omd-li` 与 `omd-quote-in-li` 并存。
+- **desktop 的 `padding` 简写会静默吃掉左侧缩进。** `.omd-block` / `.omd-math` /
+  `.omd-table` / `.omd-code` 在列表规则之后用同特异性重声明 `padding` 简写，把左侧
+  padding 归零过 —— 深度属性写了却“从来没生效”。现在的规则在这些简写之后按更高特异性
+  重新声明左侧，并且**只偏移一次**：代码块 wrapper 独占那一次偏移（header 在它里面，
+  不再加一次），编辑态 chrome 是 `.cm-content` 的直接子节点、没有 wrapper，所以由它
+  自己承担偏移 + 10px 基准内缩。改动这块要连带看引用条位置（`--omd-bq-bar`）。
+
+守卫：`packages/engine/test/blocks.test.ts`（第 5 级发出 `--omd-list-depth: 5`，类仍是
+`omd-li`）+ `test/tableUpdateDOM.test.ts` / `test/blockwidgets.test.ts`（updateDOM 后
+嵌入类与深度是新值）+ `apps/desktop/test/listDepthStyles.test.ts`（把真实 styles.css
+挂进 happy-dom 跑级联，并断言没有 per-depth 类）+ `apps/desktop/e2e/list-depth.spec.ts`
+（happy-dom 解不了带 fallback 的第二层 `var()`，所以 padding 简写存活、偏移只加一次、
+引用条落在同一次偏移上，这三件事只在真实 Chromium 里断言）。
+
 ## Line block prefixes are structural — clamp the caret, never make them atomic
 
 The folded `> ` / `> - ` / `- [ ] ` prefix is block structure, but `cursorInside`
@@ -512,6 +687,25 @@ does not contribute one through the mounted tree. So `insertNewlineAndIndent`'s
 indentation and adds one level when the text before the caret ends with
 `{ ( [ :`. Making this language-aware means providing an `indentService` (or a
 per-language provider table) — a deliberate follow-up, not a config flag.
+
+Auto-pair and that Enter branch are two independent handlers, so each can be
+green alone while the pair is wrong: typing `{` leaves `{|}` (the closer on the
+*same* line), and plain continuation pushes `}` onto the indented new line —
+`{\n  }`. `continueCodeLineSpec` therefore checks the two adjacent content
+characters around the caret: `{|}` inserts `\n<prefix><base><INDENT>\n<prefix><base>`
+and selects the inner line, leaving the existing `}` in place (never
+reinserted, and `base` is the line's own leading content whitespace so `  {}`
+keeps its indent). Keep this branch O(1) and stateless — it runs before the
+ordinary continuation path and after the terminal-blank-line exit.
+
+The same highest-priority command must not treat every empty content line as
+"continue forever". When the caret is at the end of the final blank content line
+and the next line is the closing fence, Enter preserves that blank source line
+and moves after the closing fence. It reuses an existing blank line after the
+block, or inserts one with the same quote prefix. Empty lines with later code
+content still use ordinary continuation. The real-keymap cases live in
+`test/enter-ownership.test.ts`; testing only `continueCodeLineSpec` misses
+ownership conflicts with the bundled Markdown Enter command.
 
 ## `alive` is instance-scoped, but CM's `destroy` is tile-scoped
 
@@ -764,7 +958,7 @@ update(update: ViewUpdate) {
 （`toDOM = 0`），所以扣不扣都一样。**结论：不要为了减少 tile 重建去动 `rebuildRanges`
 的选择分支。**
 
-## 块 widget 反复挂载/卸载会持续占用内存（已确认，未修）
+## 块 widget 反复挂载/卸载会持续占用内存（聚合增长仍复现，根因 `inconclusive`）
 
 同一次排查中撞到的**真实缺陷**：让光标在"块内（编辑态）↔ 块外（渲染态）"之间反复翻转，
 每次翻转都会重建整块 DOM（设计使然：光标进块必须卸载 widget），但**强制 GC 后堆仍线性增长**：
@@ -780,14 +974,176 @@ after view.destroy() + gc: 1820.5MB     ← 不回收 ⇒ 强引用保留，不�
 
 复现用的文档只需一张引用内表格（`> | a | b |` + 若干行），光标在 `0` 与文末之间往返即可。
 
-**已经排除的保留者**（这些都是有界的，别再从这儿查）：
+**有界的部分**（别再从这儿查）：
 
 - `livePreviewField` 的 `specs` / `deco` / `pending` / `atomic`：400 次翻转后逐一相等
   （`test/widgetChurnBounds.test.ts` 第一条用例把这条钉死）；
-- `blockSelectionOverlay` 的 `liveWraps` / `liveRanges` 注册表：`wraps=0 ranges=1` 恒定；
+- `blockSelectionOverlay` 的 `liveWraps`：条目数恒定（按 widget 实例存 DOM，注销只走
+  `destroy()`，`refresh` 每轮还清扫未连接的 DOM）；
 - 引擎侧没有按 pos/按 transaction 累积的容器（`widgetMeasure` 只有一个 `StateEffect` 定义）。
 
-**下一步的排查方向**（按嫌疑排序）：表/代码 widget 自己在 `toDOM` 里挂的观察者或闭包、
+⚠️ 本条早期版本把 `liveRanges` 也算进“有界”（当时读到 `wraps=0 ranges=1` 恒定）。那个
+采样是错的：它只数了**当前一轮**的条目，而 `liveRanges` 是模块级 `Map`，历史条目一直在堆里
+累积 —— 这一点由 pre-change 快照证实（见下文“所有权缺陷”一节），但它只解释那批 detached
+DOM，**不足以**解释聚合增长。凡是“注册表条目数恒定”这类结论，都必须在**churn 之后**重新数，
+不能在单轮快照里数。
+
+**当时的排查方向（历史）**：表/代码 widget 自己在 `toDOM` 里挂的观察者或闭包、
 `decorations/widgets/*` 里的模块级缓存、以及 CM 侧 tile/DOM 是否被我们的实例字段或
 注册表间接强引用。定位手法：逐个把可疑注册/观察者改成 `WeakMap`/显式解绑后跑同一段
 复现脚本看堆是否回落；修好后把上面那段脚本变成带 `global.gc` 守卫的回归用例。
+
+### 真实浏览器复核：不是 happy-dom 独有的假象
+
+上面的数字来自 happy-dom，真实浏览器里可能的保留者是布局/CM tile 而不是引擎，所以在动
+生命周期抽象之前先量了一次真实 Chromium。工具：`apps/desktop/e2e/widget-memory-audit.mjs`
+（手动工具，不在 `test:e2e` 里）：
+
+```bash
+PW_PORT=9420 pnpm --filter @omd/desktop dev --port 9420 --strictPort   # 终端 A
+PW_PORT=9420 pnpm --filter @omd/desktop audit:widget-memory            # 终端 B
+```
+
+需要堆快照时加 `PW_HEAP_SNAPSHOTS=1`（同一终端 B 命令）：
+
+```bash
+PW_PORT=9420 PW_HEAP_SNAPSHOTS=1 pnpm --filter @omd/desktop audit:widget-memory
+```
+
+快照写到 `/tmp/omd-widget-baseline.heapsnapshot` 与
+`/tmp/omd-widget-after-1000.heapsnapshot`（脚本每次先删旧文件，`addHeapSnapshotChunk`
+的 chunk 同步写 fd，不在 Node 里拼整份字符串）。这两份是诊断产物，**不进仓库**。
+
+脚本用 `e2e/harness.html` 载入一张引用内表格（20 行 + 尾随 `tail`），光标在 `0` 与文末
+之间往返（每次往返 = 一次块 widget 卸载/挂载），累计 100 / 500 / 1000 次翻转；每个采样点
+前 `HeapProfiler.collectGarbage`，再用 `Runtime.getHeapUsage` 取值。
+
+实测（2026-10-27 macOS 26.2 arm64，Chrome 156.0.8078.48，同一会话内独立两次运行，字节值
+相差 <32 KB）：
+
+```text
+baseline        6.6 MB   (6,876,232)
+flips  100      7.6 MB   (7,969,720)
+flips  500      9.1 MB   (9,575,068)
+flips 1000     10.7 MB  (11,246,292)
+afterDestroy   10.7 MB  (11,229,856)   ← 峰值 10.73 MB 的 99.9%，仍在堆上
+```
+
+**分类：`production-browser reproduced`** —— 100→500 与 500→1000 两个窗口都单调增长，且
+`view.destroy()` 后 used heap 仍是峰值的 ~100%（判定阈值为 >75%）。即：happy-dom 里看到的
+「翻转让堆线性增长且 destroy 不回收」在真实 Chromium 同样成立，不是测试环境的假象。
+
+**这里不下结论**：上面这批数字只量了总量，快照只能回答“谁强引用着哪批对象”，不能单独把
+聚合增长归因到某一条路径（下文的分析最终落在 `inconclusive`）。真实浏览器复现的意义是：
+即便最终根因落在 CM tile 或某个 widget 的观察者上，也不能用「happy-dom 的锅」推掉这条缺陷。
+
+### 已确认的一处所有权缺陷：`liveRanges` 是模块级 `Map`，DOM 作键就是强引用
+
+`PW_HEAP_SNAPSHOTS=1` 在 baseline / after-1000 各取一份快照，按
+“谁强引用着 detached DOM”排序，直接指认了 `packages/engine/src/decorations/blockSelectionOverlay.ts`
+里那个模块级缓存。
+
+**快照证据（pre-change，1000 次翻转后）**：
+
+```text
+system / Context / scope #28797 --(context:liveRanges)--> Map #35608
+Map #35608 keys = 1002
+  ↳ 1000 个键是 detachedness=2 的
+     <div class="omd-block omd-table omd-blockquote omd-blockquote-1"
+          title="Click to edit source" contenteditable="false">
+  ↳ 1001 个键本身带 {from,to} 值对象；每个键对应一次翻转
+```
+
+即：每翻转一次就 `liveRanges.set(dom, {...})`，而 `dom` 是下一次翻转就会被卸载的整块
+widget wrap。条目数 = 翻转次数（1000 次 → 1000 个 detached 块 div），`view.destroy()` 也不
+回收（模块级 `Map` 的键是强引用，跟 view 生命周期无关）。
+
+这批死键在 pre-change 快照里确实由 `Map` 强引用住：单个死键的直接 retainer 是
+`_WidgetTile.dom` 与它自己的 `<div class="omd-block-body">`（一个自引用的 tile/DOM 环），
+而该环唯一的模块级入口是 `Map` 的 table 数组；采样到的 1000 个 detached 键全部经由该
+`Map` 可达。`liveWraps` 在同一次 churn 里条目数为 1。
+
+**但这只说明“这 1000 个 wrap 被一个强引用钉住”，不说明聚合增长的来源**：同一脚本在换成
+`WeakMap` 之后聚合增长一点没变（见下节），所以它是需要修掉的所有权缺陷，不是那条聚合
+增长的根因。
+
+**修法：一处，`Map` → `WeakMap`**
+
+```ts
+// 前
+const liveRanges = new Map<HTMLElement, { from: number; to: number }>()
+// 后
+const liveRanges = new WeakMap<HTMLElement, { from: number; to: number }>()
+```
+
+`get` / `set` / `delete` 的用法一行没改（`WeakMap` 三者都有），缓存语义不变：键是 DOM，值
+只是一个 `{from, to}` 的小对象，没有“需要按 DOM 回收时跑清理”的东西。`liveWraps` 保持
+`Map`：它按 widget 实例存 DOM 且要被 `refresh` 遍历清扫，弱化会让“实例还在但 DOM 已被 GC”
+这种状态不可见。
+
+### 改完之后：聚合增长没有变化（独立复核）
+
+同一脚本、同一文档、同样的 100 / 500 / 1000 次翻转，`liveRanges` 换成 `WeakMap` 之后重新
+量了一次（2026-10-28 macOS 26.2 arm64，Chrome 156.0.8078.48，端口 9438，
+`PW_PORT=9438 pnpm --filter @omd/desktop audit:widget-memory`）：
+
+```text
+baseline        6.6 MB   (6,866,952)
+flips  100      7.6 MB   (7,960,528)
+flips  500      9.1 MB   (9,566,068)
+flips 1000     10.7 MB  (11,237,248)
+afterDestroy   10.7 MB  (11,220,844)
+```
+
+和上面那批 pre-change 数字（6,876,232 / 7,969,720 / 9,575,068 / 11,246,292 / 11,229,856）
+逐点比对：**没有变化**。100 → 1000 仍是 +41%（11,237,248 / 7,960,528 = 1.41）。
+
+判定阈值 `afterDestroy / flips100 ≤ 1.20`：
+
+```text
+pre-change : 11,229,856 / 7,969,720 = 1.41     ✗
+post-change: 11,220,844 / 7,960,528 = 1.4096   ✗
+```
+
+把 GC 次数加码也救不回来：每采样点三次 `HeapProfiler.collectGarbage`、`view.destroy()` 之后
+再追加五次，终点仍是 **11,316,564 bytes**。增量的来源不是“GC 没跑够”。
+
+**聚合增长的分类仍是 `production-browser reproduced`，并且未解决。**
+
+### 修正后的快照分析：根因 `inconclusive`
+
+早期版本把 pre-change 快照里 `Map #35608 keys = 1002` 当作整条缺陷的根因，这是错的：它只
+解释被它钉住的那批 detached DOM，解释不了同时出现的 MB 级聚合增长 —— 换成 `WeakMap` 之后
+聚合增长纹丝不动，就是反证。
+
+重做 retainer 分析时还纠正了一个方法学错误：**V8 的 heap snapshot 会把 `WeakMap` 的键经
+ephemeron table 边画进图里，但那条边不是强引用。** 按“图上可达”统计，会把只是尚未回收、
+已经不可强达的键算成“仍被强引用”，从而把 `WeakMap` 之后残留的 DOM 误读成仍在泄漏。
+排除 ephemeron 边、只保留真正的强引用路径后：
+
+```text
+采样的 retained islands：16
+  14 / 16：没有任何强根路径（只剩 ephemeron 边 / 快照残留）
+   2 / 16：由浏览器自身（DevTools/CDP 会话）持有
+   0 / 16：能证明存在 OMD 侧的强根路径
+```
+
+**结论：`inconclusive`。** 聚合堆增长能稳定复现，但现有证据不能把它归到任何一条 OMD 强
+引用上：既不能证明保留者在引擎/CM 侧，也不能证明不在。这类场景下“堆总量 + 快照可达性”
+不是有效证据 —— 它把未回收但不可强达的对象和真正被强保留的对象画在同一张图里。
+
+### 现状：保留的所有权修正 vs 未满足的验收阈值
+
+- **保留 `Map` → `WeakMap`**：它是行为安全的**所有权修正**（模块级 `Map` 用 DOM 作键把卸载
+  后的 wrap 强引用住，这一点由 pre-change 快照确凿证实；`get` / `set` / `delete` 用法一行
+  没改，缓存语义不变）。但它**没有**满足聚合内存验收阈值（`1.4096` > 1.20）。
+- **保留 `liveWraps` 为 `Map`**：它按 widget 实例存 DOM 且要被 `refresh` 遍历清扫，弱化会
+  让“实例还在但 DOM 已被 GC”这种状态不可见。
+- **推迟 disposer / per-view 注册表**：`BlockWidget.own(disposer)` 或 per-view 注册表只有在
+  **某条 OMD 强根路径被证明之后**才值得加；在根因 `inconclusive` 时加，等于给未知保留者
+  套一层“每条 destroy 路径都必须正确”的新失败面。同理不要加 `liveRanges.clear()`：模块级
+  缓存不认识 view 生命周期。
+- **回归防线**：`test/widgetChurnBounds.test.ts` 第三条用例读源码，要求 `liveRanges` 声明为
+  `WeakMap<HTMLElement, { from: number; to: number }>` 且 `liveWraps` 仍是
+  `Map<BlockWidget, HTMLElement>`。它守的是**所有权**（有人手滑改回 `Map` 会立刻红），**不**
+  守内存 —— 堆大小依赖 GC 时机，不适合做断言，真实数值只走上面的手动审计。

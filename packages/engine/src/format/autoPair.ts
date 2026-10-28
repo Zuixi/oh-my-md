@@ -1,5 +1,3 @@
-import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
-import type { SyntaxNode } from "@lezer/common"
 import {
   CharCategory,
   Compartment,
@@ -12,6 +10,9 @@ import {
   type TransactionSpec,
 } from "@codemirror/state"
 import { EditorView, keymap } from "@codemirror/view"
+import { inVerbatim } from "../parse/verbatim"
+
+export { inVerbatim, VERBATIM_NODES } from "../parse/verbatim"
 
 // 引擎自研的 Markdown 感知自动配对（spec 2026-10-02-auto-pair-design）。stock
 // `closeBrackets` 三处 AGENTS 明文禁止：它的 token 表与上下文模型都是「猜编程语言字符串」，
@@ -42,32 +43,9 @@ export const CLOSE_BEFORE = ")]}:;>，。、；：！？）】》”’"
 /** D11：行首只有这两个有块结构风险（`*` 变列表项、`$` 进 MathBlock）。 */
 export const EMPTY_LINE_MARKERS = new Set(["*", "$"])
 
-/** §4.4：这些节点内 Markdown 标记按字面处理（T1 括号/引号不受影响）。 */
-export const VERBATIM_NODES = new Set([
-  "InlineCode",
-  "FencedCode",
-  "CodeBlock",
-  "InlineMath",
-  "MathBlock",
-  "FrontMatter",
-])
-
 export const BRACKET_PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}" }
 export const QUOTE_PAIRS: Record<string, string> = { '"': '"', "'": "'" }
 export const MARKER_PAIRS: Record<string, string> = { "*": "*", "_": "_", "`": "`", "$": "$" }
-
-/**
- * §4.4 抑制集：true = 代码/数学/前导元数据**或树未就绪**（D9）。
- * `syntaxTreeAvailable` 是 O(1) 且不触发解析，只在标记分支被调用（T1 逐键零树查询）。
- */
-export function inVerbatim(state: EditorState, pos: number): boolean {
-  // D9 fail-safe：上下文不可知时抑制而不是放行 —— 误配对会在代码块里插入用户没要的字符。
-  if (!syntaxTreeAvailable(state, pos + 1)) return true
-  for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-    if (VERBATIM_NODES.has(node.name)) return true
-  }
-  return false
-}
 
 /**
  * 当前上下文里真正生效的闭合符（D12：verbatim 下不含 T2 标记）。

@@ -5,7 +5,7 @@ import { tags } from "@lezer/highlight"
 import { stex } from "@codemirror/legacy-modes/mode/stex"
 import { history, historyKeymap } from "@codemirror/commands"
 import type { SyntaxNode } from "@lezer/common"
-import { BlockWidget } from "../blockWidget"
+import { BlockWidget, applyBlockEmbed } from "../blockWidget"
 import { MATH_BLOCK_ESTIMATE_PX } from "../widgetHeights"
 import { blockWidgetRange } from "../blockSelectionOverlay"
 
@@ -110,6 +110,9 @@ export class MathBlockWidget extends BlockWidget {
   updateDOM(dom: HTMLElement, view: EditorView, _from: MathBlockWidget): boolean {
     const body = dom.querySelector<HTMLElement>(".omd-block-body")
     if (!body) return false
+    // 复用的 DOM 上还挂着上一层的嵌入类/深度：先同步成当前实例的值，
+    // 再走下面的源码同步（否则块换层后缩进与引用条留在旧位置）。
+    applyBlockEmbed(dom, this.embed)
     // 弹窗内的 dispatch → 回写 → 外层重入重建的时序下，this.src 可能是过期实例值，
     // 且 posAtDOM/注册表两种范围解析都可能失败。与 applyDraft 同理以实时文档为
     // 真相：解析失败且有弹窗时宁可跳过同步，也绝不拿旧值回滚内层已输入的内容。

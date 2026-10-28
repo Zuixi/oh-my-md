@@ -1,15 +1,31 @@
 import { defaultKeymap, historyKeymap } from "@codemirror/commands"
-import { EditorState, type Extension } from "@codemirror/state"
-import { EditorView, keymap } from "@codemirror/view"
+import { EditorSelection, EditorState, type Extension } from "@codemirror/state"
+import { EditorView, keymap, type Command } from "@codemirror/view"
 import { describe, expect, it } from "vitest"
 // 树驱动命令需要完整语法树：经 helpers 进入模块图（完整解析 + 装饰排空）。
 import { makeState } from "./helpers"
 import { editorExtensions } from "../src/index"
 import { blockPrefixOf } from "../src/format/blockPrefix"
-import { continueQuoteSpec } from "../src/format/quotes"
+import { continueQuote, continueQuoteSpec } from "../src/format/quotes"
 
 function state(doc: string, head: number) {
   return makeState(doc).update({ selection: { anchor: head } }).state
+}
+
+/** 多个光标（每个 range 都 empty）：引用命令必须整体放行，不猜改哪一端。 */
+function multiCursor(doc: string, positions: number[]) {
+  // 没有 allowMultipleSelections 时 EditorState.update 会把选区压成单个 range。
+  return makeState(doc, [EditorState.allowMultipleSelections.of(true)])
+    .update({ selection: EditorSelection.create(positions.map(pos => EditorSelection.cursor(pos))) })
+    .state
+}
+
+/** 命令包装层：返回 false 且从不 dispatch 才算真正放行。 */
+function expectUnhandled(command: Command, s: EditorState) {
+  let dispatched = false
+  const target = { state: s, dispatch: () => { dispatched = true } }
+  expect(command(target as unknown as EditorView)).toBe(false)
+  expect(dispatched).toBe(false)
 }
 
 function after(doc: string, head = doc.length) {
@@ -67,6 +83,19 @@ describe("blockPrefixOf", () => {
       expect(continueQuoteSpec(s), doc).toBeNull()
     }
   })
+
+  it("yields when the innermost non-task mark is a list, even inside a quote", () => {
+    // 归属看最内层非任务标记：`> - x` 的最内层是 ListMark → continueList 拥有 Enter；
+    // `- > x` / `> - > x` 的最内层是 QuoteMark → 仍由本命令续写。
+    for (const doc of ["> - item", "> 1. item", ">   - child", "> - [x] done", "> > - item", "> - "]) {
+      const s = state(doc, doc.length)
+      expect(continueQuoteSpec(s), doc).toBeNull()
+    }
+    for (const doc of ["- > item", "> - > item", "> > item"]) {
+      const s = state(doc, doc.length)
+      expect(continueQuoteSpec(s), doc).not.toBeNull()
+    }
+  })
 })
 
 describe("continueQuoteSpec (Enter)", () => {
@@ -92,18 +121,6 @@ describe("continueQuoteSpec (Enter)", () => {
     expect(after("- > list quote")).toBe("- > list quote\n- > ")
   })
 
-  it("continues a bullet inside a quote", () => {
-    expect(after("> - bullet")).toBe("> - bullet\n> - ")
-  })
-
-  it("increments an ordered marker inside a quote", () => {
-    expect(after("> 1. first")).toBe("> 1. first\n> 2. ")
-  })
-
-  it("resets a checked task to an unchecked one inside a quote", () => {
-    expect(after("> - [x] done")).toBe("> - [x] done\n> - [ ] ")
-  })
-
   it("splits the line at the caret", () => {
     expect(after("> hello", 4)).toBe("> he\n> llo")
   })
@@ -119,8 +136,7 @@ describe("continueQuoteSpec (Enter)", () => {
   it("exits one level on a prefix-only line", () => {
     expect(after("> ")).toBe("")
     expect(after("> > ")).toBe("> ")
-    expect(after("> - ")).toBe("> ")
-    expect(after("> - hello\n> - ", 14)).toBe("> - hello\n> ")
+    expect(after("> - > ")).toBe("> - ")
   })
 
   it("leaves pure list lines to continueList", () => {
@@ -135,6 +151,13 @@ describe("continueQuoteSpec (Enter)", () => {
   it("defers to the default Enter for a non-empty selection", () => {
     const s = EditorState.create({ doc: "> hello", selection: { anchor: 2, head: 5 } })
     expect(continueQuoteSpec(s)).toBeNull()
+  })
+
+  it("returns null and stays unhandled when several cursor ranges are present", () => {
+    // 两个光标都落在旧路径**确实会改写**的行上：拒绝只能来自多光标守卫。
+    const two = multiCursor("> a\n> b", [3, 7])
+    expect(continueQuoteSpec(two)).toBeNull()
+    expectUnhandled(continueQuote, two)
   })
 
   it("defers an unclosed fence line to continueFence", () => {
@@ -165,6 +188,19 @@ function viewWith(doc: string, extensions: Extension[]) {
   })
 }
 
+function viewWithCursors(doc: string, positions: number[], extensions: Extension[]) {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  return new EditorView({
+    state: EditorState.create({
+      doc,
+      selection: EditorSelection.create(positions.map(pos => EditorSelection.cursor(pos))),
+      extensions: [EditorState.allowMultipleSelections.of(true), ...extensions],
+    }),
+    parent,
+  })
+}
+
 describe("quoteKeymap ordering", () => {
   const hostKeys = keymap.of([...defaultKeymap, ...historyKeymap])
 
@@ -179,6 +215,14 @@ describe("quoteKeymap ordering", () => {
     const view = viewWith("- hello", [hostKeys, editorExtensions()])
     pressEnter(view)
     expect(view.state.doc.toString()).toBe("- hello\n- ")
+    view.destroy()
+  })
+
+  it("stays out of a multi-cursor Enter so every range keeps its own continuation", () => {
+    // 仅改主光标的分支只会续写第一行；两行都续写说明每个 range 都由后续命令处理。
+    const view = viewWithCursors("> a\n> b", [3, 7], [hostKeys, editorExtensions()])
+    pressEnter(view)
+    expect(view.state.doc.toString()).toBe("> a\n> \n> b\n> ")
     view.destroy()
   })
 })

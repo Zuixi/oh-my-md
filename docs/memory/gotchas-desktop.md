@@ -23,7 +23,9 @@ paste fires
 
 The `skipAtomsForSelection` call expands the WebKit selection outward to the nearest atomic-range boundary, which can push `selection.to` past one or more newlines on empty lines.
 
-**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through to CM's default handler unchanged. An `updateListener` drops the saved target as soon as the selection moves off it — without that, right-click (without pasting) followed by moving the caret and pressing `Ctrl/Cmd-V` pastes at the stale right-click position.
+**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through unchanged.
+
+CodeMirror DOM handlers are first-true-wins, so assembly order is part of this contract: `Editor.ts` must register `imagePasteHandler` before engine `editorExtensions`. Otherwise an HTML-bearing right-click clipboard is claimed by `htmlPaste` first and inserts rich Markdown (for example `**XY**`) instead of the plain-text flavor at the saved target. The desktop handler still returns `false` for ordinary keyboard HTML, so the engine retains Markdown conversion ownership. An `updateListener` drops the saved target as soon as the selection moves off it — without that, right-click (without pasting) followed by moving the caret and pressing `Ctrl/Cmd-V` pastes at the stale right-click position. The four assembled ownership cases (image+HTML, keyboard HTML, context-menu HTML+plain, and read-only HTML) live in `apps/desktop/test/Editor.test.ts`; isolated handler tests cannot prove extension order.
 
 ## Dispatching changes without a selection leaves the caret before the insert
 
@@ -120,13 +122,16 @@ the builtin paste handler's readOnly branch; handlers are first-true-wins):
 the image **drop** handler in `apps/desktop/src/imagePaste.ts` likewise runs
 before the builtin drop branch, and the drop/paste/pick paths all funnel
 through `insertImageFile` — which guards `state.readOnly` itself before any
-asset read/write. Belt and braces: `pickAndInsertImage` refuses to open the
+asset read/write. The earlier desktop paste handler also guards `readOnly`
+before its saved context-menu target dispatch; otherwise moving it ahead of
+engine rich paste would let right-click plain text mutate a read-only document.
+Belt and braces: `pickAndInsertImage` refuses to open the
 file picker, the App insert-image command checks `readonlyTabsRef`, and App
 autosave never schedules for a readonly tab, so no mutation path can persist
 changes to the user's ≥50MiB HUGE file. Every doc-changing dispatch site must
 still check `state.readOnly` itself. Guard suite:
 `packages/engine/test/readonly-guards.test.ts` plus the desktop cases in
-`apps/desktop/test/imagePaste.test.ts` and
+`apps/desktop/test/Editor.test.ts`, `apps/desktop/test/imagePaste.test.ts`, and
 `apps/desktop/test/App.largeDocOpen.test.tsx` ("read-only tabs never mutate or
 persist") — add a case there whenever a new mutation path lands.
 

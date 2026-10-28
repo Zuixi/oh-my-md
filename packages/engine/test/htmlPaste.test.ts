@@ -133,6 +133,59 @@ describe("htmlPaste caret placement (real EditorView)", () => {
     view.destroy()
     parent.remove()
   })
+
+  it("pastes clipboard plain text byte-for-byte inside fenced code", async () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "```c\n\n```",
+        selection: { anchor: 5 },
+        extensions: [editorExtensions()],
+      }),
+      parent,
+    })
+    const text = [
+      "typedef enum {",
+      "    DASHCAM_CMD_NONE = 0,",
+      "    DASHCAM_CMD_PREVIEW_START,",
+      "} dashcam_cmd_t;",
+    ].join("\n")
+    const html = [
+      "<div>typedef enum {</div>",
+      "<div>&nbsp;&nbsp;&nbsp;&nbsp;DASHCAM_CMD_NONE = 0,</div>",
+      "<div>&nbsp;&nbsp;&nbsp;&nbsp;DASHCAM_CMD_PREVIEW_START,</div>",
+      "<div>} dashcam_cmd_t;</div>",
+    ].join("")
+
+    firePaste(view, html, text)
+
+    await waitForInsert(view, "DASHCAM")
+    expect(view.state.doc.toString()).toBe(`\`\`\`c\n${text}\n\`\`\``)
+    expect(view.state.selection.main.anchor).toBe(5 + text.length)
+    view.destroy()
+    parent.remove()
+  })
+
+  it("pastes clipboard plain text byte-for-byte inside display math", async () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "$$\n\n$$",
+        selection: { anchor: 3 },
+        extensions: [editorExtensions()],
+      }),
+      parent,
+    })
+    const text = String.raw`x_1 = \frac{a_b}{c}`
+    firePaste(view, `<div>${text}</div>`, text)
+
+    await waitForInsert(view, "frac")
+    expect(view.state.doc.toString()).toBe(`$$\n${text}\n$$`)
+    view.destroy()
+    parent.remove()
+  })
 })
 
 describe("pasted block content renders immediately (real editor extensions)", () => {

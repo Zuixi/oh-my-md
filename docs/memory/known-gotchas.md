@@ -28,13 +28,16 @@
 - **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
 - **A focused table must skip its subtree** — after emitting `line:omd-table-src*` the `Table` branch must `return true`, or `inlineRules` folds `**` inside cells and source mode renders "half a preview".
 - **Table Tab must not fall through to indentation when the tree is unresolved** — 树未覆盖光标时 `tableAt` 返回 null，放行 Tab 会让 `indentMore` 把空白写进表格行首；按行首形状吞键，Enter 不套这条兜底。
+- **Table Enter exits on the final row; only Tab appends** — 末行 Enter 复用 `exitTableSpec`（否则每按一次多一行）；返回 null 会写原始换行把表拆开，返回「什么都不做」才安全。
 - **Table keymap only sees non-composing keydown** — CM6 calls `ignoreDuringComposition` before the keymap; do not add a second `isComposing` guard (it drops the IME candidate confirm on Windows).
 - **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
 - **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
 - **A line-start regex cannot see the real block prefix** — `>x`, `  > x`, `- > x`, `> - [x]` need the tree-driven `blockPrefixOf`; remove a mark plus exactly one space.
+- **List editing columns, container transitions, and deletion are engine-owned structure** — `listFrameAt`/`itemMarkAt`/`listContentColumn` over line regexes; same-line `ListItem`s, adjacent ordered↔bullet containers, new ordered children reset to `1`, innermost non-task owner, 4-column tab stops, 1–4 padding with a one-column fallback, 9-digit ordered cap, single-cursor fail-closed. Empty top-level list Backspace must beat lang-markdown's marker-to-indent behavior or replacing `2. ` with `- ` silently nests; a no-op list Tab must still consume native focus navigation.
+- **List depth is one stable class + `--omd-list-depth`, not `omd-li-N`** — unbounded `BlockEmbed.listDepth`; `applyBlockEmbed` must re-sync (and clear first) on every successful `updateDOM`; widget padding shorthands silently zeroed the offset, so desktop re-declares left padding after them and adds it exactly once.
 - **Resolve a fence's parent from the line END** — `line.from` lands on `QuoteMark`/`QuoteIndent` and the parent walk never reaches `FencedCode`/`ListItem`.
 - **Fence tokens must resolve on both highlight paths** — a Shiki-only token loses its highlight when the caret enters the block; the alias-parity test guards the gap list.
-- **`markdown()` bundles its own `Prec.high` Enter keymap** — engine Enter commands need `Prec.highest`; assert ownership signatures (exit-one-level, caret moved onto the new line), not outcomes both implementations share.
+- **`markdown()` bundles its own `Prec.high` Enter/Backspace keymap** — engine structural Enter and empty top-level list Backspace commands need `Prec.highest`; assert ownership signatures (exit-one-level, caret placement, no marker-to-indent conversion), not outcomes both implementations share.
 - **A continuation command must set an explicit selection** — inserting at a collapsed caret leaves the caret on the previous line (`assoc = -1`).
 - **Line block prefixes are structural** — clamp clicks/Home/↑↓ to the content start; never make line-start marks atomic; prefix = mark + exactly one space.
 - **There is no indentation service inside a fence** — `getIndentation` is always null there; `{`-style auto-indent is the engine's job.
@@ -45,7 +48,7 @@
 - **Block widgets leak on repeated mount/unmount** — flipping the caret in and out of a table/fence rebuilds the DOM each time and the heap keeps growing even after forced GC (2000 flips ≈ +1.8GB, not released by `view.destroy()`); engine-side state and the block registry are provably bounded, so the retention is elsewhere.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
-- **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.
+- **Desktop `defaultKeymap` is registered before engine keymaps** — `Prec.high` beats it, but every structural Enter and list Tab/Shift-Tab needs `Prec.highest` to beat `markdown()`'s bundled `Prec.high` Enter; list Tab must return true even when no rewrite applies, or the browser moves focus; arrow/caret-clamp bindings stay at `Prec.high`.
 - **Parser character codes are named, not magic** — use `parse/chars.ts` constants.
 - **Doc-start `---` is front matter, not a thematic rule** — unclosed front matter swallows to EOF.
 - **The complete-tree trap** — production code must never `forceParsing`/`ensureSyntaxTree` to `doc.length` (`crossLayerNoFullTree.test.ts` guards it).
@@ -53,6 +56,10 @@
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.
 - **`Text.append` continues the last line** — batched assembly needs an empty junction line (`docText.ts`).
 - **Pasted blocks normalize their own boundaries** — blank line before/after + opaque-end newline in `paste/blockBoundaries.ts`; never "fix" paste rendering with a decoration-layer boundary exception.
+- **Rich paste inside verbatim syntax must preserve `text/plain`** — turndown escapes `_`/`\` and expands HTML rows; code/math/front matter bypass conversion before `preventDefault`.
+- **Code-line Enter needs an exit branch** — on the final blank content line immediately before the closing fence, move after the fence instead of inserting blank lines inside forever.
+- **Paired `{}` needs its own Enter branch** — auto-pair and code-line continuation are separate handlers; `{|}` + Enter must align the existing `}`, not push it onto the indented inner line.
+- **Code render→source transitions anchor the clicked row** — rendered and editing line heights can differ across fonts/WebKit; compensate in `requestMeasure`, not with fixed heights.
 - **Auto pair: type-over before insertion** — checking insertion first turns a hand-typed `*bold*` closer into `*bold**`; the adapter's order is the contract.
 - **Auto pair: a `Prec.high` Backspace binding must `return false` when it does not apply** — otherwise it steals `skipAtomic`'s whole-atom delete at folded marker boundaries.
 - **Auto pair: line-start `*` and `$` are block structure** — the paired `* *` becomes a list item and `$$` becomes a MathBlock that swallows to EOF; rule 2b suppresses exactly those two, never `` ` ``/`_`.
@@ -63,7 +70,7 @@
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
 
-- **Right-click paste on macOS deletes extra lines** — the paste handler must dispatch from a saved `posAtCoords` position, not CM's `doPaste`.
+- **Right-click paste on macOS deletes extra lines** — dispatch from a saved `posAtCoords` position, and register the desktop paste handler before engine rich paste so HTML-bearing clipboards cannot bypass it.
 - **Dispatching changes without a selection leaves the caret before the insert** — always set an explicit anchor; never `replaceSelection` on async paths.
 - **Normalization banner accessibility** — `aria-disabled`, never native `disabled`; the live-region host mounts on the first frame.
 - **Relative image source and filesystem path are different concerns** — resolve through the `resolveImageSrc` host callback only.

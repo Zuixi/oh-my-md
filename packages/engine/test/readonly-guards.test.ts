@@ -43,9 +43,11 @@ describe("engine keymaps refuse to mutate readonly docs", () => {
   })
 
   it("indentList / outdentList (Tab / Shift-Tab) return false and leave the doc unchanged", () => {
-    const state = readonlyState("  - hello", 9)
-    expect(run(indentList, state)).toEqual({ handled: false, doc: "  - hello" })
-    expect(run(outdentList, state)).toEqual({ handled: false, doc: "  - hello" })
+    // 两份文档都在可编辑态确实能改写（下面的对照用例），所以拒绝只能来自只读守卫。
+    const indented = readonlyState("- parent\n- child", 16)
+    expect(run(indentList, indented)).toEqual({ handled: false, doc: "- parent\n- child" })
+    const outdented = readonlyState("- parent\n  - child", 18)
+    expect(run(outdentList, outdented)).toEqual({ handled: false, doc: "- parent\n  - child" })
   })
 
   it("markdownKeymap formatting (toggleBold) returns false and leaves the doc unchanged", () => {
@@ -60,6 +62,13 @@ describe("engine keymaps refuse to mutate readonly docs", () => {
     expect(run(continueList, list)).toEqual({ handled: true, doc: "- hello\n- " })
     const word = makeState("hello world").update({ selection: { anchor: 6 } }).state
     expect(run(toggleBold, word)).toEqual({ handled: true, doc: "hello **world**" })
+  })
+
+  it("keeps Tab / Shift-Tab working on editable list lines", () => {
+    const indentable = makeState("- parent\n- child").update({ selection: { anchor: 16 } }).state
+    expect(run(indentList, indentable)).toEqual({ handled: true, doc: "- parent\n  - child" })
+    const outdentable = makeState("- parent\n  - child").update({ selection: { anchor: 18 } }).state
+    expect(run(outdentList, outdentable)).toEqual({ handled: true, doc: "- parent\n- child" })
   })
 })
 

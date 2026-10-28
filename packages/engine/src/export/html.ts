@@ -3,6 +3,7 @@ import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
 import { parseCell, type CellNode } from "../parse/cell"
 import { linkHref } from "../links"
+import { createMathHtmlCache } from "./mathHtmlCache"
 import { EXPORT_BODY_CSS } from "./styles"
 
 const SKIP = new Set([
@@ -191,7 +192,7 @@ export interface ExportRichHtmlOptions {
   customCss?: string
 }
 
-const mathHtmlCache = new Map<string, string>()
+const mathHtmlCache = createMathHtmlCache()
 
 async function renderMathHtml(tex: string, displayMode: boolean): Promise<string> {
   const cacheKey = `${displayMode ? "d" : "i"}:${tex}`

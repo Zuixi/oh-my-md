@@ -1,4 +1,4 @@
-import { BlockWidget, type BlockEmbed } from "../blockWidget"
+import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
 import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../../shiki/languages"
 import { getCodeHighlighter } from "../../shiki/codeHighlighter"
 import { createCodeLangPicker } from "./codeLangPicker"
@@ -99,8 +99,7 @@ export class CodeChromeWidget extends WidgetType {
     })
     // 刻意不加 omd-block（那是给独立块 widget 的 padding/定位用的，加到行内 chrome
     // 上会撑高围栏行）：只补嵌入类，引用条由 background-image 在 chrome 自身上画。
-    const embedClasses = blockEmbedClasses(this.embed)
-    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
+    applyBlockEmbed(header, this.embed)
     return header
   }
 
@@ -137,26 +136,15 @@ export interface CodeWidgetOptions {
   embed?: BlockEmbed
 }
 
-/** 引用/列表嵌入类（`omd-blockquote-N` / `omd-li-N` / `omd-quote-in-li-N`）。 */
-function blockEmbedClasses(embed: BlockEmbed): string[] {
-  const classes: string[] = []
-  if (embed.quoteDepth > 0) classes.push("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
-  if (embed.listDepth > 0) {
-    const nest = embed.quoteInList ? "omd-quote-in-li" : "omd-li"
-    classes.push(`${nest}-${embed.listDepth}`)
-  }
-  return classes
-}
-
-function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
-  return ["omd-block", cssClass, ...blockEmbedClasses(embed)].join(" ")
-}
-
 // Shiki 行 span（pre>code>span.line*）与源码内容行 1:1：点击落在第 N 个 line
 // span 上即第 N 内容行。占位 <pre>（Shiki/缓存未就绪）无结构可依，回到首行。
+function clickedLineElement(target: EventTarget | null): Element | null {
+  if (!(target instanceof Element)) return null
+  return target.closest("span.line")
+}
+
 function clickedLineIndex(target: EventTarget | null): number {
-  if (!(target instanceof Element)) return 0
-  const line = target.closest("span.line")
+  const line = clickedLineElement(target)
   if (!line?.parentElement) return 0
   let index = 0
   for (let sibling = line.previousElementSibling; sibling; sibling = sibling.previousElementSibling) index++
@@ -200,7 +188,8 @@ export class CodeWidget extends BlockWidget {
     this.view = view
     const wrap = document.createElement("div")
     this.wrap = wrap
-    wrap.className = blockWidgetClass(this.cssClass, this.embed)
+    wrap.className = `omd-block ${this.cssClass}`
+    applyBlockEmbed(wrap, this.embed)
 
     wrap.appendChild(this.buildHeader(view))
     const body = document.createElement("div")
@@ -228,6 +217,7 @@ export class CodeWidget extends BlockWidget {
       e.stopPropagation()
       const range = blockWidgetRange(this, view, wrap)
       if (!range) return
+      const clickedTop = clickedLineElement(e.target)?.getBoundingClientRect().top
       const fenceLine = view.state.doc.lineAt(range.from)
       const target = Math.min(
         fenceLine.number + 1 + clickedLineIndex(e.target),
@@ -241,6 +231,18 @@ export class CodeWidget extends BlockWidget {
       const anchor = prefix ? targetLine.from + prefix.text.length : targetLine.from
       view.dispatch({ selection: { anchor } })
       view.focus()
+      if (clickedTop !== undefined) {
+        view.requestMeasure({
+          read: currentView => {
+            const node = currentView.domAtPos(anchor).node
+            const element = node instanceof Element ? node : node.parentElement
+            return element?.closest(".cm-line")?.getBoundingClientRect().top ?? null
+          },
+          write: top => {
+            if (top !== null) view.scrollDOM.scrollTop += top - clickedTop
+          },
+        })
+      }
     })
 
     this.activateDom(wrap)
@@ -275,8 +277,7 @@ export class CodeWidget extends BlockWidget {
     })
     // 引用/列表内的渲染态代码块：header 自带不透明底色，只有同带引用类时
     // `.omd-code-header.omd-blockquote-N` 才能把引用条重画上去（与编辑态 chrome 同理）。
-    const embedClasses = blockEmbedClasses(this.embed)
-    if (embedClasses.length > 0) header.className = ["omd-code-header", ...embedClasses].join(" ")
+    applyBlockEmbed(header, this.embed)
 
     const copyBtn = document.createElement("button")
     copyBtn.type = "button"

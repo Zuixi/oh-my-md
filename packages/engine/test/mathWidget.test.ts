@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { MathBlockWidget, mathEditorTexOf, mathTexOf, rebuildMathSrc } from "../src/decorations/widgets/math"
+import { applyBlockEmbed } from "../src/decorations/blockWidget"
 
 // MathBlockWidget's base imports the live decoration field, which is irrelevant to these tests.
 vi.mock("../src/decorations/build", () => ({
@@ -80,5 +81,41 @@ describe("MathBlockWidget widget-reuse contract", () => {
     expect(body.querySelector("annotation")?.textContent).toBe("new")
     wrap.remove()
     inner.destroy()
+  })
+
+  // 旧实例建的 DOM 被 pass-1 复用：src 相同但嵌入位置变了（深度/在不在列表里），
+  // eq 失败进入 updateDOM —— 嵌入类与 --omd-list-depth 必须跟着新实例走。
+  it("re-synchronizes embed state when updateDOM reuses the DOM", async () => {
+    const wrap = document.createElement("div")
+    wrap.className = "omd-block omd-math"
+    applyBlockEmbed(wrap, { quoteDepth: 1, listDepth: 1, quoteInList: false })
+    const body = document.createElement("div")
+    body.className = "omd-block-body"
+    wrap.appendChild(body)
+    document.body.appendChild(wrap)
+    const view = { requestMeasure: () => {} } as unknown as EditorView
+
+    const deeper = new MathBlockWidget("$$a$$", 0, { quoteDepth: 0, listDepth: 5, quoteInList: false })
+    expect(deeper.updateDOM(wrap, view, deeper)).toBe(true)
+    expect(wrap.classList.contains("omd-li")).toBe(true)
+    expect(wrap.classList.contains("omd-blockquote")).toBe(false)
+    expect(wrap.classList.contains("omd-blockquote-1")).toBe(false)
+    expect(wrap.style.getPropertyValue("--omd-list-depth")).toBe("5")
+    expect(wrap.querySelector(".omd-block-body")).toBe(body)   // DOM 仍复用
+
+    const quoteInList = new MathBlockWidget("$$a$$", 0, { quoteDepth: 1, listDepth: 2, quoteInList: true })
+    expect(quoteInList.updateDOM(wrap, view, deeper)).toBe(true)
+    expect(wrap.classList.contains("omd-li")).toBe(false)
+    expect(wrap.classList.contains("omd-quote-in-li")).toBe(true)
+    expect(wrap.classList.contains("omd-blockquote-1")).toBe(true)
+
+    const outside = new MathBlockWidget("$$a$$", 0, { quoteDepth: 0, listDepth: 0, quoteInList: false })
+    expect(outside.updateDOM(wrap, view, quoteInList)).toBe(true)
+    expect(wrap.classList.contains("omd-quote-in-li")).toBe(false)
+    expect(wrap.classList.contains("omd-blockquote-1")).toBe(false)
+    expect(wrap.style.getPropertyValue("--omd-list-depth")).toBe("")
+
+    await tick()
+    wrap.remove()
   })
 })

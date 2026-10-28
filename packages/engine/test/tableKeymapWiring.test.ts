@@ -52,15 +52,25 @@ describe("tableKeymap wins Tab/Enter through editorExtensions()", () => {
     cleanup()
   })
 
-  it("appends a '|'-prefixed row on Enter in the last row", () => {
+  it("exits to the blank paragraph on Enter in the last row", () => {
     // 上游 insertNewlineContinueMarkup 在表格里直接 bail（无 list/quote 上下文），
-    // host 的 insertNewlineAndIndent 则插入一个裸换行 —— 只有 tableKeymap 会补行。
+    // host 的 insertNewlineAndIndent 则插入一个裸换行 —— 只有 tableKeymap 会把光标
+    // 送到表后的空段。加行是 Tab 的职责，Enter 不得再追加行。
     const { view, errors, cleanup } = viewWith(TABLE, LAST_ROW_HEAD)
-    press(view, "Enter")
-    const lines = view.state.doc.toString().split("\n")
-    expect(lines).toHaveLength(TABLE.split("\n").length + 1)
-    expect(lines[3].startsWith("|")).toBe(true)
+    const event = press(view, "Enter")
+    expect(view.state.doc.toString()).toBe(TABLE)
     expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(4)
+    expect(view.state.doc.lineAt(view.state.selection.main.head).text).toBe("")
+    expect(event.defaultPrevented).toBe(true)
+    expect(errors).toEqual([])
+    cleanup()
+  })
+
+  it("still moves down to the same column from a header cell on Enter", () => {
+    const { view, errors, cleanup } = viewWith(TABLE, TABLE.indexOf("A"))
+    press(view, "Enter")
+    expect(view.state.doc.toString()).toBe(TABLE)
+    expect(view.state.selection.main.head).toBe(TABLE.indexOf("a |"))
     expect(errors).toEqual([])
     cleanup()
   })
@@ -77,8 +87,8 @@ describe("tableKeymap wins Tab/Enter through editorExtensions()", () => {
 
 describe("tableKeymap rejects read-only documents through the real keymap chain", () => {
   it("Enter inside a table row changes nothing and the handler falls through", () => {
-    // tableNextRowSpec 在末行会追加一行，exitTableSpec 永远改写 —— readOnly 守卫
-    // 只在 tableKeymap.ts 的 dispatchSpec 里，因此必须挂载真实视图验证。
+    // tableNextRowSpec 在末行会退出表格（可能改写文档），exitTableSpec 永远改写 ——
+    // readOnly 守卫只在 tableKeymap.ts 的 dispatchSpec 里，因此必须挂载真实视图验证。
     const { view, errors, cleanup } = viewWith(TABLE, LAST_ROW_HEAD, [EditorState.readOnly.of(true)])
     const event = press(view, "Enter")
     expect(view.state.doc.toString()).toBe(TABLE)

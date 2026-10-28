@@ -12,9 +12,8 @@ import {
   setNormalizationAction,
   type NormalizationByTab,
 } from "./normalizationState"
-import { markSaved, recoveryKey, sessionDirty, sessionPath, type EditorSession } from "./session"
-import { replaceTabSession, type Workspace } from "./workspace"
-import type { DocumentVersion, ExpectedDocumentVersion } from "./desktopServices"
+import { sessionDirty, sessionPath, type EditorSession } from "./session"
+import type { Workspace } from "./workspace"
 import { createTransientStatusNotifier } from "./transientStatus"
 import { t } from "./i18n"
 
@@ -203,30 +202,6 @@ export function prepareTabSave(
   return { tab, view, documentId, snapshot, docAtStart, capture, nextNormalization: saving }
 }
 
-export interface TabSaveHost {
-  readonly isOpening: () => boolean
-  readonly getTab: (tabId: number) => EditorSession | undefined
-  readonly getView: (tabId: number) => EditorView | undefined
-  readonly getContents: (tabId: number) => string
-  readonly getNormalization: () => NormalizationByTab
-  readonly setNormalization: (next: NormalizationByTab) => void
-  readonly getWorkspace: () => Workspace
-  readonly getViews: () => ReadonlyMap<number, EditorView>
-  readonly pickSavePath: () => Promise<string | null>
-  readonly writeFile: (path: string, contents: string) => Promise<void>
-  readonly allowDocumentAssets: (path: string) => Promise<void>
-  readonly readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
-  readonly onPersisted: (
-    tab: EditorSession,
-    path: string,
-    snapshot: string,
-    version: DocumentVersion,
-    view: EditorView,
-  ) => void
-  readonly onSaveFailed: (error: unknown) => void
-  readonly enqueue: (work: () => Promise<void>) => Promise<void>
-}
-
 export function createNormalizationHandlers(host: {
   readonly getActiveTabId: () => number
   readonly getTab: (tabId: number) => EditorSession | undefined
@@ -261,40 +236,6 @@ export function createNormalizationHandlers(host: {
   }
 }
 
-export function createSaveQueueRunner(
-  queueRef: { current: Promise<void> },
-): TabSaveHost["enqueue"] {
-  return async work => {
-    const operation = queueRef.current.catch(() => undefined).then(work)
-    queueRef.current = operation
-    await operation
-  }
-}
-
-export interface SessionPersistenceHost {
-  readonly getWorkspace: () => Workspace
-  readonly setWorkspace: (next: Workspace) => void
-  readonly revealFolder: (path: string) => void
-  readonly rememberRecent: (path: string) => void
-  readonly recordDiskSnapshot: (path: string, snapshot: string) => void
-  readonly syncDoc: (doc: string, tabId: number) => void
-  readonly clearRecovery: (key: string) => void
-}
-
-export function createSessionPersistence(
-  host: SessionPersistenceHost,
-): TabSaveHost["onPersisted"] {
-  return (tab, path, snapshot, version, view) => {
-    const saved = markSaved(tab, path, snapshot, version)
-    host.setWorkspace(replaceTabSession(host.getWorkspace(), saved))
-    host.revealFolder(path)
-    host.rememberRecent(path)
-    host.recordDiskSnapshot(path, snapshot)
-    host.syncDoc(view.state.doc.toString(), tab.id)
-    host.clearRecovery(recoveryKey(saved))
-  }
-}
-
 export function createSkippedStatusNotifier(
   setMessage: (value: string | null) => void,
   timerRef: { readonly current: number | null },
@@ -302,86 +243,4 @@ export function createSkippedStatusNotifier(
 ): () => void {
   const notify = createTransientStatusNotifier(setMessage, timerRef, setTimer)
   return () => notify(t(SKIPPED_MARKERS_STATUS))
-}
-
-export function createTabSaver(host: TabSaveHost) {
-  return async function saveFile(
-    tabId: number,
-    trigger: SaveTrigger,
-    saveAs = false,
-  ): Promise<void> {
-    if (host.isOpening()) return
-    const prepared = prepareTabSave(
-      tabId,
-      trigger,
-      host.getTab(tabId),
-      host.getView(tabId),
-      host.getContents(tabId),
-      host.getNormalization(),
-    )
-    if (!prepared) return
-    if (prepared.nextNormalization !== host.getNormalization()) {
-      host.setNormalization(prepared.nextNormalization)
-    }
-    const { view, documentId, snapshot, capture } = prepared
-    const resync = () => {
-      if (!capture) return
-      host.setNormalization(resyncTabNormalization(
-        host.getNormalization(), capture.tabId, capture.view,
-      ))
-    }
-    const stillTarget = () => sameSaveTarget(
-      tabId, documentId, view, host.getTab(tabId), host.getViews(),
-    )
-    await host.enqueue(async () => {
-      try {
-        if (!stillTarget()) {
-          resync()
-          return
-        }
-        const queuedTab = host.getTab(tabId)
-        if (!queuedTab) {
-          resync()
-          return
-        }
-        const targetPath = saveAs || !sessionPath(queuedTab)
-          ? await host.pickSavePath()
-          : sessionPath(queuedTab)!
-        if (!targetPath || !stillTarget()) {
-          resync()
-          return
-        }
-        await host.writeFile(targetPath, snapshot)
-        if (!stillTarget()) {
-          resync()
-          return
-        }
-        const versionProbe = await host.readDocumentVersion(targetPath)
-        if (versionProbe.kind !== "existing") {
-          throw new Error(t("error.save.noVersion"))
-        }
-        await host.allowDocumentAssets(targetPath)
-        if (!stillTarget()) {
-          resync()
-          return
-        }
-        const currentTab = host.getTab(tabId)
-        if (!currentTab) {
-          resync()
-          return
-        }
-        host.onPersisted(currentTab, targetPath, snapshot, versionProbe.version, view)
-        if (capture) {
-          const done = completeAccept(
-            capture, host.getWorkspace(), host.getViews(), host.getNormalization(),
-          )
-          host.setNormalization(done.nextState)
-          if (done.transaction) view.dispatch(done.transaction)
-        }
-      } catch (error) {
-        resync()
-        host.onSaveFailed(error)
-      }
-    })
-  }
 }

@@ -62,10 +62,36 @@ describe("tableNextRowSpec", () => {
     expect(next.selection.main.head).toBe(DOC.indexOf("a"))
   })
 
-  it("appends a row when pressed in the last row", () => {
+  it("exits to the blank paragraph after the table when pressed in the last row", () => {
     const state = stateAt("a")
     const next = state.update(tableNextRowSpec(state)!).state
-    expect(next.doc.lines).toBe(DOC.split("\n").length + 1)
+    // 加行只属于 Tab；Enter 在末行不得改写文档，也不得落一个原始换行进表格源码。
+    expect(next.doc.toString()).toBe(DOC)
+    expect(next.doc.lineAt(next.selection.main.head).number).toBe(4)
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
+  })
+
+  it("exits from every cell of the last row, not just the first", () => {
+    const state = stateAt("b")
+    const next = state.update(tableNextRowSpec(state)!).state
+    expect(next.doc.toString()).toBe(DOC)
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
+  })
+
+  it("still moves down from a non-final data row", () => {
+    const doc = ["| A | B |", "| --- | --- |", "| a | b |", "| c | d |", "", "after"].join("\n")
+    const state = makeState(doc).update({ selection: { anchor: doc.indexOf("a |") } }).state
+    const next = state.update(tableNextRowSpec(state)!).state
+    expect(next.doc.toString()).toBe(doc)
+    expect(next.selection.main.head).toBe(doc.indexOf("c |"))
+  })
+
+  it("creates the blank paragraph when the table ends the document", () => {
+    const tail = "| A | B |\n| --- | --- |\n| a | b |"
+    const state = makeState(tail).update({ selection: { anchor: tail.indexOf("a |") } }).state
+    const next = state.update(tableNextRowSpec(state)!).state
+    expect(next.doc.toString()).toBe(`${tail}\n\n`)
+    expect(next.doc.lineAt(next.selection.main.head).text).toBe("")
   })
 })
 
@@ -97,13 +123,15 @@ describe("caret on the table end boundary", () => {
     expect(fromBoundary!.doc.lines).toBe(DOC.split("\n").length + 1)
   })
 
-  it("Enter does what it does one character earlier (appends a row)", () => {
+  it("Enter does what it does one character earlier (exits the table)", () => {
     const fromBoundary = applyAt(BOUNDARY, tableNextRowSpec)
     const oneBefore = applyAt(BOUNDARY - 1, tableNextRowSpec)
     expect(oneBefore).not.toBeNull()
     expect(fromBoundary).not.toBeNull()
     expect(fromBoundary!.doc.toString()).toBe(oneBefore!.doc.toString())
     expect(fromBoundary!.selection.main.head).toBe(oneBefore!.selection.main.head)
+    expect(fromBoundary!.doc.toString()).toBe(DOC)
+    expect(fromBoundary!.doc.lineAt(fromBoundary!.selection.main.head).text).toBe("")
   })
 })
 

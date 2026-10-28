@@ -78,14 +78,26 @@ test("End reaches the table end boundary, where Tab still belongs to the table",
   expect(await caretHead(page)).toBeGreaterThan(tableEnd)
 })
 
-test("Enter at the last row appends a row", async ({ page }) => {
+// 加行是 Tab 的专属动作（上面的用例钉住了）；Enter 在末行必须退出到表后的空段。
+// 文档里已有一个空行，所以「退出」= 纯选区移动：文档一字不改，光标停到表后那一行。
+test("Enter at the last row exits to the blank paragraph", async ({ page }) => {
   await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(DOC)}`)
-  const countRows = () => page.evaluate(() =>
-    (window as any).__view.state.doc.toString().split("\n").filter((l: string) => l.startsWith("|")).length)
-  const before = await countRows()
   await page.locator(".omd-table tbody tr").last().locator("td").first().click()
   await page.keyboard.press("Enter")
-  expect(await countRows()).toBe(before + 1)
+  expect(await docText(page)).toBe(DOC)
+  const caret = await page.evaluate(() => {
+    const view = (window as any).__view
+    return { line: view.state.doc.lineAt(view.state.selection.main.head).number,
+      text: view.state.doc.lineAt(view.state.selection.main.head).text }
+  })
+  expect(caret).toEqual({ line: TABLE_LINES + 1, text: "" })
+
+  // 第二次 Enter 只是普通段落换行：不再加行，也不会跑回表格里。
+  await page.keyboard.press("Enter")
+  await page.keyboard.type("outside")
+  const after = await docText(page)
+  expect(after).toBe(DOC.replace("\n\nafter", "\n\noutside\nafter"))
+  expect(after.split("\n").filter(line => line.startsWith("|"))).toHaveLength(TABLE_LINES)
 })
 
 test("Mod-Enter leaves the table", async ({ page }) => {

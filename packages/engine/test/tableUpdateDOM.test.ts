@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest"
 // BlockWidget（"Class extends value undefined"）。现有 tables.test.ts 同序。
 import { makeState } from "./helpers"
 import { TableWidget } from "../src/decorations/widgets/table"
+import { applyBlockEmbed } from "../src/decorations/blockWidget"
 import { tableDataFromNode, type TableData } from "../src/tables/model"
 
 // 关键契约（docview.ts findWidget）：pass-1 `widget.updateDOM(tile.dom, view, tile.widget)`
@@ -81,8 +82,7 @@ describe("table widget in-place updateDOM", () => {
     expect(cellOf(dom, 2, 1)).toBe(untouched)
   })
 
-  it("returns false for structural changes so CodeMirror rebuilds via toDOM", async () => {
-    const one = "| a |\n|---|\n| 1 |"
+  it("returns false for structural changes so CodeMirror rebuilds via toDOM", async () => {    const one = "| a |\n|---|\n| 1 |"
     const two = "| a |\n|---|\n| 1 |\n| 2 |"
     const { view } = fakeView(one)
     const before = new TableWidget(one, 0, tableData(one))
@@ -131,6 +131,39 @@ describe("table widget in-place updateDOM", () => {
     expect(cellOf(dom, 0, 0).style.textAlign).toBe("left")
     expect(cellOf(dom, 1, 0).style.textAlign).toBe("left")
     expect(dom.querySelector("[data-act='align-left']")?.classList.contains("omd-table-tool-active")).toBe(true)
+  })
+
+  // 嵌入状态（列表深度/引用类）是两个实例之间唯一不在 src 里的 DOM 输入：
+  // updateDOM 复用的旧 DOM 必须被重新同步，而不是停在上一层的类与深度上。
+  it("re-synchronizes embed classes and depth on a reused DOM", async () => {
+    const src = "| a |\n|---|\n| 1 |"
+    const { view } = fakeView(src)
+    const table = tableData(src)
+    const before = new TableWidget(src, 0, table, { quoteDepth: 0, listDepth: 1, quoteInList: false })
+    const dom = await mount(before, view)
+    const tableEl = dom.querySelector("table")
+    const body = dom.querySelector(".omd-block-body")
+    expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("1")
+
+    const deeper = new TableWidget(src, 0, table, { quoteDepth: 0, listDepth: 5, quoteInList: false })
+    expect(deeper.updateDOM(dom, view as never, before)).toBe(true)
+    // DOM 身份仍复用（补丁路径），但深度与类已换成新嵌入值。
+    expect(dom.querySelector("table")).toBe(tableEl)
+    expect(dom.querySelector(".omd-block-body")).toBe(body)
+    expect(dom.classList.contains("omd-li")).toBe(true)
+    expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("5")
+
+    const quoteInList = new TableWidget(src, 0, table, { quoteDepth: 1, listDepth: 2, quoteInList: true })
+    expect(quoteInList.updateDOM(dom, view as never, deeper)).toBe(true)
+    expect(dom.classList.contains("omd-li")).toBe(false)
+    expect(dom.classList.contains("omd-quote-in-li")).toBe(true)
+    expect(dom.classList.contains("omd-blockquote-1")).toBe(true)
+    expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("2")
+
+    const plain = new TableWidget(src, 0, table, { quoteDepth: 0, listDepth: 0, quoteInList: false })
+    expect(plain.updateDOM(dom, view as never, quoteInList)).toBe(true)
+    expect(dom.className).toBe("omd-block omd-table")
+    expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("")
   })
 
 })

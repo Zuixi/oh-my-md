@@ -624,3 +624,165 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 })
+
+const MACOS_WEBKIT_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+const DEFAULT_USER_AGENT = window.navigator.userAgent
+
+function setUserAgent(userAgent: string): void {
+  Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+}
+
+interface PasteFlavors {
+  readonly html?: string
+  readonly text?: string
+  readonly items?: readonly DataTransferItem[]
+}
+
+/** Dispatches a cancelable, bubbling `paste` with the given clipboard flavors. */
+function firePaste(view: EditorView, flavors: PasteFlavors = {}): Event {
+  const data: Record<string, string> = {
+    "text/html": flavors.html ?? "",
+    "text/plain": flavors.text ?? "",
+  }
+  const event = new Event("paste", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: (type: string) => data[type] ?? "", items: flavors.items ?? [] },
+  })
+  view.contentDOM.dispatchEvent(event)
+  return event
+}
+
+/** Mounts the real assembled editor (engine htmlPaste + desktop imagePasteHandler). */
+function mountEditor(options: Partial<CreateEditorOptions> = {}) {
+  const host = document.createElement("div")
+  document.body.appendChild(host)
+  const view = createEditor(host, { ...editorOptions(vi.fn(), "alpha"), ...options })
+  const teardown = () => {
+    view.destroy()
+    host.remove()
+  }
+  return { view, host, teardown }
+}
+
+describe("assembled editor paste ownership", () => {
+  it("lets the image handler consume a clipboard that also carries HTML", async () => {
+    const onError = vi.fn()
+    const onDocumentUpdate = vi.fn()
+    // Unsaved document (getDocPath: () => null) so the image channel reports
+    // instead of writing an asset.
+    const { view, teardown } = mountEditor({ onError, onDocumentUpdate })
+    try {
+      const file = new File([new Uint8Array([1, 2, 3])], "clip.png", { type: "image/png" })
+      const items = [
+        { kind: "file", type: "image/png", getAsFile: () => file },
+      ] as unknown as DataTransferItem[]
+
+      const event = firePaste(view, {
+        html: "<p><b>screenshot</b></p>",
+        text: "screenshot",
+        items,
+      })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        expect(onError).toHaveBeenCalledWith("Save the file before inserting an image")
+      })
+      // Neither the engine's rich conversion nor a stray insert touched the doc.
+      expect(view.state.doc.toString()).toBe("alpha")
+      expect(onDocumentUpdate).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+    }
+  })
+
+  it("converts keyboard HTML paste to Markdown at the selection", async () => {
+    const { view, teardown } = mountEditor({ doc: "body" })
+    try {
+      view.dispatch({ selection: { anchor: 0 } })
+
+      const event = firePaste(view, { html: "<h2>Title</h2>", text: "Title" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        expect(view.state.doc.toString()).toBe("## Title\n\nbody")
+      })
+    } finally {
+      teardown()
+    }
+  })
+
+  it("pastes the plain-text flavor at the saved right-click target on macOS", async () => {
+    setUserAgent(MACOS_WEBKIT_UA)
+    const onError = vi.fn()
+    const { view, teardown } = mountEditor({ doc: "hello world", onError })
+    try {
+      view.dispatch({ selection: { anchor: 0 } })
+      vi.spyOn(view, "posAtCoords").mockReturnValue(6)
+
+      view.contentDOM.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
+      )
+      // macOS workaround moves the caret to the right-click target.
+      expect(view.state.selection.main.head).toBe(6)
+
+      const event = firePaste(view, { html: "<p><b>XY</b></p>", text: "XY" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        // Plain text at the right-click target, not rich Markdown.
+        expect(view.state.doc.toString()).toBe("hello XYworld")
+      })
+      expect(view.state.selection.main.head).toBe(8)
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+      setUserAgent(DEFAULT_USER_AGENT)
+    }
+  })
+
+  it("consumes HTML paste on a read-only editor and keeps the document", async () => {
+    const onDocumentUpdate = vi.fn()
+    const { view, teardown } = mountEditor({
+      doc: "locked",
+      readOnly: true,
+      onDocumentUpdate,
+    })
+    try {
+      const event = firePaste(view, { html: "<h1>Title</h1>", text: "Title" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await tick()
+      expect(view.state.doc.toString()).toBe("locked")
+      expect(onDocumentUpdate).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+    }
+  })
+
+  it("consumes context-menu paste on a read-only editor and keeps the document", async () => {
+    setUserAgent(MACOS_WEBKIT_UA)
+    const onDocumentUpdate = vi.fn()
+    const { view, teardown } = mountEditor({
+      doc: "locked",
+      readOnly: true,
+      onDocumentUpdate,
+    })
+    try {
+      vi.spyOn(view, "posAtCoords").mockReturnValue(3)
+      view.contentDOM.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
+      )
+
+      const event = firePaste(view, { html: "<b>XY</b>", text: "XY" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await tick()
+      expect(view.state.doc.toString()).toBe("locked")
+      expect(onDocumentUpdate).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+      setUserAgent(DEFAULT_USER_AGENT)
+    }
+  })
+})

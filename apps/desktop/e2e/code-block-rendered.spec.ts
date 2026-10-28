@@ -119,3 +119,60 @@ test("rendered chrome header sits above the code body", async ({ page }) => {
   expect(gap).toBeLessThan(1)
   expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
 })
+
+test("clicking a rendered code row keeps that row at the same viewport position", async ({ page }) => {
+  const doc = [
+    ...Array.from({ length: 20 }, (_, i) => `Paragraph before ${i}.`),
+    "",
+    "```js",
+    ...Array.from({ length: 12 }, (_, i) => `const value${i} = ${i}`),
+    "```",
+    "",
+    ...Array.from({ length: 20 }, (_, i) => `Paragraph after ${i}.`),
+  ].join("\n")
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
+  await page.addStyleTag({
+    content: ".cm-line.omd-codeblock-num { line-height: 2.2 !important; }",
+  })
+  const renderedRow = page.locator(".omd-code-lines .line").nth(6)
+  await expect(renderedRow).toBeVisible()
+  await renderedRow.evaluate(el => el.scrollIntoView({ block: "center" }))
+  const beforeTop = await renderedRow.evaluate(el => el.getBoundingClientRect().top)
+
+  await renderedRow.click()
+
+  await expect(page.locator(".omd-code")).toHaveCount(0)
+  const sourceRow = page.locator(".cm-line.omd-codeblock-num").nth(6)
+  await expect(sourceRow).toBeVisible()
+  await expect.poll(async () => {
+    const afterTop = await sourceRow.evaluate(el => el.getBoundingClientRect().top)
+    return Math.abs(afterTop - beforeTop)
+  }).toBeLessThan(2)
+})
+
+test("typewriter mode still centers a code row after entering source", async ({ page }) => {
+  const doc = [
+    ...Array.from({ length: 20 }, (_, i) => `Paragraph before ${i}.`),
+    "",
+    "```js",
+    ...Array.from({ length: 8 }, (_, i) => `const value${i} = ${i}`),
+    "```",
+    "",
+    ...Array.from({ length: 20 }, (_, i) => `Paragraph after ${i}.`),
+  ].join("\n")
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
+  await page.evaluate(() => { document.documentElement.dataset.typewriter = "on" })
+  const renderedRow = page.locator(".omd-code-lines .line").nth(4)
+  await expect(renderedRow).toBeVisible()
+  await renderedRow.evaluate(el => el.scrollIntoView({ block: "start" }))
+
+  await renderedRow.click()
+
+  const sourceRow = page.locator(".cm-line.omd-codeblock-num").nth(4)
+  await expect(sourceRow).toBeVisible()
+  await expect.poll(async () => sourceRow.evaluate(el => {
+    const row = el.getBoundingClientRect()
+    const scroller = document.querySelector(".cm-scroller")!.getBoundingClientRect()
+    return Math.abs((row.top + row.bottom) / 2 - (scroller.top + scroller.bottom) / 2)
+  })).toBeLessThan(20)
+})

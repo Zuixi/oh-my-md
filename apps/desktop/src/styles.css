@@ -164,14 +164,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-blockquote-2,
 .editor-host .omd-blockquote-3,
 .editor-host .omd-blockquote-4,
-.editor-host .omd-li-1,
-.editor-host .omd-li-2,
-.editor-host .omd-li-3,
-.editor-host .omd-li-4,
-.editor-host .omd-quote-in-li-1,
-.editor-host .omd-quote-in-li-2,
-.editor-host .omd-quote-in-li-3,
-.editor-host .omd-quote-in-li-4 {
+.editor-host .omd-li,
+.editor-host .omd-quote-in-li {
   padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px));
   text-indent: var(--omd-li-hang, 0px);
 }
@@ -269,20 +263,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-list-mark { color: var(--omd-link); }
 .editor-host .omd-ordered-mark { color: var(--omd-link); }
 .editor-host .omd-codeblock { font-family: var(--omd-font-family, ui-monospace, monospace); background-color: var(--omd-code-bg); }
-/* Nested list hanging indent: padding shifts the whole line, negative
-   text-indent pulls the first line back so wrapped lines align to the text. */
-.editor-host .omd-li-1 { --omd-li-pad: 1.2em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-2 { --omd-li-pad: 2.4em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-3 { --omd-li-pad: 3.6em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-4 { --omd-li-pad: 4.8em; --omd-li-hang: -1.2em; }
-.editor-host .omd-quote-in-li-1 { --omd-li-pad: 1.2em; --omd-bq-bar: 1.2em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-2 { --omd-li-pad: 2.4em; --omd-bq-bar: 2.4em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-3 { --omd-li-pad: 3.6em; --omd-bq-bar: 3.6em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-4 { --omd-li-pad: 4.8em; --omd-bq-bar: 4.8em; --omd-li-hang: 0; }
-.editor-host .omd-block.omd-li-1,
-.editor-host .omd-block.omd-li-2,
-.editor-host .omd-block.omd-li-3,
-.editor-host .omd-block.omd-li-4 { --omd-li-hang: 0; }
+/* Nested list indent, unbounded: the engine writes the semantic depth as
+   `--omd-list-depth` on one stable class, the width is derived here (no class
+   per depth). Padding shifts the whole line, negative text-indent pulls the
+   first line back so wrapped lines align to the text. */
+.editor-host .omd-li,
+.editor-host .omd-quote-in-li { --omd-li-pad: calc(var(--omd-list-depth) * 1.2em); }
+.editor-host .omd-li { --omd-li-hang: -1.2em; }
+.editor-host .omd-quote-in-li { --omd-bq-bar: var(--omd-li-pad); --omd-li-hang: 0; }
+.editor-host .omd-block.omd-li { --omd-li-hang: 0; }
 
 /* M2 block widgets
    CodeMirror's height map does not include vertical margins on block
@@ -716,6 +705,31 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-math { overflow-x: auto; padding: 4px 0; cursor: pointer; }
 .editor-host .omd-block.omd-math:hover { background: var(--omd-code-bg); border-radius: 6px; }
+/* 列表深度落在块 widget 自己身上（引擎 applyBlockEmbed 写在 widget 根），而这些
+   合写规则（.omd-block / .omd-math / .omd-table / .omd-code 都是后写的同权重声明）
+   会把左侧 padding 清零，深度缩进因此从来没生效。下面的规则在合写之后按更高特异性
+   重新声明左侧：深度 N 的块整体位移 N * 1.2em，且只位移一次，垂直 padding 不动。 */
+.editor-host .omd-block.omd-li,
+.editor-host .omd-block.omd-quote-in-li {
+  padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px));
+}
+/* 代码块的 wrapper 独占那一次列表偏移（边框盒连同 header/body 一起位移），
+   所以它里面的 header 不能再加一次。引用缩进仍留在 header 上 —— 不透明的 chrome
+   底色是它自己画的，引用条也得由它重画；这条 header 的边框盒已经跟着 wrapper 的
+   缩进走了，渐变必须从自己左边（--omd-bq-bar: 0）起画，否则条会落到第二个偏移上。 */
+.editor-host .omd-block.omd-code.omd-li,
+.editor-host .omd-block.omd-code.omd-quote-in-li {
+  padding-left: var(--omd-li-pad, 0px);
+}
+.editor-host .omd-code > .omd-code-header { --omd-bq-bar: 0px; }
+.editor-host .omd-code-header.omd-li,
+.editor-host .omd-code-header.omd-quote-in-li { --omd-li-hang: 0; }
+/* 编辑态 chrome 是独立块 widget（没有 .omd-code wrapper，直接挂在 .cm-content 下），
+   整段缩进由它自己承担：列表偏移 + 引用缩进 + 10px 基准内缩。 */
+.editor-host .cm-content > .omd-code-header.omd-li,
+.editor-host .cm-content > .omd-code-header.omd-quote-in-li {
+  padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px) + 10px);
+}
 .editor-host .omd-inline-math { padding: 0 2px; cursor: pointer; border-radius: 4px; }
 .editor-host .omd-inline-math:hover { background: var(--omd-code-bg); }
 .editor-host .omd-image { max-width: 100%; border-radius: 4px; }

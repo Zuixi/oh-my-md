@@ -211,6 +211,11 @@ function createEditorState(
       dropCursor(),
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
+      imagePasteHandler({
+        getDocPath: options.getDocPath,
+        getDocumentId: options.getDocumentId,
+        onError: options.onError,
+      }),
       editorExtensions({
         resolveImageSrc: makeImageResolver(options.getDocPath),
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
@@ -220,11 +225,6 @@ function createEditorState(
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],
       typewriterExtension(),
-      imagePasteHandler({
-        getDocPath: options.getDocPath,
-        getDocumentId: options.getDocumentId,
-        onError: options.onError,
-      }),
       EditorView.domEventHandlers({
         click: (event, view) => activateLink(view, event),
       }),

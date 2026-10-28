@@ -6,6 +6,7 @@
 // 这里统一从 Lezer 树取段，语法知识留在解析层，`format/quotes.ts`（Enter 续写）与
 // `format/commands.ts`（引用 toggle）共用同一份判定。
 import type { EditorState, Line } from "@codemirror/state"
+import type { SyntaxNode } from "@lezer/common"
 import { syntaxTree } from "@codemirror/language"
 
 const MARK_NAMES = new Set(["QuoteMark", "ListMark", "TaskMarker"])
@@ -31,6 +32,32 @@ export interface BlockPrefix {
   readonly marks: readonly BlockPrefixMark[]
   /** 最内层标记之后的内容是否为空（整行只有块前缀）。 */
   readonly blank: boolean
+}
+
+/**
+ * 视觉列：CommonMark 的制表位是每 4 列一个停靠点，`\t` 前进到下一个停靠点。
+ * 行块前缀是纯 ASCII 结构段（缩进 + 标记 + 空白），其余字符按一列算。
+ */
+export function visualColumn(text: string): number {
+  let column = 0
+  for (const ch of text) column += ch === "\t" ? 4 - (column % 4) : 1
+  return column
+}
+
+/**
+ * 列表标记的**逻辑内容列**（CommonMark）：marker 语法之后只有 1–4 视觉列的空白算内容
+ * 缩进；0 列或 5+ 列时退化成一列，剩下的空白属于内容（`-     parent` 的正文其实是
+ * 缩进代码块）。`BlockPrefixMark.to` 含标记后**全部**空白，直接拿它当内容列会让嵌套
+ * 宽度变成 marker 后的整段空白 —— Tab/续写插六格，新条目重解析成 `CodeBlock`。
+ * 不是列表标记（或标记原文不合列表语法）时返回 null，不猜层级。
+ */
+export function listContentColumn(line: Line, mark: BlockPrefixMark): number | null {
+  if (mark.kind !== "list") return null
+  const marker = line.text.slice(mark.from - line.from, mark.markTo - line.from)
+  if (!/^(?:[-+*]|\d+[.)])$/.test(marker)) return null
+  const markerEnd = visualColumn(line.text.slice(0, mark.markTo - line.from))
+  const padding = visualColumn(line.text.slice(0, mark.to - line.from)) - markerEnd
+  return markerEnd + (padding >= 1 && padding <= 4 ? padding : 1)
 }
 
 /**
@@ -94,16 +121,76 @@ export function markRemovalRange(mark: BlockPrefixMark, line: Line): { from: num
  * 续写前缀：先补回首个标记前的缩进，再逐段原样复制；只有两处按“新条目”语义
  * 改写 —— 有序列表 marker 递增（与 listKeymap 的 nextMarker 一致），任务框重置
  * 为未勾选。
+ *
+ * `keep` 只复制前 n 段：空列表项“退出一层/退出列表”就是同一规则套在**父条目**
+ * （或当前行）截断后的前缀上 —— 退出一层保留父条目的列表标记并递增，退出列表
+ * 则把它之前的引用前缀原样留下。
  */
-export function continuePrefixText(prefix: BlockPrefix): string {
-  return prefix.indent + prefix.marks.map(mark => {
-    if (mark.kind === "list") {
-      const ordered = /^(\d+)([.)])[ \t]*$/.exec(mark.text)
-      return ordered ? `${Number(ordered[1]) + 1}${ordered[2]} ` : mark.text
-    }
+export function continuePrefixText(prefix: BlockPrefix, keep: number = prefix.marks.length): string {
+  return prefix.indent + prefix.marks.slice(0, keep).map(mark => {
+    if (mark.kind === "list") return nextListMark(mark.text)
     if (mark.kind === "task") return "[ ] "
     return mark.text
   }).join("")
+}
+
+/** CommonMark 有序 marker 只允许 1–9 位数字（`1000000000.` 不是 marker）。 */
+const ORDERED_MARKER_MAX = 999_999_999
+
+/** 新条目的列表标记：有序 marker 递增（保留 `)` 分隔符），其余原样复制。 */
+function nextListMark(text: string): string {
+  const ordered = /^(\d+)([.)])[ \t]*$/.exec(text)
+  if (!ordered) return text
+  // 越过上限的 marker 会重解析成段落：上限处**重复**合法 marker 而不回绕到 1（回绕像列表重新开始）。
+  const next = Math.min(Number(ordered[1]) + 1, ORDERED_MARKER_MAX)
+  return `${next}${ordered[2]} `
+}
+
+/**
+ * 非空列表条目的续写前缀（同一物理行上的祖先层级只留缩进）。
+ *
+ * 行前缀里当前条目标记之前的每个 ListMark 都属于一个**祖先** ListItem：`- - child` 的
+ * 外层 `-`、`1. 1. child` 的外层 `1.` 都是父层结构，续写时要变成等宽空格（父层自己的
+ * marker 内容列），否则新行重生整条标记链 —— 内层 list 的兄弟变成“新外层条目里再嵌
+ * 一层”（`- - child` → `- - `）。只有当前 ListItem 自己的 marker 递增（有序）或原样
+ * 重复（无序），它自己的 TaskMarker 重置为未勾选；**祖先**的任务框不占缩进宽度
+ * （`- [ ] parent` 下的子条目续写仍是两空格，不是六格）。引用标记不是层级，原样保留。
+ *
+ * 宽度一律是**视觉列**（制表位每 4 列）：`-\t- child` 的祖先内容列是 4，不是
+ * `mark.text.length` 的 2 —— 补两空格会让新行重解析成外层兄弟。
+ *
+ * 祖先链从 Lezer 取，并逐位核对行前缀里的列表标记：对不上就返回 null（不猜层级）。
+ */
+export function listContinuationPrefix(state: EditorState, frame: ListFrame): string | null {
+  const { prefix, markIndex, item } = frame
+  const lineNumber = state.doc.lineAt(prefix.marks[markIndex].from).number
+  const ancestors: number[] = []
+  for (let node = ancestorListItem(item); node; node = ancestorListItem(node)) {
+    const mark = node.getChild("ListMark")
+    if (!mark) return null
+    // 只有与当前条目**同一行**的祖先标记出现在行前缀里，其余靠行首已有的空白缩进。
+    if (state.doc.lineAt(mark.from).number === lineNumber) ancestors.unshift(mark.from)
+  }
+  const leading = prefix.marks.slice(0, markIndex).filter(mark => mark.kind === "list")
+  if (leading.length !== ancestors.length) return null
+  if (leading.some((mark, i) => mark.from !== ancestors[i])) return null
+
+  let text = prefix.indent
+  for (let index = 0; index < prefix.marks.length; index++) {
+    const mark = prefix.marks[index]
+    if (index === markIndex) text += nextListMark(mark.text)
+    else if (index > markIndex) text += mark.kind === "task" ? "[ ] " : mark.text
+    // 当前标记之前的引用是结构，照抄；祖先列表标记换成缩进，推到它的视觉内容列。
+    else if (mark.kind === "quote") text += mark.text
+    else if (mark.kind === "list") {
+      const column = listContentColumn(state.doc.lineAt(mark.from), mark)
+      const padding = column === null ? -1 : column - visualColumn(text)
+      if (padding < 0) return null
+      text += " ".repeat(padding)
+    }
+    else return null
+  }
+  return text
 }
 
 /**
@@ -124,4 +211,83 @@ export function lineContentStart(state: EditorState, line: Line): number {
 export function clampToContentStart(state: EditorState, pos: number): number {
   const start = lineContentStart(state, state.doc.lineAt(pos))
   return pos < start ? start : pos
+}
+
+/** 前缀里最内层列表标记的下标（任务框不是列表标记）。 */
+export function innermostListMark(prefix: BlockPrefix): number {
+  for (let i = prefix.marks.length - 1; i >= 0; i--) if (prefix.marks[i].kind === "list") return i
+  return -1
+}
+
+/**
+ * Enter 归属：最内层**非任务**块标记。任务框挂在它前面的列表上，自己不当 owner ——
+ * `> - [x] x` 归列表语义（任务框只是条目内容的一部分），`- > x` 归引用。
+ * 只有任务框（或没有标记）时返回 null。
+ */
+export function enterOwnerMark(prefix: BlockPrefix): BlockPrefixMark | null {
+  for (let i = prefix.marks.length - 1; i >= 0; i--) {
+    if (prefix.marks[i].kind !== "task") return prefix.marks[i]
+  }
+  return null
+}
+
+export interface ListFrame {
+  readonly prefix: BlockPrefix
+  /** 当前行最内层列表标记所属的 `ListItem`。 */
+  readonly item: SyntaxNode
+  /** `item` 自己的 ListMark 在 `prefix.marks` 里的下标。 */
+  readonly markIndex: number
+  /** 嵌套时的父 `ListItem`；顶层条目为 null。 */
+  readonly parentItem: SyntaxNode | null
+}
+
+/**
+ * 列表行结构里 Tab/Enter 共用的一半：当前行块前缀 + 最内层 `ListItem` + 父条目。
+ * 行前缀不含列表标记、或树未覆盖该标记时返回 null —— 不猜层级。
+ */
+export function listFrameAt(state: EditorState, line: Line): ListFrame | null {
+  const prefix = blockPrefixOf(state, line)
+  if (!prefix) return null
+  const markIndex = innermostListMark(prefix)
+  if (markIndex < 0) return null
+  const item = innermostListItem(state, prefix.marks[markIndex].from)
+  if (!item) return null
+  return { prefix, item, markIndex, parentItem: ancestorListItem(item) }
+}
+
+export interface ItemMark {
+  /** 条目自己那一行（标记行）。 */
+  readonly line: Line
+  readonly prefix: BlockPrefix
+  /** 条目自己的 ListMark 在 `prefix.marks` 里的下标。 */
+  readonly index: number
+}
+
+/**
+ * `item` 自己那一行的块前缀 + 自己 ListMark 的下标。
+ * 同一物理行上的嵌套（`- - `）使父行前缀含多个列表标记，此处的权威是
+ * `item` 的直接子 ListMark 位置 —— 取整行最内层标记会拿到子层。
+ */
+export function itemMarkAt(state: EditorState, item: SyntaxNode): ItemMark | null {
+  const mark = item.getChild("ListMark")
+  if (!mark) return null
+  const line = state.doc.lineAt(item.from)
+  const prefix = blockPrefixOf(state, line)
+  if (!prefix) return null
+  const index = prefix.marks.findIndex(segment => segment.kind === "list" && segment.from === mark.from)
+  return index < 0 ? null : { line, prefix, index }
+}
+
+function innermostListItem(state: EditorState, pos: number): SyntaxNode | null {
+  for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
+    if (node.name === "ListItem") return node
+  }
+  return null
+}
+
+function ancestorListItem(item: SyntaxNode): SyntaxNode | null {
+  for (let node: SyntaxNode | null = item.parent; node; node = node.parent) {
+    if (node.name === "ListItem") return node
+  }
+  return null
 }
