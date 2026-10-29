@@ -76,6 +76,14 @@ import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
 import {
+  buildReplaceAll,
+  findNextMatch,
+  findPreviousMatch,
+  replaceCurrentSpec,
+  type SearchMatch,
+  type SearchRequest,
+} from "./currentDocumentSearch"
+import {
   collectMatches,
   nextIndex,
   prevIndex,
@@ -496,6 +504,8 @@ export default function App({
   findWholeWordRef.current = findWholeWord
   const findIndexRef = useRef(findIndex)
   findIndexRef.current = findIndex
+  const activeFindMatchRef = useRef<SearchMatch | null>(null)
+  const findRevisionRef = useRef(0)
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
   const treePollInFlightRef = useRef(false)
@@ -2263,14 +2273,70 @@ export default function App({
     }
   }
 
+  function currentSearchRequest(revision = findRevisionRef.current): SearchRequest {
+    return {
+      query: findQueryRef.current,
+      caseSensitive: findCaseRef.current,
+      regexp: findRegexModeRef.current,
+      wholeWord: findWholeWordRef.current,
+      revision,
+    }
+  }
+
+  function realTextDoc(view: EditorView | null): Text | null {
+    if (!view) return null
+    try {
+      const candidate = view.state.doc
+      return typeof candidate.sliceString === "function" ? candidate : null
+    } catch {
+      return null
+    }
+  }
+
+  function isActiveSafeMode(): boolean {
+    let lines = 0
+    try { lines = viewRef.current?.state.doc.lines ?? 0 } catch { lines = 0 }
+    return documentScaleRegistry.evaluate(workspaceRef.current.activeId, lines).safeMode
+  }
+
   function goFind(direction: "next" | "prev") {
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const request = currentSearchRequest()
+      const current = activeFindMatchRef.current
+      const sel = view.state.selection.main
+      const match = direction === "next"
+        ? findNextMatch(
+            textDoc,
+            request,
+            current && current.revision === request.revision ? current.to : sel.to,
+          )
+        : findPreviousMatch(
+            textDoc,
+            request,
+            current && current.revision === request.revision ? current.from : sel.from,
+          )
+      activeFindMatchRef.current = match
+      if (!match) {
+        setFindIndex(-1)
+        return
+      }
+      try {
+        view.dispatch({
+          selection: { anchor: match.from, head: match.to },
+          scrollIntoView: true,
+        })
+      } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const matches = collectMatches(doc, currentFindQuery())
     if (matches.length === 0) {
+      activeFindMatchRef.current = null
       setFindIndex(-1)
       return
     }
@@ -2278,6 +2344,11 @@ export default function App({
       ? nextIndex(matches.length, findIndexRef.current)
       : prevIndex(matches.length, findIndexRef.current)
     const match = matches[index]
+    activeFindMatchRef.current = {
+      from: match.from,
+      to: match.to,
+      revision: findRevisionRef.current,
+    }
     try {
       view.dispatch({
         selection: { anchor: match.from, head: match.to },
@@ -2291,6 +2362,21 @@ export default function App({
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const request = currentSearchRequest()
+      const spec = replaceCurrentSpec(
+        view.state,
+        request,
+        activeFindMatchRef.current,
+        findReplaceRef.current,
+      )
+      if (!spec) return
+      findRevisionRef.current += 1
+      activeFindMatchRef.current = null
+      try { view.dispatch(spec) } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const matches = collectMatches(doc, currentFindQuery())
@@ -2300,6 +2386,8 @@ export default function App({
       : 0
     const match = matches[index]
     const replacement = findReplaceRef.current
+    findRevisionRef.current += 1
+    activeFindMatchRef.current = null
     try {
       view.dispatch({
         changes: { from: match.from, to: match.to, insert: replacement },
@@ -2313,10 +2401,21 @@ export default function App({
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const result = buildReplaceAll(textDoc, currentSearchRequest(), findReplaceRef.current)
+      if (!result) return
+      findRevisionRef.current += 1
+      activeFindMatchRef.current = null
+      try { view.dispatch({ changes: result.changes }) } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const next = replaceAll(doc, currentFindQuery(), findReplaceRef.current)
     if (next === doc) return
+    findRevisionRef.current += 1
+    activeFindMatchRef.current = null
     try {
       view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
     } catch { /* mock views */ }
@@ -2663,19 +2762,27 @@ export default function App({
             matchCount={matchCount}
             activeIndex={findIndex}
             onQuery={query => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindQuery(query)
               setFindIndex(-1)
             }}
             onReplacement={setFindReplace}
             onCaseSensitive={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindCase(value)
               setFindIndex(-1)
             }}
             onRegex={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindRegexMode(value)
               setFindIndex(-1)
             }}
             onWholeWord={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindWholeWord(value)
               setFindIndex(-1)
             }}

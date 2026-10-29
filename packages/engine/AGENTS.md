@@ -19,6 +19,7 @@ packages/engine/
 │   ├── outline.ts               # Read-only heading outline from the Lezer tree
 │   ├── docText.ts               # Streamed-chunk → Text assembly (LARGE-tier open ingest; parity-guarded)
 │   ├── safeModeRendering.ts     # Safe-mode globals: render budget + windowed live decorations (LIVE_WINDOW_*, prune margins)
+│   ├── performancePolicy.ts · performancePolicyDiagnostics.ts # Per-editor windowing/budget Facet+Compartment + diagnostics
 │   ├── stats.ts                 # Word/character statistics for the status bar
 │   ├── links.ts                 # classifyLink — link / autolink / footnote classification
 │   ├── footnotesNav.ts          # Footnote reference ↔ definition positions
@@ -35,6 +36,7 @@ packages/engine/
 │   ├── tables/                  # Table model and edits, all Lezer-range based
 │   │   ├── model.ts             # tableDataFromNode — TableData with table-relative offsets
 │   │   ├── edit.ts              # Pure range edits (replaceTableCell, insert/delete row|column) + escapeTableCellValue
+│   │   ├── normalize.ts · directEdit.ts # First-edit normalization + opt-in direct cell editing session/history
 │   │   ├── navigate.ts          # Read-only tableAt / cellAt / nextCell / cellBelow
 │   │   ├── sourceToolbar.ts     # applyTableToolAt — the one stale-checking edit entry point
 │   │   └── tools.ts             # tableToolChanges (pure)

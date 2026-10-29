@@ -33,7 +33,9 @@ apps/desktop/
 │   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
 │   ├── commands.ts          # MENU_TO_COMMAND — native menu id → webview command
 │   ├── menuTree.ts          # In-app horizontal menubar tree (off macOS)
-│   ├── findReplace.ts       # Find/replace engine behind FindReplaceBar
+│   ├── findReplace.ts       # Find/replace engine behind FindReplaceBar (normal-tier string scan)
+│   ├── currentDocumentSearch.ts # Text-cursor search/replace for over-scale documents (100 MiB spike)
+│   ├── searchCountJob.ts · searchRevision.ts · searchRegex.worker.ts # Idle-sliced count + Worker regex spike
 │   ├── exportPath.ts · appExportActions.ts      # Export path policy + App-side export actions
 │   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
 │   ├── FileTree.tsx · SidebarResizer.tsx        # Sidebar tree (Lucide icons, in-place rename) + width drag

@@ -4,7 +4,7 @@ import { Decoration } from "@codemirror/view"
 import { cursorInside, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
-import { TableWidget } from "./widgets/table"
+import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
 import { tableDataFromNode } from "../tables/model"
 import { imageResolver } from "./widgets/image"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
@@ -439,6 +439,7 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
             table,
             blockEmbed(node.node),
             state.facet(imageResolver),
+            state.facet(tableDirectEditEnabled),
           ),
           block: true,
         }),

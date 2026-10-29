@@ -1,7 +1,16 @@
+import { isolateHistory, redo, undo } from "@codemirror/commands"
+import { Facet, type EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { parseCell, type CellNode } from "../../parse/cell"
+import {
+  beginTableEdit,
+  closeTableEdit,
+  getTableEditSession,
+  setTableComposition,
+  tableCellInputSpec,
+} from "../../tables/directEdit"
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
-import { tableAt } from "../../tables/navigate"
+import { nextCell, tableAt, type TableContext } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
 import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
 import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
@@ -38,6 +47,229 @@ export function tableEqualityKey(table: TableData): string {
  * `.omd-block-body`（单元格和工具栏监听器都挂在 body 子树里）。
  */
 const domOwner = new WeakMap<HTMLElement, TableWidget>()
+
+const TABLE_INPUT_CLASS = "omd-table-cell-input"
+const TABLE_INPUT_EVENT_TYPES = new Set([
+  "keydown", "keyup", "keypress", "beforeinput", "input", "click",
+  "compositionstart", "compositionupdate", "compositionend",
+])
+
+interface TableInputController {
+  readonly input: HTMLInputElement
+  readonly host: HTMLElement
+  readonly row: number
+  readonly column: number
+  composing: boolean
+  /** True while `commit()` dispatches its own table input transaction. */
+  committing: boolean
+  /** Session revision this controller last saw; a mismatch means history moved the doc. */
+  revision: number
+  destroy(): void
+}
+
+const tableInputControllers = new WeakMap<HTMLElement, TableInputController>()
+const viewInputControllers = new WeakMap<EditorView, TableInputController>()
+let tableInputControllerCount = 0
+
+export function activeTableInputControllerCountForTest(): number {
+  return tableInputControllerCount
+}
+
+function tableCellElements(body: HTMLElement): HTMLElement[][] {
+  const head = Array.from(body.querySelectorAll<HTMLElement>("thead th"))
+  const rows = Array.from(body.querySelectorAll<HTMLElement>("tbody tr"))
+    .map(tr => Array.from(tr.children) as HTMLElement[])
+  return head.length > 0 ? [head, ...rows] : rows
+}
+
+function tableCellDataRows(table: TableData): readonly (readonly (TableCellData | null)[])[] {
+  return [table.header.cells, ...table.rows.map(row => row.cells)]
+}
+
+function restoreTableCell(host: HTMLElement, row: number, column: number): void {
+  const owner = domOwner.get(host)
+  const el = tableCellElements(host)[row]?.[column]
+  if (!owner || !el) return
+  renderCellSlot(el, tableCellDataRows(owner.table)[row]?.[column] ?? null, owner.resolveSrc)
+}
+
+function activeCellStart(state: EditorState, row: number, column: number): number | null {
+  const session = getTableEditSession(state)
+  if (!session) return null
+  const table = tableAt(state, session.target.tableFrom)
+  if (!table) return null
+  const cell = tableCellDataRows(table.data)[row]?.[column]
+  return cell ? table.from + cell.from : null
+}
+
+function createTableInputController(
+  view: EditorView,
+  host: HTMLElement,
+  cellEl: HTMLElement,
+  row: number,
+  column: number,
+  source: string,
+): TableInputController {
+  const input = document.createElement("input")
+  input.type = "text"
+  input.className = TABLE_INPUT_CLASS
+  input.value = source
+  let destroyed = false
+
+  const commit = (value: string, kind: "typing" | "composition") => {
+    const spec = tableCellInputSpec(view.state, value, kind)
+    if (!spec) return
+    // 本次 dispatch 内部会同步跑 updateDOM，而版本推进属于 directEdit 的事务：此时控制器
+    // 版本还没变。用本地显式守卫标记"正在派发自己的事务"，让 updateDOM 跳过解析值回写
+    // （解析值会 trim，会把用户刚打的尾空格擦掉）；dispatch 之后（含异常退出）再按真实
+    // EditorState 校正版本。
+    controller.committing = true
+    try {
+      view.dispatch(spec)
+    } finally {
+      controller.committing = false
+      const session = getTableEditSession(view.state)
+      if (session) controller.revision = session.revision
+    }
+  }
+
+  const close = () => {
+    if (destroyed) return
+    view.dispatch({ effects: closeTableEdit(), annotations: isolateHistory.of("after") })
+    controller.destroy()
+    restoreTableCell(host, row, column)
+  }
+
+  const moveToAdjacentCell = (step: 1 | -1) => {
+    const pos = activeCellStart(view.state, row, column)
+    if (pos === null) return
+    const slot = nextCell(view.state, pos, step)
+    if (!slot) return
+    const table = tableAt(view.state, slot.from)
+    if (table) activateTableCellInput(view, host, slot.row, slot.col, table)
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault()
+      view.dispatch({ annotations: isolateHistory.of("after") })
+      return
+    }
+    if (event.key === "Tab") {
+      event.preventDefault()
+      moveToAdjacentCell(event.shiftKey ? -1 : 1)
+      // 末格 Tab / 首格 Shift-Tab 没有相邻格可去，仍须结束当前历史组。
+      view.dispatch({ annotations: isolateHistory.of("after") })
+      return
+    }
+    if (event.key === "Escape") {
+      event.preventDefault()
+      close()
+      return
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault()
+      if (event.shiftKey) redo(view)
+      else undo(view)
+    }
+  }
+
+  const onInput = (event: Event) => {
+    const detail = event as InputEvent
+    if (detail.isComposing || detail.inputType === "insertCompositionText") return
+    commit(input.value, "typing")
+  }
+
+  const onCompositionStart = () => {
+    controller.composing = true
+    view.dispatch({ effects: setTableComposition(true) })
+  }
+
+  const onCompositionEnd = () => {
+    controller.composing = false
+    commit(input.value, "composition")
+    view.dispatch({ effects: setTableComposition(false) })
+  }
+
+  const onFocusOut = () => {
+    if (destroyed) return
+    close()
+  }
+
+  const controller: TableInputController = {
+    input,
+    host,
+    row,
+    column,
+    composing: false,
+    committing: false,
+    revision: 0,
+    destroy() {
+      if (destroyed) return
+      destroyed = true
+      tableInputControllerCount--
+      input.removeEventListener("keydown", onKeyDown)
+      input.removeEventListener("input", onInput)
+      input.removeEventListener("compositionstart", onCompositionStart)
+      input.removeEventListener("compositionend", onCompositionEnd)
+      input.removeEventListener("focusout", onFocusOut)
+      if (tableInputControllers.get(host) === controller) tableInputControllers.delete(host)
+      if (viewInputControllers.get(view) === controller) viewInputControllers.delete(view)
+      input.remove()
+    },
+  }
+
+  input.addEventListener("keydown", onKeyDown)
+  input.addEventListener("input", onInput)
+  input.addEventListener("compositionstart", onCompositionStart)
+  input.addEventListener("compositionend", onCompositionEnd)
+  input.addEventListener("focusout", onFocusOut)
+  tableInputControllerCount++
+  tableInputControllers.set(host, controller)
+  viewInputControllers.set(view, controller)
+  cellEl.replaceChildren(input)
+  return controller
+}
+
+function activateTableCellInput(
+  view: EditorView,
+  host: HTMLElement,
+  row: number,
+  column: number,
+  table: TableContext,
+): void {
+  if (view.state.readOnly) return
+  const cell = tableCellDataRows(table.data)[row]?.[column]
+  const cellEl = tableCellElements(host)[row]?.[column]
+  if (!cell || !cellEl) return
+  const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
+  if (existing && existing.host === host && existing.row === row && existing.column === column) {
+    existing.input.focus()
+    existing.input.select()
+    return
+  }
+  if (existing) {
+    existing.destroy()
+    restoreTableCell(existing.host, existing.row, existing.column)
+  }
+  view.dispatch({
+    effects: beginTableEdit({
+      tableFrom: table.from,
+      tableTo: table.to,
+      row,
+      column,
+      source: table.source,
+    }),
+  })
+  const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
+  controller.revision = getTableEditSession(view.state)?.revision ?? 0
+  controller.input.focus()
+  controller.input.select()
+}
+
+export const tableDirectEditEnabled = Facet.define<boolean, boolean>({
+  combine: values => values.some(Boolean),
+})
 
 function ownDom(widget: TableWidget, dom: HTMLElement): void {
   domOwner.set(dom, widget)
@@ -191,9 +423,14 @@ export class TableWidget extends BlockWidget {
     table: TableData,
     embed?: BlockEmbed,
     readonly resolveSrc?: ResolveSrc,
+    readonly directEdit = false,
   ) {
     super(src, pos, embed)
     this.table = table
+  }
+
+  cellDataAt(row: number, column: number): TableCellData | null {
+    return tableCellDataRows(this.table)[row]?.[column] ?? null
   }
 
   private get equalityKey(): string {
@@ -228,15 +465,25 @@ export class TableWidget extends BlockWidget {
     const before = prev.table
     const after = this.table
     if (!sameTableShape(before, after)) return false
-    const head = Array.from(dom.querySelectorAll<HTMLElement>("thead th"))
-    const rows = Array.from(dom.querySelectorAll<HTMLElement>("tbody tr"))
-      .map(tr => Array.from(tr.children) as HTMLElement[])
-    const cells = head.length > 0 ? [head, ...rows] : rows
+    const body = dom.querySelector<HTMLElement>(".omd-block-body")
+    const cells = tableCellElements(body ?? dom)
     if (cells.length === 0) return false
-
+    const active = body ? tableInputControllers.get(body) : undefined
+    const viewActive = viewInputControllers.get(view)
     this.view = view
     this.wrap = dom as HTMLDivElement
     ownDom(this, dom)
+
+    const session = (active !== undefined || viewActive !== undefined) && view.state
+      ? getTableEditSession(view.state)
+      : null
+    const sessionOnThisTable = session !== null
+      && this.src === session.target.source
+      && this.livePos() === session.target.tableFrom
+    const keepInput = active !== undefined && sessionOnThisTable
+      && session.target.row === active.row && session.target.column === active.column
+    const moveInput = !keepInput && sessionOnThisTable && (active !== undefined || viewActive !== undefined)
+
     // 旧 DOM 上的嵌入类/深度属于上一个实例（CM pass-1 只换了 tile.widget）：
     // 整块刷新成当前嵌入值，深度变深/离开列表/进出引用都不会留旧状态。
     applyBlockEmbed(dom, this.embed)
@@ -245,18 +492,63 @@ export class TableWidget extends BlockWidget {
     this.col = prev.col
     this.hovered = prev.hovered
 
+    if (active && !keepInput) {
+      active.destroy()
+      const el = cells[active.row]?.[active.column]
+      if (el) renderCellSlot(el, this.cellDataAt(active.row, active.column), this.resolveSrc)
+    } else if (moveInput && viewActive && viewActive.host !== body) {
+      viewActive.destroy()
+      restoreTableCell(viewActive.host, viewActive.row, viewActive.column)
+    }
+    // 历史回放（撤销/重做）把文档换成了另一版格内容：输入框节点保持不动，内容按
+    // 恢复后的格同步。用户自己输入推进的版本一致，所以不会被解析值回写。
+    // 提交中的同一次 dispatch 会同步调到这里、且版本尚未推进，但那正是用户刚打的字，
+    // 由控制器自身的 committing 守卫排除，不靠预测版本号。
+    // 版本已变即证明文档是被历史移动的，此时必须按精确值比较：trim 比较会让
+    // 只有空白的差异（`"X "` → `"X"`）漏同步，输入框停在旧内容上。
+    if (keepInput && active && session && !active.committing
+      && !active.composing && !session.composing) {
+      const stale = session.revision !== active.revision
+      active.revision = session.revision
+      const source = this.cellDataAt(active.row, active.column)?.source
+      if (stale && source !== undefined && active.input.value !== source) {
+        active.input.value = source
+      }
+    }
+
     for (let r = 0; r < cells.length; r++) {
       const beforeRow = r === 0 ? before.header : before.rows[r - 1]
       const afterRow = r === 0 ? after.header : after.rows[r - 1]
       for (let c = 0; c < cells[r].length; c++) {
         const el = cells[r][c]
-        const was = beforeRow?.cells[c] ?? null
-        const now = afterRow?.cells[c] ?? null
         // source 相同即同一渲染输入（text 是 source 的纯函数）；null ↔ 非 null 也在此区分。
-        if (was?.source !== now?.source) renderCellSlot(el, now, this.resolveSrc)
+        const keepCellInput = (keepInput && r === active.row && c === active.column)
+          || (moveInput && session !== null && r === session.target.row && c === session.target.column)
+        if (!keepCellInput) {
+          const was = beforeRow?.cells[c] ?? null
+          const now = afterRow?.cells[c] ?? null
+          if (was?.source !== now?.source) renderCellSlot(el, now, this.resolveSrc)
+        }
         const align = after.aligns[c] ?? ""
         if (align) el.style.textAlign = align
         else el.style.removeProperty("text-align")
+      }
+    }
+    if (moveInput && body && session) {
+      const targetEl = cells[session.target.row]?.[session.target.column]
+      const targetCell = this.cellDataAt(session.target.row, session.target.column)
+      if (targetEl && targetCell) {
+        const moved = createTableInputController(
+          view,
+          body,
+          targetEl,
+          session.target.row,
+          session.target.column,
+          targetCell.source,
+        )
+        moved.revision = session.revision
+        moved.input.focus()
+        moved.input.select()
       }
     }
     const toolbar = dom.querySelector<HTMLElement>(".omd-table-toolbar")
@@ -268,8 +560,43 @@ export class TableWidget extends BlockWidget {
   }
 
   override destroy(dom?: HTMLElement) {
+    const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
+    if (host) tableInputControllers.get(host)?.destroy()
     if (dom) releaseDom(this, dom)
     super.destroy(dom)
+  }
+
+  override ignoreEvent(event: Event) {
+    if (TABLE_INPUT_EVENT_TYPES.has(event.type)) {
+      const target = event.target
+      const input = target instanceof Element ? target.closest(`.${TABLE_INPUT_CLASS}`) : null
+      const host = input?.closest(".omd-block-body")
+      if (input && host instanceof HTMLElement
+        && tableInputControllers.get(host)?.input === input) return true
+    }
+    return super.ignoreEvent(event)
+  }
+
+  protected nativePointerInteraction(event: MouseEvent): boolean {
+    if (!this.directEdit) return false
+    const target = event.target
+    if (!(target instanceof Element)) return false
+    if (target.closest(`.${TABLE_INPUT_CLASS}`)) return true
+    const cellEl = target.closest<HTMLTableCellElement>("td, th")
+    const host = cellEl?.closest<HTMLElement>(".omd-block-body")
+    const owner = host ? domOwner.get(host) : undefined
+    const view = owner?.view ?? this.view
+    if (!cellEl || !host || !owner || !owner.directEdit || !view) return false
+    if (view.state.readOnly) return false
+    const row = cellEl.parentElement instanceof HTMLTableRowElement
+      ? cellEl.parentElement.rowIndex
+      : 0
+    const column = cellEl.cellIndex
+    const table = tableAt(view.state, owner.livePos())
+    if (!table || !owner.cellDataAt(row, column)) return false
+    event.preventDefault()
+    activateTableCellInput(view, host, row, column, table)
+    return true
   }
 
   /** 工具栏是否有可操作的目标格（用户 hover 过某个 td/th）。 */
@@ -290,7 +617,17 @@ export class TableWidget extends BlockWidget {
       : null
     // 无单元格命中（padding 已被 shouldEnterSource 挡掉，剩下的是 `</>` 按钮）：直接回退，
     // 不查表 —— 该路径的 view 可能来自没有真实 EditorState 的调用方。
-    if (!cellEl) return this.livePos()
+    // 若直接编辑态输入框仍挂在当前表格里，先在进入源码事务前卸载，防止随后 view.focus()
+    // 触发的同步 focusout 发送 closeTableEdit 而打断外层历史或留下瞬态残留。
+    if (!cellEl) {
+      const host = _wrap.querySelector<HTMLElement>(".omd-block-body")
+      const active = host ? tableInputControllers.get(host) : undefined
+      if (active) {
+        active.destroy()
+        restoreTableCell(active.host, active.row, active.column)
+      }
+      return this.livePos()
+    }
     const table = tableAt(view.state, this.livePos())
     if (!table) return this.livePos()
     // rowIndex 含 thead：表头 = 0，与 CellSlot.row 同一口径。
@@ -351,6 +688,16 @@ export class TableWidget extends BlockWidget {
         if (!owner || !owner.hasRowCol()) return
         const view = owner.view
         if (!view) return
+        // 直接编辑态输入框处于输入法合成中时，未提交的草稿只存在于 DOM input 中；
+        // 若先关闭控制器，外层结构操作将用旧源码覆盖草稿。反之非合成态下先优雅关闭
+        // 控制器并还原单元格，再执行整表结构重写，保证会话与 DOM 干净结束。
+        const active = tableInputControllers.get(el)
+        if (active?.composing) return
+        if (active) {
+          view.dispatch({ effects: closeTableEdit(), annotations: isolateHistory.of("after") })
+          active.destroy()
+          restoreTableCell(active.host, active.row, active.column)
+        }
         // 行列来自 hover；偏移与源码一律由 applyTableToolAt 校验，陈旧输入直接拒绝。
         applyTableToolAt(view, owner.livePos(), owner.src, owner.table, owner.row, owner.col, act)
       })

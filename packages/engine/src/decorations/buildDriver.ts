@@ -1,4 +1,4 @@
-import { type StateEffect } from "@codemirror/state"
+import { type EditorState, type StateEffect } from "@codemirror/state"
 import { type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view"
 import {
   LIVE_BUILD_CHUNK_CHARS,
@@ -13,6 +13,7 @@ import {
   LIVE_WINDOW_CHARS,
   safeModeRenderingEnabled,
 } from "../safeModeRendering"
+import { editorPerformancePolicy } from "../performancePolicy"
 
 // 分片驱动（Task 2）：livePreviewField 只同步构建光标附近的种子区间，其余记入
 // LiveDeco.pending。本插件在微任务/idle 回调里逐片 dispatch liveBuildChunk 消耗
@@ -77,8 +78,8 @@ function visibleRegions(view: EditorView): ClosedRange[] {
 // 窗口区域：各可见段两侧各扩 margin 字符（闭区间，钳制到 [0, doc.length]），
 // 经 mergeRanges 归并相邻/重叠段（两个可见段间距 < 2×margin 时会重叠）。安全
 // 模式的构建窗口（LIVE_WINDOW_CHARS）与裁剪窗口（再叠 LIVE_PRUNE_MARGIN_CHARS
-// 迟滞裕量）共用此形状。
-function expandedRegions(view: EditorView, margin: number): ClosedRange[] {
+// 迟滞裕量）共用此形状；性能策略诊断的构建窗口也直接复用（唯一实现，勿复制）。
+export function expandedRegions(view: EditorView, margin: number): ClosedRange[] {
   const length = view.state.doc.length
   return mergeRanges(visibleRegions(view).map(region => ({
     from: Math.max(0, region.from - margin),
@@ -180,8 +181,10 @@ class LiveBuildDriver {
   // 锚点，见 visibleRegions）；selectionSet 属保守置位，代价是一次自门槛的微任务。
   // 无布局测试宿主用「stub visibleRanges + 触发一笔交易」模拟。
   private windowDirty = true
+  private lastWindowed: boolean
 
   constructor(private readonly view: EditorView) {
+    this.lastWindowed = this.windowed(view.state)
     this.arm()
   }
 
@@ -189,13 +192,24 @@ class LiveBuildDriver {
   // 可能改变 pending、视口或窗口）；arm 自带「已在调度中/已停止/无活」短路，代价
   // O(pending×窗口段数)，安全模式下 pending 区间数有界（mergeRanges 归并）。
   update(update: ViewUpdate) {
-    if (
-      safeModeRenderingEnabled() &&
-      (update.viewportChanged || update.docChanged || update.selectionSet)
-    ) {
+    const wasWindowed = this.lastWindowed
+    const isWindowed = this.windowed(update.state)
+    this.lastWindowed = isWindowed
+    if (!wasWindowed && isWindowed) {
+      this.cancelIdle?.()
+      this.cancelIdle = null
+      this.idleScheduled = false
+      this.windowDirty = true
+    }
+    if (isWindowed && (update.viewportChanged || update.docChanged || update.selectionSet)) {
       this.windowDirty = true
     }
     this.arm()
+  }
+
+  private windowed(state: EditorState = this.view.state): boolean {
+    const policy = editorPerformancePolicy(state)
+    return policy ? policy.windowLiveDecorations : safeModeRenderingEnabled()
   }
 
   destroy() {
@@ -211,7 +225,7 @@ class LiveBuildDriver {
   private arm() {
     if (this.stopped || this.microtaskScheduled || this.idleScheduled) return
     const live = this.view.state.field(livePreviewField, false)
-    if (safeModeRenderingEnabled()) {
+    if (this.windowed()) {
       if (!this.windowDirty) {
         if (!live || live.pending.length === 0) return
         if (pendingInWindow(live.pending, this.buildWindow()).length === 0) return
@@ -233,10 +247,10 @@ class LiveBuildDriver {
     this.microtaskScheduled = false
     if (this.stopped) return
     // 开关运行中切换（desktop 切 tab）：旧窗口维护请求作废，等下一笔交易重查
-    if (safeModeRenderingEnabled()) this.windowDirty = false
+    if (this.windowed()) this.windowDirty = false
     const live = this.view.state.field(livePreviewField, false)
     if (!live) return
-    if (safeModeRenderingEnabled()) {
+    if (this.windowed()) {
       this.windowedFirstPass(live)
       return
     }
@@ -279,7 +293,7 @@ class LiveBuildDriver {
     if (!live || live.pending.length === 0) return
     // 安全模式：构建窗口内无待建 pending 时不再排 idle —— 窗口外 pending 是稳态，
     // 持续重排会形成永不停的定时器链（也让测试的 runAllTimers 无法收敛）。
-    if (safeModeRenderingEnabled() &&
+    if (this.windowed() &&
       pendingInWindow(live.pending, this.buildWindow()).length === 0) return
     this.idleScheduled = true
     this.cancelIdle = scheduleIdle(() => {
@@ -300,7 +314,7 @@ class LiveBuildDriver {
         if (!live || live.pending.length === 0) break
         const regions = visibleRegions(this.view)
         let chunk: ClosedRange
-        if (safeModeRenderingEnabled()) {
+        if (this.windowed()) {
           const targets = pendingInWindow(live.pending, this.buildWindow())
           if (targets.length === 0) break
           chunk = nearestChunk(targets, regions)

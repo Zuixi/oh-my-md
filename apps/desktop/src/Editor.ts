@@ -13,6 +13,7 @@ import {
   linkAt,
   setAutoPair,
   type AutoPairOptions,
+  type EditorPerformancePolicy,
   type OrderedListNormalizationNotice,
   type OutlineItem,
 } from "@omd/engine"
@@ -66,6 +67,9 @@ export interface CreateEditorOptions {
   onModeChange?: (isLive: boolean) => void
   /** Notified on every update with a lightweight cursor/mode snapshot. */
   onStatusChange?: (status: EditorStatus) => void
+  /** Per-editor performance policy (`null` or omitted falls back to legacy globals). */
+  performancePolicy?: EditorPerformancePolicy | null
+  experimentalTableDirectEdit?: boolean
 }
 
 export function makeImageResolver(
@@ -221,6 +225,8 @@ function createEditorState(
         imageBrokenLabel: (src: string) => t("image.broken", { src }),
         defaultLivePreview: options.defaultLivePreview,
         autoPair: options.autoPair,
+        performancePolicy: options.performancePolicy,
+        experimentalTableDirectEdit: options.experimentalTableDirectEdit,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],

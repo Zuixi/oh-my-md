@@ -10,10 +10,15 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test:e2e": "playwright test",
-    "audit:widget-memory": "node e2e/widget-memory-audit.mjs"
+    "bench:search-spike": "vitest bench --run bench/search.bench.ts --reporter=verbose",
+    "audit:search-spike": "node e2e/search-100m-audit.mjs",
+    "audit:widget-memory": "node e2e/widget-memory-audit.mjs",
+    "audit:policy-spike": "node e2e/per-editor-policy-audit.mjs",
+    "audit:table-direct-edit-spike": "node e2e/table-direct-edit-memory.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.7.1",
+    "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.36.0",
     "@omd/engine": "workspace:*",

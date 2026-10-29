@@ -407,6 +407,18 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   background: color-mix(in srgb, var(--omd-chrome) 60%, transparent);
   opacity: 0.65;
 }
+.editor-host .omd-table .omd-table-cell-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  font: inherit;
+  color: inherit;
+  background: inherit;
+}
 /* Unavailable structural actions: keep layout, communicate inertness. */
 .editor-host .omd-table-toolbar button:disabled {
   color: var(--omd-muted);
