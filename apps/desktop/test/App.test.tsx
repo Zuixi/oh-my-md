@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi, afterEach } from "vitest"
+import { Text } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
 import {
   getPendingOrderedListNormalization,
@@ -974,19 +975,35 @@ describe("App product shell", () => {
     spy.mockRestore()
   })
 
-  it("skips the match-count scan for over-scale tabs and shows the placeholder", async () => {
+  it("skips the match-count scan for over-scale tabs, shows the placeholder, and navigates via Text cursor without collectMatches", async () => {
     const spy = vi.spyOn(findReplaceModule, "collectMatches")
     const harness = makeAppHarness()
     harness.renderApp()
     const bigDoc = Array.from({ length: 50010 }, (_, i) => `line ${i}`).join("\n")
     await harness.openFileTab("/big.md", bigDoc)
+    const view = harness.editorForTab(1).view
+    ;(view.state as { doc: unknown }).doc = Text.of(bigDoc.split("\n"))
+    const toStringSpy = vi.spyOn(view.state.doc, "toString")
 
     fireEvent.keyDown(window, { key: "f", metaKey: true })
-    fireEvent.change(screen.getByLabelText("Find"), { target: { value: "line" } })
+    fireEvent.change(screen.getByLabelText("Find"), { target: { value: "line 50009" } })
 
     // 安全模式门控：find 打开也不跑全文正则扫描，计数显示占位。
     expect(spy).not.toHaveBeenCalled()
     expect(document.querySelector(".find-replace-status")?.textContent).toBe("—")
+
+    // 点击 Next 使用 currentDocumentSearch 树游标定位，绝不调用 collectMatches 或 doc.toString()。
+    fireEvent.keyDown(screen.getByLabelText("Find"), { key: "Enter" })
+    expect(spy).not.toHaveBeenCalled()
+    expect(toStringSpy).not.toHaveBeenCalled()
+    expect(view.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      selection: {
+        anchor: bigDoc.length - "line 50009".length,
+        head: bigDoc.length,
+      },
+      scrollIntoView: true,
+    }))
+    toStringSpy.mockRestore()
     spy.mockRestore()
   })
 

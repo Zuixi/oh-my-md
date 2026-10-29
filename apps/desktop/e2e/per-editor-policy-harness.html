@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>oh-my-md per-editor policy spike</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      .policy-hosts {
+        display: flex;
+        height: 100%;
+      }
+      .policy-hosts .editor-host {
+        flex: 1 1 50%;
+        min-width: 0;
+        height: 100%;
+      }
+      .policy-hosts .editor-host .cm-editor {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="policy-hosts">
+      <div id="host-a" class="editor-host"></div>
+      <div id="host-b" class="editor-host"></div>
+    </div>
+    <script type="module" src="./per-editor-policy-harness.ts"></script>
+  </body>
+</html>

@@ -1,12 +1,18 @@
-import { syntaxTree } from "@codemirror/language"
+import { forceParsing, syntaxTree } from "@codemirror/language"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
+import { history } from "@codemirror/commands"
 import type { SyntaxNode } from "@lezer/common"
 import { describe, expect, it } from "vitest"
 // 先经 helpers→build 进入模块图：decoration 层有既有 ESM 环（blockWidget ↔ blockSelectionOverlay
 // ↔ build ↔ blocks ↔ widgets），从 table.ts 直接进入会在 widgets.ts 里拿到未初始化的
 // BlockWidget（"Class extends value undefined"）。现有 tables.test.ts 同序。
 import { makeState } from "./helpers"
-import { TableWidget } from "../src/decorations/widgets/table"
+import { drainPendingLiveBuild } from "../src/decorations/build"
+import { TableWidget, activeTableInputControllerCountForTest } from "../src/decorations/widgets/table"
 import { applyBlockEmbed } from "../src/decorations/blockWidget"
+import { editorExtensions } from "../src/index"
+import { tableCellInputSpec } from "../src/tables/directEdit"
 import { tableDataFromNode, type TableData } from "../src/tables/model"
 
 // 关键契约（docview.ts findWidget）：pass-1 `widget.updateDOM(tile.dom, view, tile.widget)`
@@ -166,4 +172,63 @@ describe("table widget in-place updateDOM", () => {
     expect(dom.style.getPropertyValue("--omd-list-depth")).toBe("")
   })
 
+})
+
+const LIVE_DOC = "intro\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\ntail"
+
+async function renderedCell(view: EditorView, selector: string): Promise<HTMLElement> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const el = view.dom.querySelector<HTMLElement>(selector)
+    if (el) return el
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error(`expected a rendered cell for ${selector}`)
+}
+
+async function renderedInput(view: EditorView): Promise<HTMLInputElement> {
+  const input = await renderedCell(view, ".omd-table-cell-input")
+  return input as HTMLInputElement
+}
+
+function mountLive() {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const view = new EditorView({
+    state: EditorState.create({
+      doc: LIVE_DOC,
+      selection: { anchor: 0 },
+      extensions: [history(), editorExtensions({ experimentalTableDirectEdit: true })],
+    }),
+    parent,
+  })
+  forceParsing(view, view.state.doc.length, 10_000)
+  drainPendingLiveBuild(view)
+  return { view, cleanup: () => { view.destroy(); parent.remove() } }
+}
+
+describe("table widget pass-1 reuse with an active cell input", () => {
+  it("patches the table in place without touching the input node, value, or selection", async () => {
+    const { view, cleanup } = mountLive()
+    const cell = await renderedCell(view, ".omd-table tbody td")
+    cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }))
+    const input = await renderedInput(view)
+    const tableEl = view.dom.querySelector(".omd-table table")
+    input.value = "9x"
+    input.setSelectionRange(1, 1)
+
+    const spec = tableCellInputSpec(view.state, "9x", "typing")
+    if (!spec) throw new Error("expected a table edit spec")
+    view.dispatch(spec)
+
+    expect(view.state.doc.toString()).toBe("intro\n\n| A | B |\n| --- | --- |\n| 9x | 2 |\n\ntail")
+    expect(view.dom.querySelector(".omd-table table")).toBe(tableEl)
+    expect(view.dom.querySelector(".omd-table-cell-input")).toBe(input)
+    expect(input.value).toBe("9x")
+    expect(input.selectionStart).toBe(1)
+    expect(input.selectionEnd).toBe(1)
+    expect(activeTableInputControllerCountForTest()).toBe(1)
+
+    cleanup()
+    expect(activeTableInputControllerCountForTest()).toBe(0)
+  })
 })

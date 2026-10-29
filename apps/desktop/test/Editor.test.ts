@@ -5,6 +5,7 @@ import { undo } from "@codemirror/commands"
 import { EditorView, RectangleMarker } from "@codemirror/view"
 import {
   acceptOrderedListNormalization,
+  editorPerformancePolicy,
   getPendingOrderedListNormalization,
   isLivePreview,
   rejectOrderedListNormalization,
@@ -115,6 +116,18 @@ describe("desktop editor lifecycle", () => {
     expect(undo(view)).toBe(true)
     expect(view.state.doc.toString()).toBe("1. a\n3. b")
     expect(undo(view)).toBe(false)
+    view.destroy()
+  })
+
+  it("mounts with an initial per-editor performancePolicy when provided", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), "alpha"),
+      performancePolicy: { windowLiveDecorations: true, blockRenderBudgetLines: 42 },
+    })
+    expect(editorPerformancePolicy(view.state)).toEqual({
+      windowLiveDecorations: true,
+      blockRenderBudgetLines: 42,
+    })
     view.destroy()
   })
 

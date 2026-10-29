@@ -107,7 +107,11 @@ function sourceRow(
     const source = state.doc.sliceString(from, to)
     const leading = source.match(/^\s*/)?.[0].length ?? 0
     const trailing = source.match(/\s*$/)?.[0].length ?? 0
-    const pos = from + Math.min(leading, source.length - trailing)
+    // 全空白段没有 Lezer TableCell。规范槽是 `| <content> |`，所以空格的插入点在
+    // 前导边界空格之后：`|  |` 落在下标 1（替换得 `| 9 |`），不是下标 0（`|9  |`）。
+    const pos = from + (source.trim().length === 0
+      ? Math.min(1, Math.max(0, source.length - 1))
+      : Math.min(leading, source.length - trailing))
     cells.push({ source: "", text: "", from: pos - table.from, to: pos - table.from })
   }
 

@@ -3,7 +3,9 @@ import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
 import { codeSyntaxHighlighting } from "./highlight/codeHighlight"
 import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+import { tableDirectEditEnabled } from "./decorations/widgets/table"
 import { renderBudgetFlush } from "./decorations/renderBudget"
+import { performancePolicyExtension, type EditorPerformancePolicy } from "./performancePolicy"
 import { orderedNormalizationState } from "./lists/ordered"
 import { markdownKeymap } from "./format/commands"
 import { quoteKeymap } from "./format/quotes"
@@ -11,6 +13,7 @@ import { listKeymap } from "./format/lists"
 import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
 import { tableKeymap } from "./format/tableKeymap"
+import { experimentalTableDirectEdit } from "./tables/directEdit"
 import { tableSourceToolbar } from "./tables/sourceToolbar"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { htmlPaste } from "./paste/htmlPaste"
@@ -107,10 +110,23 @@ export {
 export {
   blockRenderBudget,
   renderBudgetFlush,
-  SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget,
   withinRenderBudget,
 } from "./decorations/renderBudget"
+export {
+  SAFE_MODE_RENDER_BUDGET_LINES,
+  SAFE_PERFORMANCE_POLICY,
+  STANDARD_PERFORMANCE_POLICY,
+  editorPerformancePolicy,
+  performancePolicyExtension,
+  samePerformancePolicy,
+  setEditorPerformancePolicy,
+  type EditorPerformancePolicy,
+} from "./performancePolicy"
+export {
+  getPerformancePolicyDiagnostics,
+  type PerformancePolicyDiagnostics,
+} from "./performancePolicyDiagnostics"
 export {
   LIVE_PRUNE_MARGIN_CHARS,
   LIVE_WINDOW_CHARS,
@@ -130,10 +146,15 @@ export interface EngineOptions {
   defaultLivePreview?: boolean
   /** Markdown-aware auto pairing toggles (three independent switches per §4.1). */
   autoPair?: AutoPairOptions
+  /** Per-editor performance policy (`null` or omitted falls back to legacy module globals). */
+  performancePolicy?: EditorPerformancePolicy | null
+  experimentalTableDirectEdit?: boolean
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
   const live = options.defaultLivePreview !== false
+  const directEdit = options.experimentalTableDirectEdit === true
+  const policy = options.performancePolicy ?? null
   return [
     markdownLanguageSupport(),
     emojiCompletion,
@@ -166,10 +187,12 @@ export function editorExtensions(options: EngineOptions = {}) {
     // 选区（D10），Backspace 用 Prec.high 抢在 defaultKeymap 的 deleteCharBackward 之前。
     // 三个开关经 compartment 热切换（desktop: setAutoPair）。
     autoPairCompartment.of(autoPairExtension(options.autoPair ?? DEFAULT_AUTO_PAIR)),
+    performancePolicyExtension(policy),
     renderBudgetFlush(),
     markdownKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
+    ...(directEdit ? [experimentalTableDirectEdit, tableDirectEditEnabled.of(true)] : []),
     livePreviewCompartment.of(live ? livePreviewExt() : []),
     // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，
     // 渲染态工具栏（住在 widget 里）不可达，这里补回鼠标入口。
