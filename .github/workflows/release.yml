@@ -57,7 +57,7 @@ jobs:
           find "$bundle" -type f -name '*.app.tar.gz' -print -quit | grep -q .
           find "$bundle" -type f -name '*.app.tar.gz.sig' -print -quit | grep -q .
       - name: Upload macOS package and signed updater artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-package
           path: |
@@ -112,7 +112,7 @@ jobs:
           find "$bundle" -type f -name '*-setup.exe' -print -quit | grep -q .
           find "$bundle" -type f -name '*-setup.exe.sig' -print -quit | grep -q .
       - name: Upload Windows packages and signed updater artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-packages
           path: |
@@ -162,7 +162,7 @@ jobs:
           find "$bundle" -type f -name '*.AppImage' -print -quit | grep -q .
           find "$bundle" -type f -name '*.AppImage.sig' -print -quit | grep -q .
       - name: Upload Linux packages and signed updater artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-packages
           path: |
