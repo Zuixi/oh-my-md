@@ -2,90 +2,117 @@
 
 **日期：** 2026-10-30
 
-**状态：** 已批准，待实施计划
+**状态：** review 修订版，待确认
 
 **父设计：** [oh-my-md 设计文档](./2026-08-10-oh-my-md-design.md)
 
 **替代：** [24 HTML 富文本粘贴 → Markdown 设计](./2026-08-18-24-html-paste-design.md)
 
-**影响域：** `packages/engine`、`apps/desktop`，内嵌图片资产写入时涉及 `apps/desktop/src-tauri`
+**影响域：** `packages/engine`、`apps/desktop`；内嵌图片资产写入时涉及 `apps/desktop/src-tauri`
 
 ## 摘要
 
-oh-my-md 采用 Typora 式 Smart Paste：普通粘贴优先读取 `text/html`，保留结构和有意义的格式；`Cmd/Ctrl+Shift+V` 明确执行逐字节纯文本粘贴。Markdown 能准确表达的内容写成规范 Markdown；Markdown 不能表达但可以安全保真的内容写成最小化白名单 HTML；危险或未知结构删除标签但保留可见内容。
+oh-my-md 采用 Typora 式 Smart Paste：普通粘贴保留外部内容的结构和有意义格式；`Cmd/Ctrl+Shift+V` 明确执行逐字节纯文本粘贴。Markdown 能准确表达的内容写成干净、确定的 Markdown；只有 Markdown 确实无法表达的少数语义使用封闭、类型化的 HTML 逃生舱。网页主题色、背景色、字号和无意义 `span` 永不进入源码。
 
-本设计不继续修补 Turndown。当前 Turndown 管线在文本层全局转义 `_`、`*`、方括号、反引号、反斜杠和行首标记，既不了解 oh-my-md 方言，也不了解粘贴点上下文，已经造成 `access_token` → `access\_token` 等可见错误。与此同时，Live Preview、HTML 导出和表格单元格分别解释 Lezer 节点，导致 `Escape`、`HardBreak` 等语义在不同投影中漂移。
+本设计不继续修补 Turndown。当前 Turndown 管线在文本层全局转义 Markdown 标点，已经造成 `access_token` → `access\_token` 等可见错误；Live Preview、同步导出、富导出和 table cell 又分别解释 Lezer 节点，使 `Escape`、`HardBreak`、Image alt 和表格 cell 语义继续漂移。
 
-替代架构由四部分组成：
+替代架构只有三个核心层次：
 
-1. 临时 `Paste AST`：表达剪贴板 HTML 的意图，不进入持久化文档。
-2. 确定性 Markdown 序列化器：按上下文生成 Markdown，必要时输出类型安全的白名单 HTML。
-3. 有界 Lezer 验证：在真实插入上下文中最多执行两次局部解析，发现不等价节点后确定性降级。
-4. Lazy Semantic Adapters：从 Lezer 节点按需提取共享语义事实，供 Live Preview、导出和表格投影使用；不构建全局第二 AST。
+1. 临时 `Paste AST`：读取剪贴板 HTML 的语义意图，不进入 EditorState 或保存格式。
+2. 确定性 Markdown 序列化器：使用同一份方言触发策略进行上下文感知转义；每条生产路径最多做一次局部 Lezer 验证，失败时整段进入保守模式。
+3. Lazy Semantic Accessors：从 Lezer 节点按需提取 Image、Escape、HardBreak、table cell 等共享事实，供 Live Preview 和两种导出共同消费，不构建全局第二 AST。
 
-持久化后的唯一真相仍是 Markdown 源码。Lezer 仍是持久化文档唯一的 Markdown 语义来源。DOM parser 只负责读取不可信剪贴板 HTML；Paste AST 只表达导入意图；两者都不成为文档 parser。
+本修订明确删除以下设计：
 
-## 背景与当前问题
+- Paste AST 节点 ID 和 output source map；
+- 两棵异构树的规范化语义签名；
+- “定位最小不一致节点 → 单节点分层降级 → 再 parse”的重试状态机；
+- 通用 `SafeHtmlNode`、外部 CSS 保真和任意 inline HTML 配对栈；
+- `<details>` 等通用 HTML block widget。
 
-### 已确认的故障链
+持久化后的唯一真相仍是 Markdown 源码，Lezer 仍是持久化文档唯一的 Markdown parser。DOM parser 只读取不可信剪贴板 HTML；Paste AST 只存在于一次导入任务中；Live Preview 只隐藏或投影语法，绝不改写源码。
 
-当前 `packages/engine/src/paste/htmlPaste.ts` 使用 Turndown + GFM 插件把 `text/html` 转成 Markdown。Turndown 对普通文本中的 Markdown 标点做全局转义；现有“纯文本等价”判断只删除空白后比较字符串，因此：
+## 已确认的问题
+
+### 全局转义导致源码和预览污染
+
+当前 `packages/engine/src/paste/htmlPaste.ts` 使用 Turndown + GFM 插件。Turndown 不知道 oh-my-md 方言、插入点上下文或 CommonMark flanking 规则，对普通文本中的 `_`、`*`、`[`、反引号、反斜杠和行首标记做全局转义。现有“纯文本等价”判断只做空白压缩比较，因此：
 
 ```text
 HTML 可见文字       access_token
 Turndown 输出        access\_token
 text/plain          access_token
-去空白比较          不相等
+空白比较             不相等
 写入源码             access\_token
 ```
 
-Lezer 正确地把 `\_` 解析为 `Escape`，但 Live Preview 没有投影 `Escape`，最终把反斜杠显示给用户。相同缺口还存在于同步/富 HTML 导出和表格 cell AST。`HardBreak` 也缺少统一投影：反斜杠换行在 Live Preview 中泄漏标记，导出没有稳定生成 `<br>`。
+Lezer 正确把 `\_` 解析成 `Escape`，但 Live Preview 没有统一投影 `Escape`，最终把反斜杠显示给用户。相同风险覆盖：
 
-这不是 `_` 的特殊问题。当前转换还会影响：
+- 普通文本中的 CommonMark 标点；
+- 行首 heading、list、quote、thematic break、fence 和 indented code 触发器；
+- `$`、`==`、`~`、`^`、`:emoji:`、footnote、task list、table 等项目扩展；
+- HTML tag、entity、autolink 和 link destination 边界；
+- code、math、front matter 等必须逐字节处理的区域。
 
-- 普通文本中的 `*`、`[`、`]`、反引号和反斜杠；
-- 行首 `#`、`-`、`+`、`>`、`1.`、围栏标记；
-- oh-my-md 方言中的 `$...$`、`==...==`、`~...~`、`^...^`、`:emoji:`；
-- HTML `<u>` / `<mark>` 等扩展语义；
-- 代码、公式和 front matter 内必须逐字节保留的内容。
+`access_token` 不是一个 `_` 特例，而是“字符串转换器代替 parser 语义”的症状。
 
-### 架构缺口
+### 共享投影已经发生真实漂移
 
-1. **HTML 导入没有语义模型。** HTML 被直接压成字符串，转换器无法区分“文字 `**x**`”与“真正的粗体 x”。
-2. **序列化器不了解方言和插入上下文。** 片段在段落、列表、表格或行首的含义不同。
-3. **Markdown 语义被多个投影重复解释。** Live Preview、导出、表格各自维护 switch 和 skip 集合。
-4. **HTML 安全没有统一边界。** 当前只对少数 HTMLTag 特判；不存在可供预览和导出共用的安全 HTML 子集。
-5. **两条粘贴通道不一致。** 键盘普通粘贴可以走 HTML 转换，但应用层普通 Paste 命令当前复用 `pastePlainText`；菜单和键盘语义不同。
-6. **异步粘贴目标可能陈旧。** 动态 import/转换完成前文档或选区可能变化。
-7. **Live Preview 仍有源码改写例外。** 进入预览时自动改写有序列表编号，与“预览只投影、不修改源码”的目标冲突。
+当前 `packages/engine/src/export/html.ts` 有两个已经确认的裂痕：
+
+1. 同步 `exportHtml` 的 table cell 会提取 source、处理 `\|` 并调用 `parseCell`；异步 `exportRichHtml` 却直接遍历 Lezer `TableCell` 子节点。结果是富 HTML/PDF/PNG 导出会泄漏反斜杠，并丢失 `parseCell` 支持的 `<br>` 和 cell 内结构。
+2. `exportHtml` 和 `exportRichHtml` 都把 Image alt 硬编码成空字符串；Live Preview 和 `parseCell` 则各自手写一次 `](` 查找。
+
+这两个缺陷必须在 Smart Paste 主链路切换前修复。否则新 importer 即使生成正确 Markdown，用户仍会在预览与导出之间看到不一致。
+
+### 现有宿主入口并不等价
+
+- 键盘粘贴产生 DOM `ClipboardEvent`，可以读取 `text/html`。
+- macOS 原生 Edit → Paste 使用 WebKit 原生 paste selector，也会产生 DOM `paste` event。
+- 命令面板和 Windows/Linux 应用内菜单的普通 Paste 当前调用 `pastePlainText()`，只执行 `navigator.clipboard.readText()`。
+- macOS 右键粘贴为了绕过 WKWebView selection corruption，在 `imagePaste.ts` 中提前消费事件并强制插入 `text/plain`，使后续 HTML Smart Paste 永远无法运行。
+
+因此“入口统一”必须从 clipboard payload 获取层解决，不能只改 engine 的 HTML converter。
+
+### CommonMark HTMLBlock 不能支撑通用 block widget
+
+CommonMark 0.31.2 的 [HTML block 规则](https://spec.commonmark.org/0.31.2/#html-blocks)把 `<details>`、`<summary>`、`<table>` 等归入 Type 6，遇到空行就结束 block。实际 Lezer 行为是：
+
+```text
+<details> ... blank line ... </details>
+→ Document(HTMLBlock, Paragraph, HTMLBlock)
+
+<table> ... blank line ... </table>
+→ Document(HTMLBlock, HTMLBlock)
+```
+
+单个 `HTMLBlock` widget 无法安全拥有这种跨节点结构；跨兄弟节点扫描并拼回 HTML 又会在 engine 中制造第二套 block parser。本设计因此不支持通用 HTML block widget。
 
 ## 产品契约
 
 ### 普通粘贴
 
-普通 `Cmd/Ctrl+V` 表达“把外部内容按其可见语义导入当前 Markdown 文档”：
+普通 `Cmd/Ctrl+V` 表达“把外部内容按可见语义导入当前 Markdown 文档”：
 
-1. 剪贴板含真实图片 item 时，现有图片通道优先。
+1. 剪贴板含真实图片 item 时，图片资产通道优先。
 2. 含 `text/html` 时执行 Smart Paste。
 3. 无 HTML 时插入 `text/plain`。
-4. 光标或选择位于 code、math、front matter 等 verbatim 区域时，始终插入 `text/plain`，不进行富文本转换。
+4. 光标或选择位于 code、math、front matter 等 verbatim 区域时，始终插入 `text/plain`，不做富文本转换。
 5. 转换失败时保留可见文字，不允许整次粘贴消失。
-6. 多 selection/range 时不启动异步 Smart Paste，交还 CodeMirror 的 `text/plain` 多光标粘贴语义；当前产品不为同一份富文本定义多目标结构导入。
+6. 多 selection/range 不启动异步结构导入，交还 CodeMirror 的 `text/plain` 多光标粘贴语义。
 
-普通粘贴保留结构和有意义格式，不承诺像素级复制外部应用的主题、字体或页面布局。
+普通粘贴保留 heading、list、blockquote、link、code、table 和粗体等语义，但不承诺复制来源应用的主题、字体、字号、正文字色、背景色或页面布局。
 
 ### 粘贴为纯文本 / Markdown 源码
 
 `Cmd/Ctrl+Shift+V`、菜单和命令面板中的“粘贴为纯文本”具有同一语义：
 
 - 只读取 `text/plain`；
-- 逐字节插入，不做 HTML 分析、转义、块边界规范化或资源下载；
-- 插入内容随后自然由 Markdown parser 解释；例如纯文本粘贴 `# title` 会成为标题；
+- 逐字节插入，不分析 HTML、不转义、不规范化 block boundary、不写图片资产；
+- 插入后由 Markdown parser 自然解释，例如 `# title` 会成为 heading；
 - 整次操作是一个 CodeMirror undo transaction。
 
-### 复制来源与目标体验
-
-目标覆盖浏览器、Word/Pages、Google Docs、Excel/Sheets、VS Code、邮件/聊天应用以及其他 Markdown 编辑器。输出策略是：
+### 预期示例
 
 | 输入语义 | Smart Paste 源码 |
 | --- | --- |
@@ -95,82 +122,81 @@ Lezer 正确地把 `\_` 解析为 `Escape`，但 Live Preview 没有投影 `Esca
 | 普通文字 `$x$` | `\$x\$` |
 | 普通文字 `**bold**` | `\*\*bold\*\*` |
 | 真正的粗体 | `**bold**` |
-| 合并单元格表格 | 安全 HTML table block |
-| 危险标签包裹的文字 | 删除标签，保留文字 |
+| 外部黑色 15px 正文 | 只保留正文文字 |
+| 外部 CSS `font-weight: 700` | `**text**` |
+| 合并单元格表格 | 规范化复杂 table HTML |
+| 危险标签包裹的文字 | 删除标签，保留可见文字 |
 
-“与 Typora 一样的体验”指上述用户可观察契约，不要求逐字节复制 Typora 未公开的内部 Markdown 输出。
+“与 Typora 一样的体验”指这些用户可观察契约，不要求逐字节复制 Typora 未公开的内部输出。
 
 ## 目标与非目标
 
 ### 目标
 
-- 消除普通富文本粘贴产生的无意义转义和可见反斜杠。
-- 对 oh-my-md 全部 Markdown 方言进行上下文感知序列化。
-- 使普通粘贴和纯文本粘贴在菜单、快捷键和上下文菜单中一致。
-- 让 Live Preview、同步/富 HTML 导出和表格内容共享 Markdown 语义事实。
-- 支持 Markdown 无法表达的安全富文本结构，同时保持源码最小、确定、可读。
-- 对不可信 HTML 建立集中、可审计的安全边界。
-- 保持源码、undo、选择、只读模式、大文档窗口化和现有图片资产规则。
+- 消除 Smart Paste 产生的无意义转义和 Preview 可见反斜杠。
+- 对完整 CommonMark + oh-my-md 方言做上下文感知序列化。
+- 让 keyboard、native menu、app menu、command palette 和 context menu 共享同一普通粘贴语义。
+- 让 Live Preview、同步导出、富导出和 table cell 共享关键 Markdown 事实。
+- 保持生成源码干净、确定、可读，不导入外部主题 CSS。
+- 对极少数 HTML 逃生舱建立封闭、可审计、失败关闭的类型边界。
+- 保持 source-first、undo、selection、readOnly、大文档窗口化和图片资产规则。
 
 ### 非目标
 
-- 不实现 Word/Pages 的像素级排版复制。
-- 不保存外部应用的字体族、页面 margin、行高、定位、动画或 Office 私有 CSS。
+- 不实现 Word/Pages/网页的像素级排版复制。
+- 不保存 color、background-color、font-size、font-family、line-height、margin、padding、position 或 Office 私有 CSS。
 - 不引入 ProseMirror、contenteditable 文档模型或新的持久化格式。
-- 不让 Paste AST 成为编辑器状态或保存格式。
-- 不在 Smart Paste 中执行脚本、自动激活 iframe/video 或信任任意 HTML。
-- 不让复杂 HTML 表格进入现有 Markdown TableWidget 的行列编辑协议。
+- 不构建 Paste AST ↔ Lezer tree 节点对应关系。
+- 不实现通用安全 HTML renderer、通用 inline tag stack 或通用 HTMLBlock stitcher。
+- 不让 Smart Paste 自动激活 iframe、video、audio、form 或脚本能力。
+- 不让复杂 HTML table 进入现有 Markdown TableWidget 的直接编辑协议。
 - 不在生产 Live Preview 中强制完整解析大文档。
-- 不长期保留新旧两套粘贴实现或用户可见实验开关。
+- 不长期保留新旧两套 paste 实现或用户可见 feature flag。
 
 ## 总体架构
 
 ```text
-ClipboardEvent
-  │
-  ├─ image item ─────────────────────────► desktop image asset pipeline
-  │
-  ├─ Paste as Plain Text ────────────────► exact text/plain transaction
-  │
-  └─ Normal Paste
-       │
-       ├─ verbatim selection ────────────► exact text/plain transaction
-       ├─ no text/html ──────────────────► text/plain transaction
-       └─ text/html
-            │
-            ▼
-      Clipboard HTML reader (untrusted)
-            │
-            ▼
-      HTML → Paste AST normalizer
-            │
-            ├─ semantic Markdown nodes
-            ├─ typed SafeHtml nodes
-            └─ embedded image assets
-            │
-            ▼
-      deterministic serializer + source map
-            │
-            ▼
-      parse affected context with Lezer
-            │
-            ├─ equivalent ───────────────► accept
-            └─ mismatch ─► downgrade mapped nodes ─► one final parse
-            │
-            ▼
-      mapped paste anchor + one CM transaction
+DOM ClipboardEvent                     navigator.clipboard.read()
+keyboard / native menu / context menu  app menu / command palette
+              │                                      │
+              └──────── desktop ClipboardPayload ────┘
+                                      │
+                          normal paste│plain paste
+                                      │
+                      ┌───────────────┴───────────────┐
+                      │                               │
+            image asset pipeline             exact text/plain
+                      │
+                      ▼
+               engine import planner
+                      │
+          ┌───────────┼────────────────┐
+          │           │                │
+      verbatim    no HTML        text/html reader
+          │           │                │
+       plain text  plain text       Paste AST
+                                       │
+                            context-aware serializer
+                                       │
+                           one bounded local parse
+                                       │
+                       pass ────────────┴──── fail
+                        │                    │
+                     accept       whole-fragment strict mode
+                        │                    │
+                        └──── mapped target + one CM transaction
 
 Persisted Markdown source
-  │
-  ▼
-Lezer syntax tree
-  │
-  ▼
-Lazy Semantic Adapters
-  ├─ Live Preview decorations/widgets
-  ├─ HTML export
-  └─ table-cell DOM/export
+          │
+          ▼
+       Lezer tree  ──► Lazy Semantic Accessors
+                        ├─ Live Preview
+                        ├─ exportHtml
+                        ├─ exportRichHtml / PDF / PNG
+                        └─ table-cell DOM/export
 ```
+
+关键约束：fast path 和结构化 path 是互斥分支；每次生产转换最多进行一次新的局部 Markdown parse。验证失败后不做第二次 parse，也不尝试定位某个 Paste AST 节点。
 
 ## 所有权与模块边界
 
@@ -178,191 +204,292 @@ Lazy Semantic Adapters
 
 `packages/engine` 拥有：
 
-- Clipboard HTML 的语义读取与 Paste AST；
-- Markdown 方言序列化和局部 Lezer 验证；
-- Safe HTML policy、类型、解析、DOM 投影和导出；
-- Lazy Semantic Adapters；
-- Live Preview 的 Escape/HardBreak/HTML 投影；
-- table cell 的共享语义投影；
-- 普通富文本 paste handler 和可映射 paste bookmark。
+- HTML → Paste AST 的语义读取；
+- Markdown 方言触发策略、序列化器和局部结构验证；
+- verbatim predicate；
+- Lazy Semantic Accessors；
+- Escape、HardBreak、Kbd、复杂 table 的 Markdown 语义和 Preview 投影；
+- 纯函数式 `planSmartPaste(payload, context)` API。
 
-Engine 不访问 React、Tauri 或文件系统。
+Engine 不访问 React、Tauri、系统剪贴板或文件系统，也不决定 host 菜单行为。
 
 ### Desktop
 
 `apps/desktop` 拥有：
 
-- 图片 clipboard item 的优先级和本地资产写入；
-- Smart Paste 内嵌图片资产请求的 host adapter；
-- 普通 Paste / Paste as Plain Text 菜单与快捷键一致性；
-- 转换失败、资源失败和大粘贴状态的本地化非模态反馈；
-- 当前文档路径、tab/document identity 和 host image resolver。
+- 从 DOM `ClipboardEvent` 和 `navigator.clipboard.read()` 读取统一 `ClipboardPayload`；
+- image flavor 优先级、本地资产写入和 image drop；
+- keyboard/menu/context menu 的目标修正、队列、identity guard 和最终 dispatch；
+- Paste / Paste as Plain Text 快捷键和菜单一致性；
+- 失败与降级的本地化非模态反馈。
 
-Desktop 不复制 Markdown 转义或 Lezer 节点判断。
+Desktop 不复制 Markdown 转义、HTML normalization 或 Lezer 节点判断。
 
 ### Rust
 
-`apps/desktop/src-tauri` 仅在 Smart Paste 需要持久化 `data:` 图片时提供窄的批量资产写入/失败清理能力。Rust 不解析 HTML 或 Markdown。
+`apps/desktop/src-tauri` 只为 `data:`/File 图片提供窄的批量资产写入和失败清理命令。Rust 不解析 HTML 或 Markdown。任何新增多词 IPC 字段必须有 Rust serialized-JSON contract test。
+
+## 统一 ClipboardPayload 与入口
+
+Desktop 先把所有普通粘贴入口归一为同一种输入：
+
+```ts
+interface ClipboardPayload {
+  plainText: string
+  html?: string
+  images: readonly ClipboardImage[]
+  source: "dom-event" | "async-clipboard"
+}
+```
+
+真实实现可以使用 host-private File/ClipboardItem 类型，但 engine 只能看到稳定、可测试的数据和 asset request，不接触 Clipboard API。
+
+### DOM event 路径
+
+- keyboard、macOS native menu 和 context menu 从 `event.clipboardData` 构造 payload。
+- desktop 的单一 paste controller 负责 image/html/plain priority；不再由 `imagePasteHandler` 和 engine `htmlPaste()` 竞争同一个事件。
+- 普通、无图片、无 HTML 的 keyboard paste 可以继续交给 CodeMirror 内建 plain-text handler，以保留多 selection 语义。
+- readOnly 必须消费事件但不转换、不写资产、不 dispatch。
+
+### macOS 右键目标修复
+
+`contextmenu` 仍记录 `contextMenuTarget`，但非图片 paste 不再直接插入 `text/plain`。在 DOM paste handler 开始时：
+
+1. 校验 target 仍对应当前 view/document；
+2. 把 CodeMirror selection 恢复到保存的 target；
+3. 清除一次性 target；
+4. 让统一 paste controller 使用同一个 ClipboardPayload 继续 image/html/plain 路由。
+
+这保留 WKWebView selection corruption workaround，同时不牺牲 Smart Paste。现有断言“macOS 右键富文本必须变纯文本”的测试需要改成“在保存目标执行同样的 Smart Paste”。
+
+### 无 ClipboardEvent 的应用命令
+
+Command Palette 和 Windows/Linux AppMenu 的普通 Paste 使用 `navigator.clipboard.read()`，按每个 `ClipboardItem` 收集 `image/*`、`text/html` 和 `text/plain`，然后进入同一 controller。若 `read()` 不可用或权限拒绝，可回退 `readText()` 并明确成为 plain-only 降级；不能把这个降级伪装成完整 Smart Paste。
+
+Desktop 通过 `SystemClipboardReader` host interface 隔离具体 API。Phase 4 先在 macOS WKWebView、Windows WebView2 和 Linux WebKitGTK 做 capability spike；若任一受支持平台不能稳定读取 HTML/image MIME，该平台必须通过窄 Tauri/Rust clipboard adapter 补齐后才通过发布门禁。plain-only fallback 只用于权限拒绝或运行时故障，不算“入口一致性”验收通过。平台分支只允许落在 `platform.ts` 或 Rust `cfg!(target_os = …)`。
+
+Paste as Plain Text 始终只调用 `readText()`。`Mod+Shift+V` 在 `shortcuts.ts`、命令面板显示、应用菜单和 macOS native menu accelerator 中必须是同一 binding，并加入现有 shortcut drift tests。
 
 ## Paste AST
 
-Paste AST 是导入期的不可变、带来源标识的语义树。概念节点包括：
+Paste AST 是一次导入任务内的最小不可变语义树：
 
 ```text
 Document / Paragraph / Heading / Blockquote
 List / ListItem / TaskItem
-Table / TableRow / TableCell(rowspan, colspan, align)
-Text / Strong / Emphasis / Strike / Highlight / Underline
+Table / TableRow / TableCell(rowspan, colspan, header, align)
+Text / Strong / Emphasis / Strike / Highlight / Underline / Kbd
 Subscript / Superscript / InlineCode / CodeBlock
 Link / Image / HardBreak / HorizontalRule
-SafeHtmlInline / SafeHtmlBlock
 ```
 
-每个节点携带：
+它只携带序列化需要的语义属性，例如 href、alt、rowspan、colspan。它不携带：
 
-- 输入 DOM path、标签/样式来源类别，供诊断和确定性降级；DOMParser 不提供可靠字节 offset，因此不要求伪造 HTML 源范围；
-- 语义属性，例如 link href、image alt、table span；
-- 是否来自明确结构标签、CSS 推断或纯文本。
+- node ID；
+- DOM path 或伪造的 HTML byte range；
+- output range source map；
+- Lezer node；
+- browser DOM node；
+- 用于节点级重试的 provenance 状态。
 
-Serializer 返回独立的 output source map，把 Paste AST 节点 id 映射到生成范围；它不回写不可变 AST。Paste AST 不保存浏览器 DOM 节点，不进入 EditorState，不暴露为公共 API。
+诊断只记录本次任务的聚合结果，例如“丢弃 12 个 presentation-only style”或“进入 strict fallback”，不建立节点跟踪系统。
 
 ## HTML 读取与规范化
 
-### 输入安全
+### 输入边界
 
-剪贴板 HTML 永远是不可信输入。解析文档不得挂载到编辑器 DOM。脚本、事件属性和活动资源不会在规范化阶段执行。
+剪贴板 HTML 永远是不可信输入。使用 detached/inert document 读取，绝不挂载原始节点，绝不执行 script、事件属性、active resource 或 CSS。Normalizer 输出 Paste AST，而不是“清洗后的 HTML string”。
 
 ### 结构归一
 
-Normalizer 把标签和少量明确 CSS 语义转换为 Paste AST：
+- `strong` / `b` / inline `font-weight: bold|600..900` → Strong；
+- `em` / `i` / inline `font-style: italic|oblique` → Emphasis；
+- `del` / `s` / inline `text-decoration-line: line-through` → Strike；
+- inline underline → Underline；
+- `<mark>` → Highlight；
+- `<sub>` / `<sup>` → Subscript / Superscript；
+- `<kbd>` → Kbd；
+- `h1`…`h6`、list、blockquote、pre/code、table、br、a、img → 对应结构节点。
 
-- `strong` / `b` / 明确粗体 → Strong；
-- `em` / `i` / 明确斜体 → Emphasis；
-- `del` / `s` / line-through → Strike；
-- `h1`…`h6` → Heading；
-- `pre > code` → CodeBlock；
-- `ol` / `ul` / `li` → List；
-- `blockquote` → Blockquote；
-- `table` 结构 → Table；
-- `br` → HardBreak；
-- `a` / `img` → Link / Image；
-- `u`、`mark`、`sub`、`sup`、`ruby`、`kbd` 等 → 可表达的方言节点或 SafeHtml。
+CSS 只作为上述少数输入语义的识别线索，不会原样序列化。以下内容一律丢弃：
 
-Word/Docs 生成的无语义 span、嵌套重复样式和空容器被折叠。相邻相同样式合并。Office class、`data-*`、页面布局属性和主题默认样式不进入 Paste AST。
+- `color`、`background`、`background-color`、`font-size`、`font-family`；
+- line-height、letter-spacing、margin、padding、border、position、display、animation；
+- class、Office 属性、`data-*`、CSS variables 和浏览器私有属性；
+- 仅承载被丢弃样式的 `span`。
+
+`white-space` 只可帮助 normalizer 理解输入文本折叠；它必须归一成 Text/HardBreak/CodeBlock，不能作为 style 写进 Markdown。字号不能推断 heading，背景色不能推断 highlight；只有明确结构或上述强语义才转换。
+
+相邻相同语义合并，重复嵌套折叠。未知或危险标签删除标签但递归保留可见子内容。
 
 ### 空白模型
 
-空白不是通过 `trim()` 或“删除全部空白”处理。Normalizer 明确区分：
-
-- HTML 可折叠空白；
-- `&nbsp;`；
-- `<br>` hard break；
-- block boundary；
-- `pre` / code 中逐字节文本；
-- CSS `white-space` 白名单语义；
-- 表格单元格边界。
-
-Paste AST 的 Text 保存规范化后的可见文本；序列化器不得再次猜测 DOM 空白。
+Normalizer 明确区分 HTML 可折叠空白、`&nbsp;`、`<br>`、block boundary、table cell boundary 和 `pre` 中逐字节文本。Paste AST 的 Text 保存完成 HTML 空白语义后的可见文本；serializer 不再次猜 DOM layout，也不使用全局 `trim()`/squeeze heuristic。
 
 ## 确定性 Markdown 序列化
 
-### 原则
+### 唯一方言触发策略
 
-- 结构节点产生结构标记；Text 只在当前上下文确实可能改变语义时转义。
-- 不使用全局 `replaceAll` 或 Turndown `escape()`。
-- 相同 Paste AST、相同插入上下文必须产生相同源码。
-- 输出采用项目既有规范：ATX heading、`-` bullet、fenced code、GFM table、项目方言标记。
-- delimiter 宽度根据内容计算：inline code 使用大于内容最大连续反引号的 delimiter；fence 长度大于内容中同类连续 fence。
+新增一份 engine-owned `MarkdownTriggerPolicy`，与 `markdownLanguageSupport()` 同域维护。它覆盖：
 
-### 上下文
+- CommonMark block/inline 触发器、flanking、entity、autolink 和 raw HTML 边界；
+- GFM table/task/strikethrough；
+- oh-my-md math、highlight、sub/sup、emoji、footnote、underline/front matter 等扩展；
+- line start、delimiter adjacency、link label/destination、table cell 和 host block context。
 
-Serializer 至少区分：
+Policy 是 serializer 和测试的唯一转义规则来源。新增 parser extension 必须同时更新 policy fixture；drift test 列举 `markdownLanguageSupport` 的扩展注册和对应 trigger policy，防止“parser 新增语法、paste 忘记转义”。
 
-- paragraph text；
-- physical line start；
-- emphasis/strong content；
+Policy 不是第二个 Markdown parser：它不能给任意已有源码判定语法树，也不能被 Preview/export 调用来解释节点；它只回答 serializer 在一个已知输出位置能否安全发射 literal text。持久化源码的语义判断仍只来自 Lezer。
+
+Text 节点只在当前字符序列确实会触发语义时转义。`access_token` 中的 `_` 不满足 emphasis flanking，必须原样输出；段首普通文字 `# title` 会触发 heading，必须输出 `\# title`。
+
+### 序列化上下文
+
+至少区分：
+
+- paragraph text 与 physical line start；
+- emphasis/strong/highlight/sub/sup 内部；
 - link label、destination、title；
-- table cell；
+- Markdown table cell；
 - inline code / fenced code；
-- HTML text/attribute；
-- 相邻 Markdown delimiter；
-- 当前文档的列表、引用和 block boundary。
+- canonical complex-table HTML text/attribute；
+- 相邻 delimiter；
+- 当前 list、blockquote、paragraph 和 block boundary。
 
-### 纯文本 HTML 包装
+结构节点产生结构 marker，Text 负责 literal safety。inline code delimiter 和 fenced code marker 宽度根据内容最大连续 run 计算。输出固定采用项目规范：ATX heading、`-` bullet、fenced code 和 GFM table。
 
-浏览器经常为普通文字附带最小 HTML。只有当原始 `text/plain` 在真实插入上下文中解析后与 HTML Paste AST 语义等价时，才可逐字节复用 `text/plain`。因此：
+### 纯文本 fast path
 
-- `access_token` 可原样复用；
-- `# title` 不能原样复用，因为 HTML 表达段落而 Markdown 会表达标题；
-- `$x$` 不能原样复用，因为 oh-my-md 会表达数学；
-- 空白差异不能通过 squeeze 后忽略。
+当 HTML normalizer 得到的只是普通 Text/Paragraph/HardBreak，且 `text/plain` 与其可见文本严格一致时，优先尝试逐字节复用 `text/plain`。比较前只允许把剪贴板 transport 的 CRLF/CR 统一成 editor 的 LF；不得压缩空格、空行或 NBSP：
 
-## 有界 Lezer 验证
+1. 取插入点前后稳定 block boundary 内的真实上下文；
+2. 把 plain text 合成到上下文并执行一次局部 parse；
+3. 检查 Paragraph/HardBreak boundary 与 normalized AST 一致，插入范围没有产生 heading/list/math/link/emphasis/table/HTML 等意外语义，也没有吞并或改写两侧稳定宿主结构；
+4. 通过则直接采用原始 `text/plain`，不经过 serializer。
 
-### 上下文窗口
+因此 `access_token` 直通；HTML 普通段落对应的 `# title`、`$x$` 或 `**bold**` 因会触发语义而拒绝 fast path，转入 context-aware serializer。
 
-验证范围从粘贴点前一个稳定顶层块边界扩展到后一个稳定顶层块边界，包含插入前后的真实源码。它必须覆盖所有可能被粘贴改变的段落/列表/引用/表格关系，但不得推进生产 editor syntax tree 到整个文档末尾。
+fast path 不做 squeeze whitespace，不比较异构树，不生成 source map。
 
-验证可以用同一 Markdown language 对局部合成文本独立解析；不得调用 `ensureSyntaxTree(state, state.doc.length)` 或 `forceParsing`。
+## 一次局部验证与保守 fallback
 
-### 两次解析上限
+### 验证窗口
 
-1. Serializer 生成源码和 Paste AST → output range source map。
-2. 第一次局部 parse 后，Lazy Semantic Adapters 生成规范化语义签名。
-3. 若等价，接受输出。
-4. 若不等价，根据 source map 标记最小不一致 Paste AST 节点，并确定性降级：Markdown → SafeHtml → Text。
-5. 重新序列化并执行最后一次局部 parse。
-6. 第二次仍不等价时，整个富文本片段使用 fallback text 的保守 literal serialization；绝不继续循环尝试。fallback text 优先取剪贴板 `text/plain`，缺失时取 Paste AST 的可见文本；“literal”表示按当前 Markdown 上下文安全转义，而不是逐字节插入。
+窗口从插入点前一个稳定顶层 block boundary 扩展到后一个稳定 boundary，包含真实 prefix、待插入片段和 suffix。它必须覆盖 paragraph/list/quote/table 的边界影响，但不得调用 `ensureSyntaxTree(state, state.doc.length)` 或推进完整编辑器 syntax tree。
 
-生产转换最多两次局部 parse，不允许逐字符/逐转义反复解析。
+### 验证内容
 
-### 独立测试 oracle
+结构化序列化结果只 parse 一次，并检查少量明确不变量：
 
-运行时 semantic signature 不是唯一正确性来源。测试必须同时包含人工预期源码、人工预期 DOM/HTML 和真实浏览器行为，避免 serializer 与 projector 以同一种方式写错后“错误但相等”。
+- 片段预期的顶层 block kind 和顺序仍成立；
+- Strong/Emphasis/Link/Image/Code/HardBreak 等关键语义的数量符合 Paste AST 的粗粒度预期；
+- Text 节点没有引入未预期的关键语法；
+- prefix/suffix 的稳定语义没有被片段 delimiter 吞并；
+- canonical complex table 仍是一个完整、闭合的 block。
 
-## Safe HTML
+这些是整体结构断言，不是 Paste AST 与 Lezer tree 的同构语义签名。实现只知道整个插入范围，不把 Lezer node range 反向归因给某个 Paste AST 节点。
 
-### 类型边界
+### 失败策略
 
-Raw string 不能被标记为“已安全”。只有安全模块可以通过私有 `unique symbol` brand 的构造器创建 `SafeHtmlNode` 联合类型；公共模块不导出 brand 或 raw→safe 类型断言。其他模块只消费节点并通过 DOM API 或 escape-aware exporter 输出。
+任一不变量失败时，不做节点级诊断或第二次 parse，直接对整个片段使用 strict serializer：
 
-### Smart Paste 允许的语义
+- Text 节点中的全部 CommonMark 可转义 ASCII punctuation 和项目扩展 opener 采用保守转义；
+- literal backslash 成对编码；line-start indentation、tab、NBSP 和空行由 trigger policy 显式处理，不能意外形成 indented code 或新的 block；
+- block 结构使用明确空行、非紧凑形式和足够宽的 fence；
+- link destination、table cell、HTML attribute 使用各自专用编码；
+- 当前宿主上下文无法安全承载某个 block 时，整个片段降级为 visible text 的 strict literal serialization。
 
-Markdown 无法准确表达时，Smart Paste 可保留：
+strict serializer 必须由构造规则保证安全；生产不再 parse 它。其正确性由独立 fixture、property test 和真实浏览器 E2E 证明，不能靠 serializer 与 projector 自证。
 
-- inline：`span`、`u`、`mark`、`sub`、`sup`、`ruby`、`rt`、`rp`、`kbd`、`br`；
-- block：`details`、`summary`、含 `rowspan`/`colspan` 的 table、必要的语义容器；
-- 明确且有限的视觉语义：文本色、背景高亮、font weight/style、text decoration、vertical/text alignment、受限 font size、white-space。
+每次普通粘贴最多一次新的局部 parse：plain fast path 或 structured validation 二选一。不存在解析重试循环。
 
-默认删除：
+## 封闭 HTML 逃生舱
 
-- 字体族、line-height、margin、padding、position、z-index、animation、transition、filter；
-- `background-image`、CSS `url()`、CSS variables、浏览器私有属性；
-- Office class、任意 class、`data-*` 和未知属性；
-- 空 span 和与父节点重复的样式。
+Smart Paste 不提供通用 Safe HTML。允许写入 Markdown 源码的 HTML 只有：
 
-### 标签、属性与 URL
+| 语义 | 规范输出 | Parser/Preview |
+| --- | --- | --- |
+| Underline | `<u>text</u>` | 复用现有固定 `parseHtmlPair` → `Underline` |
+| Keyboard key | `<kbd>text</kbd>` | 新增固定 `Kbd` inline extension |
+| table cell hard break | `<br>` | 只由 table-cell parser 识别 |
+| rowspan/colspan table | canonical `<table>…</table>` | typed complex-table block adapter |
 
-- `script`、`style`、`meta`、`object`、`embed`、form controls 永不执行；删除标签并尽量保留可见子内容。
-- 所有 `on*` 属性删除。
-- URL 仅允许明确协议。`javascript:`、危险 `data:` 和控制字符混淆被拒绝。
-- anchor 标识在 Live Preview 中映射为应用内部数据，不把不可信 `id` 直接注入宿主 DOM；导出时可恢复安全 anchor。
-- iframe/video/audio 不由普通 Smart Paste 自动激活。可见链接或 poster/alt 被保留。
-- 用户在源码中显式写入的 iframe/video 也必须通过同一安全 renderer；iframe 强制 sandbox，危险来源显示为源码/错误占位。
+Highlight 输出 `==text==`；Strike 输出 `~~text~~`；Subscript/Superscript 输出项目方言；Strong/Emphasis 输出 Markdown。普通段落 hard break 输出 CommonMark hard break，不输出 `<br>`。
 
-### DOMPurify
+这里没有任意 `span`、style attribute、ruby、details/summary、media、iframe 或“必要的语义容器”。也不新增通用 inline HTMLTag 配对栈：`u` 和 `kbd` 都是 parser 中显式注册、独立测试的固定语法。
 
-DOMPurify 作为 engine 的直接依赖提供通用 HTML 清洗，不依赖 Mermaid 的传递依赖。DOMPurify 不是完整 policy：tag/attribute/CSS/URL 的产品白名单仍由 engine 的 Safe HTML 模块拥有并测试。
+不引入 DOMPurify 作为“通用清洗后继续渲染”的许可。复杂 table 使用 inert DOM parse → 封闭 typed model → DOM API/export encoder；未通过 typed parser 的源码失败关闭，显示源码而不是尝试修复或执行。
 
-### 向后兼容
+旧文档中已有的未知 HTML 不会因为本功能突然变成活动内容。现有 `<a id>`、`<u>`、`<mark>` 兼容行为保持；任何扩展都必须另立 spec，而不是扩大本 allowlist。
 
-新增 renderer 后，旧文档中的未知 HTML 不得突然变为活动内容：
+## Lazy Semantic Accessors
 
-- 白名单语义安全投影；
-- 未知但无害标签显示源码或展平为文字；
-- 危险内容永不执行；
-- 已有 `<a id>`、`<u>`、`<mark>` 行为保持兼容；
-- HTML 源码字节不由 Live Preview 自动重写。
+共享层回答局部、事实型问题，不产生全局 Semantic AST：
+
+- `escapeValue(node, source)`：被转义字符和 marker range；
+- `hardBreakKind(node, source)`：backslash/two-space break 及 marker range；
+- `imageParts(node, state/source)`：alt、resolved destination、可选 title，覆盖 inline/reference image、escape、entity 和嵌套 inline label；
+- `linkParts(node, state/source)`：覆盖 inline/reference link 和 autolink；
+- `tableCellModel(cellNode, source)`：正确处理 `\|`、inline Markdown、`<br>` 和 cell 内受支持结构；
+- `complexTableModel(htmlBlockSource)`：封闭 table typed model；
+- Entity、code、math 的可见值/range。
+
+Accessor 不决定 CSS、CodeMirror Decoration 或 HTML template。Live Preview 只在当前 decoration 遍历范围调用；export 可对导出快照完整遍历；table cell 只解析自己的小片段。不得缓存完整文档第二棵树。
+
+### Phase 1 必须消除的导出分叉
+
+1. `exportHtml` 和 `exportRichHtml` 都必须通过 `imageParts` 输出 alt，删除两处 `alt=""` 硬编码和 Preview/cell 中的手写 `head.indexOf("](")`。
+2. 同步与富 table export 都必须先取得同一 `tableCellModel`。富导出在这个 model 上异步渲染 math、image resolver 等能力，不能再调用 `richChildren(TableCell)` 绕过 `parseCell`。
+3. `\|` 的解释属于 table-cell semantic accessor，只处理真正的 escaped pipe；exporter 不再各自做字符串级 `.replace(/\\\|/g, "|")`。
+4. Preview DOM、同步 HTML 和富 HTML 对 cell 的 Text/Break/Image/Link/List/Code 节点使用同一 model 和不同 renderer。
+
+Phase 1 的回归样本至少包含：普通/引用式 image、含 escape/entity/inline formatting 的 alt、空 alt、可选 title、cell `\|`、偶数/奇数反斜杠后的 pipe、cell `<br>`、cell list、cell image alt，以及同步/富 export parity。
+
+## Live Preview 与源码不变性
+
+- Live Preview 通过 replace/mark/widget 隐藏或投影语法，不改源码。
+- Escape 只隐藏语法反斜杠，保留被转义字符；Source Mode 显示原始 `\`。
+- HardBreak 隐藏反斜杠或行尾空格，保留真实换行。
+- `<u>`/`<kbd>` 只隐藏固定 tag marker；内容继续由 Lezer inline parser 解释。
+- canonical complex table 使用 block widget；未知/无效 HTML 保持源码可见。
+- selection、atomic range、IME 和 Source/Live toggle 不得改变文档字节。
+
+现有“进入 Live Preview 自动改写有序列表编号”的例外将移除：预览只通过 decoration 显示连续编号；源码规范化必须是用户显式执行、可撤销的命令。该迁移单独实施，不混入 Smart Paste serializer。
+
+## 表格设计
+
+### Markdown table
+
+- 无 rowspan/colspan、cell 内容在现有能力内时序列化成 GFM table。
+- 继续使用现有 TableWidget、source toolbar 和 Lezer-range edits。
+- cell Preview、同步 export、富 export 共享 `tableCellModel`。
+
+### Complex table
+
+只有 rowspan/colspan 等 Markdown 确实无法表达的表格进入 complex path。输入 DOM 先归一为封闭 typed model，再输出 deterministic canonical HTML：
+
+- 只允许 `table/thead/tbody/tfoot/tr/th/td` 和封闭 cell inline 子集；
+- rowspan/colspan 是有上限的正整数；header/scope/align 是枚举；
+- 不输出 class、id、style、事件属性或外部主题信息；
+- URL 经过共享 URL policy；
+- unsupported nested block 展平为文字/line break，不保留任意 HTML；
+- canonical source 可以多行，但标签之间不得出现空白物理行。
+
+“无空白行”是 CommonMark Type 6 的持久化合同，使 serializer 生成的整个 table 成为一个 `HTMLBlock`。Engine 只在单个节点完整覆盖 `<table>…</table>` 且 typed parser 成功时挂载 widget。用户后来加入空白行、破坏闭合或加入未知结构时，widget 立即失败关闭并显示源码；不得跨 `HTMLBlock`/Paragraph 兄弟节点扫描拼接。
+
+Complex table widget 只提供整块 source entry，不显示 Markdown table 行列 toolbar，不调用 `tables/edit.ts`，也不把 HTML table 自动改写成 Markdown table。
+
+### BlockWidget 强制合同
+
+Complex table 是新的 `block: true` widget，实施时必须同时接入：
+
+1. `decorations/build.ts` 的 selection-range 重建机制（`SELECTION_BLOCKS` 或等价的 typed registry），确保光标进出时装饰重建；
+2. `decorations/widgetHeights.ts` 的内容规模感知 `estimatedHeight`，并更新 `widgetHeights.test.ts` 全类型门禁；
+3. `navigation/blockEntry.ts` 的 `blockEntryPosition`，覆盖 ArrowUp/ArrowDown 从上下进入源码；
+4. `blockSelectionOverlay.ts` 的完整选区覆盖态，验证 `omd-block-covered` 和相同内容多实例不会串 range；
+5. 现有 `BlockWidget` 生命周期、embed、render budget、click-to-source 和 readOnly contract。
+
+不能只“渲染出一个 div”就宣称完成。选择边界、虚拟滚动、键盘导航和全选都属于功能正确性。
 
 ## 内嵌图片资产
 
@@ -371,341 +498,228 @@ DOMPurify 作为 engine 的直接依赖提供通用 HTML 清洗，不依赖 Merm
 - `http:` / `https:`：保留 URL，不自动下载。
 - `data:image/...`：通过 desktop host adapter 写入当前文档 `assets/`，改写为相对路径。
 - `blob:`：优先匹配 Clipboard image item；无法解析时保留 alt 并报告降级。
-- `file:`：不把不可移植绝对路径写入 Markdown；只有 host 明确取得可读 File 时才进入现有资产写入管线，否则保留 alt 并报告降级。
-- 不支持或超限 MIME：保留 alt，其他粘贴内容继续成功。
+- `file:`：只有 host 明确取得可读 File 时进入资产管线；不把不可移植绝对路径写入 Markdown。
+- 不支持或超限 MIME：保留 alt，周围内容继续成功。
 
 ### 批量写入与事务
 
-Smart Paste 可包含多张图片。Desktop 通过窄 host adapter 批量请求写入，Rust 负责路径验证、MIME/大小限制和最终文件名。资源写入期间 paste bookmark 随文档 transaction 映射。
+多图先由 desktop/Rust 完成受限资产写入，paste bookmark 随中间 transaction 映射。完成后重新验证 tab、document、view、readOnly identity，再在一个 `input.paste` transaction 中插入 Markdown。
 
-写入完成后：
+view 失效、identity 改变或 dispatch 失败时，只清理由本次任务创建且尚未被引用的明确路径。Undo 不自动删除已写资产，与现有图片策略一致。未保存文档无法取得 assets 目录时，图片降级为 alt 并汇总提示；文字和格式仍粘贴。
 
-1. 重新验证 tab、document、view 和 readOnly identity；
-2. 使用已经映射的 bookmark 同步 dispatch 一次 Markdown transaction；
-3. view 已销毁、身份变化或 dispatch 失败时，仅清理由本次批量操作创建且尚未被文档引用的明确路径；
-4. undo 不自动删除已写入资产，因为资产可能已被其他文档位置引用；这与现有图片插入策略一致。
+## 并发、选择与 undo
 
-未保存文档无法取得合法 assets 目录时，`data:` / `file:` 图片降级为 alt 文本并显示非模态提示；周围文字和格式仍然粘贴。
+- 每个 EditorView 的异步 Smart Paste 串行化，不能交叉提交。
+- paste bookmark 是 StateField/StateEffect 管理的映射范围，不捕获永久绝对 offset。
+- collapsed caret 可随不相交编辑映射；原非空选择被中间 transaction 交叠修改时取消该 paste。
+- document identity 改变、view 销毁或进入 readOnly 后取消提交。
+- 一次 paste 最终只 dispatch 一个 `input.paste` transaction，形成一个 undo step。
+- 多 selection 使用 CodeMirror plain-text 语义，不定义异步富结构复制到多个 range。
 
-## 粘贴并发、选择与 undo
-
-- 每个 EditorView 的富文本粘贴串行化，不能让两个异步转换交叉提交。
-- paste bookmark 是 engine StateField/StateEffect 管理的零宽位置，随中间 transaction 映射；不捕获永久绝对 offset。
-- 非空选择的起止 bookmark 都映射；最终替换当前映射范围。
-- 文档 identity 改变、view 销毁或进入 readOnly 后取消提交并清理未引用资产。
-- collapsed caret 可随不相交编辑映射；原始非空选择若被任何中间 transaction 交叠修改则取消该 paste，不能在完成后删除用户的新输入。
-- 一次粘贴只产生一个 `input.paste` transaction 和一个 undo step。
-- 转换期间用户继续编辑不会把结果插回陈旧位置。
-- readOnly handler 消费事件但不改文档、不写资产。
-
-## Lazy Semantic Adapters
-
-### 职责
-
-共享层只回答 Markdown 语义事实：
-
-- 节点的可见文字；
-- syntax marker range；
-- `Escape` 解码；
-- `HardBreak` 类型和 marker range；
-- Entity 解码；
-- Link/Image URL、title、alt；
-- code/math 原文范围；
-- Safe HTML 节点；
-- 规范化 semantic signature。
-
-它不决定 CSS、CodeMirror decoration、HTML 字符串模板或 table widget UI。
-
-### 性能边界
-
-- Live Preview 只投影视口/增量 decoration 构建正在遍历的 Lezer 子树。
-- 不缓存完整文档第二 AST。
-- 不假设安全模式窗口外存在 decoration。
-- table cell 可用同一 Markdown language 解析小片段，再调用相同 adapters。
-- 显式导出可以对导出快照做独立完整 parse，但不得推进或污染 editor 的增量 syntax tree。
-
-### HTML 节点接入
-
-- inline 安全 HTML 以 Lezer `HTMLTag` 为边界，在当前顶层块内用线性 stack 配对 opening/closing tag；Markdown 子内容继续使用原 Lezer 节点，不由 HTML parser 重解析。
-- stack 只接受 Safe HTML 白名单和合法嵌套；不匹配、跨块或未闭合标签保持源码可见。
-- HTML block 按 CommonMark 规则视为 raw block，由 Safe HTML 模块以 inert fragment 解析并生成 block widget；其中不重新解析 Markdown。
-- inline HTML 产生的 mark decoration 可以与 Markdown mark 嵌套，但 replacement 只覆盖标签源码。实现必须遵守现有 decoration 排序、atomic range 和 block replacement 不重叠约束。
-
-### 必须统一的首批语义
-
-| 源码 | Live Preview | HTML 导出 | Table cell |
-| --- | --- | --- | --- |
-| `access\_token` | `access_token` | `access_token` | `access_token` |
-| `before\\\nafter` | hard break，无 `\` | `<br>` | `<br>` |
-| `before  \nafter` | hard break，无尾空格 | `<br>` | `<br>` |
-| `&copy;` | `©` | `©` / entity-safe output | `©` |
-
-## Live Preview 与源码不变性
-
-- Live Preview 通过 replace/mark/widget 隐藏或投影语法，不改源码。
-- Escape 只隐藏反斜杠，保留被转义字符；Source Mode 显示原始 `\`。
-- HardBreak 隐藏反斜杠或行尾空格，保留真实换行。
-- 安全 inline HTML 隐藏标签并投影允许的语义；block HTML 使用现有 BlockWidget 源码入口模型。
-- 未知/危险 HTML 保持源码可见或显示安全错误占位。
-- selection、atomic range、IME 和 source/live toggle 不得改变文档字节。
-
-现有“进入 Live Preview 自动改写有序列表编号”的例外将被移除：预览可通过 decoration 显示连续编号；修改源码只允许用户显式执行可撤销的“规范化列表编号”命令。该迁移单独成实施任务，不能混入 paste serializer 的核心提交。
-
-## 表格
-
-### Markdown 表格
-
-- 无 rowspan/colspan、可由 GFM 准确表达的表格序列化为 Markdown。
-- 继续使用现有 TableWidget、source toolbar 和 Lezer-range edits。
-- 单元格文字通过共享 semantic adapters 投影。
-
-### 复杂 HTML 表格
-
-- rowspan/colspan、嵌套块或 Markdown 无法表达的结构序列化为 Safe HTML block。
-- Live Preview 精确保真投影，但整块通过 `</>` / source entry 编辑。
-- 不显示现有 Markdown 表格行列 toolbar，不调用 `tables/edit.ts`。
-- 导出保留安全结构和 accessibility 属性。
-
-两类表格不得在运行时互相伪装或自动重写。
-
-## 可访问性
-
-- 图片保留 alt；缺失 alt 时使用空 alt，而不是文件名猜测。
-- 链接、details/summary 和安全媒体控件保持键盘可访问。
-- table header 使用 `th`/`scope`，rowspan/colspan 保持结构。
-- HTML block 的 source entry 可聚焦且有可访问名称。
-- decoration 隐藏标记后不能让屏幕阅读器重复朗读源码和投影。
-- 降级删除标签时必须保留可见子内容。
-- 颜色/背景组合不能成为表达信息的唯一方式；导入不会凭空生成只靠颜色区分的控件。
-
-## 错误处理与用户反馈
+## 错误处理
 
 | 情况 | 行为 |
 | --- | --- |
-| HTML parse/normalize 抛错 | fallback text 的保守 literal serialization |
-| 第一次语义验证失败 | 映射节点降级后重试一次 |
-| 第二次验证仍失败 | 整段 literal serialization，保留可见文本 |
-| 单张图片失败 | alt 降级；其他内容继续；非模态提示 |
-| 所有资产失败 | 文本/格式仍粘贴；汇总提示一次 |
+| HTML parse/normalize 失败 | visible text 的 strict literal serialization |
+| 一次结构验证失败 | 整段 strict serializer；不重试 parse |
+| strict serializer 无法安全承载结构 | 整段 visible text strict literal |
+| 单张图片失败 | alt 降级，其他内容继续，汇总提示 |
 | view/document 失效 | 取消插入，清理本次未引用资产 |
-| readOnly | 消费事件，不转换、不写资产、不 dispatch |
-| 危险 HTML | 删除活动能力，保留安全文字或显示源码 |
+| readOnly | 消费事件，无转换/资产/dispatch |
+| complex table 不满足 typed contract | 不挂 widget，显示源码 |
+| 危险/未知 HTML | 删除标签并保留可见子内容 |
 
-用户提示不得为每个被删除的 span 或 CSS 属性弹 toast。只有资源失败、整段严重降级或安全阻止了用户显式粘贴的 embed 时显示一次汇总反馈。详细转换原因只进入开发诊断。
+不为每个被丢弃的 span/CSS 属性弹 toast。只有资源失败、整段严重降级或 clipboard 权限使普通 Paste 退成 plain-only 时显示一次必要反馈；详细原因进入开发诊断。
 
 ## 性能
 
-- 正常富文本粘贴为 O(HTML 节点数 + 输出长度 + 局部 parse 长度)。
-- 生产最多两次局部 Markdown parse。
-- 不逐字符重新 parse，不扫描整个打开文档，不强制完成 editor syntax tree。
-- 异步 normalization/asset/validation 阶段必须可取消；同步 DOM parse 必须受基准门禁约束，超出门禁时改用 worker-capable reader，不能谎称可以中途取消 DOMParser。
-- 大粘贴显示非模态“正在转换”状态，但不能仅因体积静默降级成纯文本。
-- 实施计划先记录典型、100 KiB、1 MiB、5 MiB HTML 的解析/序列化/验证基线；合并门禁以不造成可感知输入冻结为准。如果 DOMParser 主线程阶段超出门禁，发布前必须迁移到 worker-capable HTML reader，而不是放宽正确性。
-- 新增 engine advisory benchmark；正式数值在同一硬件基线测量后固化为命名常量和 CI 告警，spec 不预设未经测量的毫秒数字。
+- 正常复杂度为 O(HTML 节点数 + 输出长度 + 局部 parse 长度)。
+- 每次生产转换最多一次新的局部 Markdown parse。
+- 不维护 source map，不做异构树 diff，不克隆 AST 替换单节点，不做 parse retry。
+- 不扫描整个打开文档，不强制完成 editor syntax tree。
+- 同步 DOM parse 不能谎称可取消；若基准显示主线程不可接受，迁移到 worker-capable HTML reader。
+- 实施计划记录典型、100 KiB、1 MiB、5 MiB clipboard HTML 的 parse/normalize/serialize/validate 基线，再把测量结果固化为命名 benchmark budget。
+- 大粘贴显示非模态转换状态；不能仅因体积静默丢失格式。
 
 ## 安全模型
-
-信任边界按顺序是：
 
 ```text
 untrusted clipboard bytes
   → inert HTML parse
-  → normalization
-  → tag/attribute/style/URL policy
-  → SafeHtmlNode
-  → DOM/export adapter
+  → Paste AST normalization
+  → Markdown serializer / closed complex-table model
+  → DOM API or escaped HTML exporter
 ```
 
 安全要求：
 
-- 无路径可以把 raw clipboard HTML 直接交给 `innerHTML`。
-- Mermaid、Shiki、KaTeX 等已知受控输出的 `innerHTML` 使用不扩大到 clipboard HTML。
-- Safe HTML policy 是 engine 单一来源，Live Preview 和 export 不得各自维护 allowlist。
-- URL 规范化在协议判断前完成，覆盖大小写、实体、控制字符和编码混淆。
-- CSS parser 按属性和值验证，不能用正则删除几个关键词后放行余下 style string。
-- sanitizer 依赖升级必须运行固定攻击语料。
-- 旧文档和外部 Markdown 文件与剪贴板输入同样视为不可信。
+- raw clipboard HTML 永不直接进入 `innerHTML`。
+- Mermaid/Shiki/KaTeX 的受控输出许可不扩展到 clipboard HTML。
+- Link/Image URL policy 是 engine 单一来源，覆盖大小写、entity、控制字符和编码混淆。
+- 外部 style string 不通过 sanitizer 后保存；只读取少数语义属性并丢弃原值。
+- complex table renderer 从 typed model 创建 DOM，不复用原 DOM node，不回放未知 attribute。
+- 旧 Markdown 文档与 clipboard 输入同样不可信；本功能不自动激活旧 raw HTML。
+- 固定攻击语料覆盖 script/event、SVG/MathML、危险 URL、malformed table 和超大 span 值。
+
+## 可访问性
+
+- Image alt 通过共享 accessor 保留；缺失时用空 alt，不猜文件名。
+- Link、Kbd 和 table header 保留语义；`th`/`scope`、rowspan/colspan 正确输出。
+- complex table source entry 可聚焦且有可访问名称。
+- decoration 隐藏 marker 后不能让屏幕阅读器重复朗读源码和投影。
+- 删除未知标签时保留可见子内容。
+- 外部颜色/背景不被保留，因此不会制造 dark mode 黑底黑字或“只靠颜色表达”的新内容。
 
 ## 测试与验收
 
 ### Fixture corpus
 
-提交最小、可审查、无版权问题的 clipboard fixture 对：`text/html` + `text/plain` + 预期源码 + 预期语义。覆盖：
+提交最小、可审查、无版权问题的 `text/html` + `text/plain` fixture，覆盖 Chrome/Safari/Firefox、Word/Pages/Google Docs、Excel/Sheets、VS Code、Typora/其他 Markdown 编辑器、邮件/聊天、CJK/RTL/emoji/entity/NBSP、嵌套列表/引用/table/code、全部 ASCII punctuation 和攻击 HTML。
 
-- Chrome、Safari、Firefox；
-- Word、Pages、Google Docs；
-- Excel、Google Sheets；
-- VS Code 和网页代码块；
-- Typora/其他 Markdown 编辑器；
-- 邮件/聊天富文本；
-- 手工攻击 HTML；
-- CJK、RTL、emoji、entity、NBSP；
-- 嵌套列表、引用、表格、代码、数学样文字；
-- 所有 ASCII Markdown punctuation 组合。
+每个 fixture 明确记录：输入 payload、插入上下文、预期源码、预期 Preview/HTML 语义、是否走 fast/normal/strict path。不能用 serializer 自己生成 expected output。
 
-### Engine 单测
+### Engine
 
 - DOM → Paste AST normalization；
-- serializer 每个上下文；
-- source map 和两次 parse 上限；
-- 真实插入上下文等价；
-- Escape/HardBreak/Entity adapters；
-- Safe HTML tag/attribute/style/URL policy；
-- Live Preview / export / table semantic parity；
-- deterministic output；
-- arbitrary DOM/property fuzz 不抛异常、不执行活动内容；
-- Source/Live round trip 字节不变。
+- color/background/font-size/span 被丢弃，bold/italic/decoration 被语义化；
+- `MarkdownTriggerPolicy` 每个上下文与 parser-extension drift gate；
+- plain fast path 的允许/拒绝矩阵；
+- structured validation 只有一次 parse；失败整段 strict fallback；
+- strict serializer property/fuzz：literal text 不产生意外语义；
+- Escape/HardBreak/Image/table-cell accessor parity；
+- `exportHtml`/`exportRichHtml` image alt 和 table cell parity；
+- canonical complex table 单 `HTMLBlock`、空白行/破损闭合失败关闭；
+- Kbd/Underline marker、Source/Live 字节不变；
+- arbitrary DOM/property fuzz 不抛异常、不执行活动内容。
 
-### Desktop/Rust 测试
+### Desktop/Rust
 
-- keyboard/menu/context menu 两条 paste 通道一致；
-- image flavor 优先；
-- 多图批量资产成功、部分失败、取消和失效清理；
-- tab/document identity 和 mapped bookmark；
-- readOnly 零副作用；
-- undo 一次撤销整次文档插入；
-- IPC 多词字段 Rust serialized-JSON contract。
+- keyboard/native menu/AppMenu/command palette/context menu 的普通 Paste 结果一致；
+- macOS 右键目标修复后 HTML 仍走 Smart Paste；
+- `navigator.clipboard.read()` 收集 image/html/plain 和 permission fallback；
+- Paste as Plain Text 在所有入口逐字节一致，`Mod+Shift+V` 无 double-fire；
+- image flavor priority、多图部分失败、取消和失效清理；
+- mapped bookmark、tab/document identity、readOnly 零副作用；
+- 一次 undo 撤销整次文档插入；
+- IPC serialized-JSON casing contract。
 
-### 真实浏览器 E2E
+### Browser E2E 与 BlockWidget
 
-- Preview 不显示多余反斜杠；
-- hard break 布局正确；
-- Safe inline/block HTML selection 和 source entry；
-- HTML/Markdown table 两种交互；
-- XSS 样本不执行；
-- keyboard accessibility；
-- paste 后 caret 和 scroll 稳定。
+- Preview 不显示多余反斜杠；两种 CommonMark HardBreak 正确；
+- Safari/WebKit context-menu paste 不吞行、不降成 plain；
+- complex table 光标进入/退出、ArrowUp/Down、Cmd+A covered overlay、滚动估高和 source entry；
+- 同内容多个 table widget range 不串联；
+- dark mode 粘贴浅色网页后没有固定外部 text/background color；
+- XSS 样本无执行路径；paste 后 caret、scroll 和 IME 稳定。
 
-### 必须满足的验收不变量
+### 验收不变量
 
-1. `Paste as Plain Text` 对 `text/plain` 逐字节一致。
-2. Smart Paste 的人工 fixture 语义与预期完全一致。
-3. 同一输入和上下文产生确定性源码。
-4. Live Preview、HTML export 和 table cell 对共享语义一致。
-5. Live/Source 往返和仅移动光标不修改源码。
-6. 任意 Escape 在 Live Preview 不泄漏语法反斜杠。
-7. 两种 CommonMark HardBreak 均投影为换行/`<br>`。
-8. 不可信 HTML/URL/CSS 攻击语料无活动执行路径。
-9. 一次 paste 是一个 undo step；异步完成不写入陈旧位置。
-10. 生产不完整解析大文档，不超过两次局部验证 parse。
+1. Paste as Plain Text 对 `text/plain` 逐字节一致。
+2. `access_token` 等 ordinary text 不产生无意义反斜杠。
+3. 同一 payload 和上下文产生确定性源码。
+4. Live Preview、同步 export、富 export 和 table cell 对共享语义一致。
+5. Image alt 在 Preview 和两种 export 一致。
+6. Live/Source 往返和仅移动光标不修改源码。
+7. 外部 color/background/font-size/style span 不进入 Markdown。
+8. keyboard/menu/context menu 的普通 Paste 语义一致。
+9. 不可信 HTML/URL 攻击语料无活动执行路径。
+10. 一次 paste 是一个 undo step，异步完成不写入陈旧位置。
+11. 生产不完整解析大文档，每次转换最多一次新局部 parse。
+12. 所有 `block: true` widget 满足 selection、height、navigation、overlay 合同。
 
 ## 迁移顺序
 
-本 spec 是跨层架构合同，不要求一次实现或一个巨型 PR。后续 writing-plans 阶段按下列 Phase 生成独立、可验证的实施计划；每份计划只在上一阶段合同满足后切入下一阶段。任何阶段发现需要改变本文用户契约时，先回到 spec 评审，不在 plan 中悄悄改设计。
+本 spec 是跨层合同，不要求一个巨型 PR。后续实施计划按以下阶段拆分；任何阶段若要改变产品契约，先回到 spec review。
 
-### Phase 1：语义基线
+### Phase 1：Semantic Accessors 与现有投影修复
 
-- 固定当前正确行为和失败 fixture；
-- 实现 Lazy Semantic Adapters；
-- 补齐 Escape、HardBreak、Entity；
-- 迁移 Live Preview、同步/富 export 和 table cell；
+- 固定当前失败 fixture；
+- 实现 Escape、HardBreak、Image 和 table-cell accessors；
+- 修复 `exportRichHtml` 绕过 `parseCell`；
+- 统一同步/富 export 的 Image alt；
+- 迁移 Preview、两种 export 和 table cell，删除重复解析；
 - 不改变 Smart Paste 主链路。
 
-### Phase 2：Safe HTML
+### Phase 2：封闭 HTML 逃生舱
 
-- 建立 SafeHtmlNode 和集中 policy；
-- 添加 DOM/export adapters；
-- 兼容已有 anchor/u/mark；
-- 完成攻击语料、旧文档兼容和 E2E；
-- 仍不切换普通粘贴。
+- 新增固定 Kbd inline extension；复用 Underline；
+- 实现 typed complex-table parser/renderer/exporter；
+- 接齐 BlockWidget 五项合同和攻击语料；
+- 验证 CommonMark 空白行失败关闭；
+- 不建立通用 Safe HTML 系统。
 
-### Phase 3：语义导入
+### Phase 3：语义 importer
 
-- 实现 Paste AST、normalizer、serializer、source map；
-- 实现上下文窗口和最多两次 Lezer 验证；
-- 在测试中让新旧转换器并行产出，人工审核差异；
-- 不在产品中暴露长期 feature flag。
+- 实现最小 Paste AST、normalizer、trigger policy 和 serializer；
+- 实现 plain fast path、一次局部验证和整段 strict fallback；
+- 在测试中与旧 converter 并行产出，人工审核 fixture 差异；
+- 不把 source map、semantic signature 或 retry state machine 带回实现。
 
-### Phase 4：资产与宿主一致性
+### Phase 4：统一 clipboard host 与资产
 
-- 接通多图 host adapter 和 Rust 批量写入/失败清理；
-- 实现 mapped bookmark、串行队列和 identity guard；
-- 统一 keyboard/menu/context menu 的 Paste / Paste as Plain Text。
+- 用 desktop 单一 paste controller 接管 DOM event 和 async Clipboard API；
+- 修复 macOS context-menu target 后继续 Smart Paste；
+- 接通多图 host adapter、bookmark、队列和 identity guard；
+- 注册/测试 `Mod+Shift+V` 和所有菜单入口。
 
 ### Phase 5：切换与删除
 
-- 完成 fixture、E2E、性能和 manual QA 门禁后原子切换主链路；
-- 删除 Turndown、turndown-plugin-gfm、类型声明、converter cache 和 whitespace heuristic；
-- 删除不再需要的 HTML 特判/重复 cell 语义代码；
-- 更新 engine/desktop AGENTS、known gotchas、manual QA 和用户指南。
+- fixture、E2E、性能和 manual QA 达标后原子切换主链路；
+- 删除 Turndown、GFM plugin、converter cache 和 whitespace heuristic；
+- 删除旧 engine `htmlPaste()` 事件竞争层和 image paste 中的 plain-text 右键分支；
+- 更新 AGENTS、known gotchas、manual QA 和用户指南。
 
 ### Phase 6：严格源码投影
 
-- 移除 Live Preview 自动改写有序列表源码；
+- 移除 Live Preview 自动改写有序列表编号；
 - 保留纯显示连续编号；
-- 增加显式、可撤销的规范化命令；
+- 提供显式、可撤销的规范化命令；
 - 单独验证保存、恢复、冲突和大文档行为。
 
-每个 Phase 都必须保持可发布和全套现有测试通过。Phase 3 的新实现不能在 Phase 1/2 未完成前接管生产 paste。
+每个 Phase 必须保持可发布。Phase 3 不在 Phase 1/2 合同完成前接管生产 paste；Phase 4 不允许通过另加一个 paste handler 形成新的入口竞争。
 
-计划分组如下：
-
-1. Semantic adapters 与 Escape/HardBreak 跨投影一致性（Phase 1）。
-2. Safe HTML 类型、安全策略、inline/block 投影（Phase 2）。
-3. Paste AST、serializer、上下文验证与 fixture program（Phase 3）。
-4. Desktop/Rust 图片资产、bookmark、菜单一致性与 cutover（Phase 4–5）。
-5. 有序列表严格源码投影（Phase 6，独立计划和独立合并）。
-
-## 删除与保留
+## 删除、保留与明确否决
 
 ### 最终删除
 
-- `turndown`；
-- `turndown-plugin-gfm`；
-- `types/turndown-plugin-gfm.d.ts`；
+- `turndown`、`turndown-plugin-gfm` 和类型声明；
 - `squeezeWhitespace` 等字符串启发式；
 - converter lazy import/cache；
-- Live Preview/export/table 中已被 adapters 替代的 Escape/HardBreak/Entity 重复解释。
+- Preview/export/table 中重复的 Escape/HardBreak/Image/table-cell 解释；
+- macOS 右键非图片强制 plain-text 分支；
+- 应用普通 Paste 对 `pastePlainText()` 的复用。
 
 ### 保留
 
 - CodeMirror + Lezer source-first 架构；
-- `normalizeBlockPaste` 的块边界责任，但由新 serializer 输出和上下文验证重新定义测试；
+- `normalizeBlockPaste` 的 block-boundary 责任，但由新 serializer 合同重新测试；
 - verbatim predicate 单一来源；
-- 现有 image item 优先和资产路径规则；
-- TableWidget 的 Markdown 表格双状态模型；
-- safe-mode windowed decoration 和 render budget；
+- 图片 item 优先和资产路径规则；
+- Markdown TableWidget 的双状态模型；
+- safe-mode windowed decoration、BlockWidget 基础设施和 render budget；
 - rich export 的 KaTeX/Shiki/Mermaid 专用 renderer。
 
-## 被否决的方案
+### 明确否决
 
-### 继续修补 Turndown
-
-否决。它不了解 oh-my-md 方言、插入上下文和安全 HTML；覆盖 `_` 后还会继续在其它标点、数学、高亮、emoji 和 block boundary 上产生漂移。
-
-### 全局删除反斜杠
-
-否决。会把 literal `# title`、`$x$`、`*x*` 等重新解释为结构，造成内容语义改变。
-
-### 保存原始 clipboard HTML
-
-否决。源码不可读、跨应用噪声巨大，并引入 XSS、危险 URL/CSS 和旧文档激活风险。
-
-### 只保留纯文本
-
-否决。丢失标题、列表、链接、代码、表格等用户明确复制的语义，不符合 Typora 式体验。
-
-### 迁移到 ProseMirror/富文本文档模型
-
-否决。oh-my-md 的核心是 Markdown 源码、CodeMirror 大文档性能和 Source/Live 往返；为粘贴重写编辑器会扩大风险且失去源码保真优势。
-
-### 构建全局万能 Semantic AST
-
-否决。会重复 Lezer tree、增加大文档内存和增量同步成本，并把输出策略耦合到一个 God Object。共享层保持 lazy、局部和事实型。
-
-### 无界解析重试
-
-否决。逐转义/逐节点试探会造成二次复杂度和不可预测卡顿。生产最多两次局部 parse。
+- **继续修补 Turndown：** 它不了解项目方言和插入上下文。
+- **全局删除反斜杠：** 会把 literal text 重新解释为结构。
+- **节点级 source map + semantic diff + retry：** 宿主上下文导致的树边界漂移无法可靠归因，成本与收益失衡。
+- **保存原始 clipboard HTML/CSS：** 污染源码、破坏 dark mode，并扩大攻击面。
+- **通用 Safe HTML renderer：** 当前需求只需要四种封闭输出；通用系统没有产品收益。
+- **跨 Lezer sibling 拼 HTMLBlock：** 等价于维护第二套不完整 block parser。
+- **只保留纯文本：** 丢失用户明确复制的 heading/list/link/table 等语义。
+- **全局 Semantic AST：** 重复 Lezer tree，增加大文档内存和同步成本。
+- **迁移到 ProseMirror：** 破坏本项目 source-first 和大文档架构。
 
 ## 文档维护
 
-实施完成时必须同步：
+实施完成时同步：
 
-- `packages/engine/AGENTS.md`：新增 semantic adapters、Safe HTML 和 source-preservation invariant；
-- `apps/desktop/AGENTS.md`：两条 paste 通道、Smart Paste 资产 host contract；
-- `docs/memory/known-gotchas.md` 与 `gotchas-engine/desktop/rust.md`：验证上下文、Safe HTML、异步 paste bookmark 和资产清理陷阱；
-- `docs/manual-qa.md`：浏览器/Office/Docs/Sheets/代码/安全/大粘贴矩阵；
+- `packages/engine/AGENTS.md`：trigger policy、semantic accessors、closed HTML 和 source-preservation invariant；
+- `apps/desktop/AGENTS.md`：统一 ClipboardPayload、右键 target、两条 paste 通道和 asset contract；
+- `docs/memory/known-gotchas.md` 与对应 gotcha：table-cell rich export、HTMLBlock 空行、paste handler 竞争、BlockWidget 五项合同；
+- `docs/manual-qa.md`：浏览器/Office/Docs/Sheets/代码/dark mode/安全/大粘贴矩阵；
 - `docs/guides/`：Paste 与 Paste as Plain Text 的用户行为；
-- 原 HTML paste spec：标记为被本设计替代。
+- 原 HTML paste spec：保持“被本设计替代”标记。
 
-README 和 CHANGELOG 在功能实际发布时更新，不在 spec-only 提交中提前宣称可用。
+README 和 CHANGELOG 只在功能实际发布时更新，spec-only 提交不提前宣称可用。
