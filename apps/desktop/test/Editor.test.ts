@@ -588,7 +588,7 @@ describe("desktop editor lifecycle", () => {
       editorOptions(vi.fn(), "hello"),
     )
     view.dispatch({ selection: { anchor: 5 } })
-    await pastePlainText(view)
+    await pastePlainText(view, { getTabId: () => 1, getDocumentId: () => 1, getDocPath: () => "/tmp/test.md", onError: vi.fn() })
     expect(view.state.doc.toString()).toBe("hello**bold**")
     view.destroy()
   })
@@ -631,7 +631,7 @@ describe("desktop editor lifecycle", () => {
       document.createElement("div"),
       editorOptions(vi.fn(), "hello"),
     )
-    await pastePlainText(view)
+    await pastePlainText(view, { getTabId: () => 1, getDocumentId: () => 1, getDocPath: () => "/tmp/test.md", onError: vi.fn() })
     expect(view.state.doc.toString()).toBe("hello")
     expect(readText).toHaveBeenCalled()
     view.destroy()
@@ -666,7 +666,7 @@ function firePaste(view: EditorView, flavors: PasteFlavors = {}): Event {
   return event
 }
 
-/** Mounts the real assembled editor (engine htmlPaste + desktop imagePasteHandler). */
+/** Mounts the real assembled editor with the desktop-owned paste controller. */
 function mountEditor(options: Partial<CreateEditorOptions> = {}) {
   const host = document.createElement("div")
   document.body.appendChild(host)
@@ -679,11 +679,9 @@ function mountEditor(options: Partial<CreateEditorOptions> = {}) {
 }
 
 describe("assembled editor paste ownership", () => {
-  it("lets the image handler consume a clipboard that also carries HTML", async () => {
+  it("keeps mixed rich HTML in the semantic importer without guessing File identity", async () => {
     const onError = vi.fn()
     const onDocumentUpdate = vi.fn()
-    // Unsaved document (getDocPath: () => null) so the image channel reports
-    // instead of writing an asset.
     const { view, teardown } = mountEditor({ onError, onDocumentUpdate })
     try {
       const file = new File([new Uint8Array([1, 2, 3])], "clip.png", { type: "image/png" })
@@ -698,12 +696,9 @@ describe("assembled editor paste ownership", () => {
       })
 
       expect(event.defaultPrevented).toBe(true)
-      await vi.waitFor(() => {
-        expect(onError).toHaveBeenCalledWith("Save the file before inserting an image")
-      })
-      // Neither the engine's rich conversion nor a stray insert touched the doc.
-      expect(view.state.doc.toString()).toBe("alpha")
-      expect(onDocumentUpdate).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(view.state.doc.toString()).toBe("**screenshot**alpha"))
+      expect(onError).not.toHaveBeenCalled()
+      expect(onDocumentUpdate).toHaveBeenCalled()
     } finally {
       teardown()
     }
@@ -725,7 +720,7 @@ describe("assembled editor paste ownership", () => {
     }
   })
 
-  it("pastes the plain-text flavor at the saved right-click target on macOS", async () => {
+  it("imports rich HTML at the saved right-click target on macOS", async () => {
     setUserAgent(MACOS_WEBKIT_UA)
     const onError = vi.fn()
     const { view, teardown } = mountEditor({ doc: "hello world", onError })
@@ -743,10 +738,9 @@ describe("assembled editor paste ownership", () => {
 
       expect(event.defaultPrevented).toBe(true)
       await vi.waitFor(() => {
-        // Plain text at the right-click target, not rich Markdown.
-        expect(view.state.doc.toString()).toBe("hello XYworld")
+        expect(view.state.doc.toString()).toBe("hello **XY**world")
       })
-      expect(view.state.selection.main.head).toBe(8)
+      expect(view.state.selection.main.head).toBe(12)
       expect(onError).not.toHaveBeenCalled()
     } finally {
       teardown()

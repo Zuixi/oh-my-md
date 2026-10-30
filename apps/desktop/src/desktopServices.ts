@@ -19,6 +19,22 @@ import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
 import { t } from "./i18n"
 import { isWindows } from "./platform"
+import type { PasteAssetBatch, PasteAssetWrite } from "./pasteAssets"
+
+export async function writePasteAssets(
+  documentPath: string,
+  assets: readonly PasteAssetWrite[],
+): Promise<PasteAssetBatch> {
+  return invoke("write_paste_assets", { documentPath, assets })
+}
+
+export async function commitPasteAssets(batchId: string): Promise<void> {
+  await invoke("commit_paste_assets", { batchId })
+}
+
+export async function discardPasteAssets(batchId: string): Promise<void> {
+  await invoke("discard_paste_assets", { batchId })
+}
 
 export interface SearchResponse {
   readonly hits: SearchHit[]

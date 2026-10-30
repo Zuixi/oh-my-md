@@ -5,6 +5,7 @@ import { cursorInside, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
+import { createComplexTableWidget } from "./widgets/complexTable"
 import { tableDataFromNode } from "../tables/model"
 import { imageResolver } from "./widgets/image"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
@@ -13,6 +14,7 @@ import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
 import { parseFenceInfo } from "../fenceInfo"
 import { blockPrefixOf } from "../format/blockPrefix"
+import { editorReferenceContext } from "../semantic/references"
 
 const MAX_QUOTE_DEPTH = 4
 
@@ -440,6 +442,8 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
             blockEmbed(node.node),
             state.facet(imageResolver),
             state.facet(tableDirectEditEnabled),
+            // 表格 cell 的引用式链接/图片定义在表格外：一份当前 state 的引用上下文。
+            editorReferenceContext(state).resolveReference,
           ),
           block: true,
         }),
@@ -504,6 +508,39 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         }),
       })
       return true
+    case "HTMLBlock": {
+      const src = state.doc.sliceString(node.from, node.to)
+      const widget = createComplexTableWidget(
+        src,
+        node.from,
+        blockEmbed(node.node),
+        state.facet(imageResolver),
+      )
+      if (!widget) return false
+      if (blockSelected(state, node.from, node.to)) {
+        for (let pos = node.from; pos <= node.to; ) {
+          const line = state.doc.lineAt(pos)
+          out.push({
+            from: line.from,
+            to: line.from,
+            tag: "line:omd-table-src",
+            deco: Decoration.line({ class: "omd-table-src" }),
+          })
+          pos = line.to + 1
+        }
+        return true
+      }
+      out.push({
+        from: node.from,
+        to: node.to,
+        tag: "widget:block:complex-table",
+        deco: Decoration.replace({
+          widget,
+          block: true,
+        }),
+      })
+      return true
+    }
   }
   return false
 }

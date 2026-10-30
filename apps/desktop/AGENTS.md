@@ -19,7 +19,8 @@ apps/desktop/
 │   ├── platform.ts              # The ONLY platform branch in TS (unknown → macOS)
 │   ├── shortcuts.ts · commands.ts · menuTree.ts  # Single-sourced shortcuts and menu command mapping
 │   ├── i18n/                    # useT() for components, module-level t() elsewhere
-│   ├── imagePaste.ts · pastePlainText.ts         # Clipboard/image handling & context-menu target
+│   ├── clipboardPaste.ts · clipboardPayload.ts · pasteAssets.ts · pasteBookmark.ts · pasteJob.ts
+│   ├── imagePaste.ts · pastePlainText.ts         # Image drop/picker & plain-text paste
 │   ├── documentMaterializer.ts · documentScaleRegistry.ts · editorStatus.ts · editorStatusStore.ts
 │   ├── documentSave*.ts · conflict*.ts · documentDiff.ts · normalization*.ts
 │   ├── updateCoordinator.ts · updateRestartReadiness.ts · updateAdapter.ts
@@ -48,10 +49,10 @@ apps/desktop/
 ## Shortcuts, Paste & Image Handling
 
 - **Shortcut single source (`shortcuts.ts`, `commands.ts`):** `WINDOW_SHORTCUTS` drives both palette labels and `App.tsx` window keydown dispatch. Editor-owned bindings (`undo`, `redo`, `cut`, `copy`, `paste`, `pastePlainText`, `select-all`) belong in `EDIT_SHORTCUT_BINDINGS` (display/drift-only, never `WINDOW_SHORTCUTS` to avoid double-fire). Guarded by `test/crossLayerMenu.test.ts`.
-- **Paste & image invariants (`imagePaste.ts`, `Editor.ts`):**
-  - Register `imagePasteHandler` before `editorExtensions` (DOM handlers are first-true-wins).
-  - Write image bytes via `write_image` (requires saved `documentPath`) and call `allow_document_assets` before inserting relative `assets/...` Markdown.
-  - Serialize per-view async paste operations, capture/revalidate `tabId`, `documentId`, and `docPath`, and always pass an explicit `selection: { anchor }` on custom `view.dispatch` calls (prevents `assoc = -1` leaving the caret before the insert).
+- **Paste & image invariants (`clipboardPaste.ts`, `pasteAssets.ts`, `imagePaste.ts`, `Editor.ts`):**
+  - `clipboardPasteExtension` is the single rich-paste event owner (captures macOS context-menu target, reads clipboard payloads, runs engine `prepareSmartPaste`/`planSmartPaste`); `imagePasteHandler` handles image drag-and-drop and the file picker.
+  - Write pasted image batches via `write_paste_assets` → `commit_paste_assets` / `discard_paste_assets` (requires saved `documentPath` and grants asset scope before inserting relative `assets/...` Markdown).
+  - Serialize per-view async paste operations via `pasteJob.ts`, capture/revalidate `tabId`, `documentId`, and selection ranges, and always pass an explicit `selection: { anchor }` on custom `view.dispatch` calls (prevents `assoc = -1` leaving the caret before the insert).
 
 ## Guarded Save, Scale Tiers & Updates
 

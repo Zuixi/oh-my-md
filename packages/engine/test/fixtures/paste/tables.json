@@ -1,0 +1,92 @@
+[
+  {
+    "name": "table-simple-gfm-three-columns",
+    "html": "<table><thead><tr><th>Item</th><th>Qty</th><th>Note</th></tr></thead><tbody><tr><td>apple</td><td>3</td><td>fresh</td></tr><tr><td>pear</td><td>1</td><td>ripe</td></tr></tbody></table>",
+    "plainText": "Item\tQty\tNote\napple\t3\tfresh\npear\t1\tripe",
+    "context": "lineStart",
+    "expectedMarkdown": "| Item | Qty | Note |\n| --- | --- | --- |\n| apple | 3 | fresh |\n| pear | 1 | ripe |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-header-alignment-left-center-right",
+    "html": "<table><thead><tr><th align=\"left\">Left</th><th align=\"center\">Center</th><th align=\"right\">Right</th></tr></thead><tbody><tr><td align=\"left\">a</td><td align=\"center\">b</td><td align=\"right\">c</td></tr></tbody></table>",
+    "plainText": "Left\tCenter\tRight\na\tb\tc",
+    "context": "lineStart",
+    "expectedMarkdown": "| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-literal-pipe-in-cell-text-shielded",
+    "html": "<table><thead><tr><th>Expr</th></tr></thead><tbody><tr><td>a | b</td></tr></tbody></table>",
+    "plainText": "Expr\na | b",
+    "context": "lineStart",
+    "expectedMarkdown": "| Expr |\n| --- |\n| a \\| b |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-literal-backslash-before-pipe-doubled-then-shielded",
+    "html": "<table><thead><tr><th>Expr</th></tr></thead><tbody><tr><td>a \\| b</td></tr></tbody></table>",
+    "plainText": "Expr\na \\| b",
+    "context": "lineStart",
+    "expectedMarkdown": "| Expr |\n| --- |\n| a \\\\\\| b |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-code-span-pipe-shielded-once",
+    "html": "<table><thead><tr><th>Code</th></tr></thead><tbody><tr><td><code>a|b</code></td></tr></tbody></table>",
+    "plainText": "Code\na|b",
+    "context": "lineStart",
+    "expectedMarkdown": "| Code |\n| --- |\n| `a\\|b` |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-cells-paragraph-list-and-break-content",
+    "html": "<table><thead><tr><th>Para</th><th>List</th><th>Break</th></tr></thead><tbody><tr><td><p>note</p></td><td><ul><li>one</li></ul></td><td>first<br>second</td></tr></tbody></table>",
+    "plainText": "Para\tList\tBreak\nnote\tone\tfirst\nsecond",
+    "context": "lineStart",
+    "expectedMarkdown": "| Para | List | Break |\n| --- | --- | --- |\n| note | - one | first<br>second |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-header-scope-col-and-scope-row-retained-in-ast",
+    "html": "<table><thead><tr><th scope=\"col\">Metric</th><th scope=\"col\">Q1</th></tr></thead><tbody><tr><th scope=\"row\">Revenue</th><td>10</td></tr></tbody></table>",
+    "plainText": "Metric\tQ1\nRevenue\t10",
+    "context": "lineStart",
+    "expectedMarkdown": "| Metric | Q1 |\n| --- | --- |\n| Revenue | 10 |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-header-scope-row-first-column-promoted-to-gfm-header-row",
+    "html": "<table><tbody><tr><th scope=\"row\">Revenue</th><td>10</td></tr><tr><th scope=\"row\">Cost</th><td>4</td></tr></tbody></table>",
+    "plainText": "Revenue\t10\nCost\t4",
+    "context": "lineStart",
+    "expectedMarkdown": "| Revenue | 10 |\n| --- | --- |\n| Cost | 4 |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-rowspan-canonical-complex-html",
+    "html": "<table><thead><tr><th scope=\"col\">Stage</th><th scope=\"col\">Owner</th></tr></thead><tbody><tr><td rowspan=\"2\">Review</td><td>Ada</td></tr><tr><td>Lin</td></tr></tbody></table>",
+    "plainText": "Stage\tOwner\nReview\tAda\nLin",
+    "context": "lineStart",
+    "expectedMarkdown": "<table>\n<thead>\n<tr>\n<th scope=\"col\">Stage</th>\n<th scope=\"col\">Owner</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td rowspan=\"2\">Review</td>\n<td>Ada</td>\n</tr>\n<tr>\n<td>Lin</td>\n</tr>\n</tbody>\n</table>\n\n",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-colspan-canonical-complex-html",
+    "html": "<table><thead><tr><th scope=\"col\" colspan=\"2\">Totals</th></tr></thead><tbody><tr><td>North</td><td>10</td></tr><tr><td>South</td><td>20</td></tr></tbody></table>",
+    "plainText": "Totals\nNorth\t10\nSouth\t20",
+    "context": "lineStart",
+    "expectedMarkdown": "<table>\n<thead>\n<tr>\n<th scope=\"col\" colspan=\"2\">Totals</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>North</td>\n<td>10</td>\n</tr>\n<tr>\n<td>South</td>\n<td>20</td>\n</tr>\n</tbody>\n</table>\n\n",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  }
+]

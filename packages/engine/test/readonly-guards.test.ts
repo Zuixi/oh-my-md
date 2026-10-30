@@ -120,12 +120,11 @@ describe("orderedRenumber skips readonly docs", () => {
   })
 })
 
-// Round 2：widget/paste 改写路径不经过 DOM 输入层（view 层的 readOnly 拦截只覆盖
-// typed input / drop / paste 内建处理器），checkbox 点击、表格编辑、富文本粘贴都
-// 直 dispatch 事务 —— 只读档必须逐一拒绝。
-describe("widget and paste mutation paths refuse readonly docs", () => {
+// Round 2：widget 改写路径不经过 DOM 输入层，checkbox 点击、表格编辑会直接
+// dispatch 事务 —— 只读档必须逐一拒绝。粘贴由 desktop host 独立覆盖。
+describe("widget mutation paths refuse readonly docs", () => {
   // makeState 挂临时视图排空渐进装饰，拿到的 state 已含全部 widget 装饰，
-  // 再用真实 EditorView 挂载让 widget DOM 真正渲染（htmlPaste 也随 editorExtensions 装配）。
+  // 再用真实 EditorView 挂载让 widget DOM 真正渲染。
   function mountDecorated(doc: string, readonly: boolean) {
     const state = makeState(doc, [
       ...(readonly ? [EditorState.readOnly.of(true)] : []),
@@ -181,37 +180,6 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     cleanup()
   })
 
-  // htmlPaste 的 domEventHandlers 先于 @codemirror/view 内建 paste 处理器运行，
-  // 内建的 readOnly 分支到不了 —— 扩展自身必须消费事件并拒绝插入。
-  function pasteEvent(html: string) {
-    const data = new Map([
-      ["text/html", html],
-      ["text/plain", "plain"],
-    ])
-    const event = new Event("paste", { cancelable: true, bubbles: true })
-    Object.defineProperty(event, "clipboardData", {
-      value: { getData: (type: string) => data.get(type) ?? "" },
-    })
-    return event
-  }
-
-  it("rich paste is consumed but inserts nothing when readonly", async () => {
-    const { view, cleanup } = mountDecorated("intro", true)
-    const event = pasteEvent("<p><strong>bold</strong></p>")
-    view.contentDOM.dispatchEvent(event)
-    await settle()
-    expect(event.defaultPrevented).toBe(true)
-    expect(view.state.doc.toString()).toBe("intro")
-    cleanup()
-  })
-
-  it("rich paste still inserts markdown when editable", async () => {
-    const { view, cleanup } = mountDecorated("intro", false)
-    view.contentDOM.dispatchEvent(pasteEvent("<p><strong>bold</strong></p>"))
-    await settle()
-    expect(view.state.doc.toString()).toContain("**bold**")
-    cleanup()
-  })
 })
 
 // 自动配对：键入路径由 @codemirror/view 的 readOnly 拦截，但 Backspace 的成对删除是

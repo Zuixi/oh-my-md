@@ -1,4 +1,5 @@
 import type { Text } from "@codemirror/state"
+import type { PasteBoundary } from "./model"
 
 /**
  * 粘贴块级内容的边界规整（Typora 语义）：块级 Markdown 落在自己的块边界里，
@@ -19,7 +20,7 @@ export interface NormalizedPaste {
   caret: number
 }
 
-// 逐行块级探测（保守：只认行首标记；turndown/GFM 的输出均为行首标记）。
+// 逐行块级探测（保守：只认行首标记；语义 serializer 的块输出均为行首标记）。
 const RE_FENCE = /^ {0,3}(?:```|~~~)/
 const RE_FENCE_CLOSE = /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/
 const RE_TABLE_ROW = /^ {0,3}\|/
@@ -50,13 +51,44 @@ function endsWithOpaqueBlock(insert: string): boolean {
  * - 后缘：同行后方还有文字补 `\n\n`（否则被吸收进块，复现过的表格吞字）；
  *   否则以不透明块结尾时补一个 `\n`（光标移出 replace 边界，粘贴即渲染）。
  * 纯段落文本逐字节不变。
+ *
+ * 省略 `boundary` 的调用方保留默认逐行块级探测。
+ *
+ * 传入 serializer 给出的 `PasteBoundary` 时进入边界感知模式：块/不透明片段
+ * 无论文本内容是否「看起来像块」都独占块位（strict 回退的转义字面文本靠
+ * 这条隔离，否则它会贴在邻座的落单反斜杠/强调定界符上被改写），并且行首
+ * 前一行非空时用空行而非单换行分隔（表格/围栏无法打断段落）。
+ *
+ * ponytail: 只保证「不会吞掉 stable prefix/suffix + 可见文本不受邻座影响」；
+ * 宿主自身是未闭合围栏/HTML 块这类跨行容器时，纯文本无法自保 —— 那是
+ * 验证器 crossingNode/boundary 拒绝的领域，本函数不重写宿主源码。
  */
 export function normalizeBlockPaste(
   doc: Text,
   from: number,
   to: number,
   insert: string,
+  boundary?: PasteBoundary,
 ): NormalizedPaste {
+  if (boundary === undefined) return normalizeLegacy(doc, from, to, insert)
+  const isolated = boundary.start !== "inline" || boundary.end !== "inline"
+  if (!isolated && !insert.split("\n").some(isBlockLine)) return { text: insert, caret: insert.length }
+
+  let text = insert
+  const line = doc.lineAt(from)
+  if (from > line.from || (from > 0 && doc.lineAt(line.from - 1).text.trim().length > 0)) {
+    text = "\n\n" + text
+  }
+  if (boundary.end === "htmlBlock" || to < doc.lineAt(to).to) {
+    text += "\n\n"
+  } else if (boundary.end === "opaque" || endsWithOpaqueBlock(text)) {
+    text += "\n"
+  }
+  return { text, caret: text.length }
+}
+
+/** 遗留路径（无 boundary）：字节兼容既有调用方与测试。 */
+function normalizeLegacy(doc: Text, from: number, to: number, insert: string): NormalizedPaste {
   if (!insert.split("\n").some(isBlockLine)) return { text: insert, caret: insert.length }
 
   let text = insert

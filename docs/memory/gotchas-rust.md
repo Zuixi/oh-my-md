@@ -224,3 +224,6 @@ the window open: log and destroy regardless. Accepted residual (VS Code
 parity): a **crash** can restore a window the user closed after that
 window's last flush — the shard only disappears at close time, so a crash
 before the finisher leaves the last-flushed shard on disk.
+## Paste asset batches are capability tokens, not delete paths
+
+`write_paste_assets` accepts document identity plus validated bytes and returns an opaque batch ID with Rust-generated relative paths. Pending state records the exact created files; `commit_paste_assets` forgets cleanup ownership and `discard_paste_assets` deletes only those recorded files. Never accept a caller-supplied cleanup path or discard after Markdown was dispatched.

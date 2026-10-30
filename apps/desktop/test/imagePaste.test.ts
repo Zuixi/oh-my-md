@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import {
   handleImageDrop,
-  imagePasteHandler,
   insertImageFile,
   pasteImage,
   pickAndInsertImage,
@@ -48,16 +46,37 @@ function makeView(options: { readOnly?: boolean } = {}) {
   }
 }
 
-function makeOptions(
-  overrides: Partial<ImagePasteOptions> = {},
-): ImagePasteOptions {
+type TestOverrides = Partial<ImagePasteOptions> & {
+  writeImage?: (path: string, base64: string, documentPath: string) => Promise<void>
+}
+
+function makeOptions(overrides: TestOverrides = {}) {
+  const writeImage = overrides.writeImage ?? vi.fn(async () => undefined)
+  const assetStore = overrides.assetStore ?? {
+    write: vi.fn(async (documentPath: string, assets: readonly { key: string; mime: string; base64: string }[]) => {
+      const asset = assets[0]
+      const extension = asset.mime === "image/jpeg" ? "jpg" : asset.mime.split("/")[1]
+      const relativePath = `assets/pasted-${asset.key}.${extension}`
+      const directory = documentPath.replace(/\\/g, "/").replace(/[^/]+$/, "")
+      await writeImage(`${directory}${relativePath}`, asset.base64, documentPath)
+      return {
+        batchId: null,
+        items: [{ key: asset.key, relativePath }],
+        failures: [],
+      }
+    }),
+    commit: vi.fn(async () => undefined),
+    discard: vi.fn(async () => undefined),
+  }
+  const { writeImage: _writeImage, ...rest } = overrides
   return {
     getDocPath: () => "/notes/doc.md",
     getDocumentId: () => 7,
     onError: vi.fn(),
     readFile: vi.fn(async () => "base64"),
-    writeImage: vi.fn(async () => undefined),
-    ...overrides,
+    assetStore,
+    ...rest,
+    writeImage,
   }
 }
 
@@ -560,186 +579,5 @@ describe("image paste pipeline", () => {
     expect(pick).not.toHaveBeenCalled()
     expect(options.writeImage).not.toHaveBeenCalled()
     expect(dispatch).not.toHaveBeenCalled()
-  })
-})
-
-describe("imagePasteHandler contextmenu selection", () => {
-  it("dispatches selection to clicked position when right clicking outside selection", () => {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const options = makeOptions()
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: "hello world\nsecond line",
-        selection: { anchor: 0 },
-        extensions: [imagePasteHandler(options)],
-      }),
-      parent,
-    })
-
-    vi.spyOn(view, "posAtCoords").mockReturnValue(6)
-
-    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
-    view.contentDOM.dispatchEvent(event)
-
-    expect(view.state.selection.main.anchor).toBe(6)
-    view.destroy()
-    parent.remove()
-  })
-
-  it("preserves non-empty selection when right clicking inside it", () => {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const options = makeOptions()
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: "hello world\nsecond line",
-        selection: { anchor: 2, head: 8 },
-        extensions: [imagePasteHandler(options)],
-      }),
-      parent,
-    })
-
-    vi.spyOn(view, "posAtCoords").mockReturnValue(5)
-
-    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
-    view.dom.dispatchEvent(event)
-
-    expect(view.state.selection.main.from).toBe(2)
-    expect(view.state.selection.main.to).toBe(8)
-    view.destroy()
-    parent.remove()
-  })
-})
-
-describe("imagePasteHandler context-menu text paste", () => {
-  function makePasteView(doc: string, selection: { anchor: number; head?: number }) {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const view = new EditorView({
-      state: EditorState.create({
-        doc,
-        selection,
-        extensions: [imagePasteHandler(makeOptions())],
-      }),
-      parent,
-    })
-    return { view, parent }
-  }
-
-  function rightClick(view: EditorView, at: number) {
-    vi.spyOn(view, "posAtCoords").mockReturnValue(at)
-    view.contentDOM.dispatchEvent(
-      new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
-    )
-  }
-
-  function fireTextPaste(view: EditorView, text: string) {
-    const event = new Event("paste", { cancelable: true, bubbles: true })
-    Object.defineProperty(event, "clipboardData", {
-      value: {
-        getData: (type: string) => (type === "text/plain" ? text : ""),
-        items: [],
-      },
-    })
-    view.contentDOM.dispatchEvent(event)
-  }
-
-  it("moves the caret to the end of text pasted at the context-menu target", () => {
-    const { view, parent } = makePasteView("hello world", { anchor: 0 })
-
-    rightClick(view, 6)
-    fireTextPaste(view, "XY")
-
-    expect(view.state.doc.toString()).toBe("hello XYworld")
-    expect(view.state.selection.main.head).toBe(8)
-    expect(view.state.selection.main.empty).toBe(true)
-    view.destroy()
-    parent.remove()
-  })
-
-  it("moves the caret to the end when replacing the context-menu selection", () => {
-    const { view, parent } = makePasteView("hello world", { anchor: 2, head: 8 })
-
-    rightClick(view, 5)
-    fireTextPaste(view, "XY")
-
-    expect(view.state.doc.toString()).toBe("heXYrld")
-    expect(view.state.selection.main.head).toBe(4)
-    view.destroy()
-    parent.remove()
-  })
-
-  it("drops the saved target once the selection moves elsewhere", () => {
-    const { view, parent } = makePasteView("hello world", { anchor: 0 })
-
-    rightClick(view, 6)
-    // User moves the caret (click/keyboard) after the right click, then
-    // pastes with the keyboard: the insert must land at the current caret,
-    // not at the stale right-click position.
-    view.dispatch({ selection: { anchor: 3 } })
-    fireTextPaste(view, "XY")
-
-    expect(view.state.doc.toString()).toBe("helXYlo world")
-    expect(view.state.selection.main.head).toBe(5)
-    view.destroy()
-    parent.remove()
-  })
-})
-
-describe("imagePasteHandler contextmenu platform gating", () => {
-  const WINDOWS_WEBVIEW2_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-  const MACOS_WEBKIT_UA =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
-  const DEFAULT_USER_AGENT = window.navigator.userAgent
-
-  function setUserAgent(userAgent: string): void {
-    Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
-  }
-
-  afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT)
-  })
-
-  function makeContextMenuView() {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: "hello world\nsecond line",
-        selection: { anchor: 0 },
-        extensions: [imagePasteHandler(makeOptions())],
-      }),
-      parent,
-    })
-    vi.spyOn(view, "posAtCoords").mockReturnValue(6)
-    return { view, parent }
-  }
-
-  it("skips the WebKit selectionchange dispatch on Windows", () => {
-    setUserAgent(WINDOWS_WEBVIEW2_UA)
-    const { view, parent } = makeContextMenuView()
-    const dispatch = vi.spyOn(view, "dispatch")
-
-    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
-    view.contentDOM.dispatchEvent(event)
-
-    expect(dispatch).not.toHaveBeenCalled()
-    expect(view.state.selection.main.anchor).toBe(0)
-    view.destroy()
-    parent.remove()
-  })
-
-  it("keeps the WebKit selectionchange dispatch on macOS", () => {
-    setUserAgent(MACOS_WEBKIT_UA)
-    const { view, parent } = makeContextMenuView()
-
-    const event = new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true })
-    view.contentDOM.dispatchEvent(event)
-
-    expect(view.state.selection.main.anchor).toBe(6)
-    view.destroy()
-    parent.remove()
   })
 })

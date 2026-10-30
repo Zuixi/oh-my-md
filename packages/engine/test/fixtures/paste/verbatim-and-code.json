@@ -1,0 +1,110 @@
+[
+  {
+    "name": "inline-code-span-verbatim-bytes",
+    "html": "<p>Use <code>a_b</code> literally</p>",
+    "plainText": "Use a_b literally",
+    "context": "paragraph",
+    "expectedMarkdown": "Use `a_b` literally",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "inline-code-widens-delimiter-for-backtick",
+    "html": "<p><code>a `b`</code></p>",
+    "plainText": "a `b`",
+    "context": "paragraph",
+    "expectedMarkdown": "``a `b` ``",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-with-language",
+    "html": "<pre><code class=\"language-ts\">const x: number = 1</code></pre>",
+    "plainText": "const x: number = 1",
+    "context": "lineStart",
+    "expectedMarkdown": "```ts\nconst x: number = 1\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-without-language",
+    "html": "<pre>plain   spacing\n\ttabbed</pre>",
+    "plainText": "plain   spacing\n\ttabbed",
+    "context": "lineStart",
+    "expectedMarkdown": "```\nplain   spacing\n\ttabbed\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-widens-fence-for-backtick-fence-bytes",
+    "html": "<pre><code>```js\nx\n```</code></pre>",
+    "plainText": "```js\nx\n```",
+    "context": "lineStart",
+    "expectedMarkdown": "````\n```js\nx\n```\n````",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-preserves-tabs-spaces-and-blank-lines",
+    "html": "<pre><code>a\tb\n    c\n\n\td</code></pre>",
+    "plainText": "a\tb\n    c\n\n\td",
+    "context": "lineStart",
+    "expectedMarkdown": "```\na\tb\n    c\n\n\td\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-crlf-normalized-to-lf",
+    "html": "<pre><code>line1\r\nline2\r\n</code></pre>",
+    "plainText": "line1\r\nline2\r\n",
+    "context": "lineStart",
+    "expectedMarkdown": "```\nline1\nline2\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "pre-code-markdown-looking-bytes",
+    "html": "<pre><code># not a heading\n- not a list\n**not bold**\n[x](y)\n$z$\na_b</code></pre>",
+    "plainText": "# not a heading\n- not a list\n**not bold**\n[x](y)\n$z$\na_b",
+    "context": "lineStart",
+    "expectedMarkdown": "```\n# not a heading\n- not a list\n**not bold**\n[x](y)\n$z$\na_b\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "verbatim-target-inside-fenced-code",
+    "html": "<p><strong>bold</strong> and $x$</p>",
+    "plainText": "**bold** and $x$",
+    "context": "verbatim",
+    "expectedMarkdown": "**bold** and $x$",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "verbatim-target-inside-inline-code",
+    "html": "<p># not heading</p>",
+    "plainText": "# not heading",
+    "context": "inlineCode",
+    "expectedMarkdown": "# not heading",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "verbatim-target-inside-math-block",
+    "html": "<p>$x$</p>",
+    "plainText": "x^2 + $y$",
+    "context": "verbatim",
+    "expectedMarkdown": "x^2 + $y$",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "verbatim-target-inside-front-matter",
+    "html": "<p>title: a_b</p>",
+    "plainText": "title: a_b",
+    "context": "verbatim",
+    "expectedMarkdown": "title: a_b",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  }
+]

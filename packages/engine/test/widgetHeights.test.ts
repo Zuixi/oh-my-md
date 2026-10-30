@@ -5,8 +5,9 @@ import { makeState } from "./helpers"
 import { collectDecorationSpecs } from "../src/decorations/build"
 import type { DecoSpec } from "../src/decorations/types"
 import { TableWidget } from "../src/decorations/widgets/table"
+import { ComplexTableWidget } from "../src/decorations/widgets/complexTable"
 import { CodeWidget } from "../src/decorations/widgets/code"
-import { estimateTableHeightPx, estimateCodeBlockHeightPx } from "../src/decorations/widgetHeights"
+import { estimateTableHeightPx, estimateComplexTableHeightPx, estimateCodeBlockHeightPx } from "../src/decorations/widgetHeights"
 
 // 从块 widget 装饰 spec 取出 widget 实例：Decoration.replace 的 spec 带 widget。
 function widgetOf(spec: DecoSpec): WidgetType | undefined {
@@ -54,6 +55,18 @@ describe("block widget estimatedHeight (scroll performance)", () => {
       "A-->B",
       "```",
       "",
+      "<table>",
+      "<tbody>",
+      "<tr>",
+      '<td rowspan="2">A</td>',
+      "<td>B</td>",
+      "</tr>",
+      "<tr>",
+      "<td>C</td>",
+      "</tr>",
+      "</tbody>",
+      "</table>",
+      "",
       "text",
     ].join("\n")
     const blockSpecs = allSpecsAtDocEnd(doc).filter(s => s.tag.startsWith("widget:block:"))
@@ -65,6 +78,7 @@ describe("block widget estimatedHeight (scroll performance)", () => {
       "widget:block:math",
       "widget:block:hr",
       "widget:block:mermaid",
+      "widget:block:complex-table",
     ]))
     for (const spec of blockSpecs) {
       const widget = widgetOf(spec)
@@ -95,6 +109,33 @@ describe("block widget estimatedHeight (scroll performance)", () => {
       .map(spec => widgetOf(spec) as TableWidget)
     expect(plain).toHaveLength(1)
     expect(tables[1].estimatedHeight).toBeGreaterThan(plain[0].estimatedHeight * 1.3)
+  })
+
+  it("complex table estimate scales with rows and wrapped cell text", () => {
+    const small = [
+      "<table>",
+      "<tbody>",
+      "<tr><td rowspan=\"2\">A</td><td>B</td></tr>",
+      "<tr><td>C</td></tr>",
+      "</tbody>",
+      "</table>",
+    ].join("\n")
+    const wrappedCell = "一".repeat(60)
+    const rows20 = Array.from({ length: 20 }, (_, i) => `<tr><td>${wrappedCell}${i}</td><td>x</td></tr>`).join("\n")
+    const big = [
+      "<table>",
+      "<tbody>",
+      '<tr><td colspan="2">head</td></tr>',
+      rows20,
+      "</tbody>",
+      "</table>",
+    ].join("\n")
+    const tables = blockWidgetSpecs(`${small}\n\ntext\n\n${big}\n\ntail`, "widget:block:complex-table")
+      .map(spec => widgetOf(spec) as ComplexTableWidget)
+    expect(tables).toHaveLength(2)
+    expect(tables[0].estimatedHeight).toBe(estimateComplexTableHeightPx(tables[0].model))
+    expect(tables[1].estimatedHeight).toBe(estimateComplexTableHeightPx(tables[1].model))
+    expect(tables[1].estimatedHeight / tables[0].estimatedHeight).toBeGreaterThan(5)
   })
 
   it("code estimate scales with source lines", () => {

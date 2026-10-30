@@ -23,9 +23,7 @@ paste fires
 
 The `skipAtomsForSelection` call expands the WebKit selection outward to the nearest atomic-range boundary, which can push `selection.to` past one or more newlines on empty lines.
 
-**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through unchanged.
-
-CodeMirror DOM handlers are first-true-wins, so assembly order is part of this contract: `Editor.ts` must register `imagePasteHandler` before engine `editorExtensions`. Otherwise an HTML-bearing right-click clipboard is claimed by `htmlPaste` first and inserts rich Markdown (for example `**XY**`) instead of the plain-text flavor at the saved target. The desktop handler still returns `false` for ordinary keyboard HTML, so the engine retains Markdown conversion ownership. An `updateListener` drops the saved target as soon as the selection moves off it — without that, right-click (without pasting) followed by moving the caret and pressing `Ctrl/Cmd-V` pastes at the stale right-click position. The four assembled ownership cases (image+HTML, keyboard HTML, context-menu HTML+plain, and read-only HTML) live in `apps/desktop/test/Editor.test.ts`; isolated handler tests cannot prove extension order.
+**Fix**: `clipboardPasteExtension` captures `view.posAtCoords({ x, y })`, restores that mapped target before dispatch, and owns every rich paste event. Keyboard, menu, image-only, and right-click routes now share the same queued identity/path/range validation. An `updateListener` drops a saved right-click target as soon as the selection moves away.
 
 ## Dispatching changes without a selection leaves the caret before the insert
 
@@ -42,7 +40,7 @@ view.dispatch({
 })
 ```
 
-Do not "simplify" this to `view.state.replaceSelection(insert)` on async paths (rich-paste conversion, clipboard reads, image writes): `replaceSelection` re-reads the selection at dispatch time, racing the user moving the caret during the `await`. The captured `from`/`to` plus an explicit anchor is the correct shape. Verified 2026-08-20 across `htmlPaste.ts`, `pastePlainText.ts`, `imagePaste.ts` (text and image inserts), and the App menu-paste command; view-level caret assertions live in `packages/engine/test/htmlPaste.test.ts` and `apps/desktop/test/imagePaste.test.ts`.
+Do not "simplify" this to `view.state.replaceSelection(insert)` on async paths: it re-reads the selection after `await`. `pasteBookmark.ts` maps captured ranges and `pasteJob.ts` revalidates identity/path/readOnly immediately before effects and dispatch.
 
 Related trap: `ViewUpdate` exposes `selectionSet`, not `selectionChanged` — the latter is `undefined` at runtime and vitest does not type-check, so the mistake only surfaces as a silently inert listener.
 
@@ -62,9 +60,7 @@ Keep the Markdown source relative; resolve only for preview display.
 
 ## Image paste is a two-step consistency operation
 
-`imagePaste.ts` first calls the Rust `write_image` command, then inserts the Markdown reference. Reversing this order can leave a document pointing to a file that was never written.
-
-The operation also requires a saved document path. It captures the path, document identity/value, and selection before asynchronous work, then passes that path to `write_image` as required `documentPath`. Paste operations for one view are serialized and revalidated before filesystem writes and editor dispatches; do not remove that queue without replacing its race guarantees. Clipboard content that is not an image must fall through to CodeMirror's default paste behavior. Local preview URLs require `allow_document_assets` for the opened/saved document directory; the static asset protocol scope stays empty.
+Rust `write_paste_assets` validates bytes and creates collision-safe paths without accepting caller-selected destinations. The host dispatches Markdown while the returned batch is pending, then commits cleanup ownership; stale/error paths discard the exact registered files. Never discard after a successful document dispatch, even when the commit acknowledgement fails. Local preview URLs still require `allow_document_assets`; the static asset protocol scope stays empty.
 
 ## Window listeners can capture stale React state
 

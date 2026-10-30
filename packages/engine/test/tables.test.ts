@@ -9,6 +9,8 @@ import { TableWidget, renderTableCellContent } from "../src/decorations/widgets/
 import { imageResolver } from "../src/decorations/widgets/image"
 import { tableDataFromNode } from "../src/tables/model"
 import { editorExtensions } from "../src/index"
+import { parseCell, type CellNode } from "../src/parse/cell"
+import { stringReferenceContext } from "../src/semantic/references"
 
 const doc = "| a | b |\n|---|---|\n| 1 | 2 |"
 
@@ -116,6 +118,48 @@ describe("tables", () => {
     const td = dom.querySelectorAll("td")[1]
     expect(td.querySelector("br")).toBeTruthy()
     expect(td.querySelector("em")?.textContent).toBe("note")
+  })
+
+  // `<kbd>` 是固定 HTML 对：cell 投影必须给出真实的 <kbd> 元素（不是 class 标记），
+  // 且内层仍是递归的 CellNode 语义。
+  it("renders <kbd> as a real element with recursive children", () => {
+    const div = document.createElement("div")
+    renderTableCellContent(div, "<kbd>**Ctrl** + *K*</kbd>")
+    const kbd = div.querySelector("kbd")
+    expect(kbd).toBeTruthy()
+    expect(kbd!.querySelector("strong")?.textContent).toBe("Ctrl")
+    expect(kbd!.querySelector("em")?.textContent).toBe("K")
+    expect(div.textContent).toBe("Ctrl + K")
+    expect(div.innerHTML).not.toContain("&lt;kbd")
+  })
+
+  it("keeps invalid <kbd> forms as literal text in a cell", () => {
+    for (const source of ['<kbd class="x">Ctrl</kbd>', "<kbd>Ctrl"]) {
+      const div = document.createElement("div")
+      renderTableCellContent(div, source)
+      expect(div.querySelector("kbd")).toBeNull()
+      expect(div.textContent).toBe(source)
+    }
+  })
+
+  it("keeps every CellNode kind of a mixed cell in the widget DOM", async () => {
+    // 同一格：kbd + sub/sup + 带 title 的引用式链接/图片 + 行内代码里的屏蔽管道。
+    const src = "| cell |\n|------|\n| <kbd>Ctrl</kbd> H~2~O 2^10^ [ref][id] ![pic][img] `a \\| b` |"
+    const resolveReference = stringReferenceContext(
+      `${src}\n\n[id]: https://r.example "RT"\n[img]: ./c.png "CT"`,
+    ).resolveReference
+    const widget = new TableWidget(src, 0, tableData(src), undefined, undefined, false, resolveReference)
+    const dom = widget.toDOM({ requestMeasure: () => {}, state: { readOnly: false } } as never)
+    await Promise.resolve()
+    const td = dom.querySelectorAll("td")[0]
+    expect(td.querySelector("kbd")?.textContent).toBe("Ctrl")
+    expect(td.querySelector("sub")?.textContent).toBe("2")
+    expect(td.querySelector("sup")?.textContent).toBe("10")
+    expect(td.querySelector("a")?.getAttribute("href")).toBe("https://r.example")
+    expect(td.querySelector("a")?.getAttribute("title")).toBe("RT")
+    expect(td.querySelector("img")?.getAttribute("alt")).toBe("pic")
+    expect(td.querySelector("img")?.getAttribute("title")).toBe("CT")
+    expect(td.querySelector("code")?.textContent).toBe("a | b")
   })
 
   it("resolves cell images through the widget resolveSrc", async () => {
@@ -357,5 +401,108 @@ describe("rendered toolbar targets stay inside their own view", () => {
       a.cleanup()
       b.cleanup()
     }
+  })
+})
+
+// 单元格里的 Link/Image 语义与 Preview、导出共用 semantic/link.ts、semantic/image.ts：
+// 参考式链接走同一条归一化 label 查询，未解析的引用保留成可见字面文本。
+describe("table cell link and image semantics", () => {
+  const text = (nodes: CellNode[]): string =>
+    nodes.map(node => {
+      switch (node.type) {
+        case "text": case "code": case "math": case "pre": return node.text
+        case "image": return node.alt
+        default: return "children" in node ? text(node.children) : ""
+      }
+    }).join("")
+
+  it("reads an inline link's label, destination and title", () => {
+    expect(parseCell('[text](https://x.example "t")')).toEqual([{
+      type: "link",
+      href: "https://x.example",
+      title: "t",
+      children: [{ type: "text", text: "text" }],
+    }])
+  })
+
+  it("keeps a titleless inline link's title null", () => {
+    expect(parseCell("[text](https://x.example)")).toEqual([{
+      type: "link",
+      href: "https://x.example",
+      title: null,
+      children: [{ type: "text", text: "text" }],
+    }])
+  })
+
+  it("decodes entities and keeps formatting inside a link label", () => {
+    const nodes = parseCell("[a *b* &amp; c](u \"t\")")
+    expect(nodes[0]).toMatchObject({ type: "link", href: "u", title: "t" })
+    expect(text(nodes)).toBe("a b & c")
+    expect(nodes.some(node => node.type === "link" && node.children[1]?.type === "em")).toBe(true)
+  })
+
+  it("resolves a reference link through the supplied resolver", () => {
+    // 与 editor 的参考索引 resolver 同契约：label 自带方括号、大小写不敏感。
+    const resolveReference = (label: string) =>
+      label.replace(/^\[|\]$/g, "").toLowerCase() === "id"
+        ? { href: "https://r.example", title: "RT" }
+        : null
+    const nodes = parseCell("[ref][id]", { resolveReference })
+    expect(nodes).toEqual([{
+      type: "link",
+      href: "https://r.example",
+      title: "RT",
+      children: [{ type: "text", text: "ref" }],
+    }])
+  })
+
+  it("keeps an unresolved reference link as visible literal text", () => {
+    expect(parseCell("[ref][missing]")).toEqual([{ type: "text", text: "[ref][missing]" }])
+    expect(parseCell("[ref]")).toEqual([{ type: "text", text: "[ref]" }])
+  })
+
+  it("reads an inline image's formatted, entity-decoded alt and title", () => {
+    expect(parseCell('![a *b* &amp; c](a.png "caption")')).toEqual([{
+      type: "image", src: "a.png", alt: "a b & c", title: "caption",
+    }])
+    expect(parseCell("![](empty.png)")).toEqual([
+      { type: "image", src: "empty.png", alt: "", title: null },
+    ])
+  })
+
+  it("resolves a reference image through the supplied resolver", () => {
+    const resolveReference = (label: string) =>
+      label.replace(/^\[|\]$/g, "").toLowerCase() === "id"
+        ? { href: "img.png", title: "title" }
+        : null
+    expect(parseCell("![ref][id]", { resolveReference })).toEqual([
+      { type: "image", src: "img.png", alt: "ref", title: "title" },
+    ])
+  })
+
+  it("keeps an unresolved reference image as visible literal text", () => {
+    expect(parseCell("![ref][missing]")).toEqual([{ type: "text", text: "![ref][missing]" }])
+  })
+
+  it("normalizes bare and email autolinks while keeping their visible text", () => {
+    expect(parseCell("https://x.example/a")).toEqual([{
+      type: "link", href: "https://x.example/a", title: null,
+      children: [{ type: "text", text: "https://x.example/a" }],
+    }])
+    expect(parseCell("www.x.example")).toEqual([{
+      type: "link", href: "https://www.x.example", title: null,
+      children: [{ type: "text", text: "www.x.example" }],
+    }])
+    expect(parseCell("a@b.example")).toEqual([{
+      type: "link", href: "mailto:a@b.example", title: null,
+      children: [{ type: "text", text: "a@b.example" }],
+    }])
+  })
+
+  it("renders a reference link as its label, never its reference id", () => {
+    const div = document.createElement("div")
+    renderTableCellContent(div, "[ref][missing]")
+    expect(div.textContent).toBe("[ref][missing]")
+    expect(div.querySelector("a")).toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 # 24 HTML 富文本粘贴 → Markdown 设计
 
 **日期：** 2026-08-18
-**状态：** 已确认，随本轮实现
+**状态：** 已被 [Smart Paste 语义导入与统一投影设计](./2026-10-30-smart-paste-semantic-import-design.md) 替代；本文仅保留为历史决策记录
 **路线图关联：** 日常体验长尾（2026-08-18 产品化差距收敛计划 Phase 2.6）；对齐 Typora/MarkText/Obsidian 的富文本粘贴
 
 ## 目标

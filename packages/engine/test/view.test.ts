@@ -110,10 +110,11 @@ describe("view smoke (real EditorView)", () => {
   })
 
   it("renders table/code/math blocks without exceptions", async () => {
-    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\ntail")
+    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\n<table>\n<tbody>\n<tr>\n<td rowspan=\"2\">a</td>\n<td>b</td>\n</tr>\n<tr>\n<td>c</td>\n</tr>\n</tbody>\n</table>\n\ntail")
     await tick()
     expect(errors.map(String)).toEqual([])
     expect(view.dom.querySelector(".omd-table table")).toBeTruthy()   // TableWidget 同步渲染
+    expect(view.dom.querySelector(".omd-complex-table table")).toBeTruthy()
     expect(view.dom.querySelector(".omd-code")).toBeTruthy()          // shiki 异步，容器先行
     expect(view.dom.querySelector(".omd-math")).toBeTruthy()
     view.destroy()

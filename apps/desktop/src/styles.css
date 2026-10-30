@@ -158,6 +158,19 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-footnote-def { font-size: 0.9em; color: var(--omd-quote); }
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
 .editor-host .omd-u { text-decoration: underline; }
+/* 固定 `<kbd>` 键帽：Live Preview 的 omd-kbd 标记（无元素的 span）与 cell 投影里的
+   真实 <kbd> 元素共用同一套外观。只声明视觉，不改源。 */
+.editor-host .omd-kbd,
+.editor-host .omd-table kbd {
+  font-family: var(--omd-font-family-mono);
+  font-size: 0.88em;
+  color: var(--omd-fg);
+  background: var(--omd-code-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
 .editor-host .omd-inline-code { font-family: var(--omd-font-family, ui-monospace, monospace); background: var(--omd-code-bg); }
 .editor-host .omd-blockquote,
 .editor-host .omd-blockquote-1,

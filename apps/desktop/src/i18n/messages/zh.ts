@@ -1,5 +1,13 @@
 export const zh: Record<string, string> = {
   "image.broken": "🖼 {src}（加载失败）",
+  "paste.notice.richUnavailable": "无法读取富文本剪贴板数据，已粘贴纯文本",
+  "paste.notice.flavorUnavailable": "部分剪贴板格式不可用",
+  "paste.notice.partialImages": "部分剪贴板图片无法导入",
+  "paste.notice.saveBeforeImages": "请先保存文件再导入剪贴板图片",
+  "paste.notice.literalFallback": "富文本已作为可见文本粘贴",
+  "paste.notice.commitUnconfirmed": "图片已插入，但无法确认清理元数据",
+  "paste.notice.tableSimplified": "合并单元格表格已简化",
+  "paste.status.converting": "正在转换粘贴内容…",
 
   "find.aria.find": "查找",
   "find.placeholder.find": "在文档中查找…",

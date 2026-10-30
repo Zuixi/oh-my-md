@@ -27,11 +27,12 @@ packages/engine/
 │   ├── lists/ordered.ts         # Ordered-list display labels and reversible normalization StateField
 │   ├── modes/livePreview.ts     # Live/source compartment, Mod-e keymap, toggleShortcutLabels
 │   ├── navigation/              # caretClamp.ts (lineContentStart clamp) + blockEntry.ts (ArrowUp/Down into blocks)
-│   ├── parse/                   # Lezer Markdown + dialect extensions (see src/parse/AGENTS.md)
+│   ├── parse/                   # Lezer Markdown + dialect extensions + complexTable.ts (see src/parse/AGENTS.md)
+│   ├── semantic/                # linkParts, imageParts, escapeParts, hardBreakParts, referenceIndexExtension
 │   ├── decorations/             # StateField live preview + widgets (see src/decorations/AGENTS.md)
 │   ├── format/                  # Editing commands + keymaps (see src/format/AGENTS.md)
 │   ├── tables/                  # Lezer-range table model + edits (see src/tables/AGENTS.md)
-│   ├── paste/                   # Smart Paste pipeline + block-boundary normalization (blockBoundaries.ts)
+│   ├── paste/                   # Semantic clipboard importer (prepareSmartPaste, planSmartPaste, serializeComplexTable, blockBoundaries)
 │   ├── export/                  # html.ts (sync exportHtml + async exportRichHtml), styles.ts, shikiExport.ts, mathHtmlCache.ts
 │   ├── shiki/ · highlight/      # Lazy single-flight Shiki highlighter + code syntax highlighting
 │   └── cache/boundedLru.ts      # Bounded LRU cache
@@ -40,7 +41,7 @@ packages/engine/
 
 ## Public Surface & Domain Rules
 
-1. **Expose host APIs only through `src/index.ts`:** Desktop code must consume `editorExtensions(options)` and exported pure helpers (`collectOutline`, `exportHtml`, `exportRichHtml`, link/footnote nav, table range edits, ordered-list normalization commands) — never reach into internal engine submodules or re-parse Markdown.
+1. **Expose host APIs only through `src/index.ts`:** Desktop code must consume `editorExtensions(options)` and exported pure helpers (`collectOutline`, `exportHtml`, `exportRichHtml`, `prepareSmartPaste`, `planSmartPaste`, `preparePlainTextFallback`, `normalizeBlockPaste`, semantic accessors/reference contexts, link/footnote nav, table range edits, ordered-list normalization commands) — never reach into internal engine submodules or re-parse Markdown.
 2. **Pure command helpers:** Table edit helpers return range changes and formatting specs return `TransactionSpec | null`. Ordered-list accept/reject helpers return discriminated results: check `kind` before consuming `.transaction`; `stale` has no transaction. These helpers never dispatch.
 3. **Host-injected capabilities:** Resolve image URLs via `EngineOptions.resolveImageSrc` and localized fallback strings via `EngineOptions.imageBrokenLabel` (never import desktop i18n or Tauri APIs).
 4. **No stock completion/pairing:** Only the `:`-only `emojiCompletion` and `format/autoPair.ts` are permitted; never enable stock `closeBrackets`, `indentOnInput`, or generic `autocompletion`.
@@ -51,6 +52,12 @@ packages/engine/
 1. Mount `orderedNormalizationState` directly in `editorExtensions()`, never inside `livePreviewCompartment`, so pending notices and post-reject suppression survive Source/Live toggles.
 2. Classify batches via `normalizationTrigger(hasUserDocChange, treeLength, docLength)`: passes while `treeLength < docLength` merge into one `preview-entry` notice (keeping first `original` and latest `normalized`); complete-tree passes after a user edit are `user-followup` and only refresh already-pending markers.
 3. `rejectOrderedListNormalization` restores unedited markers, suppresses further rewrites for that `EditorState` session, and keeps consecutive preview numbers via `widget:ordered-mark`. Compare notices by `.id`, not object reference.
+
+## Semantic Projection & Smart Paste Invariants
+
+1. **One semantic reader per syntax family (`src/semantic/`, `parse/cell.ts`):** `linkParts`, `imageParts`, `escapeParts`/`hardBreakParts`, and `parseCell` are the sole owners of Link/Autolink, Image, Escape/HardBreak, and table-cell inline semantics. `referenceIndexExtension` is mounted at top level in `editorExtensions()` (incremental over changed/newly covered blocks; never scans the full document or calls `ensureSyntaxTree`). `widgets/tableCell.ts` is the sole preview cell DOM projection; reference-dependent widgets (`Image`, `Table`) invalidate on `resolveReference` identity in `build.ts::semanticProjections` and `TableWidget.eq`.
+2. **One-parse validated Smart Paste (`src/paste/`):** `normalizeHtml.ts` (iterative DOM walk bounded by `MAX_PASTE_DOM_DEPTH`/`MAX_PASTE_DOM_NODES`), `urlPolicy.ts::normalizePasteUrl`, `triggerPolicy.ts::escapePasteText`, `serialize.ts`, `validate.ts::validatePasteCandidate`, and `smartPaste.ts::planSmartPaste` each have a single owner. Candidate validation performs at most one synthetic parse on `prefix + candidate + suffix` from the already-covered syntax tree; rejected or over-limit candidates degrade directly to whole-fragment strict literal.
+3. **Closed Complex Table HTMLBlock (`parse/complexTable.ts`, `paste/serializeComplexTable.ts`, `decorations/widgets/complexTable.ts`):** Spanned/multi-block tables at top-level `Document`/`Paragraph` serialize to canonical CommonMark Type 6 `<table>...</table>` `HTMLBlock` (`boundary.end === "htmlBlock"`, no blank lines inside); inside lists/blockquotes they downgrade to GFM/plain text (`unsupportedTable`). `parseComplexTableBlock` is the closed-whitelist validator (2D occupancy grid, `normalizePasteUrl`, zero `innerHTML`) shared by `ComplexTableWidget` (`HTMLBlock` in `SELECTION_BLOCKS`) and `exportHtml`/`exportRichHtml`; non-conforming `HTMLBlock`s stay raw source in preview and escaped text in export.
 
 ## Testing
 

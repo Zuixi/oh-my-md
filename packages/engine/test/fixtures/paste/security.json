@@ -1,0 +1,167 @@
+[
+  {
+    "name": "script-element-dropped-safe-text-kept",
+    "html": "<p>before</p><script>alert(\"x\")</script><p>after</p>",
+    "plainText": "before\nafter",
+    "context": "lineStart",
+    "expectedMarkdown": "before\n\nafter",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "style-element-dropped",
+    "html": "<p>keep</p><style>p { color: red }</style>",
+    "plainText": "keep",
+    "context": "lineStart",
+    "expectedMarkdown": "keep",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "svg-keeps-descendant-text-drops-embedded-script",
+    "html": "<p><svg viewBox=\"0 0 10 10\"><script>alert(1)</script><text>chart label</text></svg></p>",
+    "plainText": "chart label",
+    "context": "paragraph",
+    "expectedMarkdown": "chart label",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "unknown-element-text-flattened",
+    "html": "<p><custom-widget data-x=\"1\">widget text</custom-widget></p>",
+    "plainText": "widget text",
+    "context": "paragraph",
+    "expectedMarkdown": "widget text",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "event-handlers-dropped-semantics-kept",
+    "html": "<p onclick=\"steal()\">safe <strong onmouseover=\"x()\">bold</strong></p>",
+    "plainText": "safe bold",
+    "context": "paragraph",
+    "expectedMarkdown": "safe **bold**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "form-controls-dropped-button-text-kept",
+    "html": "<form action=\"https://evil.example\"><input type=\"text\" value=\"secret\"><button type=\"submit\">Send</button></form>",
+    "plainText": "Send",
+    "context": "lineStart",
+    "expectedMarkdown": "Send",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "media-element-keeps-fallback-text",
+    "html": "<video controls src=\"https://example.com/movie.mp4\">download failed</video>",
+    "plainText": "download failed",
+    "context": "lineStart",
+    "expectedMarkdown": "download failed",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "javascript-url-link-text-kept",
+    "html": "<p><a href=\"javascript:alert(1)\">click</a></p>",
+    "plainText": "click",
+    "context": "paragraph",
+    "expectedMarkdown": "click",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "rejectedUrl", "count": 1 }
+    ]
+  },
+  {
+    "name": "vbscript-url-link-text-kept",
+    "html": "<p><a href=\"vbscript:msgbox(1)\">run</a></p>",
+    "plainText": "run",
+    "context": "paragraph",
+    "expectedMarkdown": "run",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "rejectedUrl", "count": 1 }
+    ]
+  },
+  {
+    "name": "mixed-case-javascript-scheme-rejected",
+    "html": "<p><a href=\"JaVaScRiPt:alert(1)\">mixed</a></p>",
+    "plainText": "mixed",
+    "context": "paragraph",
+    "expectedMarkdown": "mixed",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "rejectedUrl", "count": 1 }
+    ]
+  },
+  {
+    "name": "control-character-scheme-rejected",
+    "html": "<p><a href=\"java&#9;script:alert(1)\">tabbed</a></p>",
+    "plainText": "tabbed",
+    "context": "paragraph",
+    "expectedMarkdown": "tabbed",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "rejectedUrl", "count": 1 }
+    ]
+  },
+  {
+    "name": "protocol-relative-url-preserved",
+    "html": "<p><a href=\"//cdn.example.com/guide\">guide</a></p>",
+    "plainText": "guide",
+    "context": "paragraph",
+    "expectedMarkdown": "[guide](//cdn.example.com/guide)",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "data-image-url-extracted-as-asset-not-url-rejected",
+    "html": "<p><img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==\" alt=\"pixel\"></p>",
+    "plainText": "pixel",
+    "context": "paragraph",
+    "expectedMarkdown": "pixel",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "unresolvedAsset", "count": 1 }
+    ]
+  },
+  {
+    "name": "data-non-image-url-rejected-by-url-policy",
+    "html": "<p><img src=\"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==\" alt=\"payload\"></p>",
+    "plainText": "payload",
+    "context": "paragraph",
+    "expectedMarkdown": "payload",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      { "kind": "rejectedUrl", "count": 1 }
+    ]
+  },
+  {
+    "name": "malformed-stray-close-tags-ignored",
+    "html": "<p>alpha</p></span></div></span><p>beta</p>",
+    "plainText": "alpha\nbeta",
+    "context": "lineStart",
+    "expectedMarkdown": "alpha\n\nbeta",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "malformed-unclosed-inline-closed-by-next-block",
+    "html": "<div><em>italic run<p>next</p></div>",
+    "plainText": "italic run\nnext",
+    "context": "lineStart",
+    "expectedMarkdown": "*italic run*\n\nnext",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "malformed-angle-brackets-in-text-stay-literal",
+    "html": "<p>5 < 6 and 7 > 2</p>",
+    "plainText": "5 < 6 and 7 > 2",
+    "context": "paragraph",
+    "expectedMarkdown": "5 < 6 and 7 > 2",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  }
+]

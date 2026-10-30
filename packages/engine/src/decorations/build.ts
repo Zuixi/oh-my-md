@@ -11,6 +11,7 @@ import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import type { DecoSpec } from "./types"
 import { measureBlockWidget } from "./widgetMeasure"
+import { editorReferenceContext } from "../semantic/references"
 
 export { nearCursor, type DecoSpec } from "./types"
 
@@ -61,8 +62,14 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
 //     skipAtomsForSelection 对指针选区端点做循环外推，这两类原子让外推跨过换行符、
 //     级联高亮下一行（“点击选中连带下一行”）。行首标记退出后不会产生不可见光标：
 //     nearCursor 的行级显源码会把整行展开（自愈路径）。
+//   Rule 4 — 硬换行 marker（行末 `\` / 行末空格）不进原子区间：它紧贴换行符结束，
+//     skipAtoms 会把「行末」的光标位推过换行符，表现为点击行末/← 落到下一行、
+//     拖选连带下一行。显式按 tag 排除，不靠 Rule 3 的边界算术。
+const HARD_BREAK_MARK_TAG = "replace:HardBreakMark"
+
 function isAtomicTag(tag: string) {
-  return (tag.startsWith("replace:") || tag.startsWith("widget:")) &&
+  return tag !== HARD_BREAK_MARK_TAG &&
+    (tag.startsWith("replace:") || tag.startsWith("widget:")) &&
     !tag.startsWith("widget:block:")
 }
 
@@ -163,7 +170,7 @@ function subtractRanges(ranges: RebuildRange[], removals: RebuildRange[]): Rebui
   return out
 }
 
-const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HorizontalRule", "FrontMatter"])
+const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HTMLBlock", "HorizontalRule", "FrontMatter"])
 
 function expandRange(
   state: EditorState,
@@ -253,6 +260,33 @@ function rebuildRanges(tr: Transaction) {
   }
 
   return mergeRanges(ranges)
+}
+
+// 语义投影的依赖身份表：spec.tag → 决定该投影内容的访问器身份。身份变了（引用定义
+// 增删改、索引重建）说明已构建的这类投影可能过期 —— 但只重建「已构建的」那些：直接
+// 取现有 specs 的区间映射，绝不为找候选而扫描文档其余部分。加一类投影依赖（如表格
+// widget）只在此加一行，不动重组逻辑。
+// 已知边界：从未挂载过的引用图片（无 spec）不会因为事后出现定义而被挂载 —— 找这类
+// 候选需要全文档扫 Image 节点；只有仍在 pending 里的区间会在后续分片重建时自然挂载。
+const semanticProjections: { tag: string; identity: (state: EditorState) => unknown }[] = [
+  { tag: "widget:image", identity: state => editorReferenceContext(state).resolveReference },
+  { tag: "widget:block:table", identity: state => editorReferenceContext(state).resolveReference },
+]
+
+function staleProjectionRanges(tr: Transaction, value: LiveDeco): RebuildRange[] {
+  const stale = new Set(
+    semanticProjections
+      .filter(projection => projection.identity(tr.startState) !== projection.identity(tr.state))
+      .map(projection => projection.tag),
+  )
+  if (stale.size === 0) return []
+  return value.specs
+    .filter(spec => stale.has(spec.tag))
+    .map(spec => ({
+      from: tr.changes.mapPos(spec.from, -1),
+      to: tr.changes.mapPos(spec.to, 1),
+    }))
+    .filter(range => range.from <= range.to)
 }
 
 // 分片驱动 dispatch 的“构建 [from, to]（tr.state 坐标）”信号：
@@ -354,6 +388,10 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
 
   const ranges = [...chunkRanges, ...rebuildRanges(tr)]
   if (growth) ranges.push(growth)
+  // 访问器身份只可能随文档变更或树增长而变（选择变化与分片不改变定义集）。
+  if (tr.docChanged || treeLength !== value.treeLength) {
+    ranges.push(...staleProjectionRanges(tr, value))
+  }
   if (!ranges.length && prunedSpecs.length === 0) {
     return treeLength === value.treeLength && pending === value.pending
       ? value

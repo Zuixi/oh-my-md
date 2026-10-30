@@ -1,0 +1,124 @@
+[
+  {
+    "name": "plain-fast-path-access-token",
+    "html": "<p>access_token 与 refresh_token</p>",
+    "plainText": "access_token 与 refresh_token",
+    "context": "paragraph",
+    "expectedMarkdown": "access_token 与 refresh_token",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "plain-fast-path-cjk-underscore",
+    "html": "<p>名前_テスト</p>",
+    "plainText": "名前_テスト",
+    "context": "paragraph",
+    "expectedMarkdown": "名前_テスト",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "plain-fast-path-literal-backslash-path",
+    "html": "<p>C:\\Users\\me\\notes</p>",
+    "plainText": "C:\\Users\\me\\notes",
+    "context": "paragraph",
+    "expectedMarkdown": "C:\\Users\\me\\notes",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "plain-fast-path-rtl-text",
+    "html": "<p dir=\"rtl\">שלום עולם</p>",
+    "plainText": "שלום עולם",
+    "context": "paragraph",
+    "expectedMarkdown": "שלום עולם",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "line-start-heading-literal",
+    "html": "<p># title</p>",
+    "plainText": "# title",
+    "context": "lineStart",
+    "expectedMarkdown": "\\# title",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "line-start-list-literal",
+    "html": "<p>- item</p>",
+    "plainText": "- item",
+    "context": "lineStart",
+    "expectedMarkdown": "\\- item",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraph-math-literal",
+    "html": "<p>$x$</p>",
+    "plainText": "$x$",
+    "context": "paragraph",
+    "expectedMarkdown": "\\$x\\$",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraph-strong-delimiters-literal",
+    "html": "<p>**bold**</p>",
+    "plainText": "**bold**",
+    "context": "paragraph",
+    "expectedMarkdown": "\\*\\*bold\\*\\*",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraph-brackets-literal",
+    "html": "<p>[draft] not a link</p>",
+    "plainText": "[draft] not a link",
+    "context": "paragraph",
+    "expectedMarkdown": "\\[draft] not a link",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraph-backticks-literal",
+    "html": "<p>run `cmd --flag` now</p>",
+    "plainText": "run `cmd --flag` now",
+    "context": "paragraph",
+    "expectedMarkdown": "run \\`cmd --flag\\` now",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraph-mixed-literal-and-real-strong",
+    "html": "<p>**bold** and <strong>真粗体</strong></p>",
+    "plainText": "**bold** and 真粗体",
+    "context": "paragraph",
+    "expectedMarkdown": "\\*\\*bold\\*\\* and **真粗体**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "strict-whole-fragment-backslash-before-punctuation",
+    "html": "<p>a \\* b</p>",
+    "plainText": "a \\* b",
+    "context": "paragraph",
+    "expectedMarkdown": "a \\\\\\* b",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "literal-fallback-policy-strict-escape",
+    "html": "<p>$x$ <strong>bold</strong></p>",
+    "plainText": "$x$ bold",
+    "context": "literalFallback",
+    "expectedMarkdown": "\\$x\\$ bold",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": [
+      {
+        "kind": "strictFallback",
+        "count": 1
+      }
+    ]
+  }
+]
