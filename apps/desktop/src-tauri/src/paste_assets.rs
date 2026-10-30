@@ -78,10 +78,13 @@ pub(crate) async fn write_paste_assets(
             .lock()
             .map_err(|_| "paste asset state lock poisoned".to_string())?
             .pending
-            .insert(batch_id.clone(), PendingBatch {
-                document_path: registered_document_path,
-                paths: batch.1.clone(),
-            });
+            .insert(
+                batch_id.clone(),
+                PendingBatch {
+                    document_path: registered_document_path,
+                    paths: batch.1.clone(),
+                },
+            );
     }
     Ok(batch.0)
 }
@@ -131,7 +134,11 @@ fn finish_batch(
             .join(ASSETS_DIR_NAME);
         reject_symlink_directory(&assets_dir)?;
         validate_assets_directory(&assets_dir, &batch.document_path)?;
-        if batch.paths.iter().any(|path| path.parent() != Some(assets_dir.as_path())) {
+        if batch
+            .paths
+            .iter()
+            .any(|path| path.parent() != Some(assets_dir.as_path()))
+        {
             return Err("registered paste asset escaped its assets directory".into());
         }
     }
@@ -142,10 +149,13 @@ fn finish_batch(
     if remove_files {
         for (index, path) in batch.paths.iter().enumerate() {
             if let Err(error) = std::fs::remove_file(path) {
-                inner.pending.insert(batch_id.to_string(), PendingBatch {
-                    document_path: batch.document_path,
-                    paths: batch.paths[index..].to_vec(),
-                });
+                inner.pending.insert(
+                    batch_id.to_string(),
+                    PendingBatch {
+                        document_path: batch.document_path,
+                        paths: batch.paths[index..].to_vec(),
+                    },
+                );
                 return Err(format!("failed to discard paste asset: {error}"));
             }
         }
@@ -163,7 +173,10 @@ fn write_paste_assets_impl(
 ) -> Result<(PasteAssetBatch, Vec<PathBuf>), String> {
     validate_document_path(document_path)?;
     let mut seen = std::collections::HashSet::new();
-    if assets.iter().any(|asset| asset.key.is_empty() || !seen.insert(asset.key.clone())) {
+    if assets
+        .iter()
+        .any(|asset| asset.key.is_empty() || !seen.insert(asset.key.clone()))
+    {
         return Err("paste asset keys must be non-empty and unique".into());
     }
 
@@ -172,11 +185,21 @@ fn write_paste_assets_impl(
     for asset in assets {
         match decode_asset(&asset) {
             Ok((extension, bytes)) => valid.push((asset.key, extension, bytes)),
-            Err(kind) => failures.push(PasteAssetFailure { key: asset.key, kind }),
+            Err(kind) => failures.push(PasteAssetFailure {
+                key: asset.key,
+                kind,
+            }),
         }
     }
     if valid.is_empty() {
-        return Ok((PasteAssetBatch { batch_id: None, items: Vec::new(), failures }, Vec::new()));
+        return Ok((
+            PasteAssetBatch {
+                batch_id: None,
+                items: Vec::new(),
+                failures,
+            },
+            Vec::new(),
+        ));
     }
 
     let assets_dir = document_path
@@ -229,7 +252,14 @@ fn write_paste_assets_impl(
             .unwrap_or_default()
             .as_nanos()
     );
-    Ok((PasteAssetBatch { batch_id: Some(batch_id), items, failures }, paths))
+    Ok((
+        PasteAssetBatch {
+            batch_id: Some(batch_id),
+            items,
+            failures,
+        },
+        paths,
+    ))
 }
 
 fn decode_asset(asset: &PasteAssetWrite) -> Result<(&'static str, Vec<u8>), &'static str> {
@@ -354,8 +384,16 @@ mod tests {
         let document = directory.path().join("document.md");
         std::fs::write(&document, "# document").unwrap();
         let assets = vec![
-            PasteAssetWrite { key: "same".into(), mime: "image/png".into(), base64: String::new() },
-            PasteAssetWrite { key: "same".into(), mime: "image/png".into(), base64: String::new() },
+            PasteAssetWrite {
+                key: "same".into(),
+                mime: "image/png".into(),
+                base64: String::new(),
+            },
+            PasteAssetWrite {
+                key: "same".into(),
+                mime: "image/png".into(),
+                base64: String::new(),
+            },
         ];
         assert!(write_paste_assets_impl(&document, assets).is_err());
         assert!(!directory.path().join(ASSETS_DIR_NAME).exists());
@@ -366,14 +404,20 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let document = directory.path().join("document.md");
         std::fs::write(&document, "# document").unwrap();
-        let asset_path = directory.path().join(ASSETS_DIR_NAME).join("pasted-test.png");
+        let asset_path = directory
+            .path()
+            .join(ASSETS_DIR_NAME)
+            .join("pasted-test.png");
         std::fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
         std::fs::write(&asset_path, b"\x89PNG\r\n\x1a\n").unwrap();
         let state = PasteAssetState::default();
-        state.0.lock().unwrap().pending.insert("batch".into(), PendingBatch {
-            document_path: document,
-            paths: vec![asset_path.clone()],
-        });
+        state.0.lock().unwrap().pending.insert(
+            "batch".into(),
+            PendingBatch {
+                document_path: document,
+                paths: vec![asset_path.clone()],
+            },
+        );
 
         finish_batch(&state, "batch", TerminalAction::Discard, true).unwrap();
         assert!(!asset_path.exists());
