@@ -40,7 +40,7 @@ function cellData(node: SyntaxNode, tableFrom: number, state: EditorState): Tabl
   const source = state.doc.sliceString(node.from, node.to)
   return {
     source,
-    text: source.replace(/\\\|/g, "|").trim(),
+    text: source.trim(),
     from: node.from - tableFrom,
     to: node.to - tableFrom,
   }

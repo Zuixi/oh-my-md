@@ -1,22 +1,29 @@
-import { EditorView } from "@codemirror/view"
+import { EditorSelection } from "@codemirror/state"
+import type { EditorView } from "@codemirror/view"
+import { runPasteJob, type PasteJobOptions } from "./pasteJob"
 
-/**
- * Inserts the clipboard's plain text at the current selection, replacing it.
- * Reads `navigator.clipboard.readText()`; no-ops when the Clipboard API is
- * unavailable or the clipboard holds no text (so a normal paste still works).
- */
-export async function pastePlainText(view: EditorView): Promise<void> {
-  const read = navigator.clipboard?.readText()
-  if (!read) return
-  const text = await read
-  if (!text) return
-  const selection = view.state.selection.main
-  view.dispatch({
-    changes: { from: selection.from, to: selection.to, insert: text },
-    // Set the caret explicitly: without a selection CM maps the old cursor
-    // with assoc -1 and it stays before the pasted text instead of after it.
-    selection: { anchor: selection.from + text.length },
-    userEvent: "input.paste",
-    scrollIntoView: true,
-  })
+export function pastePlainText(view: EditorView, options: PasteJobOptions): Promise<void> {
+  return runPasteJob(
+    view,
+    options,
+    async () => navigator.clipboard?.readText() ?? "",
+    async (text, currentTarget) => {
+      if (!text) return
+      const target = currentTarget()
+      if (target.kind !== "active") return
+      const changes = target.ranges.map(range => ({ from: range.from, to: range.to, insert: text }))
+      let delta = 0
+      const cursors = target.ranges.map(range => {
+        const anchor = range.from + delta + text.length
+        delta += text.length - (range.to - range.from)
+        return EditorSelection.cursor(anchor)
+      })
+      view.dispatch({
+        changes,
+        selection: EditorSelection.create(cursors),
+        userEvent: "input.paste",
+        scrollIntoView: true,
+      })
+    },
+  )
 }

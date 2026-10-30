@@ -206,7 +206,14 @@ Facts to remember:
 
 - Because cells parse as a **block-level mini-document**, cells are a superset of GFM: `- item` → `ul>li`, `> quote` → `blockquote`, `` ```js ... ``` `` → `pre>code`, `# h` → `strong`, `<br>` → real `<br>`, plus every inline form (bold/italic/del/mark/u/code/math/autolink/emoji/entity/image). Paragraph nodes are flattened (no `<p>` in `<td>`), and the space after a list/quote marker is trimmed from `li`/`blockquote` text.
 - Cells are **single-line**, so multi-row block content cannot be expressed; list/quote/fence content in a cell comes only from markers on that one line.
-- Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
+- Reference-style links and images (`[text][id]`, `![alt][img]`) resolve inside cells only
+  when the caller supplies a document-scoped resolver: `parseCell` takes
+  `{ resolveReference }`, and the table widget (`decorations/blocks.ts` → `TableWidget` →
+  `renderCellSlot`), `exportHtml`, and `exportRichHtml` all pass one from the same
+  `MarkdownReferenceContext`. The no-resolver convenience `renderTableCellContent(parent, text)`
+  has only the cell itself as context, so a cell referencing a definition elsewhere renders
+  the reference as literal text — not a bug, but do not call it from a document-backed path.
+  Unresolved references stay visible source in every path.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
 - Widget `eq` compares `src` + `embed` first and then the cheap lazy `tableEqualityKey` (cell `source`s + alignments + shape) — never `JSON.stringify(table)`, which serialized every cell on every rebuild pass. An unchanged table reuses its DOM; a changed cell reaches `updateDOM`, which patches only the changed cells in place (see the table in-place-refresh entry below). The model is extracted once per build by `tableDataFromNode` (Lezer-derived); never re-derive it from re-serialized strings, and never store it in a module-global.
 - **Rendered state has no per-cell event intercept.** `BlockWidget.toDOM` moves the selection into the table on wrap `mousedown`; that is the only path that turns a cell click into source editing (`TableWidget.clickPos` maps the clicked `td/th` to its exact source offset). A `mousedown` listener on the cells that calls `stopPropagation`/`preventDefault` swallows it — that legacy in-cell input handler is exactly what kept `e2e/table-source.spec.ts` red. Toolbar buttons are the opposite case: they must `preventDefault` + `stopPropagation` on `mousedown`, else the wrap handler unmounts the widget before the `click` lands.
@@ -461,6 +468,139 @@ URL/title separator) leave a dangling empty visual row in live preview because
 the title fold's backward scan correctly stops at `line.from`; this is
 cosmetic and rare with no crash (verified: StateField-provided replaces
 spanning line breaks are safe in CM 6.43.8).
+
+## Link/Image/Escape/HardBreak/cell semantics are one shared projection
+
+`src/semantic/` is the only place that turns an inline node into facts. Preview
+(`decorations/inline.ts`, `decorations/widgets/tableCell.ts`), sync export
+(`exportHtml`), rich export (`exportRichHtml`), `parse/cell.ts`, and `links.ts::linkHref`
+all consume `semantic/link.ts`, `semantic/image.ts`, `semantic/breaks.ts`, and
+`semantic/references.ts`. Re-deriving a destination, alt, or title locally (the old
+`node.getChild("URL")` + `head.indexOf("](")` shape) is exactly what made preview, sync
+export, rich export, and table cells disagree on titles, formatted/entity alt text, and
+autolink normalization.
+
+Rules that must survive refactors:
+
+- **One reference index, not one scan per tree.** `semantic/references.ts`
+  (`referenceIndexField`) seeds definitions from the committed tree, maps every definition
+  range through edits, and rescans only the changed or newly covered top-level blocks
+  (`referenceIndexScanStats.scannedBlocks` is the test counter: a concrete edit must not
+  rescan the document; tree growth may only add blocks). It is mounted **outside**
+  `livePreviewCompartment` (`index.ts`) so a Source/Live toggle never re-seeds it.
+- **No per-new-Tree live scan.** `growIndex` compares coverage against
+  `treeExtent(state)` (`min(tree.length, doc.length)`, never a forced parse) and scans only
+  the gaps — a fresh `Tree` object with the same coverage is a no-op. `snapshotReferenceContext`
+  collects every definition on a tree cache miss and is for export / one-off reads only; call
+  it from an update path and every keystroke pays a whole-document definition scan (same family
+  as the complete-tree trap).
+- **Current-state slice with a stable resolver.** `resolve` is reused whenever
+  `sameTargets` holds, so resolver identity survives text edits — but `sliceString` is rebuilt
+  per call from the state being asked (`contextFor(state, resolve)`). Caching a whole context,
+  or a slice bound to an older `EditorState`, reads stale label/alt text after an edit that
+  changed no definitions (`test/semanticReferences.test.ts`).
+- **Escape/HardBreak markers are explicit two-part semantics.** `escapeParts` = leading `\`
+  marker + escaped value; `hardBreakParts` = marker (one `\` or a run of ≥2 spaces) +
+  `newlineFrom/To` covering LF or CRLF, with `kind` read from the marker bytes only. Preview
+  folds `[markerFrom, markerTo)` and nothing else: replacing the newline would merge two
+  rendered lines, and replacing the escaped character would hide real content. Cell projection
+  keeps only the escaped value; export emits the value / `<br>`.
+- **`replace:HardBreakMark` is never atomic (atomicRanges Rule 4).** The marker ends flush
+  against the line break, so `skipAtomsForSelection` would push a line-end cursor across the
+  newline (end-of-line click or ← landing on the next line, drag selection grabbing it). The
+  exclusion in `build.ts::isAtomicTag` is by tag on purpose — do not re-derive it from boundary
+  arithmetic.
+- **Raw table-cell source stays raw; GFM pipe shielding is a separate pass.**
+  `tables/model.ts` keeps the Lezer `TableCell` source verbatim (`source.trim()`, no `\\|`
+  pre-decode). Two distinct domains: outside inline code the cell's own parser yields an
+  `Escape` node and `semantic/breaks.ts` drops exactly one backslash (`a\|b` → `a|b`); inside
+  inline code the backslash is opaque content (`InlineCode` has no `Escape` child), yet GFM
+  says the shielding backslash is not part of the code text — so
+  `parseCell(..., { pipeEscapes: "gfm-table" })` removes exactly one backslash from an
+  odd-length run followed by `|` (`decodeShieldedPipes`) and leaves even-length runs
+  untouched (an even run escapes itself, so the pipe is not shielded). The default
+  `pipeEscapes: "markdown"` performs no such rewrite — a cell string handed to `parseCell`
+  by an independent caller is a Markdown
+  fragment, not a GFM row. Never restore `replace(/\\\|/g, "|")` over a whole cell (the old
+  `cellText`), which also decoded literal backslashes in code.
+- **Reference-dependent widgets invalidate by resolver identity, not by source bytes.**
+  Editing a definition changes no `[text][id]` bytes, so `src`-based reuse would freeze the
+  old destination: `TableWidget.eq` compares `resolveReference`, `updateDOM` re-renders every
+  inactive cell when the resolver identity changed, and `build.ts::semanticProjections` maps
+  `widget:image` / `widget:block:table` specs to the resolver identity and rebuilds the ranges
+  of specs that are already built (never a document scan to find candidates). Accepted
+  boundary: a reference image that never rendered (unresolved ⇒ no spec) does not appear when
+  its definition is added later; only ranges still pending mount on their own chunk. Do not
+  "fix" that with a whole-document `Image` walk on definition change.
+- **Unresolved references stay visible as source.** `imageParts`/`linkParts` return `null` when
+  there is no definition; callers keep the raw text rather than rendering an empty
+  `![]()` widget or a link with no destination.
+
+## Smart Paste importer: one owner per rule, one parse per candidate
+
+`packages/engine/src/paste/` is the semantic clipboard importer. It deliberately mounts no DOM
+handler: the desktop controller calls `prepareSmartPaste` and `planSmartPaste`, while other
+hosts can reuse the same pure boundary. An edit here has to keep all seven contracts true.
+
+1. **Trigger policy drifts silently when the parser changes.** `paste/triggerPolicy.ts::
+   escapePasteText` is the only Markdown rule source for serialized literal text: `minimal`
+   escapes only where the engine would read semantics (`access_token` stays intact), `strict`
+   escapes every CommonMark-escaped ASCII punctuation and entity-encodes ambiguous line-start
+   indentation. It mirrors `parse/` extensions one by one, and
+   `test/pasteTriggerPolicy.test.ts` enumerates `markdownLanguageSupport()`'s extension list so
+   adding a syntax extension without a matching policy class fails the suite. Never add a
+   second escaping layer in the serializer "for safety" — double escaping is a visible defect,
+   and a locally invented rule (regex `*`/`_` handling in `serialize.ts`) is exactly the drift
+   the test exists to catch.
+2. **One paste performs at most one parse, and the candidate is final before it.** The candidate
+   is chosen before validation (plain fast path, else the minimal serializer), boundary-normalized
+   once by `blockBoundaries.ts::normalizeBlockPaste`, then handed to
+   `validate.ts::validatePasteCandidate` unchanged; the validator reads only the committed
+   context window (`MAX_PASTE_VALIDATION_CONTEXT_CHARS`) and parses `prefix + candidate + suffix`
+   once. A rejection is final: the plan goes straight to whole-fragment strict literal. Do not
+   add a retry, a second candidate, a trim, or an "accept anyway" branch; `planSmartPaste`
+   already cannot produce a second parse because `pasteValidationTestParseCalls` is asserted at
+   ≤ 1 in `test/pasteValidation.test.ts` and in `bench/paste.bench.ts`.
+3. **The Paste AST has no node identity, no source map, no DOM path.** `model.ts` nodes are
+   temporary, readonly, and positionless; asset keys (`paste-embedded-N`, `paste-unavailable-N`)
+   identify bytes only — never an output range, never a correspondence to clipboard `File`
+   array order (`normalizeHtml.ts` explicitly refuses to imply one). Once normalized, a node
+   cannot be traced back to the DOM element it came from, so no consumer may ask "which source
+   element changed" or diff a candidate against a tree; the planner re-derives the whole plan
+   from the AST plus the host boundary. Anything that needs per-node reconciliation is a new
+   design, not a small fix.
+4. **Presentation styles are dropped, not translated.** Only `font-weight`, `font-style`, and
+   `text-decoration` are read as strong-semantic facts; every other declaration (color,
+   background, font size/family, letter spacing, class, `data-*`) is counted in
+   `droppedStyle` and discarded. Unknown/media/form elements keep only their safe visible
+   descendants — no attribute strings, no `<span>` passthrough. "Preserve this one style as
+   HTML" reopens the whole escape hatch the importer exists to close.
+5. **Unresolved image identity is never guessed.** `data:image/(png|jpeg|webp)` is extracted into
+   `PasteAsset` before the URL gate; `blob:`/`file:` become an `unavailable` key plus alt and are
+   listed in `unavailableImageKeys`; when no resolver supplies bytes the image lowers to its alt
+   text with one `unresolvedAsset` diagnostic. Equal counts or matching MIME types do not prove
+   identity between HTML images and clipboard `File` entries — never zipper them by index.
+6. **Fallback is whole-fragment strict literal, never partial and never a fragment rewrite.**
+   Limit overflow, a host conversion failure, a rejected candidate, or an uncovered tree all end
+   in `serializePasteDocument(document, { mode: "strict" })` plus block isolation; the visible
+   text is preserved and every Markdown trigger is escaped. That is also why a large candidate is
+   *not* inserted as Markdown: `MAX_PASTE_VALIDATED_INSERT_CHARS` (262,144 chars) is a cost gate,
+   so a 1 MiB or 5 MiB clipboard fragment normalizes/serializes and then takes the strict path
+   with **zero** validation parses (measured in `bench/paste.bench.ts`). Do not "fix" that by
+   raising the guard to fit the benchmark.
+7. **`DOMParser` allocation is not bounded by the traversal guards.** `MAX_PASTE_DOM_DEPTH` /
+   `MAX_PASTE_DOM_NODES` are counted **after** `parseFromString` has already built the whole
+   detached document, so an oversize clipboard pays the allocation first and only then degrades
+   to `preparePlainTextFallback` (one `strictFallback` diagnostic, never a truncated AST).
+   Measured density for the bench generator: ~31 nodes/KiB for the mixed paragraph+table shape,
+   i.e. `MAX_PASTE_DOM_NODES = 200_000` sits near ~6.4 MiB of that shape but is reached at ~2.8 MiB
+   of a table-only (Sheets-shaped) fragment. A tag-dense 5 MiB fragment therefore parses fully and
+   then falls back — the guard bounds traversal, not the freeze. Escape hatch if a real user hits
+   it: bound the input by length before parsing (a new guard in `limits.ts`), never by weakening
+   the tree checks.
+
+Evidence and advisory baselines: `bench/paste.bench.ts` (raw `DOMParser`, `prepareSmartPaste`,
+serialization, one-parse planning, and the large-document reference index).
 
 ## Text.append continues the last line; batched Text assembly needs a junction line
 
@@ -1147,3 +1287,12 @@ ephemeron table 边画进图里，但那条边不是强引用。** 按“图上�
   `WeakMap<HTMLElement, { from: number; to: number }>` 且 `liveWraps` 仍是
   `Map<BlockWidget, HTMLElement>`。它守的是**所有权**（有人手滑改回 `Map` 会立刻红），**不**
   守内存 —— 堆大小依赖 GC 时机，不适合做断言，真实数值只走上面的手动审计。
+
+## Complex Table `HTMLBlock` is a closed Type 6 contract, never general HTML
+
+Why a pasted `<table>` with `rowspan`/`colspan` has four strict invariants across `paste/`, `parse/`, `decorations/`, and `export/`:
+
+1. **CommonMark Type 6 HTML blocks end at the first blank line.** If `serializeComplexTable` ever emits an empty physical line inside `<table>...</table>` (for example from multi-paragraph cell content), Lezer terminates the `HTMLBlock` mid-table and parses the remainder as paragraphs. And if the block is followed immediately by text without a blank line, Type 6 swallows the following paragraph into the `HTMLBlock`. `serializeComplexTable` therefore flattens multi-block cells with `<br>`, strips any internal blank lines, and sets `boundary: { start: "block", end: "htmlBlock" }` so `normalizeBlockPaste` always closes with `\n\n`.
+2. **Container nesting breaks block closure.** Inside `BulletList`, `OrderedList`, or `Blockquote`, a multi-line `HTMLBlock` without container continuation prefixes splits the enclosing container. `smartPaste.ts::canHostComplexTable` inspects the syntax tree at `from` and only permits `allowComplexTable` at top-level `Document` or a top-level `Paragraph`; any other host context downgrades to a GFM table or plain text and increments `unsupportedTable`.
+3. **One closed validator (`parse/complexTable.ts::parseComplexTableBlock`) gates both preview and export.** Only a single top-level `<table>` with whitelisted tags (`thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `br`, `strong`/`b`, `em`/`i`, `del`/`s`, `mark`, `u`, `kbd`, `sub`, `sup`, `code`, `a`, `img`), whitelisted attributes (`rowspan`, `colspan`, `scope`, `align`, `href`, `src`, `alt`, `title`), URLs accepted by `normalizePasteUrl`, and a rectangular 2D span occupancy grid (no overlap, no dangling row/col span, bounded dimensions) produces a `ComplexTableModel`. Anything else returns `null`, leaving the `HTMLBlock` as raw source in preview and escaped text in `exportHtml` / `exportRichHtml`.
+4. **`HTMLBlock` must be in `SELECTION_BLOCKS` (`decorations/build.ts`).** Because `ComplexTableWidget` replaces the full `HTMLBlock` when unselected and unmounts to `line:omd-table-src` when selected, selection transitions into/out of an `HTMLBlock` must expand the decoration rebuild range to the full block node.

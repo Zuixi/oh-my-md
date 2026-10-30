@@ -6,6 +6,7 @@
  */
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+export const SMART_PASTE_STATUS_CHARS = 100_000
 
 export const MAX_RECENTS = 10
 

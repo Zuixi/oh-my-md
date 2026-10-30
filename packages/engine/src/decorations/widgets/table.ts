@@ -1,7 +1,6 @@
 import { isolateHistory, redo, undo } from "@codemirror/commands"
 import { Facet, type EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
-import { parseCell, type CellNode } from "../../parse/cell"
 import {
   beginTableEdit,
   closeTableEdit,
@@ -9,6 +8,7 @@ import {
   setTableComposition,
   tableCellInputSpec,
 } from "../../tables/directEdit"
+import type { CellParseOptions } from "../../parse/cell"
 import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
 import { nextCell, tableAt, type TableContext } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
@@ -17,8 +17,15 @@ import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon } from "../icons"
+// cell 的 DOM 投影独立成文件（table.ts 已到增长上限）：这里只保留兼容再导出，
+// 既有调用方（tables.test.ts 等）继续从 table.ts 取 renderTableCellContent。
+import { renderTableCellContent, type ResolveSrc } from "./tableCell"
 
-type ResolveSrc = (src: string) => string
+export { renderTableCellContent }
+export type { ResolveSrc }
+
+/** 表格外的引用定义解析器（来自 EditorState 的 reference context，见 blocks.ts）。 */
+export type ResolveReference = CellParseOptions["resolveReference"]
 
 /**
  * 渲染输入 → 结构键（表头/表体每个单元格的 source + 行列数 + 对齐）。
@@ -90,7 +97,12 @@ function restoreTableCell(host: HTMLElement, row: number, column: number): void 
   const owner = domOwner.get(host)
   const el = tableCellElements(host)[row]?.[column]
   if (!owner || !el) return
-  renderCellSlot(el, tableCellDataRows(owner.table)[row]?.[column] ?? null, owner.resolveSrc)
+  renderCellSlot(
+    el,
+    tableCellDataRows(owner.table)[row]?.[column] ?? null,
+    owner.resolveSrc,
+    owner.resolveReference,
+  )
 }
 
 function activeCellStart(state: EditorState, row: number, column: number): number | null {
@@ -292,7 +304,12 @@ function sameTableShape(a: TableData, b: TableData): boolean {
 }
 
 /** 单个单元格槽位的完整视觉状态（内容 + ragged 缺失槽语义），renderInto 与 updateDOM 共用。 */
-function renderCellSlot(el: HTMLElement, cell: TableCellData | null, resolveSrc?: ResolveSrc): void {
+function renderCellSlot(
+  el: HTMLElement,
+  cell: TableCellData | null,
+  resolveSrc?: ResolveSrc,
+  resolveReference?: ResolveReference,
+): void {
   el.replaceChildren()
   if (cell === null) {
     // ragged 行缺失源码槽的视觉填充：语义标识为不可用（没有源码可改）。
@@ -304,7 +321,8 @@ function renderCellSlot(el: HTMLElement, cell: TableCellData | null, resolveSrc?
   el.classList.remove("omd-table-cell-missing")
   el.removeAttribute("aria-disabled")
   el.removeAttribute("title")
-  renderTableCellContent(el, cell.text, resolveSrc)
+  // 表格层已经吃掉 `\|` 的屏蔽反斜杠，cell 源是 GFM 表格语义；定义来自表格外。
+  renderTableCellContent(el, cell.text, resolveSrc, { pipeEscapes: "gfm-table", resolveReference })
 }
 
 /** 对齐按钮的 active 高亮必须跟着目标列的对齐方式走（渲染态与原地补丁态共用）。 */
@@ -313,86 +331,6 @@ function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): v
     const btn = toolbar.querySelector<HTMLElement>(`[data-act='${act}']`)
     if (btn) btn.classList.toggle("omd-table-tool-active", act === `align-${currentAlign}`)
   }
-}
-
-function renderCellContainer(
-  parent: HTMLElement,
-  tag: string,
-  children: CellNode[],
-  resolveSrc?: ResolveSrc,
-): void {
-  const el = document.createElement(tag)
-  for (const child of children) renderCellNode(el, child, resolveSrc)
-  parent.appendChild(el)
-}
-
-function renderCellNode(parent: HTMLElement, node: CellNode, resolveSrc?: ResolveSrc): void {
-  switch (node.type) {
-    case "text": parent.appendChild(document.createTextNode(node.text)); return
-    case "code": {
-      const el = document.createElement("code")
-      el.textContent = node.text
-      parent.appendChild(el)
-      return
-    }
-    case "math": {
-      const el = document.createElement("code")
-      el.className = "omd-cell-math"
-      el.textContent = node.text
-      parent.appendChild(el)
-      return
-    }
-    case "em": renderCellContainer(parent, "em", node.children, resolveSrc); return
-    case "strong": renderCellContainer(parent, "strong", node.children, resolveSrc); return
-    case "del": renderCellContainer(parent, "del", node.children, resolveSrc); return
-    case "mark": renderCellContainer(parent, "mark", node.children, resolveSrc); return
-    case "underline": renderCellContainer(parent, "u", node.children, resolveSrc); return
-    case "link": {
-      const a = document.createElement("a")
-      a.href = node.href
-      a.target = "_blank"
-      a.rel = "noopener noreferrer"
-      a.className = "omd-link"
-      for (const child of node.children) renderCellNode(a, child, resolveSrc)
-      parent.appendChild(a)
-      return
-    }
-    case "image": {
-      const img = document.createElement("img")
-      img.src = resolveSrc ? resolveSrc(node.src) : node.src
-      img.alt = node.alt
-      img.className = "omd-image"
-      img.onerror = () => {
-        img.replaceWith(Object.assign(document.createElement("span"), {
-          className: "omd-image-broken",
-          textContent: node.src,
-        }))
-      }
-      parent.appendChild(img)
-      return
-    }
-    case "br": parent.appendChild(document.createElement("br")); return
-    case "hr": parent.appendChild(document.createElement("hr")); return
-    case "ul": renderCellContainer(parent, "ul", node.children, resolveSrc); return
-    case "ol": renderCellContainer(parent, "ol", node.children, resolveSrc); return
-    case "li": renderCellContainer(parent, "li", node.children, resolveSrc); return
-    case "blockquote": renderCellContainer(parent, "blockquote", node.children, resolveSrc); return
-    case "pre": {
-      const pre = document.createElement("pre")
-      const code = document.createElement("code")
-      code.textContent = node.text
-      pre.appendChild(code)
-      parent.appendChild(pre)
-      return
-    }
-  }
-}
-
-// cell 内容按引擎自有的 markdown parser 解析后再渲染（任意语法：粗体/斜体/删除线/
-// 高亮/下划线/行内代码/行内数学/链接/autolink/图片/emoji/HTML 实体/`<br>`/列表/引用/
-// 代码块/分隔线），不再是手写正则。
-export function renderTableCellContent(parent: HTMLElement, text: string, resolveSrc?: ResolveSrc): void {
-  for (const node of parseCell(text)) renderCellNode(parent, node, resolveSrc)
 }
 
 /** 合成缺失单元格（ragged 行的视觉填充）的语义标注。 */
@@ -424,6 +362,7 @@ export class TableWidget extends BlockWidget {
     embed?: BlockEmbed,
     readonly resolveSrc?: ResolveSrc,
     readonly directEdit = false,
+    readonly resolveReference?: ResolveReference,
   ) {
     super(src, pos, embed)
     this.table = table
@@ -439,8 +378,11 @@ export class TableWidget extends BlockWidget {
 
   eq(other: TableWidget) {
     // resolveSrc 不参与相等性：由宿主 facet 注入，只在编辑器配置重建时变化。
+    // 引用解析器**必须**参与：引用定义增删改只换 resolver 身份，src 一字不变。
     // 先比 src/embed（提交热路径必变，直接短路），相同才比较结构键。
-    return super.eq(other) && this.equalityKey === other.equalityKey
+    return super.eq(other)
+      && this.equalityKey === other.equalityKey
+      && this.resolveReference === other.resolveReference
   }
 
   // 滚动性能：整表一个块，缺省按一行行高估算会让视口换算严重过绘（见
@@ -468,6 +410,8 @@ export class TableWidget extends BlockWidget {
     const body = dom.querySelector<HTMLElement>(".omd-block-body")
     const cells = tableCellElements(body ?? dom)
     if (cells.length === 0) return false
+    // resolver 身份变了：所有非活动格的渲染输入都变了（源码没变也一样）。
+    const referencesChanged = prev.resolveReference !== this.resolveReference
     const active = body ? tableInputControllers.get(body) : undefined
     const viewActive = viewInputControllers.get(view)
     this.view = view
@@ -495,7 +439,11 @@ export class TableWidget extends BlockWidget {
     if (active && !keepInput) {
       active.destroy()
       const el = cells[active.row]?.[active.column]
-      if (el) renderCellSlot(el, this.cellDataAt(active.row, active.column), this.resolveSrc)
+      if (el) {
+        renderCellSlot(
+          el, this.cellDataAt(active.row, active.column), this.resolveSrc, this.resolveReference,
+        )
+      }
     } else if (moveInput && viewActive && viewActive.host !== body) {
       viewActive.destroy()
       restoreTableCell(viewActive.host, viewActive.row, viewActive.column)
@@ -527,7 +475,9 @@ export class TableWidget extends BlockWidget {
         if (!keepCellInput) {
           const was = beforeRow?.cells[c] ?? null
           const now = afterRow?.cells[c] ?? null
-          if (was?.source !== now?.source) renderCellSlot(el, now, this.resolveSrc)
+          if (referencesChanged || was?.source !== now?.source) {
+            renderCellSlot(el, now, this.resolveSrc, this.resolveReference)
+          }
         }
         const align = after.aligns[c] ?? ""
         if (align) el.style.textAlign = align
@@ -712,7 +662,7 @@ export class TableWidget extends BlockWidget {
     const hr = document.createElement("tr")
     for (const [i, c] of this.table.header.cells.entries()) {
       const th = document.createElement("th")
-      renderCellSlot(th, c ?? null, this.resolveSrc)
+      renderCellSlot(th, c ?? null, this.resolveSrc, this.resolveReference)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
       if (c) this.bindCellHover(el, th, 0, i)
       hr.appendChild(th)
@@ -725,7 +675,7 @@ export class TableWidget extends BlockWidget {
       for (let i = 0; i < this.table.header.cells.length; i++) {
         const cell = row.cells[i]
         const td = document.createElement("td")
-        renderCellSlot(td, cell ?? null, this.resolveSrc)
+        renderCellSlot(td, cell ?? null, this.resolveSrc, this.resolveReference)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
         // ragged 行的合成占位格没有源码槽：不参与工具栏目标（点它无事可做）。
         if (cell) this.bindCellHover(el, td, r + 1, i)

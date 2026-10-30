@@ -1,0 +1,177 @@
+[
+  {
+    "name": "css-font-weight-bold-to-strong",
+    "html": "<p><span style=\"font-weight:700\">bold via css</span></p>",
+    "plainText": "bold via css",
+    "context": "paragraph",
+    "expectedMarkdown": "**bold via css**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-font-weight-600-to-strong",
+    "html": "<p><span style=\"font-weight:600\">six hundred</span></p>",
+    "plainText": "six hundred",
+    "context": "paragraph",
+    "expectedMarkdown": "**six hundred**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-font-style-italic-to-emphasis",
+    "html": "<p><span style=\"font-style:italic\">italic via css</span></p>",
+    "plainText": "italic via css",
+    "context": "paragraph",
+    "expectedMarkdown": "*italic via css*",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-text-decoration-underline-to-u",
+    "html": "<p><span style=\"text-decoration-line:underline\">underlined</span></p>",
+    "plainText": "underlined",
+    "context": "paragraph",
+    "expectedMarkdown": "<u>underlined</u>",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-text-decoration-line-through-to-strike",
+    "html": "<p><span style=\"text-decoration-line:line-through\">struck</span></p>",
+    "plainText": "struck",
+    "context": "paragraph",
+    "expectedMarkdown": "~~struck~~",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-nested-italic-bold-markers",
+    "html": "<p><span style=\"font-style:italic\"><span style=\"font-weight:700\">both</span></span></p>",
+    "plainText": "both",
+    "context": "paragraph",
+    "expectedMarkdown": "***both***",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "css-color-only-span-dropped",
+    "html": "<p><span style=\"color:#111111\">plain words</span></p>",
+    "plainText": "plain words",
+    "context": "paragraph",
+    "expectedMarkdown": "plain words",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "css-color-background-font-size-span-dropped",
+    "html": "<p><span style=\"color:#111111;background-color:#ffffff;font-size:15px\">plain words</span></p>",
+    "plainText": "plain words",
+    "context": "paragraph",
+    "expectedMarkdown": "plain words",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 3
+      }
+    ]
+  },
+  {
+    "name": "css-bold-with-dropped-color",
+    "html": "<p><span style=\"color:#111111;font-weight:700\">loud</span></p>",
+    "plainText": "loud",
+    "context": "paragraph",
+    "expectedMarkdown": "**loud**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "css-class-and-data-attributes-dropped",
+    "html": "<p class=\"MsoNormal\" data-block=\"1\" style=\"margin:0 0 8pt\">Plain paragraph</p>",
+    "plainText": "Plain paragraph",
+    "context": "lineStart",
+    "expectedMarkdown": "Plain paragraph",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "word-wrapper-noise-plain-body",
+    "html": "<div class=WordSection1><p class=MsoNormal><span style='font-size:11.0pt;font-family:\"Calibri\",sans-serif'>Word body text</span></p></div>",
+    "plainText": "Word body text",
+    "context": "lineStart",
+    "expectedMarkdown": "Word body text",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 2
+      }
+    ]
+  },
+  {
+    "name": "word-bold-run-through-wrapper",
+    "html": "<div class=WordSection1><p class=MsoNormal><b>Bold</b> and <span style='font-size:11.0pt'>plain</span></p></div>",
+    "plainText": "Bold and plain",
+    "context": "lineStart",
+    "expectedMarkdown": "**Bold** and plain",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "docs-wrapper-noise-plain-body",
+    "html": "<div id=\"docs-internal-guid-8f2c1a\" dir=\"ltr\"><p dir=\"ltr\"><span style=\"font-size:11pt;font-family:Arial;color:#000000;background-color:transparent\">Docs body text</span></p></div>",
+    "plainText": "Docs body text",
+    "context": "lineStart",
+    "expectedMarkdown": "Docs body text",
+    "expectedPath": "plain",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "name": "docs-bold-span-with-dropped-font",
+    "html": "<div id=\"docs-internal-guid-8f2c1a\" dir=\"ltr\"><p dir=\"ltr\"><span style=\"font-weight:700;font-size:11pt\">Docs bold</span></p></div>",
+    "plainText": "Docs bold",
+    "context": "lineStart",
+    "expectedMarkdown": "**Docs bold**",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": [
+      {
+        "kind": "droppedStyle",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "semantic-tags-survive-noise",
+    "html": "<div class=\"word-noise\"><p class=\"MsoNormal\"><u>under</u> and <kbd>Ctrl</kbd></p></div>",
+    "plainText": "under and Ctrl",
+    "context": "paragraph",
+    "expectedMarkdown": "<u>under</u> and <kbd>Ctrl</kbd>",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  }
+]

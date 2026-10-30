@@ -561,7 +561,7 @@ fn edit_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Re
         .cut_with_text(l.cut)
         .copy_with_text(l.copy)
         .paste_with_text(l.paste)
-        .item(&item(app, "paste-plain-text", l.paste_plain_text, None)?)
+        .item(&item(app, "paste-plain-text", l.paste_plain_text, Some("CmdOrCtrl+Shift+V"))?)
         .select_all_with_text(l.select_all)
         .separator()
         .item(&find_submenu(app, l)?)

@@ -13,18 +13,22 @@
 ## Global Constraints
 
 - Complex table is additive; the common Smart Paste cutover does not depend on this plan.
+- Start only after Plans 01–03 pass their real-platform gates and merged-table preservation is explicitly prioritized.
 - No blank physical line may occur inside canonical `<table>…</table>` source.
 - Never stitch multiple `HTMLBlock`/Paragraph siblings into one logical table.
 - Only table structure and a fixed inline subset are accepted; no arbitrary tag, style, class, id, `data-*`, event, script, media, or iframe.
 - Rendering uses typed nodes and DOM APIs/escaped output, never raw clipboard/source `innerHTML`.
 - Complex table never enters Markdown TableWidget edit/toolbar/range-edit protocols.
 - Every block-widget infrastructure gate is mandatory.
+- Canonical serialization alone is insufficient: final insertion must isolate the Type 6 block with blank lines and place the caret outside it.
+- Table header scope and resolved image assets must survive the Paste AST boundary; never reconstruct lost attributes or substitute unresolved asset keys as URLs.
 - Keep the typed parser, serializer, and widget in separate focused modules. `decorations/blocks.ts` receives only thin dispatch, and the existing large Markdown-table widget is not extended with complex-table logic.
 
 ## File Map
 
 - Create `packages/engine/src/parse/complexTable.ts`: typed model plus fail-closed persisted-source parser.
 - Create `packages/engine/src/paste/serializeComplexTable.ts`: Paste AST → canonical HTML.
+- Modify `packages/engine/src/paste/blockBoundaries.ts` and `smartPaste.ts`: final HTML-block isolation and unsupported-host fallback before the single validation parse.
 - Create `packages/engine/src/decorations/widgets/complexTable.ts`: read-only rendered block with source entry.
 - Modify block-decoration, selection, navigation, height, export, and CSS layers explicitly.
 
@@ -36,9 +40,14 @@
 - Create: `packages/engine/src/parse/complexTable.ts`
 - Create: `packages/engine/src/paste/serializeComplexTable.ts`
 - Modify: `packages/engine/src/paste/serialize.ts`
+- Modify: `packages/engine/src/paste/model.ts`
+- Modify: `packages/engine/src/paste/blockBoundaries.ts`
+- Modify: `packages/engine/src/paste/smartPaste.ts`
 - Create: `packages/engine/test/complexTableParse.test.ts`
 - Create: `packages/engine/test/complexTableSerialize.test.ts`
 - Test: `packages/engine/test/pasteSerialize.test.ts`
+- Test: `packages/engine/test/pasteBoundaries.test.ts`
+- Test: `packages/engine/test/smartPaste.test.ts`
 
 **Interfaces:**
 - Produces:
@@ -67,41 +76,59 @@ export interface ComplexTableModel {
 }
 
 export function parseComplexTableBlock(source: string): ComplexTableModel | null
-export function serializeComplexTable(table: PasteTable): string
+export function serializeComplexTable(
+  table: PasteTable,
+  options: SerializePasteOptions,
+): SerializedPaste
 ```
 
-- [ ] **Step 1: Add failing canonical round-trip tests**
+Consume `PasteTableCell.scope` and `SerializePasteOptions.resolveAsset` from Plan 02. Extend `PasteBoundary.end` with `"htmlBlock"`; the table serializer returns `{ start: "block", end: "htmlBlock" }`. The serialized `.text` contains only the canonical table, with no trailing blank line inside its source; the host boundary planner supplies separation outside it.
 
-Use a table with header cells, `rowspan=2`, `colspan=2`, underline, kbd, inline code, titled link, image alt/title, and `<br>`. Assert:
+- [x] **Step 1: Add failing canonical round-trip tests**
+
+Use a PasteTable fixture with header cells carrying distinct row/col scopes, `rowspan=2`, `colspan=2`, underline, kbd, inline code, titled link, URL and embedded images with alt/title, and `<br>`. Supply a fixed asset resolver and assert:
 
 - serialization is deterministic and contains no `\n\s*\n`;
 - the base Markdown parser returns exactly one `HTMLBlock`;
-- `parseComplexTableBlock(serializeComplexTable(model))` returns the expected typed model;
+- `parseComplexTableBlock(serializeComplexTable(table, options).text)` returns the human-authored ComplexTableModel expectation, including scope and resolved relative image paths;
+- an unresolved embedded/unavailable image produces escaped alt text and an `unresolvedAsset` diagnostic, never its key or a data/blob/file URL;
 - output contains no `style=`, `class=`, `id=`, `data-`, or event attributes.
 
-- [ ] **Step 2: Add failing rejection tests**
+- [x] **Step 2: Add failing rejection tests**
 
 Assert `null` for blank-line-split tables, missing close tag, extra root siblings, invalid/huge spans, overlapping grid occupancy, unknown tags, script/style/svg/form/media, unsafe URLs, unknown attributes, nested table, and text outside the table root.
 
-- [ ] **Step 3: Run tests and verify RED**
+Add final-planner cases, not just isolated serializer tests:
 
-```bash
-pnpm --filter @omd/engine exec vitest run test/complexTableParse.test.ts test/complexTableSerialize.test.ts
+```ts
+// canonical is the serializer's exact table text, without trailing blank lines.
+expect(planAt("helloworld", 5, table).text).toBe(`\n\n${canonical}\n\n`)
+expect(planAt("", 0, table).text).toBe(`${canonical}\n\n`)
 ```
 
-- [ ] **Step 4: Implement typed parse and canonical output**
+`planAt` is a test-local wrapper around `planSmartPaste` with a prepared one-table document. Assert the resulting document has one complete table HTMLBlock, intact `hello`/`world` siblings, and caret at `from + plan.text.length` strictly beyond the HTMLBlock range. Cover BOF, EOF, a line start after nonblank text, selected text, and a table followed by another imported block. For list/quote or unavailable host context that cannot safely isolate canonical HTML, expect strict visible-cell-text fallback plus one downgrade notice, not malformed nested HTML or silent list/quote exit.
 
-Use detached DOM parsing only to read source. Rebuild a fresh typed model, cap spans with named constants, validate the occupied cell grid, normalize allowed enum attributes, and apply `paste/urlPolicy.ts`. Unsupported cell blocks flatten to text/breaks during Paste AST normalization; persisted unknown HTML fails closed.
-
-Emit one tag line per structural element with no empty line. Escape text/attributes; emit only the fixed inline tags. After this plan lands, update `serialize.ts` so `requiresComplexHtml` tables use this serializer instead of the temporary visible-text downgrade; cell blocks outside the closed inline subset flatten deterministically to visible text and `<br>`.
-
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 3: Run tests and verify RED**
 
 ```bash
-pnpm --filter @omd/engine exec vitest run test/complexTableParse.test.ts test/complexTableSerialize.test.ts test/pasteSerialize.test.ts
+pnpm --filter @omd/engine exec vitest run test/complexTableParse.test.ts test/complexTableSerialize.test.ts test/pasteBoundaries.test.ts test/smartPaste.test.ts
+```
+
+- [x] **Step 4: Implement typed parse and canonical output**
+
+Before detached DOM parsing, require the complete single table source envelope, including its explicit closing table tag and no blank physical lines or outside content. Do not treat DOMParser's automatic repair as proof that the original source was closed. Rebuild a fresh typed model, cap spans with named constants, validate the occupied cell grid, normalize allowed enum attributes, and apply `paste/urlPolicy.ts`. Flatten unsupported PasteTable cell blocks to text/breaks while lowering to the closed complex-table model; persisted unknown HTML fails closed.
+
+Emit one tag line per structural element with no empty line. Escape text/attributes; emit only the fixed inline tags. Resolve embedded/unavailable image keys through the supplied resolver before encoding HTML; unresolved images become alt text with diagnostics. Read scope from the AST rather than guessing it from cell position. Update `serialize.ts` so representable `requiresComplexHtml` tables use this serializer; unsupported cell blocks flatten deterministically to visible text and `<br>`, and unsupported host contexts still use whole-fragment strict text fallback.
+
+Extend `normalizeBlockPaste`'s typed boundary path for `"htmlBlock"` before validation: isolate a leading table from surrounding paragraph text with a blank line, and end a trailing table with `\n\n` outside the canonical source so Type 6 cannot absorb the following paragraph and the caret is outside the block. The serializer also uses blank-line separators between an internal table and the next imported block. Do not infer this only from the old fence/table-row regexes or append a single opaque-block newline. The final candidate, including these separators, is the one parsed by `planSmartPaste`; no boundary edits happen afterward.
+
+- [x] **Step 5: Run tests and commit**
+
+```bash
+pnpm --filter @omd/engine exec vitest run test/complexTableParse.test.ts test/complexTableSerialize.test.ts test/pasteSerialize.test.ts test/pasteBoundaries.test.ts test/smartPaste.test.ts
 pnpm test
 git diff --check
-git add packages/engine/src/parse/complexTable.ts packages/engine/src/paste/serializeComplexTable.ts packages/engine/src/paste/serialize.ts packages/engine/test/complexTableParse.test.ts packages/engine/test/complexTableSerialize.test.ts packages/engine/test/pasteSerialize.test.ts
+git add packages/engine/src/parse/complexTable.ts packages/engine/src/paste/serializeComplexTable.ts packages/engine/src/paste/serialize.ts packages/engine/src/paste/model.ts packages/engine/src/paste/blockBoundaries.ts packages/engine/src/paste/smartPaste.ts packages/engine/test/complexTableParse.test.ts packages/engine/test/complexTableSerialize.test.ts packages/engine/test/pasteSerialize.test.ts packages/engine/test/pasteBoundaries.test.ts packages/engine/test/smartPaste.test.ts
 git commit -m "feat: serialize closed complex tables"
 ```
 
@@ -112,7 +139,6 @@ git commit -m "feat: serialize closed complex tables"
 - Modify: `packages/engine/src/decorations/blocks.ts`
 - Modify: `packages/engine/src/decorations/build.ts`
 - Modify: `packages/engine/src/decorations/widgetHeights.ts`
-- Modify: `packages/engine/src/navigation/blockEntry.ts`
 - Modify: `apps/desktop/src/styles.css`
 - Create: `packages/engine/test/complexTableWidget.test.ts`
 - Test: `packages/engine/test/widgetHeights.test.ts`
@@ -127,25 +153,25 @@ git commit -m "feat: serialize closed complex tables"
 export function estimateComplexTableHeightPx(table: ComplexTableModel): number
 ```
 
-- [ ] **Step 1: Add the block-infrastructure gate tests**
+- [x] **Step 1: Add the block-infrastructure gate tests**
 
 Assert a valid single `HTMLBlock` emits `widget:block:complex-table`; caret at either boundary shows source; moving out mounts the widget; ArrowUp/Down enters the first/last source position; a full selection keeps the widget and adds `omd-block-covered`; two identical tables keep distinct ranges; invalid/split HTML emits no widget. Assert the source-entry control is keyboard-focusable with an accessible name, `th` keeps the validated `scope`, images expose the shared alt, and hidden source plus projected table are not both exposed to assistive technology.
 
 Extend `widgetHeights.test.ts` so its “every mounted block widget” list includes complex table and a 20-row/wrapped-cell case has a materially larger estimate than a 2-row table.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ```bash
 pnpm --filter @omd/engine exec vitest run test/complexTableWidget.test.ts test/widgetHeights.test.ts test/navigation.test.ts test/view.test.ts test/specIdentity.test.ts
 ```
 
-- [ ] **Step 3: Implement the widget and all five registrations**
+- [x] **Step 3: Implement the widget and all five registrations**
 
 In `blocks.ts`, handle `HTMLBlock` only when `parseComplexTableBlock` succeeds. Construct table elements/cells with DOM APIs and `textContent`; apply rowSpan/colSpan/scope/align properties from enums/validated integers.
 
-Register `HTMLBlock` selection rebuilding only for the complex-table branch (refactor the current set to a predicate/registry if adding every generic HTMLBlock would broaden work), add content-aware height estimation, add `blockEntryPosition`, retain generic covered-overlay registration, and inherit the existing render budget/click-to-source/embed lifecycle.
+Add `"HTMLBlock"` directly to `SELECTION_BLOCKS` in `decorations/build.ts` (one token; do not invent a separate predicate/registry abstraction), add content-aware height estimation in `widgetHeights.ts`, verify that existing `blockEntryPosition` in `navigation/blockEntry.ts` already lands on the first (`<table>`) and last (`</table>`) lines without code changes, retain generic covered-overlay registration, and inherit the existing render budget/click-to-source/embed lifecycle.
 
-- [ ] **Step 4: Add desktop CSS and run cross-layer checks**
+- [x] **Step 4: Add desktop CSS and run cross-layer checks**
 
 Style `.omd-complex-table` with theme variables and the same typography/overflow principles as `.omd-table`; do not expose the Markdown table toolbar or direct-edit affordances.
 
@@ -156,10 +182,10 @@ pnpm --filter @omd/desktop build
 git diff --check
 ```
 
-- [ ] **Step 5: Commit the widget unit**
+- [x] **Step 5: Commit the widget unit**
 
 ```bash
-git add packages/engine/src/decorations/widgets/complexTable.ts packages/engine/src/decorations/blocks.ts packages/engine/src/decorations/build.ts packages/engine/src/decorations/widgetHeights.ts packages/engine/src/navigation/blockEntry.ts apps/desktop/src/styles.css packages/engine/test/complexTableWidget.test.ts packages/engine/test/widgetHeights.test.ts packages/engine/test/navigation.test.ts packages/engine/test/view.test.ts packages/engine/test/specIdentity.test.ts
+git add packages/engine/src/decorations/widgets/complexTable.ts packages/engine/src/decorations/blocks.ts packages/engine/src/decorations/build.ts packages/engine/src/decorations/widgetHeights.ts apps/desktop/src/styles.css packages/engine/test/complexTableWidget.test.ts packages/engine/test/widgetHeights.test.ts packages/engine/test/navigation.test.ts packages/engine/test/view.test.ts packages/engine/test/specIdentity.test.ts
 git commit -m "feat: render complex table blocks safely"
 ```
 
@@ -174,19 +200,21 @@ git commit -m "feat: render complex table blocks safely"
 **Interfaces:**
 - Both exporters consume `ComplexTableModel`; neither passes the source HTML through.
 
-- [ ] **Step 1: Add failing exporter tests**
+- [x] **Step 1: Add failing exporter tests**
 
 Assert sync/rich export preserve table structure, spans, scope, align, inline semantics, links, images, alt, and breaks. Assert dangerous source that fails typed parsing is HTML-escaped/visible rather than active. Assert source bytes are unchanged after both exports.
 
-- [ ] **Step 2: Implement exhaustive typed exporters**
+- [x] **Step 2: Implement exhaustive typed exporters**
 
 Create escaped HTML from the typed model. Rich export may resolve local image sources but cannot add a second table parser or trust raw attributes.
 
-- [ ] **Step 3: Add real-browser interaction E2E**
+- [x] **Step 3: Add real-browser interaction E2E**
 
 Assert initial render, click/keyboard source entry, accessible name/header scope/image alt, ArrowUp/Down entry, Cmd/Ctrl+A covered overlay, readOnly behavior, horizontal overflow, dark mode, same-content double instance identity, and source fallback after inserting a blank line inside the table.
 
-- [ ] **Step 4: Run focused/full checks and commit**
+Paste a merged table into an empty document and into the middle of `helloworld` through the real desktop controller. Assert immediate widget render without an extra Enter, intact surrounding paragraphs, a caret outside the replaced range and one undo restoring the original document. Cover a mixed imported fragment ending in a table and the visible-text fallback inside list/quote hosts.
+
+- [x] **Step 4: Run focused/full checks and commit**
 
 ```bash
 pnpm --filter @omd/engine exec vitest run test/export.test.ts test/export-rich.test.ts
@@ -209,15 +237,15 @@ git commit -m "feat: export and navigate complex tables"
 **Interfaces:**
 - Documents canonical Type 6/no-blank-line ownership and the complete block-widget checklist.
 
-- [ ] **Step 1: Record permanent constraints**
+- [x] **Step 1: Record permanent constraints**
 
 Add the verified CommonMark/Lezer split behavior, no sibling stitching, fixed allowlist, source fallback, no Markdown table toolbar, and all five block-widget registrations.
 
-- [ ] **Step 2: Add manual QA**
+- [x] **Step 2: Add manual QA**
 
 Cover Word/Sheets merged tables, nested formatting, links/images, blank-line edit fallback, Source/Live byte stability, PDF/PNG/HTML export, keyboard entry, select-all overlay, dark mode, and malformed/XSS samples.
 
-- [ ] **Step 3: Run the complex-table release gate**
+- [x] **Step 3: Run the complex-table release gate**
 
 ```bash
 pnpm test
@@ -225,10 +253,12 @@ pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
 PW_PORT=9483 pnpm --filter @omd/desktop test:e2e -- e2e/complex-table.spec.ts
 pnpm --filter @omd/engine bench
+pnpm check:quality
+pnpm verify
 git diff --check
 ```
 
-- [ ] **Step 4: Commit documentation**
+- [x] **Step 4: Commit documentation**
 
 ```bash
 git add packages/engine/AGENTS.md docs/memory/known-gotchas.md docs/memory/gotchas-engine.md docs/manual-qa.md

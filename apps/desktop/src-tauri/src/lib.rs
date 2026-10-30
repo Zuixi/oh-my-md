@@ -3,6 +3,7 @@ mod documents;
 mod export;
 mod fonts;
 mod menu;
+mod paste_assets;
 mod session_flush;
 mod watcher;
 mod windows;
@@ -14,12 +15,9 @@ use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-const MAX_ENCODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
 const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
 const MAX_RECENT_FILES: usize = 10;
-const ASSETS_DIR_NAME: &str = "assets";
 
 #[tauri::command]
 async fn read_file(path: String) -> Result<String, String> {
@@ -468,48 +466,6 @@ fn create_editor_window(
 }
 
 #[tauri::command]
-async fn write_image(path: String, base64: String, document_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_image_impl(&path, &base64, &document_path))
-        .await
-        .map_err(|error| format!("image write task failed: {error}"))?
-}
-
-fn write_image_impl(path: &str, base64: &str, document_path: &str) -> Result<(), String> {
-    use base64::Engine;
-
-    let target = Path::new(path);
-    let document = Path::new(document_path);
-    validate_image_target(target, document)?;
-    if base64.len() > MAX_ENCODED_IMAGE_BYTES {
-        return Err(format!(
-            "encoded image exceeds the {} byte size limit",
-            MAX_ENCODED_IMAGE_BYTES
-        ));
-    }
-
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64)
-        .map_err(|e| format!("invalid image base64: {e}"))?;
-    if bytes.len() > MAX_IMAGE_BYTES {
-        return Err(format!(
-            "image exceeds the {} byte size limit",
-            MAX_IMAGE_BYTES
-        ));
-    }
-    validate_image_format(target, &bytes)?;
-
-    let assets_dir = target
-        .parent()
-        .ok_or_else(|| "image target must have a parent directory".to_string())?;
-    std::fs::create_dir_all(assets_dir)
-        .map_err(|e| format!("failed to create image assets directory: {e}"))?;
-    reject_symlink_directory(assets_dir)?;
-    validate_document_assets_directory(assets_dir, document)?;
-
-    atomic_write(target, &bytes)
-}
-
-#[tauri::command]
 async fn list_dir(path: String) -> Result<Vec<workspace::DirEntry>, String> {
     workspace::list_dir(path).await
 }
@@ -788,68 +744,6 @@ fn save_backup_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name(format!(".{}-{}.omd-save-backup", std::process::id(), nanos))
 }
 
-fn validate_image_target(target: &Path, document_path: &Path) -> Result<(), String> {
-    if !target.is_absolute() {
-        return Err("image target must be an absolute path".into());
-    }
-    if target
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-    {
-        return Err("image target must not contain path traversal".into());
-    }
-
-    let assets_dir = target
-        .parent()
-        .ok_or_else(|| "image target must have a parent directory".to_string())?;
-    if assets_dir.file_name().and_then(|name| name.to_str()) != Some(ASSETS_DIR_NAME) {
-        return Err("image target must be a direct child of an assets directory".into());
-    }
-
-    if !document_path.is_absolute()
-        || document_path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-    {
-        return Err("document path must be an absolute path without traversal".into());
-    }
-    let expected_assets = document_path
-        .parent()
-        .ok_or_else(|| "document path must have a parent directory".to_string())?
-        .join(ASSETS_DIR_NAME);
-    if assets_dir != expected_assets {
-        return Err("image target must be inside the current document's assets directory".into());
-    }
-
-    Ok(())
-}
-
-fn reject_symlink_directory(directory: &Path) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(directory)
-        .map_err(|e| format!("failed to inspect image assets directory: {e}"))?;
-    if metadata.file_type().is_symlink() {
-        return Err("image assets directory must not be a symbolic link".into());
-    }
-    Ok(())
-}
-
-fn validate_document_assets_directory(
-    assets_dir: &Path,
-    document_path: &Path,
-) -> Result<(), String> {
-    let document_dir = document_path
-        .parent()
-        .ok_or_else(|| "document path must have a parent directory".to_string())?;
-    let canonical_document_dir = std::fs::canonicalize(document_dir)
-        .map_err(|e| format!("failed to resolve document directory: {e}"))?;
-    let canonical_assets_dir = std::fs::canonicalize(assets_dir)
-        .map_err(|e| format!("failed to resolve image assets directory: {e}"))?;
-    if canonical_assets_dir != canonical_document_dir.join(ASSETS_DIR_NAME) {
-        return Err("image assets directory resolves outside the document directory".into());
-    }
-    Ok(())
-}
-
 fn workspace_directory(path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute()
         || path
@@ -873,27 +767,6 @@ fn document_directory_for_assets(document_path: &Path) -> Result<PathBuf, String
         .parent()
         .ok_or_else(|| "document path must have a parent directory".to_string())?;
     std::fs::canonicalize(parent).map_err(|e| format!("failed to resolve document directory: {e}"))
-}
-
-fn validate_image_format(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| "image target must have a supported extension".to_string())?;
-
-    let matches = match extension.as_str() {
-        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-        "jpg" | "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
-        "webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
-        _ => return Err("supported image extensions are png, jpg, jpeg, and webp".into()),
-    };
-    if !matches {
-        return Err(format!(
-            "image bytes do not match the .{extension} extension"
-        ));
-    }
-    Ok(())
 }
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -1152,7 +1025,9 @@ pub fn run() {
             write_file,
             watch_paths,
             write_png,
-            write_image,
+            paste_assets::write_paste_assets,
+            paste_assets::commit_paste_assets,
+            paste_assets::discard_paste_assets,
             allow_document_assets,
             list_dir,
             search_markdown,
@@ -1189,6 +1064,7 @@ pub fn run() {
             export::export_preview,
             fonts::list_system_fonts
         ])
+        .manage(paste_assets::PasteAssetState::default())
         .build(tauri::generate_context!())
         .expect("error while building oh-my-md")
         .run(|app, event| {
@@ -1274,20 +1150,6 @@ mod tests {
 
     fn encoded(bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(bytes)
-    }
-
-    fn prepare_document(name: &str) -> (PathBuf, PathBuf) {
-        let directory = tmp_path(name);
-        let document = directory.join("document.md");
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(&document, "# document").unwrap();
-        (directory, document)
-    }
-
-    fn document_image(name: &str, image_name: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let (directory, document) = prepare_document(name);
-        let image = directory.join("assets").join(image_name);
-        (directory, document, image)
     }
 
     #[test]
@@ -1415,195 +1277,6 @@ mod tests {
     #[test]
     fn read_missing_file_errors() {
         assert!(read_file_impl(&path_string(&tmp_path("does-not-exist.md"))).is_err());
-    }
-
-    #[test]
-    fn write_image_decodes_base64_and_creates_dirs() {
-        let (directory, document, path) = document_image("image-success", "pixel.png");
-
-        write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document),
-        )
-        .unwrap();
-
-        assert_eq!(fs::read(&path).unwrap(), PNG_BYTES);
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_accepts_jpeg_and_webp_signatures() {
-        let (directory, document) = prepare_document("image-formats");
-        let jpeg_path = directory.join("assets/photo.jpeg");
-        let webp_path = directory.join("assets/photo.webp");
-        let jpeg = b"\xff\xd8\xff\xe0jpeg";
-        let webp = b"RIFF\x04\x00\x00\x00WEBP";
-
-        write_image_impl(
-            &path_string(&jpeg_path),
-            &encoded(jpeg),
-            &path_string(&document),
-        )
-        .unwrap();
-        write_image_impl(
-            &path_string(&webp_path),
-            &encoded(webp),
-            &path_string(&document),
-        )
-        .unwrap();
-
-        assert_eq!(fs::read(jpeg_path).unwrap(), jpeg);
-        assert_eq!(fs::read(webp_path).unwrap(), webp);
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_accepts_current_documents_assets_directory() {
-        let (directory, document, image) = document_image("document-assets", "pixel.png");
-
-        write_image_impl(
-            &path_string(&image),
-            &encoded(PNG_BYTES),
-            &path_string(&document),
-        )
-        .unwrap();
-
-        assert_eq!(fs::read(image).unwrap(), PNG_BYTES);
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_another_documents_assets_directory() {
-        let (first_directory, document) = prepare_document("first-document");
-        let second_directory = tmp_path("second-document");
-        let image = second_directory.join("assets/pixel.png");
-
-        assert!(write_image_impl(
-            &path_string(&image),
-            &encoded(PNG_BYTES),
-            &path_string(&document),
-        )
-        .is_err());
-        assert!(!image.exists());
-        fs::remove_dir_all(first_directory).ok();
-        fs::remove_dir_all(second_directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_path_traversal() {
-        let (directory, document) = prepare_document("image-traversal");
-        let path = directory.join("assets/../pixel.png");
-
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        assert!(!directory.join("pixel.png").exists());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn write_image_rejects_symlinked_assets_directory() {
-        use std::os::unix::fs::symlink;
-
-        let (directory, document) = prepare_document("symlinked-assets");
-        let outside = tmp_path("symlinked-assets-outside");
-        let assets = directory.join("assets");
-        let image = assets.join("pixel.png");
-        fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, &assets).unwrap();
-
-        assert!(write_image_impl(
-            &path_string(&image),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        assert!(!outside.join("pixel.png").exists());
-        fs::remove_dir_all(directory).ok();
-        fs::remove_dir_all(outside).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_bad_base64() {
-        let (directory, document, path) = document_image("bad-base64", "x.png");
-        assert!(write_image_impl(
-            &path_string(&path),
-            "!!!not-base64!!!",
-            &path_string(&document)
-        )
-        .is_err());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_unsupported_extension() {
-        let (directory, document, path) = document_image("bad-extension", "x.gif");
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_mismatched_format() {
-        let (directory, document, path) = document_image("bad-format", "x.jpg");
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_destination_outside_assets() {
-        let (directory, document) = prepare_document("outside-assets");
-        let path = directory.join("pixel.png");
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        assert!(!path.exists());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_nested_destination_inside_assets() {
-        let (directory, document) = prepare_document("nested-assets");
-        let path = directory.join("assets/nested/pixel.png");
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(PNG_BYTES),
-            &path_string(&document)
-        )
-        .is_err());
-        assert!(!path.exists());
-        fs::remove_dir_all(directory).ok();
-    }
-
-    #[test]
-    fn write_image_rejects_oversized_decoded_payload() {
-        let (directory, document, path) = document_image("oversized", "large.png");
-        let payload = vec![0_u8; 10 * 1024 * 1024 + 1];
-        assert!(write_image_impl(
-            &path_string(&path),
-            &encoded(&payload),
-            &path_string(&document)
-        )
-        .is_err());
-        assert!(!path.exists());
-        fs::remove_dir_all(directory).ok();
     }
 
     #[test]

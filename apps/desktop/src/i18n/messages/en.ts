@@ -1,5 +1,13 @@
 export const en: Record<string, string> = {
   "image.broken": "🖼 {src} (failed to load)",
+  "paste.notice.richUnavailable": "Rich clipboard data was unavailable; pasted plain text",
+  "paste.notice.flavorUnavailable": "Some clipboard formats were unavailable",
+  "paste.notice.partialImages": "Some clipboard images could not be imported",
+  "paste.notice.saveBeforeImages": "Save the file before importing clipboard images",
+  "paste.notice.literalFallback": "Rich paste was inserted as visible text",
+  "paste.notice.commitUnconfirmed": "Images were inserted but cleanup metadata could not be confirmed",
+  "paste.notice.tableSimplified": "Merged table structure was simplified",
+  "paste.status.converting": "Converting pasted content…",
 
   "find.aria.find": "Find",
   "find.placeholder.find": "Find in document…",

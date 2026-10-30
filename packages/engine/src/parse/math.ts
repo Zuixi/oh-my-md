@@ -1,5 +1,6 @@
 import type { MarkdownConfig } from "@lezer/markdown"
 import { CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
+import { isEscaped } from "./scan"
 
 // ponytail: 只支持 $$...$$ 与 $...$（不支持 \[...\] / \(...\)）；未闭合的 $$
 // 块吞到 EOF（katex widget 会显示错误+原文）。行间规则仿 footnotes.ts。
@@ -47,12 +48,14 @@ export const Math: MarkdownConfig = {
     name: "InlineMath",
     before: "Link",
     parse(cx, next, pos) {
-      if (next != CHAR_DOLLAR) return -1
+      if (next != CHAR_DOLLAR || isEscaped(cx, pos)) return -1  // 被转义的 $ 是字面量
       const after = cx.char(pos + 1)
       if (after == CHAR_DOLLAR || after == CHAR_SPACE || after == CHAR_NEWLINE) return -1  // $$ 或 "$ " 或行尾
       let i = pos + 1
-      while (i < cx.end && cx.char(i) != CHAR_DOLLAR) {
-        if (cx.char(i) == CHAR_NEWLINE) return -1
+      while (i < cx.end) {
+        const c = cx.char(i)
+        if (c == CHAR_NEWLINE) return -1
+        if (c == CHAR_DOLLAR && !isEscaped(cx, i)) break  // 转义的 $ 留在内容里
         i++
       }
       if (i == pos + 1 || i >= cx.end || cx.char(i - 1) == CHAR_SPACE) return -1  // 空/未闭合/"x $"

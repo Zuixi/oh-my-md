@@ -5,6 +5,7 @@ import {
   CHAR_NEWLINE,
   CHAR_OPEN_BRACKET,
 } from "./chars"
+import { isEscaped } from "./scan"
 
 // ponytail: continuation lines must be indented >= 4 and directly adjacent;
 // a blank line still ends the definition (full CommonMark allows lazy/blank
@@ -46,9 +47,12 @@ export const Footnotes: MarkdownConfig = {
     before: "Link", // claim '[^' before the Link parser sees '['
     parse(cx, next, pos) {
       if (next != CHAR_OPEN_BRACKET || cx.char(pos + 1) != CHAR_CARET) return -1
+      if (isEscaped(cx, pos)) return -1 // 被转义的 '[' 是字面量
       let i = pos + 2
-      while (i < cx.end && cx.char(i) != CHAR_CLOSE_BRACKET) {
-        if (cx.char(i) == CHAR_OPEN_BRACKET || cx.char(i) == CHAR_NEWLINE) return -1 // no nested '[' or newline
+      while (i < cx.end) {
+        const c = cx.char(i)
+        if (c == CHAR_OPEN_BRACKET || c == CHAR_NEWLINE) return -1 // no nested '[' or newline
+        if (c == CHAR_CLOSE_BRACKET && !isEscaped(cx, i)) break // 转义的 ']' 留在标签里
         i++
       }
       if (i == pos + 2 || i >= cx.end) return -1 // empty label or unterminated

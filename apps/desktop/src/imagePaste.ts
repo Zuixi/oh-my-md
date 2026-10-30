@@ -1,7 +1,10 @@
-import { invoke } from "@tauri-apps/api/core"
 import { EditorView } from "@codemirror/view"
-import { ASSETS_DIR_NAME, MAX_IMAGE_BYTES } from "./constants"
-import { isWindows } from "./platform"
+import { MAX_IMAGE_BYTES } from "./constants"
+import {
+  fileToPasteAsset,
+  nativePasteAssetStore,
+  type PasteAssetStore,
+} from "./pasteAssets"
 
 const ACCEPTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const
 const EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
@@ -16,11 +19,7 @@ export interface ImagePasteOptions {
   getDocumentId: () => number
   onError: (message: string) => void
   readFile?: (file: File) => Promise<string>
-  writeImage?: (path: string, base64: string, documentPath: string) => Promise<void>
-}
-
-const defaultWriteImage = async (path: string, base64: string, documentPath: string) => {
-  await invoke("write_image", { path, base64, documentPath })
+  assetStore?: PasteAssetStore
 }
 
 function defaultPickImage(): Promise<File | null> {
@@ -65,107 +64,8 @@ function droppedImageFile(event: DragEvent): File | null {
 }
 
 export function imagePasteHandler(options: ImagePasteOptions) {
-  // Saved paste target from the most recent right-click contextmenu event.
-  // On macOS WebKit, right-click fires selectionchange before contextmenu,
-  // which causes CM to call skipAtomsForSelection and potentially expand the
-  // CM selection to cover 2 or more lines.  By the time "paste" fires the
-  // expanded selection is baked into CM state, so CM's own doPaste replaces
-  // those lines instead of inserting at the cursor (bug: 2 lines disappear).
-  //
-  // We work around this by capturing the right-click coordinates in the
-  // contextmenu handler and converting them to a CM document position via
-  // posAtCoords — pixel coordinates are independent of native-selection state
-  // so we get the true click position even after the corruption has occurred.
-  // The paste handler then uses that position for text paste and returns true,
-  // preventing CM's corrupted-selection handler from running at all.
-  //
-  // Keyboard paste (Ctrl/Cmd-V) is unaffected: contextMenuTarget stays null
-  // and we fall through to CM's default handler unchanged.
-  let contextMenuTarget: { from: number; to: number } | null = null
-
   return [
-    // The saved target is only valid while the selection still sits on it.
-    // Without this, right-click (without pasting) followed by moving the
-    // caret and pressing Ctrl/Cmd-V pastes at the stale right-click position
-    // instead of the current caret.
-    EditorView.updateListener.of(update => {
-      if (!contextMenuTarget || !update.selectionSet) return
-      const sel = update.state.selection.main
-      if (sel.from !== contextMenuTarget.from || sel.to !== contextMenuTarget.to) {
-        contextMenuTarget = null
-      }
-    }),
     EditorView.domEventHandlers({
-      contextmenu(event, view) {
-        const clickPos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-        if (clickPos !== null) {
-          // If the user right-clicked inside an existing non-empty selection,
-          // preserve that selection so paste can replace it as expected.
-          const sel = view.state.selection.main
-          if (!sel.empty && clickPos >= sel.from && clickPos <= sel.to) {
-            contextMenuTarget = { from: sel.from, to: sel.to }
-          } else {
-            // Otherwise use the click point as a collapsed cursor.
-            contextMenuTarget = { from: clickPos, to: clickPos }
-            // The selectionchange dispatch works around a WKWebView bug (WebKit-family
-            // engines only); WebView2 is Chromium and must keep native caret behavior.
-            if (!isWindows()) {
-              view.dispatch({ selection: { anchor: clickPos } })
-            }
-          }
-        } else {
-          contextMenuTarget = null
-        }
-        return false
-      },
-
-      paste(event, view) {
-        if (view.state.readOnly) {
-          contextMenuTarget = null
-          return true
-        }
-        const items = Array.from(event.clipboardData?.items ?? [])
-        const imageItem = items.find(i => i.type.startsWith("image/"))
-
-        if (imageItem) {
-          // Image paste: same as before; clear contextMenuTarget and delegate to
-          // pasteImage which captures the selection itself.
-          event.preventDefault()
-          contextMenuTarget = null
-          const file = imageItem.getAsFile()
-          if (!file) return true
-          void pasteImage(file, view, options, imageItem.type)
-          return true
-        }
-
-        // Text paste via context menu: bypass CM's doPaste entirely so it never
-        // uses the WebKit-corrupted selection.
-        const savedTarget = contextMenuTarget
-        contextMenuTarget = null
-
-        if (savedTarget !== null) {
-          const text =
-            event.clipboardData?.getData("text/plain") ||
-            event.clipboardData?.getData("text/uri-list") ||
-            ""
-          if (text) {
-            event.preventDefault()
-            view.dispatch({
-              changes: { from: savedTarget.from, to: savedTarget.to, insert: text },
-              // Explicit selection: without one CM maps the old cursor with
-              // assoc -1 and it stays before the pasted text instead of after.
-              selection: { anchor: savedTarget.from + text.length },
-              userEvent: "input.paste",
-              scrollIntoView: true,
-            })
-            return true
-          }
-        }
-
-        // Keyboard paste (no contextmenu): fall through to CM's default handler.
-        return false
-      },
-
       drop(event, view) {
         return handleImageDrop(event, view, options)
       },
@@ -218,11 +118,7 @@ export async function insertImageFile(
   const documentId = options.getDocumentId()
   const document = view.state.doc
   const selection = range ?? view.state.selection.main
-  const normalizedPath = docPath.replace(/\\/g, "/")
-  const dir = normalizedPath.slice(0, normalizedPath.lastIndexOf("/") + 1)
   const id = crypto.randomUUID()
-  const name = `pasted-${id}.${extension}`
-  const relativePath = `${ASSETS_DIR_NAME}/${name}`
 
   const isCurrentDocument = () =>
     options.getDocPath() === docPath &&
@@ -237,20 +133,32 @@ export async function insertImageFile(
         options.onError("Document changed before the image could be inserted")
         return
       }
-      await (options.writeImage ?? defaultWriteImage)(
-        `${dir}${relativePath}`,
+      let batchId: string | null = null
+      let persistedPath: string
+      const store = options.assetStore ?? nativePasteAssetStore
+      const batch = await store.write(docPath, [{
+        key: id,
+        mime,
         base64,
-        docPath,
-      )
+      }])
+      batchId = batch.batchId
+      const result = batch.items[0]
+      if (!result) {
+        const failure = batch.failures[0]?.kind ?? "invalidData"
+        options.onError(`Image insert failed: ${failure}`)
+        return
+      }
+      persistedPath = result.relativePath
 
       if (!isCurrentDocument()) {
+        if (batchId) await (options.assetStore ?? nativePasteAssetStore).discard(batchId)
         options.onError(
           "Document changed after the image was saved; reference was not inserted",
         )
         return
       }
 
-      const markdown = `![](${relativePath})`
+      const markdown = `![](${persistedPath})`
       view.dispatch({
         changes: {
           from: selection.from,
@@ -263,6 +171,14 @@ export async function insertImageFile(
         selection: { anchor: selection.from + markdown.length },
         scrollIntoView: true,
       })
+      if (batchId) {
+        try {
+          await (options.assetStore ?? nativePasteAssetStore).commit(batchId)
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          options.onError(`Image inserted but asset cleanup metadata failed: ${detail}`)
+        }
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       options.onError(`Image insert failed: ${detail}`)
@@ -316,22 +232,6 @@ export async function pickAndInsertImage(
   await insertImageFile(file, view, options, file.type, selection)
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => {
-      if (typeof r.result !== "string") {
-        reject(new Error("FileReader returned no data"))
-        return
-      }
-      const separator = r.result.indexOf(",")
-      if (separator < 0) {
-        reject(new Error("FileReader returned invalid data"))
-        return
-      }
-      resolve(r.result.slice(separator + 1))
-    }
-    r.onerror = () => reject(r.error ?? new Error("FileReader failed"))
-    r.readAsDataURL(file)
-  })
+async function fileToBase64(file: File): Promise<string> {
+  return (await fileToPasteAsset(file, "image")).base64
 }

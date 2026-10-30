@@ -18,6 +18,9 @@ import {
   type OutlineItem,
 } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
+import { clipboardPasteExtension } from "./clipboardPaste"
+import { pasteBookmarkExtension } from "./pasteBookmark"
+import { pastePlainText } from "./pastePlainText"
 import { typewriterExtension } from "./typewriter"
 import { tightSelection } from "./tightSelection"
 import { isMacOS } from "./platform"
@@ -51,8 +54,11 @@ export interface CreateEditorOptions {
   documentId: number
   getDocPath: () => string | null
   getDocumentId: () => number
+  getTabId?: () => number
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
+  onNotice?: (message: string) => void
+  onConvertingChange?: (active: boolean) => void
   onOpenMarkdownHref?: (href: string) => void
   onOpenExternalHref?: (href: string) => void
   tabSize?: number
@@ -215,6 +221,27 @@ function createEditorState(
       dropCursor(),
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
+      pasteBookmarkExtension,
+      clipboardPasteExtension({
+        getTabId: options.getTabId ?? (() => options.tabId),
+        getDocPath: options.getDocPath,
+        getDocumentId: options.getDocumentId,
+        onError: options.onError,
+        onNotice: options.onNotice ?? options.onError,
+        onConvertingChange: options.onConvertingChange ?? (() => {}),
+      }),
+      keymap.of([{
+        key: "Mod-Shift-v",
+        run: view => {
+          void pastePlainText(view, {
+            getTabId: options.getTabId ?? (() => options.tabId),
+            getDocumentId: options.getDocumentId,
+            getDocPath: options.getDocPath,
+            onError: options.onError,
+          })
+          return true
+        },
+      }]),
       imagePasteHandler({
         getDocPath: options.getDocPath,
         getDocumentId: options.getDocumentId,

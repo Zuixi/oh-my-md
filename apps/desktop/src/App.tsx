@@ -15,6 +15,8 @@ import {
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { pastePlainText } from "./pastePlainText"
+import { pasteFromSystemClipboard } from "./clipboardPaste"
+import { systemClipboardReader } from "./clipboardPayload"
 import {
   advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
   retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
@@ -102,6 +104,9 @@ import { FileTree } from "./FileTree"
 import {
   emptyFileTree,
   pathsToRefresh,
+  removeTreePath,
+  renameTreePath,
+  replaceTreePrefix,
   setChildren,
   toggleExpand,
   visibleRows,
@@ -221,43 +226,6 @@ function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> 
 
 /** Spec 05b 打开档位：normal 一次读；large 流式 + 默认源码；readonly 只读纯文本。 */
 type OpenTier = "normal" | "large" | "readonly" | "cancel"
-
-function replaceTreePrefix(path: string, from: string, to: string): string {
-  if (!pathWithinDir(path, from)) return path
-  const suffix = path.replace(/\\/g, "/").slice(from.replace(/\\/g, "/").length)
-  return to + (to.includes("\\") ? suffix.replace(/\//g, "\\") : suffix)
-}
-
-function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
-  const prefix = `${path}/`
-  const childrenByPath = Object.fromEntries(
-    Object.entries(model.childrenByPath)
-      .filter(([key]) => key !== path && !key.startsWith(prefix))
-      .map(([key, entries]) => [
-        key,
-        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
-      ]),
-  )
-  const expanded = new Set(
-    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
-  )
-  return { childrenByPath, expanded }
-}
-
-function renameTreePath(model: FileTreeModel, from: string, to: string): FileTreeModel {
-  const childrenByPath = Object.fromEntries(
-    Object.entries(model.childrenByPath).map(([key, entries]) => [
-      replaceTreePrefix(key, from, to),
-      entries.map(entry => ({
-        ...entry,
-        name: entry.path === from ? baseName(to) : entry.name,
-        path: replaceTreePrefix(entry.path, from, to),
-      })),
-    ]),
-  )
-  const expanded = new Set([...model.expanded].map(path => replaceTreePrefix(path, from, to)))
-  return { childrenByPath, expanded }
-}
 
 function readSidebarOpen(): boolean {
   try {
@@ -765,6 +733,21 @@ export default function App({
     }
   }
 
+  function pasteOptions(tabId: number, documentId: number) {
+    return {
+      ...imageInsertOptions(tabId, documentId),
+      getTabId: () => workspaceRef.current.activeId ?? tabId,
+      onNotice: reportUserError,
+      onConvertingChange: (active: boolean) => {
+        if (transientStatusTimerRef.current !== null) {
+          window.clearTimeout(transientStatusTimerRef.current)
+          transientStatusTimerRef.current = null
+        }
+        setTransientStatus(active ? t("paste.status.converting") : null)
+      },
+    }
+  }
+
   function editorOptions(
     contents: string,
     tabId: number,
@@ -779,7 +762,7 @@ export default function App({
       doc: docText ?? contents,
       tabId,
       documentId,
-      ...imageInsertOptions(tabId, documentId),
+      ...pasteOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
       onModeChange: isLive => {
         const tab = tabById(tabId)
@@ -2020,7 +2003,12 @@ export default function App({
   const runClipboardPaste = (): (() => void) => () => {
     const view = viewRef.current
     if (!view) return
-    void pastePlainText(view).catch(() => undefined)
+    const active = sessionRef.current
+    void pasteFromSystemClipboard(
+      view,
+      systemClipboardReader,
+      pasteOptions(active.id, active.documentId),
+    )
   }
 
   const insertImage = () => {
@@ -2182,7 +2170,11 @@ export default function App({
     { id: "cut", label: t("cmd.label.cut"), shortcut: shortcutFor("cut"), run: runClipboardCopy(true) },
     { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
     { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
-    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), run: () => { const v = viewRef.current; if (v) void pastePlainText(v) } },
+    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), shortcut: shortcutFor("pastePlainText"), run: () => {
+      const view = viewRef.current
+      const active = sessionRef.current
+      if (view) void pastePlainText(view, pasteOptions(active.id, active.documentId))
+    } },
     { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
     { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)

@@ -5,6 +5,9 @@ import { cursorInside, type DecoSpec } from "./types"
 import { EntityWidget, EmojiWidget } from "./widgets"
 import { InlineMathWidget } from "./widgets/math"
 import { imageResolver, ImageWidget } from "./widgets/image"
+import { imageParts } from "../semantic/image"
+import { editorReferenceContext } from "../semantic/references"
+import { escapeParts, hardBreakParts } from "../semantic/breaks"
 import { decodeHtmlEntity } from "../parse/entities"
 import { resolveEmoji } from "../parse/emoji"
 
@@ -111,6 +114,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Strikethrough":  return foldPair(node, out, "StrikethroughMark", "omd-del")
     case "Highlight":      return foldPair(node, out, "HighlightMark", "omd-highlight")
     case "Underline":      return foldPair(node, out, "UnderlineMark", "omd-u")
+    case "Kbd":            return foldPair(node, out, "KbdMark", "omd-kbd")
     case "Subscript":      return foldPair(node, out, "RiseMark", "omd-sub")
     case "Superscript":    return foldPair(node, out, "RiseMark", "omd-sup")
     case "InlineCode":     return foldPair(node, out, "CodeMark", "omd-inline-code")
@@ -118,17 +122,19 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     case "Autolink":       return foldLink(node, state, out)
     case "Image": {
       if (cursorInside(state, node.from, node.to)) return
-      const urlNode = node.node.getChild("URL")
-      if (!urlNode) return
-      const src = state.doc.sliceString(urlNode.from, urlNode.to)
-      // alt 文本 = "![" 与 "](" 之间
-      const head = state.doc.sliceString(node.from, urlNode.from)
-      const altEnd = head.indexOf("](")
-      const alt = altEnd > 1 ? head.slice(2, altEnd) : ""
+      // 语义走 imageParts：inline 与引用式图片、格式化/实体 alt、title 同一个 accessor 给出。
+      // 未解析的引用（没有定义）没有可用目标 —— 保留源码可见，绝不渲染空 widget。
+      const parts = imageParts(node.node, editorReferenceContext(state))
+      if (!parts) return
       out.push({
         from: node.from, to: node.to, tag: "widget:image",
         deco: Decoration.replace({
-          widget: new ImageWidget(src, alt, state.facet(imageResolver)(src)),
+          widget: new ImageWidget(
+            parts.src,
+            parts.alt,
+            state.facet(imageResolver)(parts.src),
+            parts.title,
+          ),
         }),
       })
       return
@@ -162,6 +168,30 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       out.push({
         from: node.from, to: node.to, tag: "widget:emoji",
         deco: Decoration.replace({ widget: new EmojiWidget(ch, raw) }),
+      })
+      return
+    }
+    // Escape/HardBreak 是「marker + 真实字符」的双段语义：只藏 marker（`\` / 行末
+    // `\` / 行末空格），保留被转义字符与换行本身 —— 换行不是可折叠的语法标记，
+    // 替换它会让两行在预览里并成一行。行末空格必须整段替换，否则预览行尾留空白。
+    // 光标落在节点内（含行末换行符之前的空光标位）才展开 marker，供直接编辑；
+    // 非空选区不算光标编辑（cursorInside 的约定）。
+    case "Escape": {
+      const parts = escapeParts(node.node)
+      if (!parts || cursorInside(state, node.from, node.to)) return
+      out.push({
+        from: parts.markerFrom, to: parts.markerTo, tag: "replace:EscapeMark",
+        deco: Decoration.replace({}),
+      })
+      return
+    }
+    case "HardBreak": {
+      const parts = hardBreakParts(node.node, state.doc)
+      if (!parts || cursorInside(state, node.from, node.to)) return
+      // HardBreak 站点（marker + 换行）见 build.ts isAtomicSpec：该 tag 永不原子化。
+      out.push({
+        from: parts.markerFrom, to: parts.markerTo, tag: "replace:HardBreakMark",
+        deco: Decoration.replace({}),
       })
       return
     }

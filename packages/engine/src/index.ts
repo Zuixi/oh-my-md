@@ -16,7 +16,7 @@ import { tableKeymap } from "./format/tableKeymap"
 import { experimentalTableDirectEdit } from "./tables/directEdit"
 import { tableSourceToolbar } from "./tables/sourceToolbar"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
-import { htmlPaste } from "./paste/htmlPaste"
+import { referenceIndexExtension } from "./semantic/references"
 import {
   autoPairCompartment,
   autoPairExtension,
@@ -50,6 +50,16 @@ export {
   type FootnoteTarget,
 } from "./footnotesNav"
 export { applyToggle, isLivePreview, setLivePreview } from "./modes/livePreview"
+export {
+  editorReferenceContext,
+  referenceIndexExtension,
+  snapshotReferenceContext,
+  stringReferenceContext,
+  type MarkdownReferenceContext,
+  type MarkdownSlice,
+} from "./semantic/references"
+export { linkParts, type LinkParts } from "./semantic/link"
+export { imageParts, type ImageParts } from "./semantic/image"
 export { toggleKeyBindings, toggleShortcutBindings, toggleShortcutLabels } from "./modes/livePreview"
 export { markdownKeyBindings, markdownKeymap, markdownShortcutBindings, markdownShortcutLabels } from "./format/commands"
 export { continueList, indentList, listKeymap, outdentList } from "./format/lists"
@@ -102,11 +112,36 @@ export {
   setTableColumnAlignment,
   type TableSourceChange,
 } from "./tables/edit"
+// 语义粘贴（plan 02 Task 4）：prepare / plan 的纯函数面 + 模型类型。
+// 验证器、serializer、normalizer 的内部入口不经 barrel 导出。
 export {
-  convertHtmlToMarkdown,
-  htmlPaste,
-  htmlPasteToMarkdown,
-} from "./paste/htmlPaste"
+  normalizeBlockPaste,
+  type NormalizedPaste,
+} from "./paste/blockBoundaries"
+export {
+  planSmartPaste,
+  preparePlainTextFallback,
+  prepareSmartPaste,
+  type PasteAssetResolution,
+  type PasteRange,
+} from "./paste/smartPaste"
+export type {
+  PasteAsset,
+  PasteBlock,
+  PasteBoundary,
+  PasteDiagnostic,
+  PasteDocument,
+  PasteImageSource,
+  PasteInline,
+  PasteListItem,
+  PasteTable,
+  PasteTableCell,
+  PasteTableRow,
+  PreparedSmartPaste,
+  SerializedPaste,
+  SmartPasteInput,
+  SmartPastePlan,
+} from "./paste/model"
 export {
   blockRenderBudget,
   renderBudgetFlush,
@@ -137,6 +172,7 @@ export {
 // 留在 format/autoPair.ts，不经 barrel 导出。DEFAULT_AUTO_PAIR 是引擎默认值的单一来源，
 // desktop 的 DEFAULT_SETTINGS/sanitizeSettings 从它派生（禁止在 desktop 侧再写一份字面量）。
 export { DEFAULT_AUTO_PAIR, setAutoPair, type AutoPairOptions } from "./format/autoPair"
+export { inVerbatim } from "./parse/verbatim"
 
 export interface EngineOptions {
   // 宿主把 markdown 里的图片 src 解析成可加载的 URL（desktop: 相对路径 → convertFileSrc）
@@ -182,7 +218,6 @@ export function editorExtensions(options: EngineOptions = {}) {
     // 排在 livePreviewCompartment 之前，让块间 ↑/↓ 进入（blockEntry）优先命中。
     caretClampKeymap,
     caretClampHandlers,
-    htmlPaste(),
     // 引擎自研的 Markdown 感知配对（禁止 stock closeBrackets）：inputHandler 覆盖全部
     // 选区（D10），Backspace 用 Prec.high 抢在 defaultKeymap 的 deleteCharBackward 之前。
     // 三个开关经 compartment 热切换（desktop: setAutoPair）。
@@ -192,6 +227,8 @@ export function editorExtensions(options: EngineOptions = {}) {
     markdownKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,
+    // 引用定义索引：同样在 compartment 之外，模式切换不得重新播种。
+    referenceIndexExtension,
     ...(directEdit ? [experimentalTableDirectEdit, tableDirectEditEnabled.of(true)] : []),
     livePreviewCompartment.of(live ? livePreviewExt() : []),
     // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，

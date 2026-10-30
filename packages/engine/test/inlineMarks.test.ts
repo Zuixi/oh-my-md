@@ -10,6 +10,16 @@ const names = (doc: string) => {
   return out
 }
 
+// 精确源码区间：固定 HTML 对的闭合位置是这套规则的全部意义。
+const nodeText = (doc: string, name: string) => {
+  const state = makeState(doc)
+  const out: string[] = []
+  syntaxTree(state).iterate({
+    enter: n => { if (n.name === name) out.push(state.doc.sliceString(n.from, n.to)) },
+  })
+  return out
+}
+
 const tags = (doc: string, sel: number) => {
   const state = makeState(doc).update({ selection: { anchor: sel } }).state
   return collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
@@ -82,5 +92,38 @@ describe("sub/sup export", () => {
   it("exports subscript and superscript as <sub>/<sup>", () => {
     expect(exportHtml(makeState("H~2~O"))).toContain("<sub>2</sub>")
     expect(exportHtml(makeState("x^2^"))).toContain("<sup>2</sup>")
+  })
+})
+
+describe("fixed HTML pair escape contract", () => {
+  it("skips a same-name closing tag inside a complete code span", () => {
+    expect(nodeText("<u>`</u>`x</u>", "Underline")).toEqual(["<u>`</u>`x</u>"])
+    expect(nodeText("<mark>`</mark>`x</mark>", "Highlight")).toEqual(["<mark>`</mark>`x</mark>"])
+  })
+
+  it("still closes at the first tag when no code span intervenes", () => {
+    expect(nodeText("<u>a</u>b</u>", "Underline")).toEqual(["<u>a</u>"])
+  })
+
+  it("treats an unclosed code span as its opener and closes after it", () => {
+    // skipInlineCode 对未闭合 span 只跳过 opener ticks，所以后面的 </u> 是真闭合。
+    expect(nodeText("<u>`</u>x</u>", "Underline")).toEqual(["<u>`</u>"])
+  })
+
+  it("rejects an escaped opener", () => {
+    expect(nodeText("a \\<u>x</u> b", "Underline")).toEqual([])
+  })
+
+  it("keeps the opener when the backslash run is even", () => {
+    expect(nodeText("a \\\\<u>x</u> b", "Underline")).toEqual(["<u>x</u>"])
+  })
+
+  it("keeps the case-insensitive fixed no-attribute shape", () => {
+    expect(nodeText("<U>x</u>", "Underline")).toEqual(["<U>x</u>"])
+    expect(nodeText("<u >x</U >", "Underline")).toEqual(["<u >x</U >"])
+    // 带属性的 opener 不是固定形状
+    expect(nodeText("<u class=\"x\">x</u>", "Underline")).toEqual([])
+    // 带属性的 closer 不能被当成 fixed close
+    expect(nodeText("<u>x</u class=\"x\">", "Underline")).toEqual([])
   })
 })

@@ -26,6 +26,7 @@ import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SA
  */
 
 const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf8")
+const PASTE_ASSETS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/paste_assets.rs"), "utf8")
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
@@ -53,8 +54,8 @@ function rustConstStringList(source: string, name: string): string[] {
 }
 
 describe("cross-layer constants (TS ↔ Rust)", () => {
-  it("image size cap matches lib.rs MAX_IMAGE_BYTES", () => {
-    expect(MAX_IMAGE_BYTES).toBe(rustConstNumber(LIB_RS, "MAX_IMAGE_BYTES"))
+  it("image size cap matches paste_assets.rs MAX_IMAGE_BYTES", () => {
+    expect(MAX_IMAGE_BYTES).toBe(rustConstNumber(PASTE_ASSETS_RS, "MAX_IMAGE_BYTES"))
   })
 
   it("recent-files cap matches lib.rs MAX_RECENT_FILES", () => {
@@ -81,8 +82,8 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
     )
   })
 
-  it("assets directory name matches lib.rs ASSETS_DIR_NAME", () => {
-    expect(ASSETS_DIR_NAME).toBe(rustConstString(LIB_RS, "ASSETS_DIR_NAME"))
+  it("assets directory name matches paste_assets.rs ASSETS_DIR_NAME", () => {
+    expect(ASSETS_DIR_NAME).toBe(rustConstString(PASTE_ASSETS_RS, "ASSETS_DIR_NAME"))
   })
 
   it("session flush event name matches session_flush.rs SESSION_FLUSH_EVENT", () => {
