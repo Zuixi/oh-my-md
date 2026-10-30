@@ -12,6 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from classify import needed_checks
 
 COMMANDS = {
+    "modules": [
+        ["pnpm", "check:modules", "--staged"],
+        ["pnpm", "test:quality"],
+    ],
     "engine": [["pnpm", "test"]],
     "desktop": [["pnpm", "--filter", "@omd/desktop", "test"]],
     "rust": [

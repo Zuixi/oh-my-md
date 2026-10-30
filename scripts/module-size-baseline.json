@@ -1,0 +1,12 @@
+{
+  "apps/desktop/src-tauri/src/documents/tests.rs": 1085,
+  "apps/desktop/src-tauri/src/lib.rs": 1957,
+  "apps/desktop/src-tauri/src/menu.rs": 846,
+  "apps/desktop/src-tauri/src/workspace.rs": 1827,
+  "apps/desktop/src/App.tsx": 2858,
+  "apps/desktop/test/App.test.tsx": 1422,
+  "apps/desktop/test/Editor.test.ts": 801,
+  "apps/desktop/test/updateCoordinator.test.ts": 1014,
+  "apps/desktop/test/updateManifest.test.ts": 830,
+  "packages/engine/test/snapshot.test.ts": 944
+}

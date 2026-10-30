@@ -1,280 +1,74 @@
 # Desktop Domain
 
 > **Parent:** [`../../AGENTS.md`](../../AGENTS.md)
->
-> **Scope:** React application lifecycle, CodeMirror host assembly, desktop styles, file dialogs, image paste, and the Tauri Rust host.
-
-## Read This When
-
-- You are changing `apps/desktop/src/**`.
-- You are changing native commands, capabilities, or packaging under `apps/desktop/src-tauri/**`.
-- You are debugging behavior that crosses React, CodeMirror, CSS, and Tauri IPC.
+> **Scope:** Desktop assembly and tests (`apps/desktop/**`). Frontend-specific rules below apply to React/CodeMirror code; native implementations additionally use the Rust guide.
+> **Rust / Tauri host rules:** See [`src-tauri/AGENTS.md`](./src-tauri/AGENTS.md).
 
 ## Local Structure
 
 ```text
 apps/desktop/
 ├── src/
-│   ├── App.tsx              # Shell: files/export chrome, tabs, palette, search, session IO
-│   ├── main.tsx             # React mount (+ the only react-toastify container)
-│   ├── styles.css           # App styles, theme variables, and omd-* presentation
-│   ├── constants.ts         # TS↔Rust contract values + localStorage keys (drift-tested)
-│   ├── desktopServices.ts   # Every Tauri invoke caller — the TS half of each IPC contract
-│   ├── platform.ts          # The ONLY platform branch in TS (unknown → macOS)
-│   ├── settings.ts · theme.ts · windowScope.ts · recents.ts
-│   ├── Editor.ts            # Generic CM6 extensions, engine assembly, base theme
-│   ├── tightSelection.ts    # Vendored selection drawing (never re-add stock drawSelection)
-│   ├── typewriter.ts · pastePlainText.ts · sidebarResize.ts
-│   ├── editorStatus.ts · editorStatusStore.ts   # Cursor/mode snapshot + StatusBar-only rerenders
-│   ├── documentMaterializer.ts  # Trailing pull-based doc materialization (queue/flush/discard)
-│   ├── documentScaleRegistry.ts # Per-tab safe-mode/byte/read-only/stashed-Text policy registry
-│   ├── transientStatus.ts   # Shared transient-status timer for save/normalization status lines
-│   ├── i18n/                # index.ts + messages/{en,zh}.ts (useT in components, module-level t elsewhere)
-│   ├── shortcuts.ts         # Single source for command shortcut display + window key bindings
-│   ├── commands.ts          # MENU_TO_COMMAND — native menu id → webview command
-│   ├── menuTree.ts          # In-app horizontal menubar tree (off macOS)
-│   ├── findReplace.ts       # Find/replace engine behind FindReplaceBar (normal-tier string scan)
-│   ├── currentDocumentSearch.ts # Text-cursor search/replace for over-scale documents (100 MiB spike)
-│   ├── searchCountJob.ts · searchRevision.ts · searchRegex.worker.ts # Idle-sliced count + Worker regex spike
-│   ├── exportPath.ts · appExportActions.ts      # Export path policy + App-side export actions
-│   ├── fileTreeState.ts     # Sticky-root file tree: expand cache and visible rows
-│   ├── FileTree.tsx · SidebarResizer.tsx        # Sidebar tree (Lucide icons, in-place rename) + width drag
-│   ├── session.ts           # EditorSession: path, dirty baseline, documentId
-│   ├── sessionRestore.ts · workspace.ts         # Startup restore + tab list / active tab / folder root
-│   ├── recoveryWriter.ts    # Crash-recovery draft writes (console.error by convention: no logger yet)
-│   ├── imagePaste.ts        # Clipboard image → Tauri write_image → Markdown insertion
-│   ├── useWorkspaceSearch.ts    # Debounced folder-search state with stale-request invalidation
-│   ├── normalizationState.ts    # Per-tab pending notice projection (pure reducers)
-│   ├── normalizationCoordinator.ts  # Accept/reject/save orchestration, autosave gate
-│   ├── documentSaveState.ts     # Per-tab save lifecycle + divergence reducer
-│   ├── documentSaveCoordinator.ts  # canAutosave, topBanner, watcherIntent
-│   ├── documentSaveRunner.ts    # Guarded save queue, poll, saveCopy
-│   ├── documentSaveAppBridge.ts # App wiring for save runner
-│   ├── conflictActions.ts       # Conflict action orchestration (compare/reload/overwrite/…)
-│   ├── conflictSaveBinding.ts   # React hook: diff state + makeConflictActions deps
-│   ├── documentDiff.ts          # unifiedDiff for conflict compare
-│   ├── updateCoordinator.ts     # Updater state machine (never silent, never automatic)
-│   ├── updateRestartReadiness.ts # Document-safety classification gating install
-│   ├── updateAdapter.ts         # Adapter over tauri-plugin-updater
-│   ├── AppMenu.tsx · TopBar.tsx · StatusBar.tsx
-│   ├── CommandPalette.tsx · QuickOpenModal.tsx · SearchPanel.tsx · FindReplaceBar.tsx · OutlinePanel.tsx
-│   ├── SettingsModal.tsx · FontFamilyPicker.tsx · AboutDialog.tsx · VersionHistoryModal.tsx
-│   ├── SaveConflictBanner.tsx · ConflictSaveRegion.tsx · DocumentDiffPanel.tsx
-│   └── NormalizationBanner.tsx · UpdateBanner.tsx · LargeDocBanner.tsx · OpeningOverlay.tsx
-└── src-tauri/
-    ├── src/lib.rs           # File IO, image write, asset scope, workspace commands, open-file events
-    ├── src/main.rs          # Binary entry
-    ├── src/documents.rs     # Guarded document IO core + DocumentVersionCache (stat-first fingerprinting)
-    ├── src/documents/       # save.rs (double-compare atomic save), coordinator.rs, tests.rs
-    ├── src/workspace.rs     # workspace tree commands, search, quick-open list, snapshots, config/recovery state
-    ├── src/watcher.rs       # notify watcher: workspace-changed events (hint-only)
-    ├── src/session_flush.rs # FlushGate — quit / update-restart session flush protocol
-    ├── src/windows.rs       # Multi-window registry; menu events route through its MRU
-    ├── src/menu.rs          # Native File / Edit / Format / View / Window menu
-    ├── src/export.rs        # PDF/PNG path checks and WKWebView capture
-    ├── src/export_native.rs # Native-side export helpers
-    ├── src/fonts.rs         # CoreText font enumeration (macOS)
-    ├── src/diagnostics.rs   # Diagnostics payload for the app
-    ├── capabilities/        # Tauri permissions
-    └── tauri.conf.json      # Desktop application configuration
+│   ├── App.tsx                  # Shell wiring (growth-frozen: put new logic in focused modules)
+│   ├── main.tsx                 # React mount + single react-toastify container
+│   ├── Editor.ts                # CM6 host assembly, engine options, link activation, status reporter
+│   ├── tightSelection.ts        # Vendored tight selection drawing (never re-add stock drawSelection)
+│   ├── styles.css               # Theme tokens (--omd-*), color-scheme, and omd-* presentation
+│   ├── constants.ts             # TS↔Rust shared limits and localStorage keys (drift-tested)
+│   ├── desktopServices.ts       # All Tauri invoke/listen callers (wire boundary)
+│   ├── platform.ts              # The ONLY platform branch in TS (unknown → macOS)
+│   ├── shortcuts.ts · commands.ts · menuTree.ts  # Single-sourced shortcuts and menu command mapping
+│   ├── i18n/                    # useT() for components, module-level t() elsewhere
+│   ├── imagePaste.ts · pastePlainText.ts         # Clipboard/image handling & context-menu target
+│   ├── documentMaterializer.ts · documentScaleRegistry.ts · editorStatus.ts · editorStatusStore.ts
+│   ├── documentSave*.ts · conflict*.ts · documentDiff.ts · normalization*.ts
+│   ├── updateCoordinator.ts · updateRestartReadiness.ts · updateAdapter.ts
+│   ├── findReplace.ts · currentDocumentSearch.ts · searchCountJob.ts · useWorkspaceSearch.ts
+│   ├── session.ts · sessionRestore.ts · workspace.ts · recoveryWriter.ts · fileTreeState.ts
+│   └── *.tsx                    # Focused UI components (TopBar, StatusBar, FileTree, Modals, Banners)
+└── src-tauri/                   # Rust backend (see src-tauri/AGENTS.md)
 ```
 
-## Frontend Boundaries
+## Frontend & Module Boundaries
 
-1. React owns application state and lifecycle; do not put React state or hooks in `@omd/engine`.
-2. `Editor.ts` owns generic editing behavior and the base editor theme. Markdown language support and preview behavior must come from `editorExtensions`.
-3. Do not duplicate Lezer traversal or Markdown syntax recognition in the desktop layer.
-4. Engine-generated `omd-*` classes are styled in `styles.css`. Coordinate class changes with the engine in the same task.
-5. Native filesystem effects must use narrow Tauri commands. Browser-side code may select paths and orchestrate calls, but must not emulate native path/file operations.
-6. Keep `App.tsx` as the current default-export exception; use named exports for ordinary modules.
-7. The i18n store lives in `apps/desktop/src/i18n/` (desktop-owned). Components use `useT()`; non-component modules use the module-level `t` (reads live locale at call time). The engine must NOT import the i18n store — localized engine strings (e.g. the broken-image fallback) are host-injected via `EngineOptions` Facet functions, preserving "引擎框架无关".
-8. User-visible feedback goes through `services.reportError` / `services.notifySuccess` (toast-backed via react-toastify; container mounts only in `main.tsx`); never call `window.alert` directly in desktop code.
-9. Editor cursor/mode status is published through the dedicated editor-status store so CodeMirror updates rerender `StatusBar`, not the App shell. Document text still enters React only through the trailing materializer. `EditorStatus` and its single equality helper live in `editorStatus.ts`; the Editor reporter and the store both deduplicate through `sameEditorStatus`, and `test/editorStatus.test.ts` fails if a snapshot field is added without updating that comparison.
+1. **Keep `App.tsx` thin (growth-frozen):** Put state machines, coordinators, and IO workflows in dedicated modules (`*Coordinator.ts`, `*Runner.ts`, `pasteController.ts`); apply the root size policy rather than adding orchestration to the shell.
+2. **Hot-path performance (`documentMaterializer.ts`, `editorStatusStore.ts`):** `EditorDocumentUpdate` never carries a full document string. Pull `view.state.doc.toString()` on the 250ms trailing materializer cadence and flush before save/close/delete. Route cursor/mode updates through `editorStatusStore` (`sameEditorStatus` deduplicated).
+3. **Feedback & i18n:** Route user notifications through `services.reportError` / `services.notifySuccess` (never call `window.alert` directly; rate-limit per-change recovery errors in `recoveryWriter.ts`). Keep i18n in desktop (`useT` / `t`) and pass localized labels to the engine via `EngineOptions`.
+4. **Multi-window safety:** Scope window-targeted Tauri listeners (`menu-command`, `open-file`, `session-flush`) with `listenTarget()` (`AnyLabel`) in `desktopServices.ts`. Gate `restoreDraft()` on `windowScope.isMainWindow()`, while `restoreSavedSession()` runs per window shard.
 
-## CodeMirror Host Rules
+## CodeMirror Host & CSS Rules (`Editor.ts`, `tightSelection.ts`, `styles.css`)
 
-- Do not enable `indentOnInput`, **stock** `closeBrackets`, or generic `autocompletion`; current live-preview decorations conflict with them. Two engine-owned exceptions arrive through `editorExtensions`: the `:`-only emoji completion and the Markdown-aware pairing in `format/autoPair.ts`. Pairing is configured per view through `CreateEditorOptions.autoPair` and hot-swapped by `setEditorAutoPair`; never add a second pairing layer here.
-- Preserve history, selection drawing, drop cursor, active-line highlighting, and standard editing keymaps unless the task explicitly changes host behavior.
-- `highlightActiveLine()` paints nothing — `styles.css` overrides `.cm-activeLine` to a transparent background, because it is a *line* decoration and CodeMirror's stock blue tinted a whole soft-wrapped paragraph or an entire rendered block on every click. It stays mounted because focus mode dims `.cm-line:not(.cm-activeLine)`, so the class is what focus mode reads. Do not delete the extension as dead weight; `test/Editor.test.ts` fails if either half goes missing.
-- Selection drawing is the vendored tight-selection extension (`src/tightSelection.ts`), not stock `drawSelection()` from `@codemirror/view`: multi-line highlights stop at each line's text end (+ `NUB_PX`); open line starts use the shared content `leftSide` (VS Code / Typora alignment); multi-row selections snap per-line bars to row boxes so they abut under `line-height` > 1. A range whose endpoints resolve to the same visual row must keep the raw endpoint y coordinates — never infer and snap its row from `block.height / defaultLineHeight`, because WKWebView/font metrics can turn one selected row into two. Do not re-add stock `drawSelection()`, and re-diff the vendored geometry against upstream whenever `@codemirror/view` is bumped.
-- **`.cm-content`'s rect is the border box; the theme pads it on all four sides.** Upstream selection geometry may ignore that (stock `.cm-content` has no horizontal padding), so every borrowed formula has to be re-checked against our 16px/24px padding. Vertically, `BlockInfo.top`/`.bottom`/`.height` are measured from `view.documentTop` — the top of the first line, *below* `padding-top` — so block-derived y must never come from `contentRect.top`; mixing them shifted every marker 16px against a ~25.6px line box and made single-line selections paint across three rows. Horizontally, `leftSide`/`rightSide` must add `.cm-content`'s own padding back, or fully-selected rows overhang the text by 24px on the left. Equally, `defaultLineHeight` is a default, not a row pitch: headings are 1.25–1.8em and block widgets are arbitrary, so never synthesize a document-wide line grid — read each block's real box instead. These are enforced by the vendoring guards in `test/tightSelection.test.ts`, one of which also fails when the installed `@codemirror/view` version drifts from the version recorded in the vendored file header (the prompt to re-diff, since upstream fixes to `drawSelection.ts` no longer reach us automatically).
-- Block decorations must not have vertical margins: CodeMirror excludes them from its height map, so the error accumulates until clicks target another line. Put visual spacing in wrapper padding and keep borders/overflow on `.omd-block-body`; `test/blockWidgetLayout.test.ts` guards the rule.
-- Pass host-dependent behavior through engine options, such as resolving Markdown image sources to loadable URLs.
-- Keep `imagePasteHandler` before `editorExtensions` in the assembled extension list. CodeMirror DOM handlers are first-true-wins: desktop must claim image clipboard items and a saved macOS context-menu target before engine rich HTML paste runs; ordinary keyboard text/HTML still returns `false` and falls through to the engine.
-- Destroy `EditorView` during React cleanup and clear retained references.
-- Window-level shortcuts must use stable listeners and refs to observe current mutable state without re-registering on each render.
-- CodeMirror's keymap owns editing commands; window handlers should be limited to application-level commands such as open/save/command palette.
-- Do not enable generic `autocompletion()`; ⇧⌘P is the command palette, and ⌘K is the engine's Markdown insert-link binding (live preview), not a CM completion or a window-level command.
-- Replace an opened document with a fresh `EditorState`; synchronize the document path first so initial image resolution is correct and undo history cannot cross files.
+- **No stock `drawSelection()`, `closeBrackets`, `indentOnInput`, or `autocompletion()`:** Mount vendored `tightSelection()` (guarded by version/geometry tests in `test/tightSelection.test.ts` — account for `.cm-content` 16px/24px padding and `view.documentTop`).
+- **Keep `highlightActiveLine()` mounted** with `.editor-host .cm-content .cm-activeLine { background: transparent }` in `styles.css` (required by focus mode `.cm-line:not(.cm-activeLine)`). Repaint `.cm-line.omd-codeblock.cm-activeLine` background and `.cm-line.omd-blockquote.cm-activeLine` `--omd-bq-image` quote bar.
+- **No vertical margins on `.omd-block`:** Use wrapper vertical padding and put borders/overflow on `.omd-block-body` (`test/blockWidgetLayout.test.ts`).
+- **Theme via CSS variables only:** Never enable CodeMirror's `{ dark: true }` facet. Drive selection and caret colors from `--omd-selection-bg` and `--omd-cursor`, declare `color-scheme` on every theme block in `styles.css`, quote font names via `settings.ts::cssFamily`, and sync native window appearance via `setWindowTheme` only after initial settings load.
+- **Read-only is advisory:** Guard document-changing commands and asset writes with `view.state.readOnly`; selection/status-only transactions remain permitted.
+- **View lifecycle (`Editor.ts`, `App.tsx`):** Open/reload uses a fresh `EditorState`, with the path synchronized before initial image resolution; undo history must not cross documents. Destroy views and clear retained references on cleanup. Keep window listeners stable and read changing state through refs.
 
-## Ordered-list normalization (desktop)
+## Shortcuts, Paste & Image Handling
 
-1. `Editor.ts` binds each `EditorView` to a stable tab id and document id. Document-update callbacks carry the ids captured at view creation, not the currently active tab.
-2. Before resetting a view for open/reload/restore, commit a bumped `documentId` to the tab session, then reset with that new id. Never reset before the identity bump — stale updates from the old view must be ignored. If reset throws, roll back session refs and projection.
-3. While a tab has pending normalization, pause autosave to the on-disk path for that tab only; recovery writes to the crash-recovery directory continue on real document edits.
-4. Accepting normalization runs through the explicit save queue (banner **Save normalization** or Cmd+S). Successful save dispatches `acceptOrderedListNormalization`; Save As cancel and save failure leave pending and re-sync idle banner state.
-5. Reject dispatches only to the captured target view after re-validating tab, document, view, and notice id. Command completion must call `resyncNormalizationIdle` only after the same identity checks — the reducer does not validate ids itself.
-6. `normalizationCoordinator.ts` owns accept/reject/save wiring; extend the coordinator instead of inlining that orchestration in `App.tsx`.
+- **Shortcut single source (`shortcuts.ts`, `commands.ts`):** `WINDOW_SHORTCUTS` drives both palette labels and `App.tsx` window keydown dispatch. Editor-owned bindings (`undo`, `redo`, `cut`, `copy`, `paste`, `pastePlainText`, `select-all`) belong in `EDIT_SHORTCUT_BINDINGS` (display/drift-only, never `WINDOW_SHORTCUTS` to avoid double-fire). Guarded by `test/crossLayerMenu.test.ts`.
+- **Paste & image invariants (`imagePaste.ts`, `Editor.ts`):**
+  - Register `imagePasteHandler` before `editorExtensions` (DOM handlers are first-true-wins).
+  - Write image bytes via `write_image` (requires saved `documentPath`) and call `allow_document_assets` before inserting relative `assets/...` Markdown.
+  - Serialize per-view async paste operations, capture/revalidate `tabId`, `documentId`, and `docPath`, and always pass an explicit `selection: { anchor }` on custom `view.dispatch` calls (prevents `assoc = -1` leaving the caret before the insert).
 
-## Conflict-safe guarded save (desktop)
+## Guarded Save, Scale Tiers & Updates
 
-1. **Markdown document IO only through guarded IPC.** Open/read/save/version-probe must use `readDocument`, `readDocumentVersion`, and `saveDocument` (Rust: `read_document`, `read_document_version`, `save_document`). Do not call legacy `read_file` / `write_file` for editor documents. Export, recovery, and image writes use their own commands and paths.
-2. **Watcher is early notification, not the truth boundary.** File-tab polling compares opaque disk fingerprints via `readDocumentVersion`; correctness comes from Rust double-compare at save time. Never treat a poll result as permission to overwrite.
-3. **Session baseline updates atomically.** On `Saved` only, update the tab's on-disk version/fingerprint and clean baseline together through `documentSaveState` reducers. Conflict, save failure, and stale completions must not clear recovery or bump baseline.
-4. **Single autosave gate.** `canAutosave` in `documentSaveCoordinator.ts` is the only autosave entry point (conflict, saveFailed, pending normalization, opening, and per-tab queues). Do not add parallel autosave checks in React effects.
-5. **Conflict UI is non-modal.** `SaveConflictBanner` + `ConflictSaveRegion` host compare/reload/overwrite/save-copy/recreate actions. `Compare` opens a debounced read-only unified diff (`DIFF_RECOMPUTE_MS = 150` in `ConflictSaveRegion.tsx`). Path-changed and unexpected-symlink conflicts disable compare/overwrite.
-6. **Normalization coexistence.** While a tab is in conflict or saveFailed, pending normalization stays visible but autosave to the on-disk path stays paused. Overwrite/recreate/successful guarded save may accept normalization; save copy and reload/discard clear stale pending per plan 01 rules.
-7. **Orchestration lives outside `App.tsx`.** Extend `conflictActions.ts`, `conflictSaveBinding.ts`, or `documentSaveRunner.ts` rather than growing the shell component.
-
-## Large-document tiers (Spec 05b + 2026-08-20 progressive rendering)
-
-- Scale policy no longer forces source mode: over-scale docs open in Live with safe mode = render budget (`SAFE_MODE_RENDER_BUDGET_LINES` = 60) + windowed live decorations + on-demand stats + viewport-bounded ordered renumber. All applied through `applyDocumentScalePolicy` in `App.tsx`, which delegates classification and process-global render-policy application to `documentScaleRegistry.ts` — every path that first hands a view real content must call it.
-- The HUGE tier (≥ `OPEN_READONLY_THRESHOLD_BYTES`) also renders live, with `readOnly: true`. CodeMirror readOnly is advisory: engine keymaps, renumber dispatches, widget interactions, and paste handlers guard `state.readOnly` themselves (guard suite `packages/engine/test/readonly-guards.test.ts`; gotchas entry "CodeMirror `readOnly` is advisory").
-- Outlines are per-tab cached (`docVersionsRef` / `outlineCacheRef` in `App.tsx`): tab switches hit the cache (version-checked), and over-scale tabs return immediately with the outline filled from an idle callback.
-- LARGE opens stream (`readDocumentStreaming`) and assemble chunks into a CM `Text` directly (engine `docText.ts`; `documentScaleRegistry.stashText`/`takeText` carries it one-shot to `ensureViews`/`resetTabDocument`), so `EditorState.create` skips the full-string line split. Streaming failure falls back to one-shot `readDocument`.
-- Version probing is stat-first: `stat_document` tiers opens before any read, and Rust's `DocumentVersionCache` (`(mtime_ns, size) → fingerprint`) lets background polls of unchanged 50MB tabs skip the read entirely (`src-tauri/src/documents.rs`).
-- Document-scale state (byte count, read-only flag, stashed streamed `Text`, and the derived safe-mode set) lives in one per-App `documentScaleRegistry` instance (`documentScaleRegistry.ts`), not in parallel `App.tsx` refs. Only the active tab may call `applyRenderPolicy`, which pushes the process-global `setBlockRenderBudget`/`setSafeModeRendering` engine state; non-active tabs only update the registry's cached classification.
-
-## Tauri and File Rules
-
-Current Rust commands are:
-
-- `read_document(path)` — read Markdown as UTF-8 with typed `DiskSnapshot` (missing or existing + opaque version).
-- `stat_document(path)` — metadata-only probe (`missing` / `existing` + `sizeBytes`); used to tier opens (normal / LARGE stream / HUGE read-only) before any content read (Spec 05b).
-- `read_document_streaming(path, onEvent)` — LARGE-tier open: chunk events (`{ kind: "chunk", index, text }`, 512 KiB UTF-8-aligned) plus byte progress over a Tauri channel; the frontend assembles chunks into a CM `Text` (engine `docText.ts`) and falls back to `read_document` on failure.
-- `read_document_version(path)` — fingerprint probe only; used by watcher and pre-save checks. Stat-first: a `(mtime_ns, size)` cache hit returns the last fingerprint without reading (`DocumentVersionCache`).
-- `save_document(path, contents, expected)` — guarded save with double-compare; returns typed `SaveDocumentResult` (saved, content/deleted/created/path-changed/unexpected-symlink conflict, permission/metadata/internal errors).
-- `read_file(path)` — legacy UTF-8 read; not for editor document lifecycle.
-- `write_file(path, contents)` — legacy atomic replace; not for editor document saves.
-- `write_image(path, base64, documentPath)` — decode pasted image data into the current document's `assets/` directory. `documentPath` is required.
-- `allow_document_assets(documentPath)` — grant the asset protocol access to that document's directory.
-- `allow_workspace_dir(path)` — grant the asset protocol access to an opened folder root and authorize later create/rename/delete under that root.
-- `list_dir(path)` — list directories and Markdown files in one folder (no `..`). The sidebar tree keeps a sticky workspace root and calls this per expanded directory.
-- `search_markdown(root, query, case_sensitive)` — parallel scan of `.md` files under the folder (ripgrep `ignore` + `regex` crates). Returns `SearchResponse { hits, truncated }`; each `SearchHit` carries UTF-16 code-unit offsets `start`/`end` into a possibly truncated `text`. Case-insensitive by default; skips hidden files, `.gitignore`, non-UTF-8, and files over 5 MB; caps at 500 hits with `truncated=true`.
-- `create_markdown(dir, name)` — create a new empty `.md` file under an authorized workspace root without overwriting.
-- `create_dir(dir, name)` — create a new empty subdirectory under an authorized workspace root without overwriting.
-- `rename_path(from, toName)` — rename a file or directory within its current parent under an authorized workspace root; Markdown files must keep `.md`.
-- `delete_path(path)` — delete a file or an empty directory under an authorized workspace root.
-- `write_recovery` / `list_recoveries` / `read_recovery` / `clear_recovery` — crash-recovery drafts under `OMD_RECOVERY_DIR` or the temp recovery directory.
-- `write_png(path, base64)` — write raw PNG bytes. Path must end in `.png` and the bytes must be PNG.
-- `export_preview(html, path, format)` — render exported HTML in an offscreen WKWebView, then write PDF (`createPDF`) or PNG (same PDF, rasterized). `format` is `"pdf"` or `"png"`. Missing `.pdf`/`.png` is appended; an existing directory is rejected. macOS only.
-- `set_recent_files(paths)` — rebuild the Open Recent submenu (max 10, no traversal).
-- `set_view_menu_state(state)` — mirror the frontend view-mode state (source/sidebar/outline/typewriter/focus) into the checkable View menu items (`CheckMenuItem::set_checked` on stable ids).
-- `set_menu_locale(locale)` — update managed `MenuState.locale` and rebuild the native menu (zh/en; unknown → en). Called by the frontend `initLocale`/`setLocale`; single-field IPC (`{ locale }`), no multi-word casing trap.
-- `set_window_theme(theme)` — push the resolved app theme onto the native window (`"light"`/`"dark"`; `null` = system-follow) so the title bar matches the in-app toggle. Deliberately sync (window mutation belongs on the main thread, like the menu setters). Called from the App theme effect via `desktopServices.setWindowTheme`, gated on initial settings load; the Rust `setup` hook also applies the persisted theme pre-paint (`startup_window_theme` reads `settings.json`) so cold start doesn't flash the OS appearance (tauri-apps/tauri#6027).
-- `quit_app()` / `app_version()` — explicit quit and About-dialog version for the in-app menubar on Windows/Linux (macOS covers both with the native app menu).
-- `update_capability()` — `{ check, install, reason? }` derived from the **actual runtime bundle type** (`tauri::utils::platform::bundle_type()`, the `__TAURI_BUNDLE_TYPE` marker): macOS inside `.app`, Windows `Nsis`, and Linux `AppImage` are install-capable; Windows `Msi` and Linux `Deb`/`Rpm` are check-only (`reason: "manualPackage"`); debug builds (`reason: "development"`) and unpackaged/unknown binaries (`reason: "unsupported"`) fail closed. MSI is deliberately never install-capable so a generic `windows-x86_64` manifest entry cannot let an MSI installation consume the NSIS updater. Pure policy + serialized-JSON tests live in `lib.rs`.
-- `prepare_update_restart()` — update-only session-flush protocol reusing the `FlushGate`/`session-flush` events; returns `{ kind: "ready" } | { kind: "timedOut" }` and — unlike ordinary quit — never exits or restarts on timeout; after its round it clears the one-shot flushed marker so the next normal quit still flushes. Must be `async` + `spawn_blocking` so the webview's `session_flush_ack` IPC is served during the wait.
-
-The native menu (`menu.rs`) has File / Edit / Format / View / Window top-level menus and only installs as a menubar on macOS (`rebuild_from_state` early-returns off macOS). Item clicks emit `menu-command` to the webview, except the `window-*` items which are handled natively in Rust (`handle_window_command`) and never forwarded. Do not use `PredefinedMenuItem` for window actions — their macOS selectors go through the responder chain and do not act on the Tauri window. Do not reimplement those actions as sidebar buttons.
-
-Off macOS the menu is the in-app horizontal menubar (`AppMenu.tsx` above the TopBar, one dropdown per top-level menu defined in `menuTree.ts`: File / Edit / Format / View / Help). It dispatches the same ids through `runMenuCommand`; `test/crossLayerMenu.test.ts` guards `menu.rs` ids ⊆ `menuTree.ts` ids. View toggles render as `menuitemcheckbox` from the `viewState` prop; `undo/redo/cut/copy/paste/select-all/quit/about` commands exist only in the webview layer (the clipboard ones are best-effort `navigator.clipboard` — Ctrl+C/X/V through the editor stay primary).
-
-**Shortcut wiring is single-sourced and drift-guarded.** Window-level shortcuts live only in `shortcuts.ts` `WINDOW_SHORTCUTS` — the same table feeds the command palette display and the `App.tsx` keydown dispatch. Format/mode shortcut labels come from the engine (`markdownShortcutLabels`/`toggleShortcutLabels`) so the palette cannot drift from the CM keymap. `EDIT_SHORTCUT_BINDINGS` (undo/redo/cut/copy/paste/select-all) is display-only — the keys themselves are owned by the editor's default keymap, so those bindings must never enter `WINDOW_SHORTCUTS` or they would double-fire. Native menu item ids and accelerators must match `commands.ts` `MENU_TO_COMMAND` and the shortcut labels (window or engine format); `test/crossLayerMenu.test.ts` parses `src-tauri/src/menu.rs` (both `item(` and `check_item(`) and guards all. Note that macOS menu accelerators intercept keys before the webview, so a menu accelerator for an engine shortcut (e.g. ⌘E) makes the App command the only live path on the desktop. When adding or changing a shortcut, touch the single source and let the tests verify — never add a second literal.
-
-When adding or changing a command:
-
-1. Keep the IPC entrypoint thin and return `Result<_, String>` or a deliberately introduced shared error shape.
-2. **Update both sides of the wire in the same change.** Any signature change (added/removed/renamed argument, changed return shape) must touch the Rust command, the `desktopServices.ts` invoke caller, and every TS consumer together. Leaving the frontend on the old contract makes Tauri reject the call (missing/extra arg) or the UI read the wrong shape silently — TypeScript compiles fine, and desktop tests mock services at the TS boundary, so they never catch it. Concrete failure: `search_markdown` gained `case_sensitive` and returned `SearchResponse` while `desktopServices.ts` still invoked `{ root, query }` and typed the result as `SearchHit[]` — folder search stopped working until both sides were aligned.
-3. Validate frontend argument names against the Rust command signature (Tauri maps snake_case Rust params to camelCase JS keys).
-4. Register the command in `tauri::generate_handler!`.
-5. Check whether Tauri capabilities or plugins must change.
-6. Add Rust tests for native behavior and failure paths.
-7. For any payload with multi-word fields, add a Rust test asserting the **serialized JSON field names** (see IPC casing trap below).
-8. **Shared limits stay in sync across the wire.** Limits that both sides enforce (image bytes, recent-files cap, search hit cap, markdown extensions, `assets` dir, `.md` create/rename rule) are named constants on each side — `apps/desktop/src/constants.ts` and the Rust `lib.rs`/`workspace.rs` — guarded by `apps/desktop/test/crossLayerConstants.test.ts`, which parses the Rust const definitions and asserts equality. Never change one side's literal without the other and the test.
-
-**IPC casing trap (verified 2026-08-14).** `#[serde(tag = "kind", rename_all = "camelCase")]` on a Rust enum camelCases only the *variant names*, never fields inside struct variants — those need their own variant-level `#[serde(rename_all = "camelCase")]` (see `SaveDocumentResult` for the correct pattern). `DiskSnapshot` once relied on the enum-level attribute, so `read_document` sent `requested_path` while the webview read `requestedPath`; every opened file silently became an "unnamed" tab. TypeScript gives no protection: `snapshot.requestedPath` compiles fine and is `undefined` at runtime, and desktop tests mock `services.readDocument` at the TS boundary so they can never catch wire-format drift. Only a Rust-side `serde_json::to_string` assertion (e.g. `disk_snapshot_serializes_requested_path_as_camel_case`) guards the contract.
-
-**Sync-command trap (verified 2026-08-19).** Non-`async` `#[tauri::command]` fns run on the Rust main thread and serialize behind each other; an IO-bound sync command (a 50MB `write_recovery` `fs::write`) stalls every queued command — `openPath` awaited `allow_document_assets` *after* the read succeeded, so the file was in hand and never displayed. IO-bound commands must be `async fn` + `tauri::async_runtime::spawn_blocking` (in-memory-only commands may stay sync; menu mutation must stay on the main thread, which is why `set_recent_files` is exempt — its rebuild is macOS-only).
-
-Do not silently overwrite in-memory content after a failed read/write. Preserve the current document and surface the error. Do not add unconditional force-write APIs for conflict paths.
-
-**Installer bundling bitmaps are layout-constrained (verified 2026-08-28).** The `bundle.windows` NSIS/WiX bitmaps are generated by `scripts/generate_installer_images.py` at fixed sizes, and the WiX banner's left strip (`WIX_BANNER_TITLE_SAFE_W` = 220) must stay flat background: WixUI paints a transparent black page title over it on every inner MSI page, so baked-in logos/text there render as overlapping glyphs. The failure is invisible on macOS — it only shows when the MSI is actually installed on Windows. Never regenerate the BMPs without `tauriConfig.test.ts` passing (it asserts the strip's pixels and every BMP's dimensions). Details in `docs/memory/known-gotchas.md` (tooling section, "Windows installer branding").
-
-## Automatic updates (desktop)
-
-**Updater ownership is layered and never duplicated.** The official Tauri updater plugin (`tauri-plugin-updater` — never replace it) owns stable-endpoint fetch, download, minisign signature verification, platform installation, and relaunch. Desktop React owns orchestration and user-visible state through `updateCoordinator.ts` (state machine), `updateRestartReadiness.ts` (document-safety classification), and `UpdateBanner.tsx` (non-modal banner); Rust exposes only `update_capability` and `prepare_update_restart` and nothing else. Do not reimplement manifest parsing, version comparison, or signature verification in desktop code, and do not import the engine's Markdown parsing to guess platform semantics.
-
-**Updates are never silent and never automatic.** Startup schedules one check 8 seconds after initialization but stops at `available` (no download); download requires an explicit user action; installation requires the final `readyToInstall` confirmation and the separate `install()` action. `requestInstall()` flushes pending edits, classifies readiness, awaits the update-specific flush, and only then enters the final confirmation. `install()` re-runs that same flush-and-readiness gate synchronously before invoking the platform installer, so edits made after the final confirmation re-block installation: the state returns to `blocked` (installer and relaunch never run) and the user saves then repeats `requestInstall()`, which performs the update flush again. Installation is blocked while any tab is dirty, conflicted, save-failed, pending ordered-list normalization, opening, or actively saving (`updateRestartReadiness.ts`); a flush timeout aborts installation and keeps the app running. Startup-check failures log the classified product failure kind through the `logFailure` sink (`console.error` by convention — no user UI, never raw error internals or document content).
-
-**MSI/deb are check-only by design.** Windows MSI and Linux deb/rpm/other-package installations discover updates but open the official immutable GitHub Release page — they never download, install, or let the updater mix installer ownership. The capability comes from the actual runtime bundle marker, not configured bundle targets (`tauriConfig` `"all"` never implies install).
-
-**The updater signing private key never enters this workspace.** `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are GitHub Actions secrets passed only to the tag workflow's package-building jobs; pull-request workflows never receive them. Never read, print, log, cache, paste, or commit private-key material — repository files, `.env`, diagnostics, workflow artifacts, and Releases are all forbidden homes. Public key lives in `tauri.conf.json` (`plugins.updater.pubkey`); maintainers hold at least two encrypted offline backups (see `CONTRIBUTING.md` for the loss/compromise runbook).
-
-**Fixed release/updater URLs have named homes and drift guards — never invent on one side.** The stable endpoint is a single source in `apps/desktop/src-tauri/tauri.conf.json` (`plugins.updater.endpoints`, pinned by `test/tauriConfig.test.ts`); `scripts/update-manifest.mjs` owns `RELEASE_OWNER_REPO`/`RELEASE_BASE` (pinned by `test/updateManifest.test.ts` immutable-URL assertions); the `promote-update.yml`/`withdraw-update.yml` Pages fetch embeds the `https://zuixi.github.io/oh-my-md` base and the tag URL shape. A change to any of these fixed URLs must update the owning side(s) and add a drift test — never leave one side as a bare literal. The `stable-updates` environment's required reviewers and the Pages "source: GitHub Actions" setting are external repository settings the workflows require but cannot configure; document them as prerequisites instead of automating.
-
-## Image Paste Invariants
-
-- Non-image clipboard content must fall through to CodeMirror's default paste behavior.
-- The document must have a saved path before inserting a relative `assets/...` reference.
-- Write image bytes successfully before inserting Markdown into the document.
-- Keep the stored Markdown path relative; resolve it for display through the engine host callback rather than rewriting source to an absolute file URL.
-- Path handling must continue to account for slash normalization on supported desktop paths.
-- Capture path, document identity, document value, and selection before asynchronous work. Serialize concurrent pastes and revalidate before writing and dispatching.
-- Pass the current Markdown path as `documentPath` so Rust can bind the write to that document's `assets/` directory. The command rejects writes that omit it.
-- After a successful open or save, call `allow_document_assets` before the first local image load.
+- **Guarded document IO & single autosave gate:** Use only `statDocument`, `readDocument`, `readDocumentStreaming`, `readDocumentVersion`, and `saveDocument`. Gate all autosaves through `documentSaveCoordinator.ts::canAutosave` (paused during conflict, save failure, or pending ordered-list normalization). Update session baseline atomically on `Saved` only.
+- **Identity before reset (`App.tsx::resetTabDocument`):** Keep tab ids stable, bump `documentId` for a new/reloaded document, and commit that identity before resetting the view. Roll back session/projection on reset failure; discard pending materialization after successful reset. Update callbacks carry their captured identities, never the active tab's.
+- **Async completion (`normalizationCoordinator.ts`, `documentSaveRunner.ts`):** Revalidate tab, document, view, and normalization notice via the existing target guards before dispatch or UI resync. Accept normalization only after a successful explicit save; cancellation/failure keeps it pending. Recovery continues while normalization pauses disk autosave. Old save completions must not clear newer edits, recovery, or dirty state.
+- **Conflict boundary:** Watcher/poll results are hints, not permission to overwrite; Rust's guarded save owns the final compare. Use save-state reducers to update version and clean baseline together for the same document, preserving edits made during the save.
+- **Large-document scale policy (`documentScaleRegistry.ts`):** Call `applyDocumentScalePolicy` in both `resetTabDocument` and `ensureViews`. Only the active tab (`tabId === activeId`) may push process-global `setBlockRenderBudget` / `setSafeModeRendering`.
+- **Updater (`updateCoordinator.ts`, `updateRestartReadiness.ts`):** Never silent or automatic. Both `requestInstall()` and `install()` run the session-flush and readiness gate (`dirty`, `conflict`, `saveFailed`, `pendingNormalization`, `opening`, `saving` block install).
 
 ## Verification
 
-- `pnpm --filter @omd/desktop test:e2e` runs Playwright layout invariants in a real
-  Chromium (`e2e/harness.html` mounts the real `Editor.ts` + `styles.css`, no React App,
-  no Tauri). Run it for any change touching rendered appearance or editor geometry;
-  it is the only automated net for zero-height rows, container seams, and collapsed
-  blank lines. Extend `apps/desktop/e2e/` whenever a new visual bug class ships a fix.
-- Run `test:e2e` in the foreground and let Playwright start and stop Vite; do not
-  pre-start `pnpm dev` for the normal suite. Playwright does not own an already-running
-  server and therefore cannot clean it up. Local reuse is an explicit human-only
-  opt-in (`PW_REUSE_SERVER=1`).
-- Set `PW_PORT=<free port>` for every concurrent worktree (for example 9431);
-  the default is 9420. With reuse off, an occupied port fails loudly instead of
-  silently testing another worktree's `src/`. On PowerShell set it with
-  `$env:PW_PORT=9431`; on POSIX shells use `PW_PORT=9431 <command>`.
-- Standalone browser audits are the exception: they require a separately managed
-  Vite server. Start it on a dedicated `PW_PORT`, record its PID/command handle, and
-  stop that exact server in a finally-equivalent cleanup step; the audit itself must
-  close `browser` in `finally`. If an agent/IDE is force-killed, inspect the exact PID,
-  command line, working tree, and port before stopping a leftover process. Never use
-  a name-wide kill such as `Stop-Process -Name chrome` / `pkill chrome`; e2e uses the
-  system Chrome channel.
-
-For TypeScript/React/CSS changes:
-
 ```sh
+pnpm --filter @omd/desktop test
 pnpm --filter @omd/desktop build
+PW_PORT=9431 pnpm --filter @omd/desktop test:e2e
 ```
 
-For engine behavior used by the desktop:
-
-```sh
-pnpm test
-```
-
-For Rust/Tauri command changes:
-
-```sh
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-```
-
-Use `pnpm dev` for manual interaction checks. Review the relevant sections of `docs/manual-qa.md`, especially file IO, IME, undo/redo, mode switching, and large-document scrolling.
-
-## Common Pitfalls
-
-- React state captured by a one-time window listener becomes stale; route changing handlers through refs.
-- Dirty state is transaction-driven and compared with the last saved/opened text, so undoing to that baseline becomes clean again.
-- Engine class names without matching CSS appear structurally correct in tests but broken in the desktop.
-- Tauri dialog cancellation is a normal result, not an error.
-- Image writing and Markdown insertion are asynchronous; inserting before a successful write or allowing concurrent operations to race creates broken or orphaned assets.
-- Static window values in `tauri.conf.json` and runtime window behavior can drift if both are later used.
-- Hidden iframe `print()` and `html-to-image` fail in WKWebView; PDF/PNG export must go through `export_preview`. Do not use `takeSnapshot` with `afterScreenUpdates` on an offscreen window — WindowServer never presents it, so the completion never fires and no file is written.
-
-## Documentation Maintenance
-
-Before concluding desktop work, check:
-
-- [ ] Did the frontend/Rust ownership boundary or command list change?
-- [ ] Did added/removed modules require a Local Structure update?
-- [ ] Did an `omd-*` class require a coordinated engine or CSS update?
-- [ ] Did user-visible interaction require a `docs/manual-qa.md` update?
-- [ ] Did a shortcut or operation require a `docs/guides/` update?
-- [ ] Did a reusable integration trap belong in `docs/memory/gotchas-desktop.md` (plus an index line in `known-gotchas.md`)?
-- [ ] Did setup, packaging, or supported behavior require README/spec updates?
+- Let Playwright start and stop Vite in the foreground (use a free `PW_PORT` per worktree; never run `pkill chrome`).
+- For engine-owned behavior, also read the corresponding [engine guide](../../packages/engine/AGENTS.md) and run its checks. For IPC changes, follow [Rust verification](./src-tauri/AGENTS.md#verification) as well.

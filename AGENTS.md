@@ -1,24 +1,24 @@
 # oh-my-md
 
-> **What is this?** A cross-platform, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host. macOS, Windows (NSIS/MSI), and Linux (AppImage/deb/rpm) are all first-class targets; the few platform-only paths go through `apps/desktop/src/platform.ts` in TS or `cfg!(target_os = …)` in Rust — never a scattered string compare. Unknown platforms are treated as macOS. One deliberate exception: native PDF/PNG export (`export_preview`) is macOS-only.
+> **What is this?** A cross-platform, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host. macOS, Windows (NSIS/MSI), and Linux (AppImage/deb/rpm) are first-class targets; platform branches go only through `apps/desktop/src/platform.ts` (TS, unknown → macOS) or `cfg!(target_os = …)` (Rust). Native PDF/PNG export (`export_preview`) is the single deliberate macOS-only feature.
 >
-> **Progressive disclosure:** Use this file for workspace orientation and cross-layer rules. Before changing a domain, read its nearest `AGENTS.md`.
+> **Progressive disclosure:** Read this file, every applicable ancestor `AGENTS.md`, then the nearest guide before editing. Rules accumulate; a deeper guide overrides only a conflicting local rule, not the rest of its parents. Follow explicit cross-directory links too: a `Scope` description does not extend filesystem inheritance. For tests, also read the guide governing the behavior under test.
 
 ## Task Routing
 
-
-| If you are working on...                                                     | Read first                                                                                                       |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Markdown parsing, decorations, live/source mode, block widgets, engine tests | `[packages/engine/AGENTS.md](./packages/engine/AGENTS.md)`                                                       |
-| React lifecycle, editor hosting, styles, shortcuts, image paste, Tauri IPC   | `[apps/desktop/AGENTS.md](./apps/desktop/AGENTS.md)`                                                             |
-| Product scope or architecture decisions                                      | `[docs/superpowers/specs/2026-08-10-oh-my-md-design.md](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md)` |
-| Known traps                                                              | [`docs/memory/known-gotchas.md`](./docs/memory/known-gotchas.md) (one-line index → read the matching `gotchas-engine/desktop/rust.md` in full before non-trivial domain work) |
-| Windows installer branding (NSIS/WiX bitmaps, bundling visuals)              | `[docs/memory/known-gotchas.md](./docs/memory/known-gotchas.md)` installer section + `[scripts/generate_installer_images.py](./scripts/generate_installer_images.py)` |
-| Finding or writing a doc (spec, plan, QA, guide, competitor note)            | `[docs/AGENTS.md](./docs/AGENTS.md)`                                                                            |
-| A bug spanning domains                                                       | Read this file, then every affected domain guide                                                                 |
-
-
-
+| If you are working on... | Read first |
+| --- | --- |
+| Engine public surface, outline, stats, HTML export, ordered-list state | [`packages/engine/AGENTS.md`](./packages/engine/AGENTS.md) |
+| Live-preview `StateField`, progressive/windowed build, `atomicRanges`, `BlockWidget` | [`packages/engine/src/decorations/AGENTS.md`](./packages/engine/src/decorations/AGENTS.md) |
+| Formatting commands, `Prec.highest` Enter/Tab/Backspace chain, `blockPrefix` | [`packages/engine/src/format/AGENTS.md`](./packages/engine/src/format/AGENTS.md) |
+| Table model, Lezer-range edits, toolbars, cell parsing | [`packages/engine/src/tables/AGENTS.md`](./packages/engine/src/tables/AGENTS.md) |
+| Lezer Markdown dialect extensions, `chars.ts`, `inVerbatim` | [`packages/engine/src/parse/AGENTS.md`](./packages/engine/src/parse/AGENTS.md) |
+| React shell, CodeMirror host (`Editor.ts`), CSS, shortcuts, save/update flows | [`apps/desktop/AGENTS.md`](./apps/desktop/AGENTS.md) |
+| Tauri Rust commands, guarded IO, native menu, asset scope, installer bitmaps | [`apps/desktop/src-tauri/AGENTS.md`](./apps/desktop/src-tauri/AGENTS.md) |
+| Quality gates, scripts, Git hooks, CI | `scripts/check-module-size.mjs`, `.githooks/classify.py`, `.github/workflows/ci.yml` |
+| Product scope or architecture decisions | [`docs/superpowers/specs/2026-08-10-oh-my-md-design.md`](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md) |
+| Known traps & historical debugging notes | [`docs/memory/known-gotchas.md`](./docs/memory/known-gotchas.md) → `gotchas-engine/desktop/rust.md` |
+| Finding or writing a doc (spec, plan, QA, guide) | [`docs/AGENTS.md`](./docs/AGENTS.md) |
 
 ## Workspace Map
 
@@ -26,111 +26,85 @@
 oh-my-md/
 ├── apps/desktop/          # React 19 + CodeMirror host + Tauri 2 application
 │   ├── src/               # Frontend lifecycle, editor assembly, IPC callers, i18n/, CSS
-│   └── src-tauri/
-│       ├── src/           # lib.rs, documents.rs + documents/ (guarded IO), workspace.rs, menu.rs,
-│       │                  # watcher.rs, session_flush.rs, windows.rs, export.rs + export_native.rs,
-│       │                  # fonts.rs, diagnostics.rs, main.rs
-│       └── capabilities/  # Tauri permissions
-├── packages/engine/       # Markdown language support and live-preview behavior
-│   ├── src/               # parse/ (Lezer) · decorations/ + decorations/widgets/ · format/ (keymaps) ·
-│   │                      # tables/ · navigation/ · modes/ · export/ · shiki/ · paste/ · cache/
+│   └── src-tauri/         # Rust commands, guarded document IO, menu, watcher, native export
+├── packages/engine/       # Framework-independent Markdown language support & live preview
+│   ├── src/               # parse/ · decorations/ · format/ · tables/ · navigation/ · export/ · paste/
 │   └── test/              # Vitest tests and Markdown fixtures
-├── scripts/               # Build/test/package/release entry points: *.sh (Unix) + *.ps1 (Windows),
-│                          # installer-bitmap generator, updater-key prep, release manifest, perf smoke
-├── .github/               # CI：changes 路径过滤 + engine/desktop/rust(含 link gate)/bench；复合 action 在 .github/actions；
-│                          # release/promote/withdraw 工作流已在位，macOS 签名与公证尚未接入（见 docs/superpowers/plans/2026-08-18-13b-release-unblock.md）
-├── .githooks/             # pre-commit（按路径跑域测试）+ commit-msg（type 前缀、剥离 Co-authored-by）
-├── .cursor/               # hooks.json 危险命令拦截（仅 Cursor 生效）+ rules/*.mdc
-└── docs/                  # Product specs, implementation plans, QA, guides, agent memory
+├── scripts/               # Build/test/release entry points (*.sh, *.ps1), installer bitmaps, perf smoke
+├── .github/               # CI path filters + engine/desktop/rust/bench + release workflows
+├── .githooks/             # pre-commit (domain tests) + commit-msg (conventional type prefix)
+└── docs/                  # Product specs, implementation plans, manual QA, guides, agent memory
 ```
 
-Per-domain trees are complete for `packages/engine` and `apps/desktop`; see each domain `AGENTS.md`.
-
-The repository intentionally uses plain pnpm workspaces; do not add Turborepo or Nx for the current two-package graph.
-
-## Runtime Graph
-
-```text
-React App
-  ├── Editor.ts ──► @omd/engine ──► CodeMirror / Lezer / DOM widgets
-  ├── styles.css ──► visual styles for engine-emitted omd-* classes
-  └── Tauri invoke ──► src-tauri Rust commands ──► filesystem / native OS
-```
-
-`@omd/engine` is consumed directly from `src/index.ts`; it has no separate package build step.
+`@omd/engine` is consumed directly from `packages/engine/src/index.ts` (plain pnpm workspace; do not add Turborepo or Nx).
 
 ## Commands and Verification
 
-Use pnpm for JavaScript workspace tasks and Cargo for Rust tasks.
-
 ```sh
 pnpm dev
-pnpm test
-pnpm verify
-pnpm verify:win
-pnpm verify:unix
-pnpm perf:smoke
-pnpm --filter @omd/engine bench
-pnpm --filter @omd/desktop test
-pnpm --filter @omd/desktop build
-pnpm --filter @omd/desktop test:e2e
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-pnpm release:version <x.y.z>
-pnpm release:changelog
+pnpm check:quality                                                 # module-size gate + its behavior tests
+pnpm test                                                          # engine tsc --noEmit + Vitest
+pnpm --filter @omd/engine bench                                    # advisory large-doc benchmarks
+pnpm --filter @omd/desktop test                                    # desktop Vitest suite
+pnpm --filter @omd/desktop build                                   # desktop tsc + Vite bundle
+pnpm --filter @omd/desktop test:e2e                                # Playwright real-browser layout suite
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml       # Rust unit tests
+pnpm verify                                                        # full test + Rust binary link check
 ```
 
-- `pnpm test` runs engine TypeScript checking (`tsc --noEmit`) before Vitest.
-- `pnpm --filter @omd/engine bench` 跑 advisory 大文档基准（typing p95/冷解析/装饰重建/字数统计/切Live种子/open-live摄入/安全模式窗口化typing/表格滚动进入与高度估算增益）；预算超限只告警不阻断，CI 中 continue-on-error。
-- `pnpm verify` dispatches by host platform: Windows runs `scripts/test.ps1` then `scripts/build.ps1`; Unix runs `scripts/test.sh` then `scripts/build.sh`. `verify:win` / `verify:unix` select a path explicitly. Both build scripts link the Rust app binary (`cargo build --no-default-features`, matching what `tauri dev` runs); both test scripts cover engine, desktop, and `cargo test`. `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade. Use `pnpm verify` before a release or any multi-domain merge.
-- Use `pnpm --filter @omd/desktop tauri build` only when a packaged desktop build is relevant.
 - Run the checks matching the changed domains; cross-layer changes require both frontend/engine and Rust checks.
-- Before a release or interaction-sensitive editor change, review `docs/manual-qa.md`. Its recorded test counts are historical, not assertions about the current suite.
-- There is no repository-wide lint or format command, and `pnpm verify` does not lint or format. Do not claim lint/format checks passed.
-- `release:version` 同步四处版本号（tauri.conf.json 为单一来源），`release:changelog` 用 git-cliff 从 conventional commits 生成 CHANGELOG。两者只在发版时使用；`release:changelog` 依赖本机 `git-cliff`。
-
-
+- Add a focused regression test for changed behavior; for bug fixes, observe it fail before the fix and pass afterwards. Test observable outcomes, stale/error paths, and relevant boundaries, not private implementation text or arbitrary coverage percentages.
+- Engine changes also require desktop contract tests. Appearance/interaction changes require the relevant real-browser checks and `docs/manual-qa.md`; structural happy-dom assertions do not prove layout.
+- `cargo test` does not link the app binary; `pnpm verify` (`scripts/test.*` + `scripts/build.*`) runs `cargo build --no-default-features` to catch link-stage failures.
+- Run `pnpm verify` before releases or multi-domain merges. Local hooks are feedback, not a substitute for CI.
+- There is no repo-wide lint/format script in `pnpm verify`; do not claim lint/format passed unless run explicitly.
 
 ## Cross-Layer Boundaries
 
-1. **Engine owns Markdown semantics.** Lezer extensions, Markdown-specific decorations, live/source mode, and preview widgets belong in `packages/engine`.
-2. **Desktop owns host behavior.** React lifecycle, generic CodeMirror editing behavior, base theme, CSS, file dialogs, shortcuts, and IPC orchestration belong in `apps/desktop/src`.
-3. **Rust owns native effects.** Filesystem writes and other OS operations belong in `apps/desktop/src-tauri`; expose narrow Tauri commands and call them from TypeScript.
-4. **Do not duplicate parsing.** Desktop and Rust code must not reimplement Markdown syntax detection already owned by the engine.
-5. **Keep the engine framework-independent.** It must not import React or Tauri. It may use browser DOM APIs for CodeMirror widgets; tests provide `happy-dom`.
-6. **Preserve source text.** Preview is a projection of the Markdown document. Decorations and widgets must not silently rewrite user content.
-7. **IPC field casing is a tested contract.** TypeScript types cannot catch wire-format drift (runtime `undefined` compiles fine), and desktop tests mock services at the TS boundary. Any Rust payload with multi-word fields needs a serialized-JSON assertion in Rust tests — see the "IPC casing trap" in `apps/desktop/AGENTS.md`.
-8. **IPC changes span both sides — or they silently do nothing.** A Tauri command change to arguments or return type must update the Rust command, the `desktopServices.ts` invoke caller, and every TypeScript consumer in the same change. Leaving the frontend on the old contract makes the invoke reject (missing/extra arg) or the UI read the wrong shape — it compiles, passes tests (which mock services at the TS boundary), and fails only at runtime. This is what broke folder search: `search_markdown` gained `case_sensitive` and returned `SearchResponse` while `desktopServices.ts` still called it with `{ root, query }` and typed the result as `SearchHit[]`.
+1. **Engine owns Markdown semantics.** Lezer extensions, Markdown decorations, live/source mode, and preview widgets belong in `packages/engine` (zero React or Tauri imports).
+2. **Desktop owns host behavior.** React lifecycle, generic CodeMirror host setup, base theme, CSS (`styles.css`), file dialogs, shortcuts, and IPC orchestration belong in `apps/desktop/src`.
+3. **Rust owns native effects.** Filesystem writes, menus, and OS integration belong in `apps/desktop/src-tauri` behind narrow Tauri commands.
+4. **Do not duplicate parsing.** Desktop and Rust code must never reimplement Markdown syntax detection owned by the engine.
+5. **Preserve source text.** Preview is a projection of the Markdown document; decorations and widgets must not silently rewrite user content.
+6. **IPC changes span both sides.** Any change to a Tauri command's arguments or return type must update the Rust command, `desktopServices.ts`, all TS consumers, and a Rust `serde_json::to_string` field-casing assertion in the same change.
+7. **Shared constants have named homes and drift guards.** Cross-layer limits/keys live in `apps/desktop/src/constants.ts` ↔ Rust (`crossLayerConstants.test.ts`); ASCII parser codes live in `packages/engine/src/parse/chars.ts`; shortcuts live in engine keymaps and `apps/desktop/src/shortcuts.ts` (`crossLayerMenu.test.ts`).
 
+## Code & Module Style
 
+### Module Size & Ownership
+- **Target <= 500 physical lines; hard limit 800.** Count comments, blank lines, and tests, including inline Rust tests. The gate covers TS/JS, Rust, and Python; generated or vendored names are not automatic exemptions. Never compress formatting or delete useful explanations to evade it.
+- **Legacy oversized files may only shrink.** `scripts/module-size-baseline.json` records existing caps; the gate also compares against the base revision so reductions cannot be reclaimed. Never add or increase a legacy allowance. Remove entries when files are deleted or reach the hard limit.
+- Split by cohesive responsibility and state ownership, not arbitrary line counts. A module should have one explainable purpose and a narrow interface; avoid pass-through wrappers, catch-all `utils`, or abstractions for hypothetical reuse.
+- Put new behavior outside growth-frozen hotspots (`App.tsx`, Rust `lib.rs`/`workspace.rs`, engine `decorations/widgets/table.ts`/`blocks.ts`); keep only thin wiring there. Move large Rust inline tests into sibling test modules.
+- Reuse existing helpers before adding logic. Keep one owner for each state; derive projections instead of synchronizing duplicate mutable facts. Keep parsers/edit plans pure where possible and put dispatch, IO, and notifications at explicit execution boundaries.
 
-## Workspace Conventions
+### Numbers, Units & Shared Contracts
+- Name behavioral values: delays/timeouts (`*_MS`), byte limits (`*_BYTES`), retries, cache capacities, parser codes, and protocol identifiers. Reuse an existing named home; do not introduce unexplained literals or vague names such as `LIMIT`.
+- Keep single-use constants private and near their use. Promote only genuinely shared contracts; never turn `constants.ts` into a dump of unrelated values. Cross-layer values require named definitions on both sides and drift assertions.
+- Do not extract self-evident indexes, increments, or empty checks into `ZERO`/`ONE`. Use CSS tokens for semantic/reused theme values, not every ordinary `1px` border.
 
-- Write strict TypeScript and avoid `any`; use named exports except framework/config files that conventionally require default exports.
-- The nearest `AGENTS.md` is authoritative. `.cursor/rules/*.mdc` may add tool-specific guidance only when it does not conflict with root or domain instructions.
-- Do not enable `indentOnInput`, **stock** `closeBrackets`, or generic `autocompletion` in `createEditor`; they conflict with current live-preview behavior. Both sanctioned overrides live inside `editorExtensions`: the engine's Markdown-aware pairing (`packages/engine/src/format/autoPair.ts`) and the `:`-only gemoji completion. Do not add a second pairing layer in `createEditor`.
-- Keep window-level handlers stable with refs so listeners are not repeatedly registered as React state changes.
-- Do not hard-code values that have a named home. Shared/cross-layer limits and storage keys live in `apps/desktop/src/constants.ts` (drift-guarded against Rust/CSS by `apps/desktop/test/crossLayerConstants.test.ts`); ASCII punctuation in the engine parsers uses the named constants in `packages/engine/src/parse/chars.ts`; shortcut labels are owned by the engine keymap and `apps/desktop/src/shortcuts.ts`; native menu wiring must match `commands.ts` `MENU_TO_COMMAND` (guarded by `apps/desktop/test/crossLayerMenu.test.ts`). If a value must agree across two sides (TS↔Rust, TS↔CSS, keymap↔palette, generator-script↔test — e.g. installer BMP layout constants in `scripts/generate_installer_images.py` ↔ `apps/desktop/test/tauriConfig.test.ts`), define it on both sides as a named constant and add a drift test — never leave one side as a bare literal.
-- Do not edit or discard unrelated working-tree changes. Inspect the current diff before broad or mechanical edits.
-- Prefer the smallest rule set that preserves current behavior; future milestones in design documents are not automatically current implementation requirements.
-- Dangerous shell commands are blocked by [`.cursor/hooks.json`](./.cursor/hooks.json) (`beforeShellExecution`). Cursor currently ignores hook `permission: ask`, so the guard returns `deny`. Add or adjust patterns in [`.cursor/hooks/guard-dangerous.sh`](./.cursor/hooks/guard-dangerous.sh). To run a blocked command, execute it yourself in the integrated terminal (human terminals do not trigger hooks).
-- **并发会话在各自 worktree 作业**：同一仓库可能有多个 agent/人工会话并行。功能分支的工作必须在自己的 worktree 里做（`git worktree add .worktrees/<name> -b <branch> origin/main`，参照现有 `.worktrees/` 先例），主 checkout 留给用户当前分支。绝不在主 checkout 里切换分支、stash 或还原他人未提交的改动 —— 2026-09-01 两次实际碰撞（分支被并发切换导致提交落错基底；他人 WIP 混入工作区使测试失败）都源于此。
-- Never spawn CPU-saturating processes on the dev machine — busy loops (`while :; do :; done`), fork bombs, `stress`/`stress-ng`, or any load-generation script — for any reason, including "verifying flaky tests under load". Make such tests deterministic by construction instead; load-sensitive checks are the user's to run.
-- 平台分支只经 `apps/desktop/src/platform.ts`（TS）或 `cfg!(target_os = …)`（Rust），不得散落 UA/平台字符串比较；未知平台按 macOS 处理。
-- Git hooks live in [`.githooks/`](./.githooks/). `pnpm install` sets `core.hooksPath` via the root `prepare` script.
-  - `pre-commit` runs domain tests for staged paths: `packages/engine/**` → `pnpm test`; `apps/desktop/src|test|package files` → `pnpm --filter @omd/desktop test`; `apps/desktop/src-tauri/**` → `cargo fmt --check` and `cargo test`. Docs-only commits skip.
-  - `commit-msg` strips any `Co-authored-by:` trailer (Cursor, Copilot, etc.), then requires `<type>: <why>` (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`). Merge and Revert subjects are allowed.
+### State, Errors & Async Work
+- Validate at trust boundaries and represent mutually exclusive states with discriminated unions. Do not bypass contracts with unsafe assertions.
+- Capture and revalidate target identity/version before applying async results. Cancellation, stale completion, and failure are distinct outcomes; none may masquerade as success or erase newer edits.
+- Surface failures through the domain's error channel. Never use empty catches, silent data loss, or success-shaped fallback values. A deliberate degraded rendering path must preserve source and expose its degraded state.
 
+### TypeScript & Control Flow
+- Write strict TypeScript without `any`; use named exports (except `App.tsx` and framework configs).
+- Make exported functions read as the happy path; place supporting validation or lowering helpers below them in the same file.
+- Do not extract single-use helpers preemptively unless they name a real domain boundary or clarify a complex caller.
+- Prefer `const` over `let` and early returns over `else` branches.
+- Add comments for non-obvious invariants and browser/OS quirks, not for obvious control flow.
 
+### Operational Safety
+- Inspect the working-tree diff before editing. Preserve unrelated WIP, including changes in files you touch; never switch branches, stash, revert, or clean up someone else's work without permission.
+- **Isolate parallel feature branches in `.worktrees/<name>`** when working concurrently so you never switch branches, stash, or revert unrelated WIP in the main checkout.
+- **Never spawn CPU-saturating processes** (busy loops, `stress`, load generators) on the dev machine; make timing-sensitive tests deterministic by construction.
+- **`AGENTS.md` authoring:** Give each rule one authoritative home. Local guides describe scope/entry points, invariants, approved exceptions, related guides/tests, and verification; link shared rules rather than repeating them. State the trigger and required behavior with a code/test anchor. Keep only verified current contracts mandatory; label future designs explicitly. Put incident narratives in `docs/memory/gotchas-*.md`.
 
 ## Documentation Maintenance
 
-Before finishing a task, check whether these need updates:
-
-- [ ] Root or domain `AGENTS.md` — Did routing, ownership, constraints, module layout, or recurring pitfalls change?
-- [ ] `docs/memory/known-gotchas.md` (index) + the matching `gotchas-*.md` — Did you discover a reusable trap or invalidate an existing one?
-- [ ] Product spec or implementation plan — Did an approved architecture or milestone decision change?
-- [ ] `docs/manual-qa.md` — Did user-visible interaction behavior or the release verification matrix change?
-- [ ] `docs/guides/` — Did a user-visible shortcut or operation change?
-- [ ] README or changelog — Did public setup or user-visible behavior change?
-
-Add permanent agent rules only when they describe verified, recurring project constraints rather than a one-off implementation choice.
+Before finishing a task, check whether updates are needed in:
+- [ ] Nearest `AGENTS.md` (routing, module layout, or recurring invariants)
+- [ ] `docs/memory/known-gotchas.md` + `gotchas-engine/desktop/rust.md` (new reusable traps)
+- [ ] `docs/superpowers/specs/` or `docs/superpowers/plans/` (architecture or milestone changes)
+- [ ] `docs/manual-qa.md` or `docs/guides/` (user-visible interaction or shortcut changes)
