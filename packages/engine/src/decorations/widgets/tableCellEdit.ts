@@ -67,9 +67,23 @@ function decodeShieldedPipes(text: string): string {
 }
 
 function caretInside(node: SyntaxNode, caret: number): boolean {
-  // 停在 from 上还没进入节点。整格就是 `` `journal/` `` 时，去空白后的内容起点
-  // 正好压在开头标记上，单击应继续显示折叠后的 journal/。进入 (from, to) 才整段展开。
-  return caret > node.from && caret < node.to
+  return caret >= node.from && caret < node.to
+}
+
+function outermostReveal(node: SyntaxNode, caret: number): SyntaxNode | null {
+  if (REVEAL_WHOLE.has(node.name) && caretInside(node, caret)) return node
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    const inner = outermostReveal(child, caret)
+    if (inner) return inner
+  }
+  return null
+}
+
+/** 无布局命中时，停在开头标记上会整段展开。单击落到节点之后，可见文本仍是折叠芯片。 */
+export function unhitClickCaret(source: string): number {
+  const trimmed = trimmedCellCaret(source)
+  const covered = outermostReveal(parser().parse(source).topNode, trimmed)
+  return covered ? covered.to : trimmed
 }
 
 function appendText(parent: HTMLElement, text: string, from: number, to: number): void {
@@ -164,16 +178,15 @@ export function focusEditableCell(
   clientY: number | undefined,
   options?: CellParseOptions,
 ): void {
+  const clicked = clientX !== undefined && clientY !== undefined
   if (projection.childNodes.length === 0) {
-    const start = trimmedCellCaret(input.value)
+    const start = clicked ? unhitClickCaret(input.value) : trimmedCellCaret(input.value)
     input.setSelectionRange(start, start)
     syncEditableCell(projection, cell, input, options)
   }
   input.focus()
-  const hit = clientX !== undefined && clientY !== undefined
-    ? cellSourceOffsetAt(projection, clientX, clientY)
-    : null
-  const caret = hit ?? trimmedCellCaret(input.value)
+  const hit = clicked ? cellSourceOffsetAt(projection, clientX, clientY) : null
+  const caret = hit ?? (clicked ? unhitClickCaret(input.value) : trimmedCellCaret(input.value))
   input.setSelectionRange(caret, caret)
   syncEditableCell(projection, cell, input, options)
 }
