@@ -1,5 +1,5 @@
 import type { SyntaxNode } from "@lezer/common"
-import { cellLanguage, type CellParseOptions } from "../../parse/cell"
+import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
 import { decodeHtmlEntity } from "../../parse/entities"
 import { resolveEmoji } from "../../parse/emoji"
 import { escapeParts } from "../../semantic/breaks"
@@ -57,12 +57,6 @@ function referenceContext(source: string, options?: CellParseOptions): MarkdownR
     sliceString: (from, to) => source.slice(from, to),
     resolveReference: options.resolveReference,
   }
-}
-
-/** 与 `parseCell` 的行内代码管道解码一致：只去掉 GFM 为 `\|` 留下的那一个屏蔽反斜杠。 */
-function decodeShieldedPipes(text: string): string {
-  return text.replace(/(\\+)\|/g, (match, run: string) =>
-    run.length % 2 === 1 ? `${run.slice(1)}|` : match)
 }
 
 function caretInside(node: SyntaxNode, caret: number): boolean {

@@ -65,7 +65,7 @@ function cellContext(source: string, options?: CellParseOptions): CellContext {
 
 // 行内代码是不透明值：GFM 行切分只为 `\|` 保留了「奇数个反斜杠 + 管道」里的一个
 // 屏蔽反斜杠，去掉的只能是这一个；其余反斜杠是代码的字面量，必须原样保留。
-function decodeShieldedPipes(text: string): string {
+export function decodeShieldedPipes(text: string): string {
   return text.replace(/(\\+)\|/g, (match, run: string) =>
     run.length % 2 === 1 ? `${run.slice(1)}|` : match)
 }
