@@ -50,7 +50,7 @@ MSI **不再随 Release 发布**，但保留了本地自建能力：`tauri.conf.
 
 实现细节（修改钩子时必读）：
 
-1. **注册表视图**：NSIS 安装器是 32 位进程，`HKLM` 访问默认被重定向到 `WOW6432Node`；而 MSI（x64 打包）注册在 64 位视图。钩子里必须 `SetRegView 64` 枚举、读完 `SetRegView 32` 恢复。这也解释了为什么 Tauri 内置 WixMode 检测在某些机器上"看不见"MSI。
+1. **注册表视图**：NSIS 安装器是 32 位进程，`HKLM` 访问默认被重定向到 `WOW6432Node`；而 MSI（x64 打包）注册在 64 位视图。钩子里显式 `SetRegView 64`（模板 `.onInit` 的 SetContext 对 x64 构建其实已切换，显式重申是为了让钩子不依赖该初始化时序），**不要**事后恢复 `SetRegView 32`——安装其余部分预期 64 位视图。
 2. **退出码**：NSIS Section 内的 `SetErrorLevel` 会被进程退出路径覆盖。正确做法是把码存入变量，在 `Function .onInstFailed`（Section `Abort` 触发）里重新 `SetErrorLevel`。
 3. 测试注意：通过 `cmd /c ... %ERRORLEVEL%` 取码会拿到 wrapper 的 0；`Start-Process -Wait` 的 `ExitCode` 才是真实进程退出码。
 
