@@ -96,6 +96,7 @@ export const zh: Record<string, string> = {
   "update.checking": "正在检查更新…",
   "update.available": "发现新版 oh-my-md {version}。",
   "update.download": "下载更新",
+  "update.downloadInstaller": "下载安装包（NSIS）",
   "update.viewRelease": "查看发布说明",
   "update.openRelease": "打开发布页",
   "update.later": "以后再说",

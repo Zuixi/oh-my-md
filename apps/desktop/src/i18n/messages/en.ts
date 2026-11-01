@@ -96,6 +96,7 @@ export const en: Record<string, string> = {
   "update.checking": "Checking for updates…",
   "update.available": "oh-my-md {version} is available.",
   "update.download": "Download update",
+  "update.downloadInstaller": "Download installer (NSIS)",
   "update.viewRelease": "View release",
   "update.openRelease": "Open Release",
   "update.later": "Later",

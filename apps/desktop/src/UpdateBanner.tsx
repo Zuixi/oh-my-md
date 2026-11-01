@@ -12,7 +12,7 @@ import type { UpdateBlockReason } from "./updateRestartReadiness"
  */
 export interface UpdateBannerProps {
   readonly state: UpdateState
-  /** `available` -> start the explicit download (or, for check-only packages, open the Release page). */
+  /** `available` -> start the explicit download (or, for check-only packages, open the installer download). */
   readonly onDownload: () => void
   /** Open the official immutable GitHub Release page. */
   readonly onViewRelease: () => void
@@ -74,7 +74,7 @@ export function UpdateBanner({
           ) : null}
           <div className="update-banner-actions">
             <button type="button" className="update-banner-view" onClick={onDownload}>
-              {t(state.installSupported ? "update.download" : "update.openRelease")}
+              {t(state.installSupported ? "update.download" : "update.downloadInstaller")}
             </button>
             {state.installSupported ? (
               <button type="button" className="update-banner-view" onClick={onViewRelease}>

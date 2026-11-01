@@ -102,21 +102,26 @@ jobs:
           printf 'oh-my-md updater signing probe' > "$probe"
           env -u TAURI_SIGNING_PRIVATE_KEY pnpm --filter @omd/desktop tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$probe"
           rm -f "$probe" "$probe.sig"
-      - name: Build x64 NSIS and MSI installers
-        run: pnpm --filter @omd/desktop tauri build --bundles nsis,msi
-      - name: Require Windows installers and updater signature
+      - name: Build x64 NSIS installer
+        run: pnpm --filter @omd/desktop tauri build --bundles nsis
+      - name: Require Windows installer and updater signature
         shell: bash
         run: |
           bundle="apps/desktop/src-tauri/target/release/bundle"
-          find "$bundle" -type f -name '*.msi' -print -quit | grep -q .
           find "$bundle" -type f -name '*-setup.exe' -print -quit | grep -q .
           find "$bundle" -type f -name '*-setup.exe.sig' -print -quit | grep -q .
+          # The in-app updater deep-links to this exact asset name
+          # (windowsSetupAssetUrl); fail the build if it ever drifts.
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          find "$bundle" -type f -name "oh-my-md_${version}_x64-setup.exe" -print -quit | grep -q . || {
+            echo "Expected NSIS asset oh-my-md_${version}_x64-setup.exe not found" >&2
+            exit 1
+          }
       - name: Upload Windows packages and signed updater artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-packages
           path: |
-            apps/desktop/src-tauri/target/release/bundle/**/*.msi
             apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe
             apps/desktop/src-tauri/target/release/bundle/**/*-setup.exe.sig
           if-no-files-found: error
@@ -189,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          for pattern in '*.dmg' '*.msi' '*-setup.exe' '*.deb' '*.AppImage' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe.sig' '*.AppImage.sig'; do
+          for pattern in '*.dmg' '*-setup.exe' '*.deb' '*.AppImage' '*.app.tar.gz' '*.app.tar.gz.sig' '*-setup.exe.sig' '*.AppImage.sig'; do
             mapfile -d '' matches < <(find downloaded -type f -name "$pattern" -print0)
             test "${#matches[@]}" -gt 0 || {
               echo "Missing required release package or updater artifact: $pattern" >&2
@@ -204,6 +209,13 @@ jobs:
               cp "$package" "release-assets/$name"
             done
           done
+          # The in-app updater and winget deep-link to this exact asset name;
+          # fail the release if the NSIS bundle name ever drifts.
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          test -f "release-assets/oh-my-md_${version}_x64-setup.exe" || {
+            echo "Expected NSIS asset oh-my-md_${version}_x64-setup.exe not staged" >&2
+            exit 1
+          }
       - name: Generate and validate candidate updater manifest
         shell: bash
         run: |
@@ -245,5 +257,13 @@ jobs:
             signed candidate updater set. They ship with the Release but are
             not promoted to the stable endpoint until the protected manual
             workflow publishes them.
+
+            ## Upgrading from an MSI install?
+
+            Download and run the `-setup.exe` once — the wizard guides you
+            through removing the old MSI installation. If your desktop shows
+            two shortcuts afterwards, delete the older one. Silent installs
+            (`/S`) refuse to run while an MSI installation is present
+            (exit code 1603).
           files: release-assets/*
           fail_on_unmatched_files: true
