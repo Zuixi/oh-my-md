@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { editorExtensions } from "../src/index"
 import { livePreviewField } from "../src/decorations/build"
+import { isTableSourceRevealed, revealTableSource } from "../src/tables/sourceReveal"
 import { makeState } from "./helpers"
 
 const DOC = ["| A | B |", "| --- | --- |", "| a | b |", "", "after"].join("\n")
@@ -17,8 +18,13 @@ const INLINE_DOC = "x\n\n| **a** |\n| --- |\n| b |\n"
 
 describe("table source mode", () => {
   it("emits line decorations and no folding inside a focused table", () => {
-    const state = makeState(DOC, [editorExtensions()], { anchor: DOC.indexOf("a") })
-    const specs = state.field(livePreviewField).specs
+    const anchor = DOC.indexOf("a")
+    const state = makeState(DOC, [editorExtensions()], { anchor })
+    const revealed = state.update({
+      selection: { anchor: anchor + 1 },
+      effects: revealTableSource.of(null),
+    }).state
+    const specs = revealed.field(livePreviewField).specs
     const tableFrom = DOC.indexOf("| A")
     const tableTo = DOC.indexOf("\n\nafter")
     const inside = specs.filter(s => s.from >= tableFrom && s.from <= tableTo)
@@ -30,10 +36,13 @@ describe("table source mode", () => {
   })
 
   it("keeps inline markup raw inside a focused table", () => {
-    const state = makeState(INLINE_DOC, [editorExtensions()], {
-      anchor: INLINE_DOC.lastIndexOf("| b |") + 2,
-    })
-    const specs = state.field(livePreviewField).specs
+    const anchor = INLINE_DOC.lastIndexOf("| b |") + 2
+    const state = makeState(INLINE_DOC, [editorExtensions()], { anchor })
+    const revealed = state.update({
+      selection: { anchor: anchor + 1 },
+      effects: revealTableSource.of(null),
+    }).state
+    const specs = revealed.field(livePreviewField).specs
     const tableFrom = INLINE_DOC.indexOf("| **a**")
     const inside = specs.filter(s => s.from >= tableFrom && s.from <= INLINE_DOC.length)
 
@@ -49,5 +58,68 @@ describe("table source mode", () => {
     const specs = state.field(livePreviewField).specs
     expect(specs.some(s => s.tag === "widget:block:table")).toBe(true)
     expect(specs.some(s => s.tag === "line:omd-table-src")).toBe(false)
+  })
+
+  it("keeps the rendered table while a collapsed caret rests inside a header cell", () => {
+    const headerCaret = DOC.indexOf("A")
+    const state = makeState(DOC, [editorExtensions()], { anchor: headerCaret })
+    const tableFrom = DOC.indexOf("| A")
+    const tableTo = DOC.indexOf("\n\nafter")
+    const inside = state.field(livePreviewField).specs
+      .filter(s => s.from >= tableFrom && s.from <= tableTo)
+
+    expect(inside.some(s => s.tag === "widget:block:table")).toBe(true)
+    expect(inside.some(s => s.tag === "line:omd-table-src")).toBe(false)
+
+    // 同一张表、仍在表头单元格内，但向后移一格：live 装饰只在选区变化时重建。
+    const revealed = state.update({
+      selection: { anchor: headerCaret + 1 },
+      effects: revealTableSource.of(null),
+    }).state
+    const revealedInside = revealed.field(livePreviewField).specs
+      .filter(s => s.from >= tableFrom && s.from <= tableTo)
+
+    expect(revealedInside.filter(s => s.tag === "line:omd-table-src").length).toBe(3)
+    expect(revealedInside.some(s => s.tag === "widget:block:table")).toBe(false)
+  })
+
+  it("renders the table again after the caret leaves and re-enters without a new reveal", () => {
+    const inside = DOC.indexOf("a")
+    const revealed = makeState(DOC, [editorExtensions()], { anchor: 0 }).update({
+      selection: { anchor: inside },
+      effects: revealTableSource.of(null),
+    }).state
+    expect(isTableSourceRevealed(revealed)).toBe(true)
+
+    const left = revealed.update({ selection: { anchor: DOC.length } }).state
+    expect(isTableSourceRevealed(left)).toBe(false)
+
+    const returned = left.update({ selection: { anchor: inside + 1 } }).state
+    const specs = returned.field(livePreviewField).specs
+    expect(specs.some(s => s.tag === "widget:block:table")).toBe(true)
+    expect(specs.some(s => s.tag === "line:omd-table-src")).toBe(false)
+  })
+
+  it("keeps source lines while typing inside a revealed table", () => {
+    const anchor = DOC.indexOf("a")
+    const revealed = makeState(DOC, [editorExtensions()], { anchor: 0 }).update({
+      selection: { anchor },
+      effects: revealTableSource.of(null),
+    }).state
+    const typed = revealed.update({
+      changes: { from: anchor, to: anchor, insert: "z" },
+      selection: { anchor: anchor + 1 },
+    }).state
+    const specs = typed.field(livePreviewField).specs
+    expect(isTableSourceRevealed(typed)).toBe(true)
+    expect(specs.some(s => s.tag === "widget:block:table")).toBe(false)
+    expect(specs.some(s => s.tag === "line:omd-table-src")).toBe(true)
+  })
+
+  it("keeps the reveal flag false when the caret is not inside a table", () => {
+    const state = makeState(OUTSIDE_DOC, [editorExtensions()], { anchor: 0 })
+    const next = state.update({ effects: revealTableSource.of(null) }).state
+    expect(isTableSourceRevealed(next)).toBe(false)
+    expect(next.field(livePreviewField).specs.some(s => s.tag === "widget:block:table")).toBe(true)
   })
 })

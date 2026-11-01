@@ -165,10 +165,13 @@ describe("view smoke (real EditorView)", () => {
     vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
 
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
-
-    expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
     await tick()
-    expect(view.dom.querySelector(".omd-table")).toBeNull()   // widget 卸载，进入源码
+    // 未带 revealTableSource 时渲染表盖住源码，光标落不进被替换的区间。
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()
+    const tableFrom = doc.indexOf("| a |")
+    const tableTo = doc.indexOf("\n\ntail")
+    const head = view.state.selection.main.head
+    expect(head <= tableFrom || head >= tableTo).toBe(true)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -255,13 +258,13 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     view.dispatch({ changes: { from: 0, insert: "prefix\n" } })
     await tick()
-    // happy-dom 无 layout：posAtCoords 和 posAtDOM 均返回 0，光标落在文档开头而非块内，
-    // widget 不会因 mousedown 自然卸载。精确的鼠标定位需手动 QA 在真实浏览器中验证。
-    // 这里验证：把选区显式移进表格块内后，blockSelected 逻辑使 widget 卸载。
+    // happy-dom 无 layout：posAtCoords 和 posAtDOM 均返回 0，光标落在文档开头而非块内。
+    // 精确的鼠标定位需手动 QA 在真实浏览器中验证。
+    // 把选区放进表格源码后，未展开的表仍保持渲染。
     const tableStart = doc.indexOf("| a |") + "prefix\n".length
     view.dispatch({ selection: { anchor: tableStart } })
     await tick()
-    expect(view.dom.querySelector(".omd-block")).toBeNull()  // 选区在块内，widget 已卸载
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

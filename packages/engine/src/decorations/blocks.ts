@@ -7,6 +7,7 @@ import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
 import { createComplexTableWidget } from "./widgets/complexTable"
 import { tableDataFromNode } from "../tables/model"
+import { isTableSourceRevealed } from "../tables/sourceReveal"
 import { imageResolver } from "./widgets/image"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
@@ -207,7 +208,7 @@ function styleEditingCodeblock(
   }
 }
 
-// 源码态表格（光标在表内）：整表保持可编辑的 Markdown 源码，但按行给出
+// 显式展开后的源码态表格：整表保持可编辑的 Markdown 源码，但按行给出
 // 等宽 + 底色 + 行级的表头/分隔行标记，让管道符纵向对齐 —— 不做任何行内折叠，
 // 否则 `**`/`|` 的半渲染让源码网格变成“半个预览”。
 function styleTableSource(
@@ -424,10 +425,10 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       return true
     }
     case "Table": {
-      if (blockSelected(state, node.from, node.to)) {
+      // 光标停在表内仍保持渲染。只有显式展开、且选区落在这张表上时才卸成源码行。
+      // 源码态必须跳过子树：否则 inlineRules 会在单元格里折叠 `**` 并加粗。
+      if (isTableSourceRevealed(state) && blockSelected(state, node.from, node.to)) {
         styleTableSource(node, state, out)
-        // 必须跳过子树：否则 inlineRules 会在单元格里折叠 `**` 并加粗，
-        // 源码网格就成了“半个预览”。
         return true
       }
       const table = tableDataFromNode(node.node, state)

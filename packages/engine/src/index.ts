@@ -14,6 +14,7 @@ import { fenceKeymap } from "./format/fences"
 import { codeIndentKeymap, codeLineKeymap } from "./format/codeLines"
 import { tableKeymap } from "./format/tableKeymap"
 import { experimentalTableDirectEdit } from "./tables/directEdit"
+import { tableSourceRevealed } from "./tables/sourceReveal"
 import { tableSourceToolbar } from "./tables/sourceToolbar"
 import { caretClampHandlers, caretClampKeymap } from "./navigation/caretClamp"
 import { referenceIndexExtension } from "./semantic/references"
@@ -229,6 +230,9 @@ export function editorExtensions(options: EngineOptions = {}) {
     orderedNormalizationState,
     // 引用定义索引：同样在 compartment 之外，模式切换不得重新播种。
     referenceIndexExtension,
+    // 哪张表被展开成源码。挂在 livePreviewCompartment 之外，切到全局源码模式
+    // 不会丢掉；全局源码模式没有 live 装饰，字段空转。
+    tableSourceRevealed,
     ...(directEdit ? [experimentalTableDirectEdit, tableDirectEditEnabled.of(true)] : []),
     livePreviewCompartment.of(live ? livePreviewExt() : []),
     // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，

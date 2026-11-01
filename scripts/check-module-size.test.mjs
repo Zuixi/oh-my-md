@@ -9,10 +9,21 @@ import { test } from "node:test"
 const SCRIPT = fileURLToPath(new URL("./check-module-size.mjs", import.meta.url))
 const BASELINE = "scripts/module-size-baseline.json"
 
+function fixtureGitEnv() {
+  // Pre-commit exports GIT_DIR / GIT_INDEX_FILE. A fixture must not inherit them,
+  // or `git init` and `git commit` rewrite the repository that invoked the hook.
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GIT_")) delete env[key]
+  }
+  return env
+}
+
 function fixture(t, files = {}, baseline = {}) {
   const root = mkdtempSync(join(tmpdir(), "omd-module-size-"))
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim()
+  const env = fixtureGitEnv()
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", env }).trim()
   const write = (path, text) => {
     mkdirSync(dirname(join(root, path)), { recursive: true })
     writeFileSync(join(root, path), text)
@@ -31,6 +42,7 @@ function fixture(t, files = {}, baseline = {}) {
   const check = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd: root,
     encoding: "utf8",
+    env,
   })
   return { root, git, write, budgets, commit, check }
 }

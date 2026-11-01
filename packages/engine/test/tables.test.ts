@@ -38,21 +38,21 @@ describe("tables", () => {
     expect(t).toContain(`widget:block:table@7-${7 + doc.length}`)
   })
 
-  it("shows source (no widget) when cursor is inside the table", () => {
+  it("keeps the block widget when the caret is inside the table", () => {
     const state = makeState(doc)
     const s = state.update({ selection: { anchor: 5 } }).state
     const t = collectDecorationSpecs(s, 0, s.doc.length).map(d => d.tag)
-    expect(t).not.toContain("widget:block:table")
+    expect(t).toContain("widget:block:table")
+    expect(t).not.toContain("line:omd-table-src")
   })
 
-  it("keeps a caret resting exactly on the end boundary in source editing", () => {
-    // 「粘贴后需按 Enter」的修复在粘贴侧做边界规整（paste/blockBoundaries.ts），
-    // 装饰层不得为「光标恰在 node.to」开渲染例外：手敲表格收尾时光标也停在
-    // node.to，例外会让 widget 在打字中途吞掉正在编辑的行（M2 围栏同类回归）。
+  it("keeps the block widget when the caret rests on the table end", () => {
+    // 未显式展开时，光标停在 node.to 也保持渲染表。源码行只在 revealTableSource 之后出现。
     const state = makeState(doc)
     const s = state.update({ selection: { anchor: doc.length } }).state
     const t = collectDecorationSpecs(s, 0, s.doc.length).map(d => d.tag)
-    expect(t).not.toContain("widget:block:table")
+    expect(t).toContain("widget:block:table")
+    expect(t).not.toContain("line:omd-table-src")
   })
 
   it("inline marks inside cells do not emit decorations under the widget", () => {

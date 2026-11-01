@@ -499,8 +499,8 @@ describe("table direct edit DOM controller", () => {
     cleanup()
   })
 
-  // 光标进表会卸载渲染态 widget 与它的输入框；会话必须随之关闭，否则
-  // `tableEditSession` 会在没有任何编辑面时继续存活并接受后续输入。
+  // 光标进未展开的表不再卸载渲染表。会话仍必须关闭，否则
+  // `tableEditSession` 会在主选区已经进表时继续接受后续输入。
   it("clears the session when the outer selection moves into the table", async () => {
     const { view, changes, cleanup } = mountDirect()
     const cells = await renderedCells(view)
@@ -512,9 +512,7 @@ describe("table direct edit DOM controller", () => {
     view.dispatch({ selection: { anchor: table.from + 2 } })
     drainPendingLiveBuild(view)
 
-    expect(view.dom.querySelector(".omd-table")).toBeNull()
-    expect(view.dom.querySelector(".omd-table-cell-input")).toBeNull()
-    expect(activeTableInputControllerCountForTest()).toBe(0)
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()
     expect(getTableEditSession(view.state)).toBeNull()
     expect(changes).toHaveLength(0)
     cleanup()
