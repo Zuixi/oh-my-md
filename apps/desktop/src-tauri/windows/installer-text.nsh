@@ -32,9 +32,11 @@ LangString OMD_SILENT_MSI_BLOCK ${LANG_SIMPCHINESE} "检测到旧版 oh-my-md �
   ; by the built-in WixMode migration on the reinstall page; doing the same
   ; work here would double-prompt the user.
   ${If} ${Silent}
-    ; The installer is a 32-bit process, so HKLM access is redirected to the
-    ; WOW6432Node view by default, while the MSI (built as x64) registers in
-    ; the 64-bit view. Enumerate the 64-bit view, then restore.
+    ; Explicit 64-bit registry view: the installer is a 32-bit process and
+    ; the MSI (built as x64) registers in the 64-bit view. The template's
+    ; .onInit SetContext already sets this for ARCH=x64; restate it here so
+    ; the hook stays correct independent of that initialization order. Do
+    ; NOT reset to 32 afterwards — the rest of the install expects 64.
     SetRegView 64
     ; Mirror the built-in WixMode detection exactly (DisplayName+Publisher
     ; match, then msiexec in UninstallString) so the two paths never disagree.
@@ -50,7 +52,6 @@ LangString OMD_SILENT_MSI_BLOCK ${LANG_SIMPCHINESE} "检测到旧版 oh-my-md �
       ${StrCase} $R1 $R0 "L"
       ${StrLoc} $R0 $R1 "msiexec" ">"
       StrCmp $R0 0 0 omd_msi_loop
-      SetRegView 32
       ; Signal MSI remnant to the caller. SetErrorLevel alone is
       ; overwritten by the process exit path, so stash the code and
       ; re-apply it from .onInstFailed below.
@@ -58,7 +59,6 @@ LangString OMD_SILENT_MSI_BLOCK ${LANG_SIMPCHINESE} "检测到旧版 oh-my-md �
       DetailPrint "$(OMD_SILENT_MSI_BLOCK)"
       Abort
     omd_msi_done:
-    SetRegView 32
   ${EndIf}
 !macroend
 
