@@ -1,5 +1,5 @@
 import { isolateHistory, redo, undo } from "@codemirror/commands"
-import { Facet, type EditorState } from "@codemirror/state"
+import { Facet, type EditorState, type StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import {
   beginTableEdit,
@@ -13,7 +13,13 @@ import type { TableAlignment, TableCellData, TableData } from "../../tables/mode
 import { nextCell, tableAt, type TableContext } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
 import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
+import { revealTableSource } from "../../tables/sourceReveal"
 import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
+import {
+  focusEditableCell,
+  mountEditableCell,
+  syncEditableCell,
+} from "./tableCellEdit"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon } from "../icons"
@@ -71,6 +77,8 @@ interface TableInputController {
   committing: boolean
   /** Session revision this controller last saw; a mismatch means history moved the doc. */
   revision: number
+  paint(): void
+  focusAt(clientX?: number, clientY?: number): void
   destroy(): void
 }
 
@@ -114,6 +122,11 @@ function activeCellStart(state: EditorState, row: number, column: number): numbe
   return cell ? table.from + cell.from : null
 }
 
+function editingCellOptions(host: HTMLElement): CellParseOptions {
+  const owner = domOwner.get(host)
+  return { pipeEscapes: "gfm-table", resolveReference: owner?.resolveReference }
+}
+
 function createTableInputController(
   view: EditorView,
   host: HTMLElement,
@@ -127,6 +140,15 @@ function createTableInputController(
   input.className = TABLE_INPUT_CLASS
   input.value = source
   let destroyed = false
+  const projection = mountEditableCell(cellEl, input)
+  const repaint = () => {
+    if (destroyed) return
+    syncEditableCell(projection, cellEl, input, editingCellOptions(host))
+  }
+  const onSelectionChange = () => {
+    if (destroyed || document.activeElement !== input) return
+    repaint()
+  }
 
   const commit = (value: string, kind: "typing" | "composition") => {
     const spec = tableCellInputSpec(view.state, value, kind)
@@ -143,6 +165,7 @@ function createTableInputController(
       const session = getTableEditSession(view.state)
       if (session) controller.revision = session.revision
     }
+    repaint()
   }
 
   const close = () => {
@@ -216,10 +239,16 @@ function createTableInputController(
     composing: false,
     committing: false,
     revision: 0,
+    paint: repaint,
+    focusAt(clientX?: number, clientY?: number) {
+      if (destroyed) return
+      focusEditableCell(projection, cellEl, input, clientX, clientY, editingCellOptions(host))
+    },
     destroy() {
       if (destroyed) return
       destroyed = true
       tableInputControllerCount--
+      document.removeEventListener("selectionchange", onSelectionChange)
       input.removeEventListener("keydown", onKeyDown)
       input.removeEventListener("input", onInput)
       input.removeEventListener("compositionstart", onCompositionStart)
@@ -236,10 +265,10 @@ function createTableInputController(
   input.addEventListener("compositionstart", onCompositionStart)
   input.addEventListener("compositionend", onCompositionEnd)
   input.addEventListener("focusout", onFocusOut)
+  document.addEventListener("selectionchange", onSelectionChange)
   tableInputControllerCount++
   tableInputControllers.set(host, controller)
   viewInputControllers.set(view, controller)
-  cellEl.replaceChildren(input)
   return controller
 }
 
@@ -249,6 +278,8 @@ function activateTableCellInput(
   row: number,
   column: number,
   table: TableContext,
+  clientX?: number,
+  clientY?: number,
 ): void {
   if (view.state.readOnly) return
   const cell = tableCellDataRows(table.data)[row]?.[column]
@@ -256,8 +287,7 @@ function activateTableCellInput(
   if (!cell || !cellEl) return
   const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
   if (existing && existing.host === host && existing.row === row && existing.column === column) {
-    existing.input.focus()
-    existing.input.select()
+    existing.focusAt(clientX, clientY)
     return
   }
   if (existing) {
@@ -275,8 +305,7 @@ function activateTableCellInput(
   })
   const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
   controller.revision = getTableEditSession(view.state)?.revision ?? 0
-  controller.input.focus()
-  controller.input.select()
+  controller.focusAt(clientX, clientY)
 }
 
 export const tableDirectEditEnabled = Facet.define<boolean, boolean>({
@@ -310,6 +339,7 @@ function renderCellSlot(
   resolveSrc?: ResolveSrc,
   resolveReference?: ResolveReference,
 ): void {
+  el.style.removeProperty("position")
   el.replaceChildren()
   if (cell === null) {
     // ragged 行缺失源码槽的视觉填充：语义标识为不可用（没有源码可改）。
@@ -461,6 +491,7 @@ export class TableWidget extends BlockWidget {
       const source = this.cellDataAt(active.row, active.column)?.source
       if (stale && source !== undefined && active.input.value !== source) {
         active.input.value = source
+        active.paint()
       }
     }
 
@@ -497,8 +528,7 @@ export class TableWidget extends BlockWidget {
           targetCell.source,
         )
         moved.revision = session.revision
-        moved.input.focus()
-        moved.input.select()
+        moved.focusAt()
       }
     }
     const toolbar = dom.querySelector<HTMLElement>(".omd-table-toolbar")
@@ -545,16 +575,21 @@ export class TableWidget extends BlockWidget {
     const table = tableAt(view.state, owner.livePos())
     if (!table || !owner.cellDataAt(row, column)) return false
     event.preventDefault()
-    activateTableCellInput(view, host, row, column, table)
+    // 打开会话，不把文档选区派发进表格。
+    activateTableCellInput(view, host, row, column, table, event.clientX, event.clientY)
     return true
   }
 
   /** 工具栏是否有可操作的目标格（用户 hover 过某个 td/th）。 */
   hasRowCol(): boolean { return this.hovered }
 
-  // 单元格点击是"进源码并落在该格"的意图；wrap 的 padding/边框/工具栏空隙是误触，
-  // 由 shouldEnterSource 挡掉（不进源码；焦点仍进编辑器，见 blockWidget）。
-  protected enterSourceOnClick(): boolean { return true }
+  protected editButtonEffects(): readonly StateEffect<unknown>[] {
+    return [revealTableSource.of(null)]
+  }
+
+  // 直接编辑打开时，单元格点击交给 nativePointerInteraction，不把选区派进表格。
+  // wrap 的 padding/边框/工具栏空隙仍不进源码；`</>` 按钮经 editButtonEffects 展开源码。
+  protected enterSourceOnClick(): boolean { return !this.directEdit }
 
   protected shouldEnterSource(event: MouseEvent): boolean {
     const target = event.target

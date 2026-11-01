@@ -367,9 +367,14 @@ describe("table direct edit DOM controller", () => {
     const cells = await renderedCells(view)
     activate(cells, 0, 0)
     const input = onlyInput(view)
+    const cell = cells[0][0]
+    expect(cell.querySelector(".omd-table-cell-view")).toBeTruthy()
+    expect(cell.contains(input)).toBe(true)
+    expect(cell.childNodes.length).toBeGreaterThan(1)
     expect(input.value).toContain("**A**")
-    expect(input.selectionStart).toBe(0)
-    expect(input.selectionEnd).toBe(input.value.length)
+    const caret = input.value.length - input.value.trimStart().length
+    expect(input.selectionStart).toBe(caret)
+    expect(input.selectionEnd).toBe(caret)
     expect(document.activeElement).toBe(input)
     expect(view.state.selection.main.head).toBe(0)
     expect(view.state.doc.toString()).toBe(INPUT_DOC)

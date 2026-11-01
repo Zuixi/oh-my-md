@@ -44,7 +44,8 @@ export type CellNode =
 
 let language: Language | null = null
 
-function markdownLanguage(): Language {
+/** 单元格解析与格内投影共用的 Language。不要在调用方再造一份。 */
+export function cellLanguage(): Language {
   if (!language) language = markdownLanguageSupport().language
   return language
 }
@@ -199,5 +200,5 @@ function cellChildren(
 }
 
 export function parseCell(source: string, options?: CellParseOptions): CellNode[] {
-  return cellChildren(markdownLanguage().parser.parse(source).topNode, source, cellContext(source, options))
+  return cellChildren(cellLanguage().parser.parse(source).topNode, source, cellContext(source, options))
 }

@@ -1,5 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view"
-import type { EditorState } from "@codemirror/state"
+import type { EditorState, StateEffect } from "@codemirror/state"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
@@ -95,6 +95,17 @@ export abstract class BlockWidget extends WidgetType {
   /** 点击是否应该让光标进入源码。默认 true；表格只在 td/th 上返回 true。 */
   protected shouldEnterSource(_event: MouseEvent): boolean { return true }
   protected nativePointerInteraction(_event: MouseEvent): boolean { return false }
+  /** 编辑按钮（以及不走单元格会话的 wrap 点击）随选区一起派发的 effects。 */
+  protected editButtonEffects(): readonly StateEffect<unknown>[] { return [] }
+  private moveCaretIntoSource(view: EditorView, event: MouseEvent, wrap: HTMLElement): void {
+    const pos = this.clickPos(view, event, wrap)
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: this.editButtonEffects(),
+      scrollIntoView: true,
+    })
+    view.focus()
+  }
   /** 点击不进源码的块（代码块、数学弹窗）由此钩子接管后续交互；默认保持聚焦编辑器。 */
   protected onWrapClick(view: EditorView, _wrap: HTMLElement): void { view.focus() }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
@@ -130,9 +141,7 @@ export abstract class BlockWidget extends WidgetType {
         return
       }
       e.preventDefault()
-      const pos = this.clickPos(view, e, wrap)
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
-      view.focus()
+      this.moveCaretIntoSource(view, e, wrap)
     })
 
     const editBtn = document.createElement("button")
@@ -151,9 +160,7 @@ export abstract class BlockWidget extends WidgetType {
       if (e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
-      const pos = this.clickPos(view, e, wrap)
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
-      view.focus()
+      this.moveCaretIntoSource(view, e, wrap)
     })
     wrap.appendChild(editBtn)
 

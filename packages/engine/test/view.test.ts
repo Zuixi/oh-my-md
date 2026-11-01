@@ -6,6 +6,8 @@ import {
   getPendingOrderedListNormalization,
   rejectOrderedListNormalization,
 } from "../src/index"
+import { getTableEditSession } from "../src/tables/directEdit"
+import { isTableSourceRevealed } from "../src/tables/sourceReveal"
 import { livePreviewField } from "../src/decorations/build"
 
 // View 级冒烟：纯函数 spec 测试测不到 "Block decorations may not be specified
@@ -47,21 +49,6 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   return null
 }
 
-/** 渲染态工具栏：hover 目标格后才 enabled，点击经 applyTableToolAt 改写源码。 */
-async function hoverCell(view: EditorView, selector: string, index: number) {
-  const cell = (await waitFor(selector, view)) && view.dom.querySelectorAll(selector)[index]
-  expect(cell).toBeTruthy()
-  cell!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
-}
-
-function clickTool(view: EditorView, tableIndex: number, act: string) {
-  const wrap = view.dom.querySelectorAll(".omd-table")[tableIndex]
-  expect(wrap).toBeTruthy()
-  const btn = wrap!.querySelector(`.omd-table-toolbar [data-act='${act}']`) as HTMLButtonElement
-  expect(btn).toBeTruthy()
-  btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-  btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
-}
 
 describe("view smoke (real EditorView)", () => {
   it("keeps angle URL/email autolinks and reference labels visible", async () => {
@@ -155,7 +142,7 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("clicking a block widget's edit button moves the cursor into the block", async () => {
+  it("clicking a table edit button reveals that table's source lines", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
@@ -166,12 +153,35 @@ describe("view smoke (real EditorView)", () => {
 
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
     await tick()
-    // 未带 revealTableSource 时渲染表盖住源码，光标落不进被替换的区间。
-    expect(view.dom.querySelector(".omd-table")).toBeTruthy()
-    const tableFrom = doc.indexOf("| a |")
-    const tableTo = doc.indexOf("\n\ntail")
-    const head = view.state.selection.main.head
-    expect(head <= tableFrom || head >= tableTo).toBe(true)
+    expect(view.dom.querySelector(".omd-table")).toBeNull()
+    expect(view.dom.querySelector(".omd-table-src")).toBeTruthy()
+    expect(isTableSourceRevealed(view.state)).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("opens a caret in the clicked cell without entering table source", async () => {
+    const tableSource = "| 路径 |\n| --- |\n| `journal/` |"
+    const doc = `${tableSource}\n`
+    const { view, errors } = makeView(doc)
+    await tick()
+    // 表头是 th，第二个单元格才是正文 td。
+    const td = view.dom.querySelectorAll<HTMLElement>(".omd-table th, .omd-table td")[1]
+    expect(td?.tagName).toBe("TD")
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(td.querySelector(".omd-table-caret")).toBeTruthy()
+    const code = td.querySelector("code")
+    expect(code?.textContent).toBe("journal/")
+    expect(code?.textContent).not.toContain("`")
+    const input = td.querySelector(".omd-table-cell-input")
+    expect(input).toBeTruthy()
+    expect(td.childNodes.length).toBeGreaterThan(1)
+    const tableFrom = doc.indexOf(tableSource)
+    const tableTo = tableFrom + tableSource.length
+    const sel = view.state.selection.main
+    expect(sel.from <= tableTo && sel.to >= tableFrom).toBe(false)
+    expect(getTableEditSession(view.state)?.target).toMatchObject({ row: 1, column: 0 })
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -639,26 +649,6 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  function makeInteractView(doc: string) {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const errors: unknown[] = []
-    let docChanged = 0
-    const view = new EditorView({
-      state: EditorState.create({
-        doc,
-        selection: { anchor: doc.length },
-        extensions: [
-          editorExtensions(),
-          EditorView.exceptionSink.of(e => { errors.push(e) }),
-          EditorView.updateListener.of(u => { if (u.docChanged) docChanged++ }),
-        ],
-      }),
-      parent,
-    })
-    return { view, errors, count: () => docChanged }
-  }
-
   it("does not write mermaid output after the widget is destroyed", async () => {
     const mermaid = [
       "```mermaid",
@@ -673,120 +663,6 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
     await tick(700)
     expect(errors.map(String)).toEqual([])
-  })
-
-  it("inserts a row below the hovered one from the rendered toolbar in one transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      await hoverCell(view, ".omd-table tbody td", 0)
-      const before = count()
-      clickTool(view, 0, "insert-row")
-      await tick()
-      // 一次点击 = 一个文档事务（渲染态工具栏不再需要"先提交单元格、再补结构操作"）。
-      expect(count() - before).toBe(1)
-      expect(view.state.doc.toString()).toContain("| 1 | 2 |\n|  |  |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("inserts a column right of the hovered one from the rendered toolbar in one transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      await hoverCell(view, ".omd-table tbody td", 0)
-      const before = count()
-      clickTool(view, 0, "insert-col")
-      await tick()
-      expect(count() - before).toBe(1)
-      expect(view.state.doc.toString()).toContain("| a |  | b |")
-      expect(view.state.doc.toString()).toContain("| 1 |  | 2 |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("deletes the hovered row in a single transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      await hoverCell(view, ".omd-table tbody td", 0)
-      const before = count()
-      clickTool(view, 0, "delete-row")
-      await tick()
-      expect(count() - before).toBe(1)
-      // 删掉的是 hover 的那一行（首数据行）；第二行原样保留。
-      expect(view.state.doc.toString()).toBe("| a | b |\n|---|---|\n| 3 | 4 |\n\ntail")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("deletes the hovered column in a single transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      await hoverCell(view, ".omd-table tbody td", 1)  // 第二列
-      const before = count()
-      clickTool(view, 0, "delete-col")
-      await tick()
-      expect(count() - before).toBe(1)
-      // 删掉的是 hover 的那一列（b）；a 列原样保留。
-      expect(view.state.doc.toString()).toBe("| a |\n|---|\n| 1 |\n| 3 |\n\ntail")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("applies a toolbar action only to the table whose DOM owns it", async () => {
-    const doc = [
-      "| a | b |",
-      "|---|---|",
-      "| 1 | 2 |",
-      "| 3 | 4 |",
-      "",
-      "intro",
-      "",
-      "| c | d |",
-      "|---|---|",
-      "| 5 | 6 |",
-      "",
-      "tail",
-    ].join("\n")
-    const { view, errors } = makeInteractView(doc)
-    try {
-      // 光标在表外 → 两张表都是渲染态 widget；hover 的目标格属于第一张表。
-      await hoverCell(view, ".omd-table tbody td", 0)
-      clickTool(view, 0, "delete-row")
-      await tick()
-      const out = view.state.doc.toString()
-      expect(out).toContain("| a | b |\n|---|---|\n| 3 | 4 |\n\nintro")
-      // 第二张表逐字节未动：按钮经 domOwner 解析出的是自己那张表的 livePos/src。
-      expect(out).toContain("| c | d |\n|---|---|\n| 5 | 6 |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("disables delete-row for a single data row and delete-column for a single column", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      // 未 hover 时全部 disabled（没有目标格）；hover 之后才只剩结构边界造成的禁用。
-      const buttons = [...view.dom.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button")]
-      expect(buttons.every(btn => btn.disabled)).toBe(true)
-      await hoverCell(view, ".omd-table tbody td", 0)
-      const delRow = view.dom.querySelector("[data-act='delete-row']") as HTMLButtonElement
-      expect(delRow.disabled).toBe(true)
-      const delCol = view.dom.querySelector("[data-act='delete-col']") as HTMLButtonElement
-      expect(delCol.disabled).toBe(false)
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("renders synthetic ragged cells disabled and input-less", async () => {
-    const doc = "| a | b |\n|---|---|\n| only |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      await waitFor(".omd-table tbody td", view)
-      const missing = view.dom.querySelector(".omd-table tbody tr td:nth-child(2)") as HTMLElement
-      expect(missing).toBeTruthy()
-      expect(missing.classList.contains("omd-table-cell-missing")).toBe(true)
-      expect(missing.getAttribute("aria-disabled")).toBe("true")
-      expect(missing.title).toBe("Missing source cell; add a column or edit Markdown source")
-      expect(missing.querySelector("input")).toBeNull()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
   })
 
 })

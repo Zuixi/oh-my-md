@@ -185,12 +185,13 @@ export interface EngineOptions {
   autoPair?: AutoPairOptions
   /** Per-editor performance policy (`null` or omitted falls back to legacy module globals). */
   performancePolicy?: EditorPerformancePolicy | null
+  /** Cell sessions. Omitted turns them on; pass false to keep source-only table clicks. */
   experimentalTableDirectEdit?: boolean
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
   const live = options.defaultLivePreview !== false
-  const directEdit = options.experimentalTableDirectEdit === true
+  const directEdit = options.experimentalTableDirectEdit !== false
   const policy = options.performancePolicy ?? null
   return [
     markdownLanguageSupport(),
