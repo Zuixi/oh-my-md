@@ -95,11 +95,21 @@ function mapSession(session: TableEditSession, tr: Transaction): TableEditSessio
   }
 }
 
-/** A selection-only transaction that lands on the table unmounts its widget. */
+/**
+ * A selection-only transaction closes the session when its head lands in the
+ * table, so find/drag-select cannot coexist with a cell session. The same
+ * transaction as `beginTableEdit` does not close. An anchor parked exactly on
+ * `tableFrom` is the rendered cell's document caret and must keep the session.
+ */
 function selectionTouchesTable(tr: Transaction, target: TableEditTarget): boolean {
-  return tr.state.selection.ranges.some(
-    range => range.from <= target.tableTo && range.to >= target.tableFrom,
-  )
+  if (tr.effects.some(effect => effect.is(beginEdit))) return false
+  const { tableFrom, tableTo } = target
+  return tr.state.selection.ranges.some(range => {
+    if (range.anchor === tableFrom) return false
+    const headInside = range.head >= tableFrom && range.head <= tableTo
+    if (headInside) return true
+    return range.from <= tableTo && range.to >= tableFrom
+  })
 }
 
 /**

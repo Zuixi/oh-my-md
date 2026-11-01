@@ -16,6 +16,7 @@ import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
 import { revealTableSource } from "../../tables/sourceReveal"
 import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
 import {
+  bindRenderedTableCellOpener,
   focusEditableCell,
   mountEditableCell,
   syncEditableCell,
@@ -752,3 +753,5 @@ export class TableWidget extends BlockWidget {
     return this.pos
   }
 }
+
+bindRenderedTableCellOpener(activateTableCellInput)

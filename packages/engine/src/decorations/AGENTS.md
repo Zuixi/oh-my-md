@@ -32,7 +32,7 @@ Every `block: true` widget (`widgets/*.ts`) must wire all five:
 1. **Selection rebuild (`build.ts::SELECTION_BLOCKS`):** Register the syntax node name so caret entry/exit rebuilds the block range.
 2. **Height estimation (`widgetHeights.ts`):** Declare a positive `estimatedHeight` (guarded by `test/widgetHeights.test.ts`).
 3. **Spec identity reuse (`build.ts` `removedByKey` + `WidgetType.eq`):** Implement `eq` comparing `src`, `embed`, and render-affecting inputs (`lang`, `title`, `tableEqualityKey`) — never `pos`. Preserving spec identity prevents CodeMirror from resetting measured heights to estimates on `measureBlockWidget`.
-4. **Keyboard entry (`navigation/blockEntry.ts`):** Support ArrowUp/ArrowDown entry into source in `blockEntryPosition`.
+4. **Keyboard entry (`navigation/blockEntry.ts`):** ArrowUp/ArrowDown enters the next rendered block (`blockEntryPosition`), skipping the blank gap before it. Non-table blocks place the selection inside and unmount the widget. A rendered table that is not source-revealed opens a cell session instead (`Prec.highest`, ahead of caret clamp).
 5. **Covered selection & lifecycle (`blockSelectionOverlay.ts`, `blockWidget.ts`):** Register/unregister in `toDOM`/`updateDOM`/`destroy`. Separate instance lifetime from tile lifetime via `activateDom(wrap)` and `destroy(dom)`. Install synchronous placeholders in `toDOM` before async renders, refresh via `measureBlockWidget`, and expose `data-omd-highlight` / `data-omd-render` markers.
 
 ## Widget-Specific Invariants

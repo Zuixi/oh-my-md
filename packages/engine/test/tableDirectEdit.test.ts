@@ -154,6 +154,32 @@ describe("table edit session state", () => {
     }
     cleanup()
   })
+
+  it("keeps the session when the selection anchor is exactly the table start", () => {
+    const doc = `intro\n\n${CANONICAL}`
+    const { view, cleanup } = mount(doc)
+    const table = tableAt(view.state, doc.indexOf("| A |"))
+    if (!table) throw new Error("expected a table")
+    view.dispatch({ effects: beginTableEdit(targetOf(view, 1, 1, table.from)) })
+    view.dispatch({ selection: { anchor: table.from } })
+    expect(getTableEditSession(view.state)?.target).toMatchObject({
+      row: 1,
+      column: 1,
+      tableFrom: table.from,
+    })
+    cleanup()
+  })
+
+  it("closes the session when a caret lands inside the table without beginTableEdit", () => {
+    const doc = `intro\n\n${CANONICAL}`
+    const { view, cleanup } = mount(doc)
+    const table = tableAt(view.state, doc.indexOf("| A |"))
+    if (!table) throw new Error("expected a table")
+    view.dispatch({ effects: beginTableEdit(targetOf(view, 1, 1, table.from)) })
+    view.dispatch({ selection: { anchor: table.from + 2 } })
+    expect(getTableEditSession(view.state)).toBeNull()
+    cleanup()
+  })
 })
 
 describe("table cell input transactions", () => {

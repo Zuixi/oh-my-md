@@ -4,6 +4,7 @@ import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } f
 import { codeSyntaxHighlighting } from "./highlight/codeHighlight"
 import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 import { tableDirectEditEnabled } from "./decorations/widgets/table"
+import { tableCaretFollower } from "./decorations/widgets/tableCellEdit"
 import { renderBudgetFlush } from "./decorations/renderBudget"
 import { performancePolicyExtension, type EditorPerformancePolicy } from "./performancePolicy"
 import { orderedNormalizationState } from "./lists/ordered"
@@ -234,7 +235,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     // 哪张表被展开成源码。挂在 livePreviewCompartment 之外，切到全局源码模式
     // 不会丢掉；全局源码模式没有 live 装饰，字段空转。
     tableSourceRevealed,
-    ...(directEdit ? [experimentalTableDirectEdit, tableDirectEditEnabled.of(true)] : []),
+    ...(directEdit ? [experimentalTableDirectEdit, tableCaretFollower, tableDirectEditEnabled.of(true)] : []),
     livePreviewCompartment.of(live ? livePreviewExt() : []),
     // 源码态表格浮层工具栏：聚焦表格时整表以源码网格呈现、没有块 widget，
     // 渲染态工具栏（住在 widget 里）不可达，这里补回鼠标入口。

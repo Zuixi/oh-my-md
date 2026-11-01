@@ -7,6 +7,7 @@ import {
   rejectOrderedListNormalization,
 } from "../src/index"
 import { getTableEditSession } from "../src/tables/directEdit"
+import { tableAt } from "../src/tables/navigate"
 import { isTableSourceRevealed } from "../src/tables/sourceReveal"
 import { livePreviewField } from "../src/decorations/build"
 
@@ -34,6 +35,14 @@ function click(el: Element, x = 10, y = 10) {
 }
 
 const tick = (ms = 100) => new Promise(r => setTimeout(r, ms))
+
+function pressKey(view: EditorView, key: string) {
+  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  }))
+}
 
 /** Engine emits depth as a CSS custom property, not one class per depth. */
 const listDepthOf = (el: Element) =>
@@ -645,6 +654,93 @@ describe("view smoke (real EditorView)", () => {
     const mathError = await waitFor(".omd-math .omd-block-error", view)
     expect(mermaidError?.textContent).toContain("not a valid diagram")
     expect(mathError?.textContent).toContain("\\notacommand")
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("opens the header cell when ArrowDown enters a rendered table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("before") + "before".length)
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    pressKey(view, "ArrowDown")
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(getTableEditSession(view.state)?.target.row).toBe(0)
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("opens the last data cell when ArrowUp enters a rendered table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("after"))
+    expect(await waitFor(".omd-table td", view)).toBeTruthy()
+    pressKey(view, "ArrowUp")
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(getTableEditSession(view.state)?.target.row).toBe(1)
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("reopens the landed cell on the next frame and parks the selection on the table start", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc)
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    view.dispatch({ selection: { anchor: table!.from + 2 } })
+    expect(getTableEditSession(view.state)).toBeNull()
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(getTableEditSession(view.state)?.target).toMatchObject({ row: 0, column: 0 })
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not open a cell when a read-only caret lands inside the table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.length, [EditorState.readOnly.of(true)])
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    view.dispatch({ selection: { anchor: table!.from + 2 } })
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not open a cell when the caret lands in a source-revealed table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc)
+    const button = await waitFor(".omd-table .omd-block-edit", view)
+    button!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(view.dom.querySelector(".omd-table-src")).toBeTruthy()
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("ArrowDown into a thematic break still enters its source", async () => {
+    const doc = "before\n\n***\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("before") + "before".length)
+    expect(await waitFor(".omd-hr-block hr", view)).toBeTruthy()
+    pressKey(view, "ArrowDown")
+    expect(view.state.selection.main.head).toBe(doc.indexOf("***"))
+    expect(view.dom.querySelector(".omd-hr-block")).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })

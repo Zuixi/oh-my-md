@@ -1,5 +1,9 @@
 import type { SyntaxNode } from "@lezer/common"
+import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
 import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
+import { getTableEditSession } from "../../tables/directEdit"
+import { cellAt, type TableContext } from "../../tables/navigate"
+import { isRevealedTableRange } from "../../tables/sourceReveal"
 import { decodeHtmlEntity } from "../../parse/entities"
 import { resolveEmoji } from "../../parse/emoji"
 import { escapeParts } from "../../semantic/breaks"
@@ -402,3 +406,92 @@ function renderFootnote(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx): 
   renderChildren(sup, node, ctx, node.to)
   parent.appendChild(sup)
 }
+
+type RenderedTableCellOpener = (
+  view: EditorView,
+  host: HTMLElement,
+  row: number,
+  column: number,
+  table: TableContext,
+  clientX?: number,
+  clientY?: number,
+) => void
+
+let renderedTableCellOpener: RenderedTableCellOpener | null = null
+
+/** Click and keyboard entry share `table.ts`'s cell opener. */
+export function bindRenderedTableCellOpener(opener: RenderedTableCellOpener): void {
+  renderedTableCellOpener = opener
+}
+
+export function openRenderedTableCell(
+  view: EditorView,
+  table: TableContext,
+  row: number,
+  column: number,
+): void {
+  const host = renderedTableBody(view, table.from)
+  if (!host || !renderedTableCellOpener) return
+  renderedTableCellOpener(view, host, row, column, table)
+}
+
+function renderedTableBody(view: EditorView, tableFrom: number): HTMLElement | null {
+  for (const wrap of view.dom.querySelectorAll<HTMLElement>(".omd-table")) {
+    let pos: number
+    try {
+      pos = view.posAtDOM(wrap)
+    } catch {
+      continue
+    }
+    if (pos !== tableFrom) continue
+    return wrap.querySelector<HTMLElement>(".omd-block-body")
+  }
+  return null
+}
+
+/** Collapsed caret strictly inside a rendered table, with no live cell session. */
+function caretInsideUnrevealedTable(view: EditorView) {
+  const state = view.state
+  if (state.readOnly) return null
+  const selection = state.selection.main
+  if (!selection.empty || getTableEditSession(state)) return null
+  const hit = cellAt(state, selection.head)
+  if (!hit) return null
+  const { from, to } = hit.table
+  if (selection.head <= from || selection.head > to) return null
+  if (isRevealedTableRange(state, from, to)) return null
+  return hit
+}
+
+/** Next frame after an in-table caret closed the session: reopen with the click opener and park on `table.from`. */
+export const tableCaretFollower = ViewPlugin.fromClass(class {
+  private frame: number | null = null
+  private destroyed = false
+
+  update(update: ViewUpdate) {
+    if (this.destroyed || (!update.selectionSet && !update.docChanged)) return
+    this.schedule(update.view)
+  }
+
+  destroy() {
+    this.destroyed = true
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+  }
+
+  private schedule(view: EditorView) {
+    if (this.frame !== null || !caretInsideUnrevealedTable(view)) return
+    this.frame = requestAnimationFrame(() => {
+      this.frame = null
+      if (!this.destroyed) this.follow(view)
+    })
+  }
+
+  private follow(view: EditorView) {
+    const hit = caretInsideUnrevealedTable(view)
+    if (!hit) return
+    const { table, slot } = hit
+    view.dispatch({ selection: { anchor: table.from }, scrollIntoView: true })
+    openRenderedTableCell(view, table, slot.row, slot.col)
+  }
+})
