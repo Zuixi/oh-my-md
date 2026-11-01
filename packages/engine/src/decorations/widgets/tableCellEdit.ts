@@ -11,7 +11,7 @@ import {
 } from "../../semantic/references"
 
 /**
- * 格内投影。强调类始终折叠标记；光标落在可展开节点内部时，整节点输出源码。
+ * 格内投影。强调类和行内代码始终折叠标记；光标落在链接、图片、行内公式等节点内部时，整节点输出源码。
  * 和 `parseCell` 共用 `cellLanguage()`，不改导出的 `CellNode`。
  */
 
@@ -27,7 +27,6 @@ const EMPHASIS_TAG: Record<string, string> = {
 }
 
 const REVEAL_WHOLE = new Set([
-  "InlineCode",
   "Link",
   "Autolink",
   "Image",
@@ -68,22 +67,6 @@ function decodeShieldedPipes(text: string): string {
 
 function caretInside(node: SyntaxNode, caret: number): boolean {
   return caret >= node.from && caret < node.to
-}
-
-function outermostReveal(node: SyntaxNode, caret: number): SyntaxNode | null {
-  if (REVEAL_WHOLE.has(node.name) && caretInside(node, caret)) return node
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    const inner = outermostReveal(child, caret)
-    if (inner) return inner
-  }
-  return null
-}
-
-/** 无布局命中时，停在开头标记上会整段展开。单击落到节点之后，可见文本仍是折叠芯片。 */
-export function unhitClickCaret(source: string): number {
-  const trimmed = trimmedCellCaret(source)
-  const covered = outermostReveal(parser().parse(source).topNode, trimmed)
-  return covered ? covered.to : trimmed
 }
 
 function appendText(parent: HTMLElement, text: string, from: number, to: number): void {
@@ -178,15 +161,16 @@ export function focusEditableCell(
   clientY: number | undefined,
   options?: CellParseOptions,
 ): void {
-  const clicked = clientX !== undefined && clientY !== undefined
   if (projection.childNodes.length === 0) {
-    const start = clicked ? unhitClickCaret(input.value) : trimmedCellCaret(input.value)
+    const start = trimmedCellCaret(input.value)
     input.setSelectionRange(start, start)
     syncEditableCell(projection, cell, input, options)
   }
   input.focus()
-  const hit = clicked ? cellSourceOffsetAt(projection, clientX, clientY) : null
-  const caret = hit ?? (clicked ? unhitClickCaret(input.value) : trimmedCellCaret(input.value))
+  const hit = clientX !== undefined && clientY !== undefined
+    ? cellSourceOffsetAt(projection, clientX, clientY)
+    : null
+  const caret = hit ?? trimmedCellCaret(input.value)
   input.setSelectionRange(caret, caret)
   syncEditableCell(projection, cell, input, options)
 }
@@ -260,6 +244,11 @@ function renderChildren(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx, e
 
 function renderNode(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx): void {
   if (node.name.endsWith("Mark")) return
+  // 与正文 foldPair 相同：行内代码的反引号对任意插入点保持隐藏。
+  if (node.name === "InlineCode") {
+    renderInlineCode(parent, node, ctx)
+    return
+  }
   if (REVEAL_WHOLE.has(node.name) && caretInside(node, ctx.caret)) {
     appendText(parent, ctx.source.slice(node.from, node.to), node.from, node.to)
     return

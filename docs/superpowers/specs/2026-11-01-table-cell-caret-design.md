@@ -7,7 +7,7 @@
 ## 验收
 
 1. 单击 `td`/`th` 后，`.omd-table table` 仍在。表头、边框、其余格子的渲染不变。被点中的格子里有 `.omd-table-caret`。文档主选区不落在这张表的源码范围内。
-2. 焦点格里的行内代码、链接、图片、行内公式：插入点在该语法节点内部时，该节点显示源码文本；插入点离开后恢复渲染。加粗、斜体、删除线保持折叠，和正文路线 A 相同。
+2. 焦点格里的链接、图片、行内公式：插入点在该语法节点内部时，该节点显示源码文本；插入点离开后恢复渲染。行内代码、加粗、斜体、删除线保持折叠，和正文路线 A 相同。
 3. 在格子里打一个字再撤销，文档字节回到编辑前，含首次编辑触发的整表规范化。中文输入法只在 `compositionend` 提交一次。`</>` 按钮才进入 `styleTableSource`；光标离开表格后渲染表回来。
 
 ## 编辑面
@@ -28,8 +28,8 @@
 
 新增 `renderEditableCell(parent, source, caret, options)`。它走和 `parseCell` 同一个 Lezer 解析，不改导出用的 `CellNode`。
 
-- 强调类（`Emphasis`、`StrongEmphasis`、`Strikethrough`、`Highlight`、`Underline`、`Kbd`、`Subscript`、`Superscript`）始终渲染，标记不展开。
-- `InlineCode`、`Link`、`Autolink`、`Image`、`InlineMath`、`Escape`、`HardBreak`、`Entity`、`Emoji`、`FootnoteReference`：`caret >= from && caret < to` 时这一整个节点输出 `source.slice(from, to)`，否则照常渲染。判定在节点整体上做一次。
+- 强调类（`Emphasis`、`StrongEmphasis`、`Strikethrough`、`Highlight`、`Underline`、`Kbd`、`Subscript`、`Superscript`）与 `InlineCode` 始终渲染，标记不展开。行内代码对节点内任意插入点都隐藏反引号，包括 `caret === from`。
+- `Link`、`Autolink`、`Image`、`InlineMath`、`Escape`、`HardBreak`、`Entity`、`Emoji`、`FootnoteReference`：`caret >= from && caret < to` 时这一整个节点输出 `source.slice(from, to)`，否则照常渲染。判定在节点整体上做一次。
 - 每个文本片段带 `data-from` / `data-to`（相对本格源码）。单击用命中节点的偏移换算格内下标，再写入输入框的 `selectionStart`。
 - 在 `caret` 处插入 `.omd-table-caret`。输入框 `position: absolute`，宽高 1px，叠在这个插入点上，输入法候选窗跟着它。
 

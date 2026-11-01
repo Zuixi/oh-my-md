@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { cellSourceOffsetAt, renderEditableCell, unhitClickCaret } from "../src/decorations/widgets/tableCellEdit"
+import { cellSourceOffsetAt, renderEditableCell } from "../src/decorations/widgets/tableCellEdit"
 
 const CODE = "use `code` here"
 const LINK = "see [a](https://e.test)"
@@ -11,44 +11,15 @@ function mount(): HTMLElement {
 }
 
 describe("renderEditableCell", () => {
-  it("reveals the whole inline code node when the caret is inside it", () => {
-    const root = mount()
-    renderEditableCell(root, CODE, CODE.indexOf("code"))
-    expect(root.querySelector("code")).toBeNull()
-    expect(root.textContent).toContain("`")
-    root.remove()
-  })
-
-  it("reveals raw source when the caret equals the inline code node's start", () => {
+  it("keeps inline code folded at the node's start and inside the code text", () => {
     const source = "`journal/`"
     const root = mount()
-    renderEditableCell(root, source, 0)
-    expect(root.querySelector("code")).toBeNull()
-    expect(root.textContent).toContain("`journal/`")
-    root.remove()
-  })
-
-  it("reveals raw source when the caret is one past the opening mark", () => {
-    const source = "`journal/`"
-    const root = mount()
-    renderEditableCell(root, source, 1)
-    expect(root.querySelector("code")).toBeNull()
-    expect(root.textContent).toContain("`journal/`")
-    root.remove()
-  })
-
-  it("renders the code chip for an unhit click and stamps the visible text inside the content", () => {
-    const source = "`journal/`"
-    const root = mount()
-    const caret = unhitClickCaret(source)
-    expect(caret).toBe(source.length)
-    renderEditableCell(root, source, caret)
-    const code = root.querySelector("code")
-    expect(code?.textContent).toBe("journal/")
-    expect(code?.textContent).not.toContain("`")
-    const span = code?.querySelector<HTMLElement>("[data-from]")
-    expect(Number(span?.dataset.from)).toBe(1)
-    expect(Number(span?.dataset.to)).toBe(source.length - 1)
+    const middle = source.indexOf("journal/") + Math.floor("journal/".length / 2)
+    for (const caret of [0, middle]) {
+      renderEditableCell(root, source, caret)
+      expect(root.querySelector("code")?.textContent).toBe("journal/")
+      expect(root.textContent).not.toContain("`")
+    }
     root.remove()
   })
 
