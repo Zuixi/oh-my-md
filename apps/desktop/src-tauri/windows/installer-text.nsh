@@ -18,3 +18,57 @@ LangString OMD_FINISH_TEXT ${LANG_SIMPCHINESE} "oh-my-md 已安装完成。$\r$\
 
 !define MUI_FINISHPAGE_TITLE "$(OMD_FINISH_TITLE)"
 !define MUI_FINISHPAGE_TEXT "$(OMD_FINISH_TEXT)"
+
+; Silent installs cannot run the interactive MSI migration from the reinstall
+; page (Tauri built-in WixMode path), and unprivileged currentUser installs
+; cannot uninstall a per-machine MSI anyway. Fail with a distinct exit code
+; instead of silently creating a second side-by-side installation.
+; Documented in docs/guides/windows-installer.md: 1603 = MSI remnant detected.
+LangString OMD_SILENT_MSI_BLOCK ${LANG_ENGLISH} "An MSI installation of oh-my-md was detected. Silent installs cannot migrate it. Run the setup wizard once (it will guide you through removing the MSI), then retry."
+LangString OMD_SILENT_MSI_BLOCK ${LANG_SIMPCHINESE} "检测到旧版 oh-my-md 的 MSI 安装。静默安装无法完成迁移：请手动运行一次安装向导（会引导卸载 MSI）后重试。"
+
+!macro NSIS_HOOK_PREINSTALL
+  ; Guard silent installs only. Interactive and passive installs are handled
+  ; by the built-in WixMode migration on the reinstall page; doing the same
+  ; work here would double-prompt the user.
+  ${If} ${Silent}
+    ; The installer is a 32-bit process, so HKLM access is redirected to the
+    ; WOW6432Node view by default, while the MSI (built as x64) registers in
+    ; the 64-bit view. Enumerate the 64-bit view, then restore.
+    SetRegView 64
+    ; Mirror the built-in WixMode detection exactly (DisplayName+Publisher
+    ; match, then msiexec in UninstallString) so the two paths never disagree.
+    StrCpy $0 0
+    omd_msi_loop:
+      EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $0
+      StrCmp $1 "" omd_msi_done
+      IntOp $0 $0 + 1
+      ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayName"
+      ReadRegStr $R1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "Publisher"
+      StrCmp "$R0$R1" "${PRODUCTNAME}${MANUFACTURER}" 0 omd_msi_loop
+      ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
+      ${StrCase} $R1 $R0 "L"
+      ${StrLoc} $R0 $R1 "msiexec" ">"
+      StrCmp $R0 0 0 omd_msi_loop
+      SetRegView 32
+      ; Signal MSI remnant to the caller. SetErrorLevel alone is
+      ; overwritten by the process exit path, so stash the code and
+      ; re-apply it from .onInstFailed below.
+      StrCpy $OMD_EXIT 1603
+      DetailPrint "$(OMD_SILENT_MSI_BLOCK)"
+      Abort
+    omd_msi_done:
+    SetRegView 32
+  ${EndIf}
+!macroend
+
+; Custom exit code for silent MSI-remnant blocking; empty otherwise.
+Var OMD_EXIT
+
+; Abort inside a section raises install-failed; re-assert our exit code
+; here because the default failure path resets it.
+Function .onInstFailed
+  ${If} $OMD_EXIT != ""
+    SetErrorLevel $OMD_EXIT
+  ${EndIf}
+FunctionEnd
