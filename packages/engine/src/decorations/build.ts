@@ -11,6 +11,7 @@ import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import type { DecoSpec } from "./types"
 import { measureBlockWidget } from "./widgetMeasure"
+import { revealTableSource } from "../tables/sourceReveal"
 import { editorReferenceContext } from "../semantic/references"
 
 export { nearCursor, type DecoSpec } from "./types"
@@ -233,6 +234,9 @@ function rebuildRanges(tr: Transaction) {
   for (const effect of tr.effects) {
     if (effect.is(measureBlockWidget)) {
       ranges.push(expandRange(tr.state, effect.value.pos, effect.value.pos, SELECTION_BLOCKS))
+    } else if (effect.is(revealTableSource)) {
+      const head = tr.newSelection.main.head
+      ranges.push(expandRange(tr.state, head, head, SELECTION_BLOCKS))
     }
   }
 

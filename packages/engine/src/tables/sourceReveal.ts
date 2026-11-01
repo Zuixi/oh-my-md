@@ -35,6 +35,12 @@ export function isTableSourceRevealed(state: EditorState): boolean {
   return state.field(tableSourceRevealed, false) != null
 }
 
+/** 只有字段记下的那一张表可以进入源码行。范围按节点起止比较。 */
+export function isRevealedTableRange(state: EditorState, from: number, to: number): boolean {
+  const range = state.field(tableSourceRevealed, false)
+  return range != null && range.from === from && range.to === to
+}
+
 function revealedTableAtHead(state: EditorState): RevealedTable | null {
   const head = state.selection.main.head
   const node = tableNodeAt(state, head)

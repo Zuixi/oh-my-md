@@ -71,7 +71,6 @@ describe("table source mode", () => {
     expect(inside.some(s => s.tag === "widget:block:table")).toBe(true)
     expect(inside.some(s => s.tag === "line:omd-table-src")).toBe(false)
 
-    // 同一张表、仍在表头单元格内，但向后移一格：live 装饰只在选区变化时重建。
     const revealed = state.update({
       selection: { anchor: headerCaret + 1 },
       effects: revealTableSource.of(null),
@@ -81,6 +80,45 @@ describe("table source mode", () => {
 
     expect(revealedInside.filter(s => s.tag === "line:omd-table-src").length).toBe(3)
     expect(revealedInside.some(s => s.tag === "widget:block:table")).toBe(false)
+  })
+
+  it("reveals source lines when the effect is dispatched without moving the caret", () => {
+    const headerCaret = DOC.indexOf("A")
+    const state = makeState(DOC, [editorExtensions()], { anchor: headerCaret })
+    const tableFrom = DOC.indexOf("| A")
+    const tableTo = DOC.indexOf("\n\nafter")
+    const revealed = state.update({ effects: revealTableSource.of(null) }).state
+    const inside = revealed.field(livePreviewField).specs
+      .filter(s => s.from >= tableFrom && s.from <= tableTo)
+
+    expect(inside.filter(s => s.tag === "line:omd-table-src").length).toBe(3)
+    expect(inside.some(s => s.tag === "widget:block:table")).toBe(false)
+  })
+
+  it("source-styles only the table that contains the selection head", () => {
+    const doc = [
+      "| A | B |",
+      "| --- | --- |",
+      "| a | b |",
+      "",
+      "| C | D |",
+      "| --- | --- |",
+      "| c | d |",
+    ].join("\n")
+    const state = makeState(doc, [editorExtensions()], { anchor: 0 })
+    const revealed = state.update({
+      selection: { anchor: doc.indexOf("A"), head: doc.indexOf("C") },
+      effects: revealTableSource.of(null),
+    }).state
+    const secondFrom = doc.indexOf("| C")
+    const specs = revealed.field(livePreviewField).specs
+    const first = specs.filter(s => s.from < secondFrom)
+    const second = specs.filter(s => s.from >= secondFrom)
+
+    expect(first.some(s => s.tag === "widget:block:table")).toBe(true)
+    expect(first.some(s => s.tag === "line:omd-table-src")).toBe(false)
+    expect(second.filter(s => s.tag === "line:omd-table-src").length).toBe(3)
+    expect(second.some(s => s.tag === "widget:block:table")).toBe(false)
   })
 
   it("renders the table again after the caret leaves and re-enters without a new reveal", () => {
