@@ -147,7 +147,8 @@ window.__view = createEditor(host, {
   getDocPath: () => null,
   getDocumentId: () => 1,
   autoPair,
-  experimentalTableDirectEdit: params.get("tableDirectEdit") === "1",
+  // Match production default (on). Pass `tableDirectEdit=0` to force legacy source-on-click.
+  experimentalTableDirectEdit: params.get("tableDirectEdit") !== "0",
   onDocumentUpdate: update => {
     if (update.docChanged) window.__docChangeCount++
   },
