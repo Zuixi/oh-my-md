@@ -358,6 +358,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: 0.93em;
   line-height: 1.6;
 }
+/* Keep sibling columns still while the active cell's text grows. */
+.editor-host .omd-table:has(.omd-table-cell-input) table { table-layout: fixed; }
 .editor-host .omd-table th, .editor-host .omd-table td {
   border: 1px solid var(--omd-border);
   padding: 6px 8px;

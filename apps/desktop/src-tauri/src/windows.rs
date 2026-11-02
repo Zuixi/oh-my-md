@@ -267,6 +267,10 @@ pub fn create_editor_window<R: tauri::Runtime>(
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("oh-my-md");
+    #[cfg(target_os = "windows")]
+    if let Some(args) = &app.config().app.windows[0].additional_browser_args {
+        builder = builder.additional_browser_args(args);
+    }
     match opts.bounds {
         Some(b) => {
             builder = builder

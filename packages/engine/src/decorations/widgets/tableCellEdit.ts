@@ -128,6 +128,20 @@ export function trimmedCellCaret(source: string): number {
   return source.length - source.trimStart().length
 }
 
+export function freezeEditableTableColumns(cell: HTMLElement): HTMLTableColElement | null {
+  const table = cell.closest("table")
+  if (!table) return null
+  const widths = [...table.querySelectorAll("thead th")].map(th => th.getBoundingClientRect().width)
+  const group = document.createElement("colgroup")
+  for (const width of widths) {
+    const column = document.createElement("col")
+    column.style.width = `${width}px`
+    group.appendChild(column)
+  }
+  table.prepend(group)
+  return group
+}
+
 export function mountEditableCell(cell: HTMLElement, input: HTMLInputElement): HTMLElement {
   const projection = document.createElement("div")
   projection.className = "omd-table-cell-view"

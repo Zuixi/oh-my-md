@@ -18,6 +18,7 @@ import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
 import {
   bindRenderedTableCellOpener,
   focusEditableCell,
+  freezeEditableTableColumns,
   mountEditableCell,
   syncEditableCell,
 } from "./tableCellEdit"
@@ -141,6 +142,7 @@ function createTableInputController(
   input.className = TABLE_INPUT_CLASS
   input.value = source
   let destroyed = false
+  const frozenColumns = freezeEditableTableColumns(cellEl)
   const projection = mountEditableCell(cellEl, input)
   const repaint = () => {
     if (destroyed) return
@@ -258,6 +260,7 @@ function createTableInputController(
       if (tableInputControllers.get(host) === controller) tableInputControllers.delete(host)
       if (viewInputControllers.get(view) === controller) viewInputControllers.delete(view)
       input.remove()
+      frozenColumns?.remove()
     },
   }
 

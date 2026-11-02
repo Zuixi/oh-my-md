@@ -15,6 +15,7 @@ const NONCANONICAL = "A|  B\n:-----|---:\nC | D\n\ntail"
 const NONCANONICAL_EDITED = "| X | B |\n| :--- | ---: |\n| C | D |\n\ntail"
 const TWO_TABLES = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\nmiddle\n\n| C | D |\n| --- | --- |\n| 3 | 4 |\n\ntail"
 const ORDERED_TABLE = "1. first\n\n   | A | B |\n   | --- | --- |\n   | 1 | 2 |\n\n7. second"
+const REPORTED = "## Tables and Tasks\n\n| Layer | Role |\n| --- | --- |\n| Engine | Markdown parsing, decorations, widgets |\n| Desktop | React shell, styes, shortcuts, IPC |\n| Tauri | Filesystem, nativemenus, packaging |\n\nShip checklist:\n\n- [x] Live Preview with folded inline syntax\n- [x] File tree, outline, and folder search\n- [x] KaTeX, Mermaid, and fenced code blocks\n- [ ] Your next feature here—keep typing"
 
 const url = (doc: string) => `/e2e/harness.html?doc=${encodeURIComponent(doc)}`
 const editUrl = (doc: string) => `/e2e/harness.html?tableDirectEdit=1&doc=${encodeURIComponent(doc)}`
@@ -66,6 +67,35 @@ test("typing only changes the target table", async ({ page }) => {
 
   expect(await docText(page)).toBe(TWO_TABLES.replace("| 3 | 4 |", "| 9 | 4 |"))
   await expect(page.locator(".omd-table-cell-input")).toHaveCount(1)
+})
+
+test("reported middle-space edit accepts the next character", async ({ page }) => {
+  await page.goto(editUrl(REPORTED))
+  const input = await openCell(page, 0, 2, 1)
+  const value = "React shell, styes, shortcuts, IPC"
+  const caret = value.indexOf("styes") + 2
+  await input.evaluate((el, pos) => (el as HTMLInputElement).setSelectionRange(pos, pos), caret)
+  await page.keyboard.press("Space")
+  await page.keyboard.type("x")
+  const expected = `${value.slice(0, caret)} x${value.slice(caret)}`
+  await expect(input).toHaveValue(expected)
+  expect(await docText(page)).toContain(`| Desktop | ${expected} |`)
+  await expect(cellOf(page, 0, 2, 1).locator(".omd-table-cell-view")).toHaveText(expected)
+})
+
+test("editing one reported cell keeps the other column geometry stable", async ({ page }) => {
+  await page.goto(editUrl(REPORTED))
+  const other = cellOf(page, 0, 2, 0)
+  const before = await other.boundingBox()
+  const input = await openCell(page, 0, 1, 1)
+  const opened = await other.boundingBox()
+  await page.keyboard.type(" extra words that extend the active cell by a lot")
+  const after = await other.boundingBox()
+  expect(input).toBeFocused()
+  expect(before).not.toBeNull()
+  expect(opened?.width).toBe(before?.width)
+  expect(after).not.toBeNull()
+  expect(after?.width).toBe(opened?.width)
 })
 
 test("a composition sequence produces exactly one document transaction after compositionend", async ({ page }) => {
