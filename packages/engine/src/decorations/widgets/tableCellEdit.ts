@@ -491,6 +491,7 @@ export const tableCaretFollower = ViewPlugin.fromClass(class {
     const hit = caretInsideUnrevealedTable(view)
     if (!hit) return
     const { table, slot } = hit
+    if (!renderedTableBody(view, table.from)) return
     view.dispatch({ selection: { anchor: table.from }, scrollIntoView: true })
     openRenderedTableCell(view, table, slot.row, slot.col)
   }

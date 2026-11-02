@@ -585,7 +585,7 @@ export class TableWidget extends BlockWidget {
   hasRowCol(): boolean { return this.hovered }
 
   protected editButtonEffects(): readonly StateEffect<unknown>[] {
-    return [revealTableSource.of(null)]
+    return [revealTableSource.of(null), closeTableEdit()]
   }
 
   // 直接编辑打开时，单元格点击交给 nativePointerInteraction，不把选区派进表格。

@@ -5,6 +5,7 @@ import {
   editorExtensions,
   getPendingOrderedListNormalization,
   rejectOrderedListNormalization,
+  setLivePreview,
 } from "../src/index"
 import { getTableEditSession } from "../src/tables/directEdit"
 import { tableAt } from "../src/tables/navigate"
@@ -165,6 +166,41 @@ describe("view smoke (real EditorView)", () => {
     expect(view.dom.querySelector(".omd-table")).toBeNull()
     expect(view.dom.querySelector(".omd-table-src")).toBeTruthy()
     expect(isTableSourceRevealed(view.state)).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not hijack a source-mode caret inside a table", async () => {
+    const doc = "| a |\n|---|\n| 1 |\n"
+    const { view, errors } = makeView(doc)
+    await tick()
+    view.dispatch(setLivePreview(false))
+    const head = doc.indexOf("| 1 |") + 3
+    view.dispatch({ selection: { anchor: head } })
+    await tick()
+    expect(view.state.selection.main.head).toBe(head)
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-cell-input")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("closes a cell session when revealing table source from the edit button", async () => {
+    const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const td = view.dom.querySelector(".omd-table tbody td") as HTMLElement
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    expect(getTableEditSession(view.state)).not.toBeNull()
+    const btn = view.dom.querySelector(".omd-table .omd-block-edit") as HTMLElement
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    await tick()
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(isTableSourceRevealed(view.state)).toBe(true)
+    view.dispatch({ selection: { anchor: doc.length } })
+    await tick()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(isTableSourceRevealed(view.state)).toBe(false)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
