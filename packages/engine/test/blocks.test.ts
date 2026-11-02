@@ -227,7 +227,7 @@ describe("block syntax", () => {
     const state = makeState(doc).update({ selection: { anchor: doc.length } }).state
     const tags = collectDecorationSpecs(state, 0, doc.length).map(d => d.tag)
     expect(tags).toContain("line:omd-blockquote-1")
-    expect(tags).toContain("line:omd-h1")
+    expect(tags.some(tag => tag.startsWith("line:omd-h1"))).toBe(true)  // 光标在末尾 → 含 omd-h-active
     expect(tags).toContain("replace:QuoteMark")
     expect(tags).toContain("replace:HeaderMark")
   })

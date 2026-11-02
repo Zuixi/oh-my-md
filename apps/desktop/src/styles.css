@@ -146,10 +146,29 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .cm-editor .cm-content :focus {
   caret-color: var(--omd-cursor) !important;
 }
-.editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
-.editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
-.editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
-.editor-host .omd-h4, .editor-host .omd-h5, .editor-host .omd-h6 { font-weight: 700; }
+/* 六级单调递减（Typora github 主题同构）：px 换算 27/22.5/18.8/16.9/15/13.1。
+h4 不取 Typora 的 1em —— 源编辑器里整行加粗的正文会与 1em 的 h4 撞脸，1.125em 独立成档。
+h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。 */
+.editor-host .omd-h1 { font-size: 1.8em;   font-weight: 700; }
+.editor-host .omd-h2 { font-size: 1.5em;   font-weight: 700; }
+.editor-host .omd-h3 { font-size: 1.25em;  font-weight: 700; }
+.editor-host .omd-h4 { font-size: 1.125em; font-weight: 700; }
+.editor-host .omd-h5 { font-size: 1em;     font-weight: 700; }
+.editor-host .omd-h6 { font-size: 0.875em; font-weight: 700; color: var(--omd-quote); }
+/* 光标所在标题行左缘的级别徽标（折叠的 `#` 唯一替代线索）：overlay 定位零宽，
+不推动正文 —— 行宽不抖动是路线 A 的核心不变量。仅编辑态可见，阅读态零噪音。 */
+.editor-host .omd-h-active { position: relative; }
+.editor-host .omd-h-active::before {
+  content: "H" attr(data-omd-h);
+  position: absolute;
+  left: -3em;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: inherit;
+  color: var(--omd-quote);
+  opacity: 0.75;
+  pointer-events: none;
+}
 .editor-host .omd-strong { font-weight: 700; }
 .editor-host .omd-em { font-style: italic; }
 .editor-host .omd-del { text-decoration: line-through; }
