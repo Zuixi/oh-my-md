@@ -3,11 +3,12 @@
 > **Parent:** [`../../AGENTS.md`](../../AGENTS.md)
 > **Scope:** GFM table model, Lezer-range edits, source toolbar, and navigation (`src/tables/**`). Related consumers must explicitly read this guide: `decorations/widgets/table.ts`, `parse/cell.ts`, and `format/tableKeymap.ts`; they do not inherit it by path.
 
-## Two-State Model & Subtree Skipping
+## Three-State Model & Subtree Skipping
 
-- **Two states only:** Caret outside → `TableWidget` projection; caret inside (`blockSelected`) → `styleTableSource` (`line:omd-table-src*` classes).
+- **Three states (Live Preview):** No cell session and no explicit source → `TableWidget` projection; `TableEditSession` on one cell → widget stays mounted with `.omd-table-caret` in that cell (IME anchor input, edits via `directEdit.ts`); `tableSourceRevealed` for this table with selection overlapping → `styleTableSource` (`line:omd-table-src*` classes), widget unmounted.
+- **Explicit source only:** `styleTableSource` runs only when `isRevealedTableRange(state, node.from, node.to)` and `blockSelected`. Cell clicks do not reveal source; the block `</>` button dispatches `revealTableSource` (and closes any cell session).
 - **Skip subtree in source state:** `blocks.ts` `case "Table"` **must `return true`** after calling `styleTableSource` so `inlineRules` does not fold `**` or links inside raw source cells (`test/tableSourceDecorations.test.ts`).
-- **Opt-in direct edit (`directEdit.ts`):** In-cell `<input>` editing is strictly behind the `experimentalTableDirectEdit` facet. In standard mode, clicking a `td`/`th` enters source at the exact cell offset via `TableWidget.clickPos`; never attach a cell `mousedown` listener that stops propagation.
+- **Cell session default on:** `editorExtensions()` mounts direct-edit session unless `experimentalTableDirectEdit: false`. The visible cell is projected by `tableCellEdit.ts`; the input is not a second document or history.
 
 ## Lezer-Range Model & Stale-Checked Edits
 
@@ -25,7 +26,7 @@
 ## Shared Cell Semantics & Table Keymap
 
 - **Single cell parser (`parse/cell.ts::parseCell`):** Both `TableWidget` (`renderTableCellContent`) and HTML exports (`exportHtml` / `exportRichHtml`) must consume the shared cell model — never regex-parse cells or bypass `parseCell` in rich export.
-- **Navigation (`navigate.ts`, `format/tableKeymap.ts`, `navigation/blockEntry.ts`):** `tableAt`, `cellAt`, `nextCell`, `cellBelow` are read-only tree queries (`null` when tree is unavailable; never advance parsing). `Enter` on the final row (or at `Table.to`) exits the table via `exitTableSpec`; only `Tab` on the final cell appends a row. Never add a redundant `isComposing` guard in `tableKeymap` (CodeMirror already filters composition keydowns). ArrowUp/ArrowDown into a rendered table that is not source-revealed dispatches `beginTableEdit` for the directional entry cell and parks the selection at `table.from`; the caret is the click opener. An anchor exactly on `tableFrom` does not close the session. A caret strictly inside the table without `beginTableEdit` still closes, then `tableCaretFollower` reopens that cell on the next frame when the editor is editable and that table is not source-revealed.
+- **Navigation (`navigate.ts`, `format/tableKeymap.ts`):** `tableAt`, `cellAt`, `nextCell`, `cellBelow` are read-only tree queries (`null` when tree is unavailable; never advance parsing). `Enter` on the final row (or at `Table.to`) exits the table via `exitTableSpec`; only `Tab` on the final cell appends a row. Never add a redundant `isComposing` guard in `tableKeymap` (CodeMirror already filters composition keydowns).
 - **Future complex HTML tables:** Dedicated complex-table modules are not implemented. If an approved task introduces `rowspan`/`colspan` editing, design a separate model/widget rather than silently extending the GFM range-edit contract; future plans are not current requirements.
 
 ## Related Guides & Verification

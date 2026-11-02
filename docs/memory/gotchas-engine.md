@@ -216,8 +216,8 @@ Facts to remember:
   Unresolved references stay visible source in every path.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
 - Widget `eq` compares `src` + `embed` first and then the cheap lazy `tableEqualityKey` (cell `source`s + alignments + shape) — never `JSON.stringify(table)`, which serialized every cell on every rebuild pass. An unchanged table reuses its DOM; a changed cell reaches `updateDOM`, which patches only the changed cells in place (see the table in-place-refresh entry below). The model is extracted once per build by `tableDataFromNode` (Lezer-derived); never re-derive it from re-serialized strings, and never store it in a module-global.
-- **Rendered state has no per-cell event intercept.** `BlockWidget.toDOM` moves the selection into the table on wrap `mousedown`; that is the only path that turns a cell click into source editing (`TableWidget.clickPos` maps the clicked `td/th` to its exact source offset). A `mousedown` listener on the cells that calls `stopPropagation`/`preventDefault` swallows it — that legacy in-cell input handler is exactly what kept `e2e/table-source.spec.ts` red. Toolbar buttons are the opposite case: they must `preventDefault` + `stopPropagation` on `mousedown`, else the wrap handler unmounts the widget before the `click` lands.
-- **Do not reintroduce a cell `<input>` overlay.** The table has two states only (rendered widget / `omd-table-src` source grid); "which cell is being edited" is `state.selection`, never widget state. An in-cell input needs its own commit/cancel/pending-focus state machine (~320 lines, deleted in the table-source-editing work) and silently breaks undo, find, autosave and crash recovery for table edits.
+- **Rendered cells open a session, not source.** With direct edit on (default), `td`/`th` `mousedown` goes through `TableWidget.nativePointerInteraction` → `tableCellEdit` session + `.omd-table-caret`; the document selection stays outside the table (`table.from`). Wrap `mousedown` on padding/toolbar does not reveal source. The `</>` button dispatches `revealTableSource` + `closeTableEdit` and moves the CM caret into the table for the source grid. Toolbar buttons on the rendered widget must still `preventDefault` + `stopPropagation` on `mousedown`.
+- **The cell input is an IME anchor only.** Visible text comes from `renderEditableCell` in `tableCellEdit.ts`. Durable edits must go through `tableCellInputSpec` / outer `EditorView` transactions (`directEdit.ts` session + history replay). Do not give the input its own commit queue, cancel state, or history — that breaks undo, find, autosave, and crash recovery. `tableCaretFollower` reopens a session when a collapsed caret lands inside an unrevealed table that still has a rendered `TableWidget`; Source mode has no widget host, so the follower no-ops and the CM caret stays put.
 
 ## Table edits are Lezer-range-based and validated at dispatch; ragged cells are deliberate placeholders
 
@@ -229,7 +229,7 @@ The GFM render parser accepts ragged rows (missing tail cells) and escaped pipes
 
 ## A focused table must skip its subtree after emitting source lines
 
-`decorations/blocks.ts` 的 `case "Table"` 有两个分支：`blockSelected` 为真时它调用
+`decorations/blocks.ts` 的 `case "Table"`：`isRevealedTableRange` 且 `blockSelected` 时调用
 `styleTableSource()` 产出 `line:omd-table-src*` 源码网格，然后**必须 `return true`**
 跳过子树。`return false` 会让 `inlineRules` 走进单元格，折叠 `**` 并加粗文字 ——
 源码态直接变成"半个预览"（用户要看的是原始标记，不是渲染效果）。渲染态分支同样

@@ -39,4 +39,4 @@ Every `block: true` widget (`widgets/*.ts`) must wire all five:
 
 - **`CodeWidget` (`widgets/code.ts`):** Lazy single-flight Shiki via `shiki/codeHighlighter.ts`; bounded LRU cache via `codeHtmlCache.ts` (128 entries / 8 MiB). Body click enters source at clicked `span.line` with 4px drift guard.
 - **`MathBlockWidget` (`widgets/math.ts`):** `enterSourceOnClick` is `false`; click opens `.omd-math-popup` hosting an inner CM6 view (`__omdMathPopupView` on DOM, never on widget fields). Re-sync in `updateDOM` via `mathEditorTexOf`, skip while `view.composing` or when `liveRange` is stale, and guard close with `closed` flag to avoid synchronous `focusout` double-destroy.
-- **`TableWidget` (`widgets/table.ts`):** See [`../tables/AGENTS.md`](../tables/AGENTS.md).
+- **`TableWidget` (`widgets/table.ts`):** Live Preview uses render / in-cell session / explicit source (see [`../tables/AGENTS.md`](../tables/AGENTS.md)); projection and caret live in `widgets/tableCellEdit.ts`.
