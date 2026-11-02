@@ -86,14 +86,14 @@ describe("UpdateBanner", () => {
     expect(document.querySelector("[dangerouslySetInnerHTML]")).toBeNull()
   })
 
-  it("renders a check-only available state as an Open Release action, never a download", () => {
+  it("renders a check-only available state as a download-installer action, never a download", () => {
     const props = renderBanner({
       kind: "available",
       update: UPDATE,
       installSupported: false,
     })
     const buttons = screen.getAllByRole("button")
-    expect(buttons.map(button => button.textContent)).toEqual(["Open Release", "Later"])
+    expect(buttons.map(button => button.textContent)).toEqual(["Download installer (NSIS)", "Later"])
     fireEvent.click(buttons[0])
     expect(props.onDownload).toHaveBeenCalled()
   })

@@ -84,8 +84,10 @@ Figures come from the built-in advisory benchmark on an M-series machine — run
 | Platform | Download | Notes |
 | --- | --- | --- |
 | macOS | Universal `.dmg` | One package for Apple Silicon and Intel Macs |
-| Windows x64 | `-setup.exe` **(recommended)** or `.msi` | NSIS installer is the easiest choice; MSI is provided for managed installs |
+| Windows x64 | `-setup.exe` | The NSIS installer is the only published Windows package; see the note below for managed environments |
 | Linux x64 | `.AppImage` or `.deb` | AppImage is portable; deb is for Debian/Ubuntu-based systems |
+
+> **Previously installed the MSI?** Run the `-setup.exe` wizard once — it guides you through removing the old MSI installation. If your desktop shows two shortcuts afterwards, delete the older one. MSI packages are no longer published with releases; managed environments can build one from source (`pnpm --filter @omd/desktop tauri build --bundles msi`), see [docs/guides/windows-installer.md](./docs/guides/windows-installer.md).
 
 ### Unsigned package warning
 
@@ -120,11 +122,10 @@ Updater-capable releases (`0.1.0` and later) can update in place with the Tauri 
 | --- | --- |
 | macOS app (from the DMG) | ✅ |
 | Windows NSIS (`-setup.exe`) | ✅ |
-| Windows MSI | — ¹ |
 | Linux AppImage | ✅ |
 | Linux deb | — ¹ |
 
-¹ These packages check for updates but open the official GitHub Release page for manual installation — an MSI or deb install is never replaced by the updater.
+¹ The deb package checks for updates but opens the official GitHub Release page for manual installation — a deb install is never replaced by the updater. Legacy MSI installs behave the same way, and the download button deep-links straight to the versioned `-setup.exe`; running it once migrates the install (see the note above).
 
 - **Starting from `0.0.1`:** the originally released build cannot self-update. Install one updater-capable release (`0.1.0` or later) manually once; from then on, higher versions update from inside the app.
 - **Updater trust vs. package signing:** the installer packages above are unsigned (see the warning above), yet the updater remains trusted — every updater bundle is signed with the project's minisign key, and the app verifies signatures against the public key it ships. A signature failure stops installation and points to the official GitHub Release; it never falls back to an unverified URL.

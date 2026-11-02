@@ -11,9 +11,8 @@ import {
   type FakeUpdateHandle,
 } from "./appHarness"
 import App from "../src/App"
-import { STARTUP_UPDATE_CHECK_MS } from "../src/constants"
+import { STARTUP_UPDATE_CHECK_MS, RELEASES_URL, windowsSetupAssetUrl } from "../src/constants"
 import type { PrepareUpdateRestartResult } from "../src/desktopServices"
-import { RELEASES_URL } from "../src/constants"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -207,7 +206,7 @@ describe("App update integration", () => {
         .toContain("ready to install"))
   })
 
-  it("routes a check-only package to the Release page without ever downloading", async () => {
+  it("routes a check-only package to the versioned installer without ever downloading", async () => {
     const harness = makeAppHarness()
     harness.services.updateCapability = vi.fn(async () => ({ check: true, install: false }))
     const handle = harness.updates.nextAvailable()
@@ -216,12 +215,29 @@ describe("App update integration", () => {
 
     harness.renderApp()
     openPaletteAndRun("check")
-    await waitFor(() => screen.getByRole("button", { name: "Open Release" }))
+    const button = await screen.findByRole("button", { name: "Download installer (NSIS)" })
     expect(screen.queryByRole("button", { name: "Download update" })).toBeNull()
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Release" }))
-    await waitFor(() => expect(openExternal).toHaveBeenCalledWith(RELEASES_URL))
+    fireEvent.click(button)
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledWith(windowsSetupAssetUrl(handle.version)))
+    expect(openExternal).not.toHaveBeenCalledWith(RELEASES_URL)
     expect(handle.download).not.toHaveBeenCalled()
+  })
+
+  it("falls back to the Release page when the installer deep-link open fails", async () => {
+    const harness = makeAppHarness()
+    harness.services.updateCapability = vi.fn(async () => ({ check: true, install: false }))
+    harness.updates.nextAvailable()
+    const openExternal = vi.fn(async (url: string) => {
+      if (url.includes("/releases/download/")) throw new Error("no opener")
+    })
+    harness.services.openExternal = openExternal as unknown as typeof harness.services.openExternal
+
+    harness.renderApp()
+    openPaletteAndRun("check")
+    fireEvent.click(await screen.findByRole("button", { name: "Download installer (NSIS)" }))
+    await waitFor(() => expect(openExternal).toHaveBeenCalledWith(RELEASES_URL))
   })
 
   it("reports a Release-page open failure at the service boundary", async () => {
@@ -232,8 +248,7 @@ describe("App update integration", () => {
 
     harness.renderApp()
     openPaletteAndRun("check")
-    await waitFor(() => screen.getByRole("button", { name: "Open Release" }))
-    fireEvent.click(screen.getByRole("button", { name: "Open Release" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Download installer (NSIS)" }))
 
     await waitFor(() => expect(harness.services.reportError).toHaveBeenCalled())
     expect(String(vi.mocked(harness.services.reportError).mock.calls[0][0]))

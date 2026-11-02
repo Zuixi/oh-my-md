@@ -161,6 +161,7 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
+  windowsSetupAssetUrl,
 } from "./constants"
 import { extractSessionState,
 } from "./sessionRestore"
@@ -1015,9 +1016,8 @@ export default function App({
         if (!prepare) throw new Error("update restart is not supported here")
         return prepare()
       },
-      openReleasePage: async () => {
-        await services.openExternal?.(RELEASES_URL)
-      },
+      openReleasePage: async () => { await services.openExternal?.(RELEASES_URL) },
+      openManualDownload: async version => { await services.openExternal?.(windowsSetupAssetUrl(version)) },
       reportManualFailure: failure => {
         if (mountedRef.current) services.reportError(localeT(`update.failure.${failure}`))
       },

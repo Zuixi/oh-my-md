@@ -28,6 +28,23 @@ export const ASSETS_DIR_NAME = "assets"
 /** GitHub Releases page used by update notifications; matches the release CI target repo. */
 export const RELEASES_URL = "https://github.com/Zuixi/oh-my-md/releases/latest"
 
+/** Windows CPU architectures the NSIS setup asset is published for. */
+export type WindowsSetupArch = "x64" | "arm64"
+
+/**
+ * Direct download URL for the NSIS setup.exe published with a release.
+ *
+ * The asset name is produced by the Tauri bundler and pinned by the release
+ * workflow (it fails when `oh-my-md_${version}_x64-setup.exe` is missing),
+ * so this URL shape is a contract — keep it identical to
+ * `immutableUrl` in scripts/update-manifest.mjs. Used by the in-app updater
+ * to deep-link check-only (e.g. former MSI) installs straight to the
+ * installer instead of a releases page the user must read.
+ */
+export function windowsSetupAssetUrl(version: string, arch: WindowsSetupArch = "x64"): string {
+  return `https://github.com/Zuixi/oh-my-md/releases/download/v${version}/oh-my-md_${version}_${arch}-setup.exe`
+}
+
 /** Startup automatic-update check delay (spec §10: eight seconds after mount).
  *  Frontend-only: the check is scheduled by the desktop App, not by Rust. */
 export const STARTUP_UPDATE_CHECK_MS = 8000

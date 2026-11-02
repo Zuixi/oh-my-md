@@ -343,6 +343,17 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] banner 右端 omd logo：无白底贴片、无光晕，150% 缩放下不越过标题区。
 - [ ] 欢迎页 / 完成页：左侧品牌面板完整，大标题「Welcome to the oh-my-md Setup Wizard」落在右侧留白区、可读。
 
+### Windows 单一安装包策略（MSI 迁移，详见 docs/guides/windows-installer.md）
+
+前置：造一台"NSIS + MSI 双装"机器（先装 `.msi`，再装 `-setup.exe`），或用历史双装实机。
+
+- [ ] 交互运行 `-setup.exe`（双击）：重装页出现后，引导卸载旧 MSI（会弹 msiexec 卸载界面 + UAC）；完成后「设置 → 应用」仅剩一个 oh-my-md，桌面仅一个图标。
+- [ ] 静默安装 `setup.exe /S`（PowerShell：`Start-Process -Wait` 取 `ExitCode`，**不要**用 `cmd /c %ERRORLEVEL%`——那是 wrapper 的 0）：MSI 残留时 `ExitCode` 为 **1603**，且未写入任何文件。
+- [ ] 无 MSI 残留时 `setup.exe /S`：正常安装完成，退出码 0。
+- [ ] NSIS over NSIS 升级（旧版 → 新版 setup.exe）：单卸载项、版本号更新、无残留图标。
+- [ ] MSI 安装（历史版本）的应用内更新：更新横幅按钮为「下载安装包（NSIS）」，点击后浏览器直接下载对应版本 `oh-my-md_<版本>_x64-setup.exe`（深链 URL，非 Release 列表页）。
+- [ ] 双装机器上 NSIS 安装的应用内更新（passive）：先弹一次 msiexec 卸载向导 + UAC，随后完成升级——一次性，之后收敛为单安装（已知行为，非 bug）。
+
 - [ ] 启动无 crash、无多余控制台窗口（`windows_subsystem` 属性）。
 - [ ] 应用内菜单栏全量走查（同 Linux 清单）。
 - [ ] Ctrl 系快捷键全测（同 Linux 清单）。

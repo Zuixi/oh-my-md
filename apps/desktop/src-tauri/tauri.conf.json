@@ -42,7 +42,12 @@
       }
     ],
     "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
+        "installMode": "currentUser",
         "displayLanguageSelector": true,
         "languages": ["English", "SimpChinese"],
         "installerIcon": "icons/icon.ico",

@@ -45,10 +45,10 @@ describe("release workflow", () => {
 
     expect(windows).toContain("runs-on: windows-2022")
     expect(windows).not.toContain("runs-on: windows-latest")
-    expect(windows).toMatch(/--bundles nsis,msi/)
-    expect(windows).not.toMatch(/--bundles nsis,wix/)
+    expect(windows).toMatch(/--bundles nsis\b/)
+    expect(windows).not.toMatch(/--bundles nsis,msi/)
     expect(windows).toContain("actions/upload-artifact@")
-    expect(windows).toContain("**/*.msi")
+    expect(windows).not.toContain("**/*.msi")
     expect(windows).toContain("**/*-setup.exe")
 
     expect(linux).toContain("runs-on: ubuntu-22.04")
@@ -63,9 +63,10 @@ describe("release workflow", () => {
 
     expect(publish).toContain("needs: [macos, windows, linux]")
     expect(publish).toContain("actions/download-artifact@")
-    for (const pattern of ["*.dmg", "*.msi", "*-setup.exe", "*.deb", "*.AppImage"]) {
+    for (const pattern of ["*.dmg", "*-setup.exe", "*.deb", "*.AppImage"]) {
       expect(publish).toContain(pattern)
     }
+    expect(publish).not.toContain("'*.msi'")
     expect(publish).toContain("SHA256SUMS.txt")
     expect(publish).toMatch(/find .* -print0.*sort -z.*sha256sum/s)
     expect(publish).toContain("! -name SHA256SUMS.txt")
@@ -109,12 +110,25 @@ describe("release workflow", () => {
     for (const pattern of ["*.dmg", "*.app.tar.gz", "*.app.tar.gz.sig"]) {
       expect(macos).toContain(`-name '${pattern}'`)
     }
-    for (const pattern of ["*.msi", "*-setup.exe", "*-setup.exe.sig"]) {
+    for (const pattern of ["*-setup.exe", "*-setup.exe.sig"]) {
       expect(windows).toContain(`-name '${pattern}'`)
     }
     for (const pattern of ["*.deb", "*.AppImage", "*.AppImage.sig"]) {
       expect(linux).toContain(`-name '${pattern}'`)
     }
+  })
+
+  it("pins the NSIS asset name the updater deep-links to", () => {
+    const windows = jobBlock("windows", "linux")
+    const publish = jobBlock("publish")
+
+    // windowsSetupAssetUrl in apps/desktop/src/constants.ts must produce
+    // URLs to exactly this asset; both jobs fail the release on drift.
+    for (const block of [windows, publish]) {
+      expect(block).toContain("oh-my-md_${version}_x64-setup.exe")
+    }
+    expect(windows).toMatch(/Expected NSIS asset/)
+    expect(publish).toMatch(/Expected NSIS asset/)
   })
 
   it("uploads signed updater artifacts and signatures for every platform", () => {

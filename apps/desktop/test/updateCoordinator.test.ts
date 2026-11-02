@@ -57,6 +57,7 @@ function makeEnv(overrides: Partial<UpdateCoordinatorDependencies> = {}) {
     checkRestartReadiness: vi.fn().mockReturnValue({ ready: true, reasons: [] }),
     prepareRestart: vi.fn<() => Promise<PrepareUpdateRestartResult>>().mockResolvedValue({ kind: "ready" }),
     openReleasePage: vi.fn().mockResolvedValue(undefined),
+    openManualDownload: vi.fn().mockResolvedValue(undefined),
     reportManualFailure: vi.fn(),
     logFailure: vi.fn(),
     notifyLatest: vi.fn(),
@@ -173,21 +174,6 @@ describe("createUpdateCoordinator", () => {
       kind: "available",
       installSupported: true,
       update: { version: "0.1.1", notes: "Bug fixes and polish." },
-    })
-  })
-
-  it("publishes available with installSupported false for check-only packages", async () => {
-    const { deps } = makeEnv({
-      capability: vi.fn().mockResolvedValue({ check: true, install: false, reason: "manualPackage" }),
-    })
-    const coordinator = createUpdateCoordinator(deps)
-
-    await coordinator.check("manual")
-
-    expect(last(statesOf(coordinator))).toEqual({
-      kind: "available",
-      installSupported: false,
-      update: UPDATE,
     })
   })
 
@@ -507,25 +493,6 @@ describe("createUpdateCoordinator", () => {
     await coordinator.download()
 
     expect(handle.download).not.toHaveBeenCalled()
-  })
-
-  it("opens the Release page instead of downloading for check-only packages", async () => {
-    const { deps, handle } = makeEnv({
-      capability: vi.fn().mockResolvedValue({ check: true, install: false, reason: "manualPackage" }),
-    })
-    const coordinator = createUpdateCoordinator(deps)
-    const { states } = collect(coordinator)
-
-    await coordinator.check("manual")
-    await coordinator.download()
-
-    expect(deps.openReleasePage).toHaveBeenCalledTimes(1)
-    expect(handle.download).not.toHaveBeenCalled()
-    expect(last(states)).toEqual({
-      kind: "available",
-      installSupported: false,
-      update: UPDATE,
-    })
   })
 
   it("ignores a second download while a download is running", async () => {
