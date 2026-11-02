@@ -11,6 +11,16 @@ const specs = (doc: string, sel?: number) => {
 
 const tags = (doc: string, sel?: number) => specs(doc, sel).map(d => d.tag)
 
+// 精确源码区间：转义契约是“内容保留原文”。
+const nodeText = (doc: string, name: string) => {
+  const state = makeState(doc)
+  const out: string[] = []
+  syntaxTree(state).iterate({
+    enter: n => { if (n.name === name) out.push(state.doc.sliceString(n.from, n.to)) },
+  })
+  return out
+}
+
 describe("footnotes", () => {
   it("parses reference and definition nodes", () => {
     const names: string[] = []
@@ -71,5 +81,30 @@ describe("footnotes", () => {
     // inline marks inside the continuation still fold
     const t = tags(doc)
     expect(t).toContain("mark:omd-strong")
+  })
+})
+
+describe("footnote reference escape contract", () => {
+  it("rejects an escaped opening [", () => {
+    expect(nodeText("a \\[^1] b", "FootnoteReference")).toEqual([])
+  })
+
+  it("keeps the opening when the backslash run is even", () => {
+    expect(nodeText("a \\\\[^1] b", "FootnoteReference")).toEqual(["[^1]"])
+  })
+
+  it("allows an escaped ] inside the label", () => {
+    // 转义的 ] 留在标签里，闭合在下一个真正的 ]
+    expect(nodeText("a [^x\\]y] b", "FootnoteReference")).toEqual(["[^x\\]y]"])
+  })
+
+  it("closes at an even-backslash ] because that ] is not escaped", () => {
+    expect(nodeText("a [^x\\\\] b", "FootnoteReference")).toEqual(["[^x\\\\]"])
+  })
+
+  it("keeps the nested opener and newline rules", () => {
+    expect(nodeText("a [^x[y] b", "FootnoteReference")).toEqual([])
+    expect(nodeText("a [^x\ny] b", "FootnoteReference")).toEqual([])
+    expect(nodeText("a [^\\] b", "FootnoteReference")).toEqual([])
   })
 })

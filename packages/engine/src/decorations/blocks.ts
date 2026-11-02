@@ -4,17 +4,20 @@ import { Decoration } from "@codemirror/view"
 import { cursorInside, type DecoSpec } from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
-import { TableWidget } from "./widgets/table"
+import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
+import { createComplexTableWidget } from "./widgets/complexTable"
 import { tableDataFromNode } from "../tables/model"
+import { isRevealedTableRange } from "../tables/sourceReveal"
 import { imageResolver } from "./widgets/image"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
 import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
 import { parseFenceInfo } from "../fenceInfo"
+import { blockPrefixOf } from "../format/blockPrefix"
+import { editorReferenceContext } from "../semantic/references"
 
 const MAX_QUOTE_DEPTH = 4
-const MAX_LIST_DEPTH = 4
 
 // Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
 // caret is inside the mark itself — same span granularity as the inline reveal
@@ -103,9 +106,16 @@ function quoteInsideList(node: SyntaxNode): boolean {
 function blockEmbed(node: SyntaxNode): BlockEmbed {
   return {
     quoteDepth: Math.min(ancestorQuoteDepth(node), MAX_QUOTE_DEPTH),
-    listDepth: Math.min(listDepth(node), MAX_LIST_DEPTH),
+    listDepth: listDepth(node),
     quoteInList: quoteInsideList(node),
   }
+}
+
+// 列表行深度用**一个**稳定类 + 行内 `--omd-list-depth` 表达（视觉换算在 desktop
+// CSS）。tag 保留真实深度：增量装饰身份必须随深度变化，否则缩进变化时旧行装饰
+// 会被复用。
+function listDepthLine(cssClass: string, depth: number): Decoration {
+  return Decoration.line({ class: cssClass, attributes: { style: `--omd-list-depth: ${depth}` } })
 }
 
 function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
@@ -129,6 +139,7 @@ function styleEditingCodeblock(
   out: DecoSpec[],
   langToken: string,
   title: string,
+  embed: BlockEmbed,
 ) {
   const doc = state.doc
   const sel = state.selection.main
@@ -151,11 +162,23 @@ function styleEditingCodeblock(
   if ((closeLine || firstContent <= lastContent) && !overlaps(openLine.from, openLine.to)) {
     out.push({
       from: openLine.from, to: openLine.to, tag: "widget:block:code-chrome",
-      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title), block: true }),
+      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title, undefined, embed), block: true }),
     })
   }
   for (let number = firstContent; number <= lastContent; number++) {
     const line = doc.line(number)
+    // 引用内围栏的内容行：`> ` 前缀是 FencedCode 的子节点，而本分支会让 walker
+    // 跳过整棵 FencedCode 子树（返回 true），不在这里补折叠，编辑态就会露出裸
+    // `> `（渲染态由 CodeWidget 整体替换，所以只有编辑态暴露）。折叠范围与
+    // foldQuoteMark 一致：标记 + 后随一个空格，光标进入该范围时按 Route A 展开。
+    const prefix = blockPrefixOf(state, line)
+    for (const mark of prefix?.marks ?? []) {
+      if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
+      out.push({
+        from: mark.from, to: mark.to, tag: "replace:QuoteMark",
+        deco: Decoration.replace({}),
+      })
+    }
     out.push({
       from: line.from, to: line.from, tag: "line:omd-codeblock",
       deco: Decoration.line({ class: "omd-codeblock" }),
@@ -182,6 +205,40 @@ function styleEditingCodeblock(
       from: closeLine.from, to: Math.min(doc.length, closeLine.to + 1),
       tag: "replace:CloseFence", deco: Decoration.replace({ block: true }),
     })
+  }
+}
+
+// 显式展开后的源码态表格：整表保持可编辑的 Markdown 源码，但按行给出
+// 等宽 + 底色 + 行级的表头/分隔行标记，让管道符纵向对齐 —— 不做任何行内折叠，
+// 否则 `**`/`|` 的半渲染让源码网格变成“半个预览”。
+function styleTableSource(
+  node: { from: number; to: number },
+  state: EditorState,
+  out: DecoSpec[],
+): void {
+  const first = state.doc.lineAt(node.from).number
+  const last = state.doc.lineAt(node.to).number
+  for (let n = first; n <= last; n++) {
+    const line = state.doc.line(n)
+    out.push({
+      from: line.from, to: line.from,
+      tag: "line:omd-table-src",
+      deco: Decoration.line({ class: "omd-table-src" }),
+    })
+    if (n === first) {
+      out.push({
+        from: line.from, to: line.from,
+        tag: "line:omd-table-src-head",
+        deco: Decoration.line({ class: "omd-table-src-head" }),
+      })
+    }
+    if (n === first + 1) {
+      out.push({
+        from: line.from, to: line.from,
+        tag: "line:omd-table-src-delim",
+        deco: Decoration.line({ class: "omd-table-src-delim" }),
+      })
+    }
   }
 }
 
@@ -219,21 +276,27 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     })
     return true
   }
-  if (!langToken || insideBlockquote(node.node)) {
-    styleCodeblockLines(node, state, out)
-    return false
-  }
+  // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器样式、
+  // 尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。这一分支必须排在
+  // 语言/引用判断之前：旧顺序里 `!langToken` 先返回，无语言块永远拿不到 chrome，
+  // 用户只能手敲源码才能加语言（同一段代码在光标进出时还会换一套 DOM）。
+  // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
   if (blockSelected(state, node.from, node.to)) {
-    // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器
-    // 样式、尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。
-    // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
-    if (langToken && langToken !== "mermaid") {
-      styleEditingCodeblock(node, state, out, langToken, title)
+    if (langToken !== "mermaid") {
+      styleEditingCodeblock(node, state, out, langToken, title, embed)
     } else {
       styleCodeblockLines(node, state, out)
     }
     return true
   }
+  // 无语言块渲染态保持行样式：没有 Shiki 输出可展示，折叠成块反而丢掉行号基线。
+  if (!langToken) {
+    styleCodeblockLines(node, state, out)
+    return false
+  }
+  // 引用内的语言块与引用外同一路径：embed 已带 omd-blockquote-N，引用条由 widget
+  // 容器自己画（与表格/公式/mermaid 相同的既有模型；旧代码把引用内 lang 块降级成
+  // 行样式，同样的 Markdown 只因外面套了 `> ` 就没有高亮）。
   out.push({
     from: node.from, to: node.to, tag: "widget:block:code",
     deco: Decoration.replace({
@@ -252,7 +315,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
 
 function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const depth = Math.min(Math.max(quoteDepth(node.node), 1), MAX_QUOTE_DEPTH)
-  const itemDepth = Math.min(listDepth(node.node), MAX_LIST_DEPTH)
+  const itemDepth = listDepth(node.node)
   for (let pos = node.from; pos <= node.to; ) {
     const line = state.doc.lineAt(pos)
     if (!childQuoteCoversLine(node.node, line.from, line.to)) {
@@ -265,19 +328,12 @@ function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
         out.push({
           from: line.from, to: line.from,
           tag: `line:omd-quote-in-li-${itemDepth}`,
-          deco: Decoration.line({ class: `omd-quote-in-li-${itemDepth}` }),
+          deco: listDepthLine("omd-quote-in-li", itemDepth),
         })
       }
     }
     pos = line.to + 1
   }
-}
-
-function insideBlockquote(node: SyntaxNode): boolean {
-  for (let parent = node.parent; parent; parent = parent.parent) {
-    if (parent.name === "Blockquote") return true
-  }
-  return false
 }
 
 function listIndentStart(lineFrom: number, markFrom: number, state: EditorState): number {
@@ -295,12 +351,11 @@ function listIndentStart(lineFrom: number, markFrom: number, state: EditorState)
 
 function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const line = state.doc.lineAt(node.from)
-  let depth = 0
-  for (let parent = node.node.parent; parent; parent = parent.parent) {
-    if (parent.name === "ListItem") depth++
-  }
-  const cls = `omd-li-${Math.min(depth, MAX_LIST_DEPTH)}`
-  out.push({ from: line.from, to: line.from, tag: `line:${cls}`, deco: Decoration.line({ class: cls }) })
+  const depth = listDepth(node.node)
+  out.push({
+    from: line.from, to: line.from, tag: `line:omd-li-${depth}`,
+    deco: listDepthLine("omd-li", depth),
+  })
 
   // 路线 A：列表符与缩进无条件折叠 —— 点击列表文本只定位光标，不闪源码；
   // 列表增删走 toggleOrderedList / toggleUnorderedList 命令。
@@ -370,7 +425,12 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
       return true
     }
     case "Table": {
-      if (blockSelected(state, node.from, node.to)) return false
+      // 光标停在表内仍保持渲染。只有字段记下的那张表，且选区落在其上时才卸成源码行。
+      // 源码态必须跳过子树：否则 inlineRules 会在单元格里折叠 `**` 并加粗。
+      if (blockSelected(state, node.from, node.to) && isRevealedTableRange(state, node.from, node.to)) {
+        styleTableSource(node, state, out)
+        return true
+      }
       const table = tableDataFromNode(node.node, state)
       if (!table) return false
       out.push({
@@ -382,6 +442,9 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
             table,
             blockEmbed(node.node),
             state.facet(imageResolver),
+            state.facet(tableDirectEditEnabled),
+            // 表格 cell 的引用式链接/图片定义在表格外：一份当前 state 的引用上下文。
+            editorReferenceContext(state).resolveReference,
           ),
           block: true,
         }),
@@ -446,6 +509,39 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
         }),
       })
       return true
+    case "HTMLBlock": {
+      const src = state.doc.sliceString(node.from, node.to)
+      const widget = createComplexTableWidget(
+        src,
+        node.from,
+        blockEmbed(node.node),
+        state.facet(imageResolver),
+      )
+      if (!widget) return false
+      if (blockSelected(state, node.from, node.to)) {
+        for (let pos = node.from; pos <= node.to; ) {
+          const line = state.doc.lineAt(pos)
+          out.push({
+            from: line.from,
+            to: line.from,
+            tag: "line:omd-table-src",
+            deco: Decoration.line({ class: "omd-table-src" }),
+          })
+          pos = line.to + 1
+        }
+        return true
+      }
+      out.push({
+        from: node.from,
+        to: node.to,
+        tag: "widget:block:complex-table",
+        deco: Decoration.replace({
+          widget,
+          block: true,
+        }),
+      })
+      return true
+    }
   }
   return false
 }

@@ -9,6 +9,16 @@ const names = (doc: string) => {
   return out
 }
 
+// 精确源码区间：转义契约是“内容保留原文”，只断言节点名会漏掉截断。
+const nodeText = (doc: string, name: string) => {
+  const state = makeState(doc)
+  const out: string[] = []
+  syntaxTree(state).iterate({
+    enter: n => { if (n.name === name) out.push(state.doc.sliceString(n.from, n.to)) },
+  })
+  return out
+}
+
 describe("math parsing", () => {
   it("parses single-line $$ block", () => {
     expect(names("$$E=mc^2$$")).toContain("MathBlock")
@@ -27,6 +37,38 @@ describe("math parsing", () => {
   it("rejects currency-ish $5 and $ x $", () => {
     expect(names("costs $5 and $6")).not.toContain("InlineMath")
     expect(names("spaced $ x $")).not.toContain("InlineMath")
+  })
+})
+
+describe("inline math escape contract", () => {
+  it("rejects an escaped opening $", () => {
+    expect(nodeText("a \\$x$ b", "InlineMath")).toEqual([])
+  })
+
+  it("keeps the opening when the backslash run is even", () => {
+    expect(nodeText("a \\\\$x$ b", "InlineMath")).toEqual(["$x$"])
+  })
+
+  it("skips an escaped closing $ and closes at the next unescaped one", () => {
+    const doc = "$x\\$y$"
+    expect(nodeText(doc, "InlineMath")).toEqual([doc])
+    // 被转义的 $ 仍属于内容：不产生内嵌 InlineMath，也没有截断在第一个 $
+    expect(nodeText(doc, "InlineMath")).toHaveLength(1)
+  })
+
+  it("closes at an even-backslash $ because that $ is not escaped", () => {
+    // `$x\\$` 里 $ 前是两个反斜杠 → 未转义，是真正的 closing
+    expect(nodeText("$x\\\\$y$", "InlineMath")).toEqual(["$x\\\\$"])
+  })
+
+  it("rejects an unterminated pair whose only closer is escaped", () => {
+    expect(nodeText("$x\\$", "InlineMath")).toEqual([])
+  })
+
+  it("keeps existing boundary rules with escapes in play", () => {
+    expect(names("$$x$$")).not.toContain("InlineMath")
+    expect(names("$ x\\$y$")).not.toContain("InlineMath")
+    expect(names("$x\\$y $")).not.toContain("InlineMath")
   })
 })
 

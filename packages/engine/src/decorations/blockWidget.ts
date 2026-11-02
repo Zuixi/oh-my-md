@@ -1,5 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view"
-import type { EditorState } from "@codemirror/state"
+import type { EditorState, StateEffect } from "@codemirror/state"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
@@ -14,17 +14,31 @@ export interface BlockEmbed {
 }
 
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
+const EMBED_CLASS = /^omd-blockquote(-\d+)?$/
 
-function blockWidgetClass(cssClass: string, embed: BlockEmbed): string {
-  const classes = ["omd-block", cssClass]
+/**
+ * 引用/列表嵌入：把嵌入类与列表深度写到元素上（块 widget 与代码 chrome 共用一份，
+ * 不再各自复制一套类名拼接）。列表深度是语义值 —— 一个稳定类 + `--omd-list-depth`
+ * 行内自定义属性，视觉换算（padding/引用条位置）归 desktop CSS。
+ *
+ * 同步而非叠加：块 widget 的 DOM 会被 CM pass-1 复用（eq 失败 → updateDOM），旧 DOM
+ * 上还留着上一层的 `omd-li` / `omd-quote-in-li` / 引用类和深度属性。先清空嵌入自己的
+ * 状态再写入当前值，否则深度会停在旧值、`omd-li` 与 `omd-quote-in-li` 会并存。
+ * 只碰嵌入自己的类：`omd-block` / `omd-table` / `omd-math` / `omd-code` / `omd-code-header`
+ * 属于 widget 本体，删不得。
+ */
+export function applyBlockEmbed(el: HTMLElement, embed: BlockEmbed): void {
+  for (const cls of [...el.classList]) {
+    if (cls === "omd-li" || cls === "omd-quote-in-li" || EMBED_CLASS.test(cls)) el.classList.remove(cls)
+  }
+  el.style.removeProperty("--omd-list-depth")
   if (embed.quoteDepth > 0) {
-    classes.push("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
+    el.classList.add("omd-blockquote", `omd-blockquote-${embed.quoteDepth}`)
   }
   if (embed.listDepth > 0) {
-    const nest = embed.quoteInList ? "omd-quote-in-li" : "omd-li"
-    classes.push(`${nest}-${embed.listDepth}`)
+    el.classList.add(embed.quoteInList ? "omd-quote-in-li" : "omd-li")
+    el.style.setProperty("--omd-list-depth", String(embed.listDepth))
   }
-  return classes.join(" ")
 }
 
 // 光标/选区与 [from, to] 重叠（含边界）且**未完整包含**→ 块处于编辑态（显示源码）。
@@ -44,6 +58,14 @@ export function blockSelected(state: EditorState, from: number, to: number) {
 export abstract class BlockWidget extends WidgetType {
   private alive = true
   private pendingEntry: PendingRender | null = null
+  /**
+   * 本实例当前挂载的 DOM（toDOM 的产物）。异步渲染写回前用它判断"这块 DOM 还归我吗"。
+   * 存在的理由：`alive` 记的是**实例**生命期，而 CM/装饰重建产生的是 **tile** 级事件 ——
+   * 同一个实例会被重新 toDOM 到新 tile 上，并可能乱序收到旧 tile 的 destroy()
+   * （实测时序：toDOM#1 → toDOM#2 → destroy(#1)）；只按 alive 判断会让新 DOM 永远
+   * 停在同步占位（引用内代码块在文档首块时丢失 Shiki 高亮，见 docs/memory/gotchas-engine.md）。
+   */
+  protected currentDom: HTMLElement | undefined
 
   constructor(
     readonly src: string,
@@ -70,28 +92,56 @@ export abstract class BlockWidget extends WidgetType {
   }
   /** Live 预览代码块保持渲染以便复制；其它块仍单击进源码编辑。 */
   protected enterSourceOnClick(): boolean { return true }
+  /** 点击是否应该让光标进入源码。默认 true；表格只在 td/th 上返回 true。 */
+  protected shouldEnterSource(_event: MouseEvent): boolean { return true }
   protected nativePointerInteraction(_event: MouseEvent): boolean { return false }
+  /** 编辑按钮（以及不走单元格会话的 wrap 点击）随选区一起派发的 effects。 */
+  protected editButtonEffects(): readonly StateEffect<unknown>[] { return [] }
+  private moveCaretIntoSource(view: EditorView, event: MouseEvent, wrap: HTMLElement): void {
+    const pos = this.clickPos(view, event, wrap)
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: this.editButtonEffects(),
+      scrollIntoView: true,
+    })
+    view.focus()
+  }
   /** 点击不进源码的块（代码块、数学弹窗）由此钩子接管后续交互；默认保持聚焦编辑器。 */
   protected onWrapClick(view: EditorView, _wrap: HTMLElement): void { view.focus() }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
 
+  /**
+   * 登记本实例当前 DOM 并重新激活：**每个 toDOM 都必须调用**。同一个实例被重新挂到
+   * 新 tile 上是正常路径（装饰重建会复用同一 Decoration/实例），toDOM 即"重新激活"。
+   */
+  protected activateDom(dom: HTMLElement): void {
+    this.alive = true
+    this.currentDom = dom
+  }
+
   toDOM(view: EditorView) {
     const wrap = document.createElement("div")
-    wrap.className = blockWidgetClass(this.cssClass, this.embed)
+    wrap.className = `omd-block ${this.cssClass}`
+    applyBlockEmbed(wrap, this.embed)
     wrap.title = this.enterSourceOnClick() ? "Click to edit source" : ""
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       if (this.nativePointerInteraction(e)) return
+      if (this.enterSourceOnClick() && !this.shouldEnterSource(e)) {
+        // 误触点（边框/padding/工具栏空隙）：既不进源码，也不把事件交给 CM。
+        // 但焦点仍要进编辑器：D3 只禁止"翻源码"，未聚焦时点这块 padding 不该整个失效。
+        e.preventDefault()
+        view.focus()
+        return
+      }
       if (!this.enterSourceOnClick()) {
         e.preventDefault()
         this.onWrapClick(view, wrap)
         return
       }
       e.preventDefault()
-      const pos = this.clickPos(view, e, wrap)
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
-      view.focus()
+      this.moveCaretIntoSource(view, e, wrap)
     })
 
     const editBtn = document.createElement("button")
@@ -102,21 +152,22 @@ export abstract class BlockWidget extends WidgetType {
     editBtn.title = "View source"
     editBtn.setAttribute("aria-label", "View source")
     editBtn.tabIndex = -1
-    // `</>` 按钮是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap），wrap
-    // 点击不进源码的块（表格：enterSourceOnClick=false）仍能经它进入源码编辑。
+    // `</>` 按钮是显式的“进源码”控件：自带处理器（不依赖冒泡到 wrap）。
+    // wrap 点击不进源码的块分两类：代码块/数学弹窗（enterSourceOnClick=false，
+    // 点击交给 onWrapClick），以及表格这类按目标门控的块（enterSourceOnClick=true
+    // 但 shouldEnterSource 只对 td/th 点头）。两类都能经这个按钮显式进入源码。
     editBtn.addEventListener("mousedown", e => {
       if (e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
-      const pos = this.clickPos(view, e, wrap)
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
-      view.focus()
+      this.moveCaretIntoSource(view, e, wrap)
     })
     wrap.appendChild(editBtn)
 
     const body = document.createElement("div")
     body.className = "omd-block-body"
     wrap.appendChild(body)
+    this.activateDom(wrap)
     this.renderPlaceholder(body)
 
     const start = () => Promise.resolve()
@@ -159,8 +210,14 @@ export abstract class BlockWidget extends WidgetType {
     return event.type === "mousedown" || event.type === "dblclick"
   }
 
-  destroy(_dom?: HTMLElement) {
-    this.alive = false
+  destroy(dom?: HTMLElement) {
+    // tile 级事件，不是实例级：只有"当前 DOM 被丢弃"才退役实例。乱序到达的旧 tile
+    // destroy（toDOM#2 之后才收到 destroy(#1)）不得杀死已重新挂载的实例；
+    // 不传 dom 视为"这个实例不再使用"（测试与显式回收路径）。
+    if (!dom || dom === this.currentDom) {
+      this.alive = false
+      this.currentDom = undefined
+    }
     unregisterBlockWidget(this)
     if (this.pendingEntry) dropPendingBlockRender(this.pendingEntry)
   }

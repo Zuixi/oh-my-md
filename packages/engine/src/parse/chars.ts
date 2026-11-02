@@ -5,15 +5,18 @@
  */
 export const CHAR_NEWLINE = 10
 export const CHAR_CARRIAGE_RETURN = 13
+export const CHAR_TAB = 9
 export const CHAR_SPACE = 32
 export const CHAR_DOLLAR = 36
 export const CHAR_PLUS = 43
 export const CHAR_MINUS = 45
+export const CHAR_SLASH = 47
 export const CHAR_ZERO = 48
 export const CHAR_NINE = 57
 export const CHAR_COLON = 58
 export const CHAR_LT = 60
 export const CHAR_EQ = 61
+export const CHAR_GT = 62
 export const CHAR_AT = 64
 export const CHAR_UPPER_A = 65
 export const CHAR_UPPER_Z = 90

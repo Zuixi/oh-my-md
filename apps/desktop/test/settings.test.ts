@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   familyFromCssValue,
   parseSettings,
+  sameAutoPair,
   sanitizeSettings,
   type UserSettings,
 } from "../src/settings"
@@ -19,6 +20,7 @@ describe("settings model", () => {
       tabSize: 2,
       defaultMode: "live",
       spellcheck: false,
+      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
       verboseLogging: false,
     })
@@ -72,6 +74,7 @@ describe("settings model", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
       verboseLogging: true,
     } satisfies UserSettings)
@@ -85,8 +88,25 @@ describe("settings model", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
       verboseLogging: true,
+    })
+  })
+
+  it("defaults auto pair on for settings.json written before the toggles existed", () => {
+    expect(parseSettings(JSON.stringify({ theme: "dark" })).autoPair).toEqual({
+      brackets: true,
+      quotes: true,
+      markdownSyntax: true,
+    })
+  })
+
+  it("fills a partial auto pair object instead of passing undefined to the engine", () => {
+    expect(parseSettings('{"autoPair":{"quotes":false}}').autoPair).toEqual({
+      brackets: true,
+      quotes: false,
+      markdownSyntax: true,
     })
   })
 
@@ -111,6 +131,20 @@ describe("settings model", () => {
   it("parseSettings tolerates missing locale", () => {
     const s = parseSettings(JSON.stringify({ theme: "dark" }))
     expect(s.locale).toBe("auto")
+  })
+})
+
+describe("sameAutoPair", () => {
+  const all: UserSettings["autoPair"] = { brackets: true, quotes: true, markdownSyntax: true }
+
+  it("treats an equal toggle set as unchanged", () => {
+    expect(sameAutoPair({ ...all }, { ...all })).toBe(true)
+  })
+
+  it("notices every individual toggle flip", () => {
+    expect(sameAutoPair({ ...all, brackets: false }, all)).toBe(false)
+    expect(sameAutoPair({ ...all, quotes: false }, all)).toBe(false)
+    expect(sameAutoPair({ ...all, markdownSyntax: false }, all)).toBe(false)
   })
 })
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
-  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument, setEditorSpellcheck,
+  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument,
+  setEditorAutoPair, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import { EditorView } from "@codemirror/view"
@@ -9,10 +10,13 @@ import { createEditorStatusStore } from "./editorStatusStore"
 import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
   applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
-  setBlockRenderBudget, setSafeModeRendering, type OutlineItem,
+  setBlockRenderBudget, setSafeModeRendering,
+  type AutoPairOptions, type OutlineItem,
 } from "@omd/engine"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { pastePlainText } from "./pastePlainText"
+import { pasteFromSystemClipboard } from "./clipboardPaste"
+import { systemClipboardReader } from "./clipboardPayload"
 import {
   advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
   retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
@@ -75,6 +79,14 @@ import { AboutDialog } from "./AboutDialog"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
 import type { LogStateView } from "./logging"
 import {
+  buildReplaceAll,
+  findNextMatch,
+  findPreviousMatch,
+  replaceCurrentSpec,
+  type SearchMatch,
+  type SearchRequest,
+} from "./currentDocumentSearch"
+import {
   collectMatches,
   nextIndex,
   prevIndex,
@@ -93,6 +105,9 @@ import { FileTree } from "./FileTree"
 import {
   emptyFileTree,
   pathsToRefresh,
+  removeTreePath,
+  renameTreePath,
+  replaceTreePrefix,
   setChildren,
   toggleExpand,
   visibleRows,
@@ -127,6 +142,7 @@ import {
 import { SettingsModal } from "./SettingsModal"
 import {
   DEFAULT_SETTINGS,
+  sameAutoPair,
   sanitizeSettings,
   type UserSettings,
 } from "./settings"
@@ -147,6 +163,7 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   STORAGE_KEY_OUTLINE_OPEN,
   STORAGE_KEY_SIDEBAR_OPEN,
+  windowsSetupAssetUrl,
 } from "./constants"
 import { extractSessionState,
 } from "./sessionRestore"
@@ -212,41 +229,6 @@ function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> 
 
 /** Spec 05b 打开档位：normal 一次读；large 流式 + 默认源码；readonly 只读纯文本。 */
 type OpenTier = "normal" | "large" | "readonly" | "cancel"
-
-function replaceTreePrefix(path: string, from: string, to: string): string {
-  if (path === from) return to
-  return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path
-}
-
-function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
-  const prefix = `${path}/`
-  const childrenByPath = Object.fromEntries(
-    Object.entries(model.childrenByPath)
-      .filter(([key]) => key !== path && !key.startsWith(prefix))
-      .map(([key, entries]) => [
-        key,
-        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
-      ]),
-  )
-  const expanded = new Set(
-    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
-  )
-  return { childrenByPath, expanded }
-}
-
-function renameTreePath(model: FileTreeModel, from: string, to: string): FileTreeModel {
-  const childrenByPath = Object.fromEntries(
-    Object.entries(model.childrenByPath).map(([key, entries]) => [
-      replaceTreePrefix(key, from, to),
-      entries.map(entry => ({
-        ...entry,
-        path: replaceTreePrefix(entry.path, from, to),
-      })),
-    ]),
-  )
-  const expanded = new Set([...model.expanded].map(path => replaceTreePrefix(path, from, to)))
-  return { childrenByPath, expanded }
-}
 
 function readSidebarOpen(): boolean {
   try {
@@ -497,6 +479,8 @@ export default function App({
   findWholeWordRef.current = findWholeWord
   const findIndexRef = useRef(findIndex)
   findIndexRef.current = findIndex
+  const activeFindMatchRef = useRef<SearchMatch | null>(null)
+  const findRevisionRef = useRef(0)
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
   const treePollInFlightRef = useRef(false)
@@ -667,12 +651,14 @@ export default function App({
 
   async function refreshTreePath(path: string): Promise<void> {
     if (!services.listDir) return
+    const folder = workspaceRef.current.folder
     try {
       const entries = await services.listDir(path)
+      if (!mountedRef.current || workspaceRef.current.folder !== folder) return
       clearTreeError(path)
       commitTree(setChildren(treeModelRef.current, path, entries))
     } catch (error) {
-      reportTreeError(path, error)
+      if (mountedRef.current && workspaceRef.current.folder === folder) reportTreeError(path, error)
     }
   }
 
@@ -691,9 +677,9 @@ export default function App({
     const nextTabs = previousTabs.map(tab => {
       const path = sessionPath(tab)
       if (!path) return tab
-      if (path === from) return retargetSessionPath(tab, to)
-      if (isDir && path.startsWith(`${from}/`)) {
-        return retargetSessionPath(tab, `${to}${path.slice(from.length)}`)
+      const nextPath = replaceTreePrefix(path, from, to)
+      if (nextPath !== path && (isDir || path.replace(/\\/g, "/") === from.replace(/\\/g, "/"))) {
+        return retargetSessionPath(tab, nextPath)
       }
       return tab
     })
@@ -710,9 +696,11 @@ export default function App({
     const affectedPaths = nextTabs
       .map(tab => sessionPath(tab))
       .filter((path): path is string => path !== null)
-      .filter(path => path === to || (isDir && path.startsWith(`${to}/`)))
+      .filter(path => path === to || (isDir && pathWithinDir(path, to)))
     for (const path of new Set(affectedPaths)) {
-      void services.allowDocumentAssets(path)
+      void services.allowDocumentAssets(path).catch(error => {
+        services.reportError(errorMessage(t("error.renameSyncFailed"), error))
+      })
     }
   }
 
@@ -752,6 +740,21 @@ export default function App({
     }
   }
 
+  function pasteOptions(tabId: number, documentId: number) {
+    return {
+      ...imageInsertOptions(tabId, documentId),
+      getTabId: () => workspaceRef.current.activeId ?? tabId,
+      onNotice: reportUserError,
+      onConvertingChange: (active: boolean) => {
+        if (transientStatusTimerRef.current !== null) {
+          window.clearTimeout(transientStatusTimerRef.current)
+          transientStatusTimerRef.current = null
+        }
+        setTransientStatus(active ? t("paste.status.converting") : null)
+      },
+    }
+  }
+
   function editorOptions(
     contents: string,
     tabId: number,
@@ -766,7 +769,7 @@ export default function App({
       doc: docText ?? contents,
       tabId,
       documentId,
-      ...imageInsertOptions(tabId, documentId),
+      ...pasteOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
       onModeChange: isLive => {
         const tab = tabById(tabId)
@@ -794,6 +797,7 @@ export default function App({
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
+      autoPair: settingsRef.current.autoPair,
       readOnly,
     }
   }
@@ -1023,9 +1027,8 @@ export default function App({
         if (!prepare) throw new Error("update restart is not supported here")
         return prepare()
       },
-      openReleasePage: async () => {
-        await services.openExternal?.(RELEASES_URL)
-      },
+      openReleasePage: async () => { await services.openExternal?.(RELEASES_URL) },
+      openManualDownload: async version => { await services.openExternal?.(windowsSetupAssetUrl(version)) },
       reportManualFailure: failure => {
         if (mountedRef.current) services.reportError(localeT(`update.failure.${failure}`))
       },
@@ -1291,10 +1294,19 @@ export default function App({
     }
   }
 
+  function applyAutoPair(next: AutoPairOptions) {
+    for (const view of viewsRef.current.values()) {
+      try { setEditorAutoPair(view, next) } catch { /* mock views */ }
+    }
+  }
+
   function handleSaveSettings(next: UserSettings) {
     const sanitized = sanitizeSettings(next)
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
+    }
+    if (!sameAutoPair(sanitized.autoPair, settingsRef.current.autoPair)) {
+      applyAutoPair(sanitized.autoPair)
     }
     const localeChanged = sanitized.locale !== settingsRef.current.locale
     setSettings(sanitized)
@@ -1312,6 +1324,9 @@ export default function App({
         if (mountedRef.current) {
           if (saved.spellcheck !== settingsRef.current.spellcheck) {
             applySpellcheck(saved.spellcheck)
+          }
+          if (!sameAutoPair(saved.autoPair, settingsRef.current.autoPair)) {
+            applyAutoPair(saved.autoPair)
           }
           setSettings(saved)
           settingsRef.current = saved
@@ -2011,7 +2026,12 @@ export default function App({
   const runClipboardPaste = (): (() => void) => () => {
     const view = viewRef.current
     if (!view) return
-    void pastePlainText(view).catch(() => undefined)
+    const active = sessionRef.current
+    void pasteFromSystemClipboard(
+      view,
+      systemClipboardReader,
+      pasteOptions(active.id, active.documentId),
+    )
   }
 
   const insertImage = () => {
@@ -2067,27 +2087,34 @@ export default function App({
     }
   }
 
-  async function renameTreeEntry(entry: TreeEntry) {
-    if (!services.renamePath) return
-    const rawName = window.prompt(t("filetree.prompt.rename"), entry.name)
-    if (rawName === null) return
+  async function renameTreeEntry(entry: TreeEntry, rawName: string): Promise<string> {
+    if (!services.renamePath) throw new Error(t("error.renameFailed"))
     const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
-    if (name === entry.name) return
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
+    if (name === entry.name) return entry.path
+    if (invalidName(name)) throw new Error(t("error.emptyName"))
     const dir = parentDir(entry.path)
-    if (!dir) return
+    if (!dir) throw new Error(t("error.renameFailed"))
+    const folder = workspaceRef.current.folder
+    let nextPath: string
     try {
-      const nextPath = await services.renamePath(entry.path, name)
-      commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
-      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
-      await refreshTreePath(dir)
-      services.notifySuccess?.(t("notify.entryRenamed", { name }))
+      nextPath = await services.renamePath(entry.path, name)
     } catch (error) {
-      services.reportError(errorMessage(t("error.renameFailed"), error))
+      throw new Error(errorMessage(t("error.renameFailed"), error))
     }
+    if (!mountedRef.current) return nextPath
+    // 原生操作已成功：目录刷新失败不能再被当作重命名失败供用户重试。
+    try {
+      if (workspaceRef.current.folder === folder) {
+        commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
+        void refreshTreePath(dir)
+      }
+      materializer.flush()
+      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
+    } catch (error) {
+      services.reportError(errorMessage(t("error.renameSyncFailed"), error))
+    }
+    services.notifySuccess?.(t("notify.entryRenamed", { name }))
+    return nextPath
   }
 
   async function deleteTreeEntry(entry: TreeEntry) {
@@ -2166,7 +2193,11 @@ export default function App({
     { id: "cut", label: t("cmd.label.cut"), shortcut: shortcutFor("cut"), run: runClipboardCopy(true) },
     { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
     { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
-    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), run: () => { const v = viewRef.current; if (v) void pastePlainText(v) } },
+    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), shortcut: shortcutFor("pastePlainText"), run: () => {
+      const view = viewRef.current
+      const active = sessionRef.current
+      if (view) void pastePlainText(view, pasteOptions(active.id, active.documentId))
+    } },
     { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
     { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
       setFindOpen(true)
@@ -2264,14 +2295,70 @@ export default function App({
     }
   }
 
+  function currentSearchRequest(revision = findRevisionRef.current): SearchRequest {
+    return {
+      query: findQueryRef.current,
+      caseSensitive: findCaseRef.current,
+      regexp: findRegexModeRef.current,
+      wholeWord: findWholeWordRef.current,
+      revision,
+    }
+  }
+
+  function realTextDoc(view: EditorView | null): Text | null {
+    if (!view) return null
+    try {
+      const candidate = view.state.doc
+      return typeof candidate.sliceString === "function" ? candidate : null
+    } catch {
+      return null
+    }
+  }
+
+  function isActiveSafeMode(): boolean {
+    let lines = 0
+    try { lines = viewRef.current?.state.doc.lines ?? 0 } catch { lines = 0 }
+    return documentScaleRegistry.evaluate(workspaceRef.current.activeId, lines).safeMode
+  }
+
   function goFind(direction: "next" | "prev") {
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const request = currentSearchRequest()
+      const current = activeFindMatchRef.current
+      const sel = view.state.selection.main
+      const match = direction === "next"
+        ? findNextMatch(
+            textDoc,
+            request,
+            current && current.revision === request.revision ? current.to : sel.to,
+          )
+        : findPreviousMatch(
+            textDoc,
+            request,
+            current && current.revision === request.revision ? current.from : sel.from,
+          )
+      activeFindMatchRef.current = match
+      if (!match) {
+        setFindIndex(-1)
+        return
+      }
+      try {
+        view.dispatch({
+          selection: { anchor: match.from, head: match.to },
+          scrollIntoView: true,
+        })
+      } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const matches = collectMatches(doc, currentFindQuery())
     if (matches.length === 0) {
+      activeFindMatchRef.current = null
       setFindIndex(-1)
       return
     }
@@ -2279,6 +2366,11 @@ export default function App({
       ? nextIndex(matches.length, findIndexRef.current)
       : prevIndex(matches.length, findIndexRef.current)
     const match = matches[index]
+    activeFindMatchRef.current = {
+      from: match.from,
+      to: match.to,
+      revision: findRevisionRef.current,
+    }
     try {
       view.dispatch({
         selection: { anchor: match.from, head: match.to },
@@ -2292,6 +2384,21 @@ export default function App({
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const request = currentSearchRequest()
+      const spec = replaceCurrentSpec(
+        view.state,
+        request,
+        activeFindMatchRef.current,
+        findReplaceRef.current,
+      )
+      if (!spec) return
+      findRevisionRef.current += 1
+      activeFindMatchRef.current = null
+      try { view.dispatch(spec) } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const matches = collectMatches(doc, currentFindQuery())
@@ -2301,6 +2408,8 @@ export default function App({
       : 0
     const match = matches[index]
     const replacement = findReplaceRef.current
+    findRevisionRef.current += 1
+    activeFindMatchRef.current = null
     try {
       view.dispatch({
         changes: { from: match.from, to: match.to, insert: replacement },
@@ -2314,10 +2423,21 @@ export default function App({
     const view = viewRef.current
     const query = findQueryRef.current
     if (!view || query === "") return
+    const textDoc = realTextDoc(view)
+    if (textDoc && isActiveSafeMode()) {
+      const result = buildReplaceAll(textDoc, currentSearchRequest(), findReplaceRef.current)
+      if (!result) return
+      findRevisionRef.current += 1
+      activeFindMatchRef.current = null
+      try { view.dispatch({ changes: result.changes }) } catch { /* mock views */ }
+      return
+    }
     let doc: string
     try { doc = view.state.doc.toString() } catch { doc = docRef.current }
     const next = replaceAll(doc, currentFindQuery(), findReplaceRef.current)
     if (next === doc) return
+    findRevisionRef.current += 1
+    activeFindMatchRef.current = null
     try {
       view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
     } catch { /* mock views */ }
@@ -2502,12 +2622,15 @@ export default function App({
               folder={workspace.folder}
               rows={treeRows}
               activePath={activeFilePath}
+              activeTabId={workspace.activeId}
+              visible={sidebarOpen}
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => search.setOpen(true)}
               onNewFile={dir => void createTreeFile(dir)}
               onNewFolder={dir => void createTreeFolder(dir)}
-              onRename={entry => void renameTreeEntry(entry)}
+              onRename={services.renamePath ? renameTreeEntry : undefined}
+              onRenameError={message => services.reportError(message)}
               onDelete={entry => void deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {
@@ -2661,19 +2784,27 @@ export default function App({
             matchCount={matchCount}
             activeIndex={findIndex}
             onQuery={query => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindQuery(query)
               setFindIndex(-1)
             }}
             onReplacement={setFindReplace}
             onCaseSensitive={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindCase(value)
               setFindIndex(-1)
             }}
             onRegex={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindRegexMode(value)
               setFindIndex(-1)
             }}
             onWholeWord={value => {
+              findRevisionRef.current += 1
+              activeFindMatchRef.current = null
               setFindWholeWord(value)
               setFindIndex(-1)
             }}

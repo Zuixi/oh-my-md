@@ -1,125 +1,74 @@
 # Engine Domain
 
 > **Parent:** [`../../AGENTS.md`](../../AGENTS.md)
->
-> **Scope:** Markdown parsing, CodeMirror live-preview state, decorations, block widgets, and engine tests. The package is framework-independent but browser-DOM-aware.
+> **Scope:** Markdown parsing, CodeMirror live-preview state, decorations, block widgets, HTML export, and engine tests (`packages/engine/**`). Framework-independent (no React/Tauri), browser-DOM-aware.
 
-## Read This When
+## Subdomain Guides (Proximity Scoped)
 
-- You are changing `packages/engine/src/**` or `packages/engine/test/**`.
-- You are adding or changing Markdown syntax, folded markers, widgets, or live/source behavior.
-- A rendering defect appears to come from the syntax tree or decoration ranges rather than CSS.
+Read the applicable subdomain guides for source changes and the tests exercising them; `test/**` does not inherit guides under `src/**`. Table work spans parsing, formatting, and widgets: read the tables guide as well as each file's ancestor guides.
+
+| Subdirectory | Guide | Covers |
+| --- | --- | --- |
+| `src/decorations/**` | [`src/decorations/AGENTS.md`](./src/decorations/AGENTS.md) | `StateField` progressive/windowed build, `atomicRanges`, Route A folding, `BlockWidget` 5 contracts |
+| `src/format/**` | [`src/format/AGENTS.md`](./src/format/AGENTS.md) | `Prec.highest` Enter/Tab/Backspace chain, `blockPrefixOf`, `autoPair`, shortcut derivation |
+| `src/tables/**` | [`src/tables/AGENTS.md`](./src/tables/AGENTS.md) | Two-state table model, Lezer-range edits, hover/source toolbars, `parseCell` |
+| `src/parse/**` | [`src/parse/AGENTS.md`](./src/parse/AGENTS.md) | Lezer extensions, `chars.ts`, `isEscaped`/`skipInlineCode`, `inVerbatim`, no full-tree parses |
 
 ## Local Structure
 
 ```text
 packages/engine/
 ├── src/
-│   ├── index.ts                 # Public editorExtensions, collectOutline, exportHtml
-│   ├── outline.ts               # Read-only heading outline from the Lezer tree
-│   ├── docText.ts               # Streamed-chunk → Text assembly (LARGE-tier open ingest; parity-guarded)
-│   ├── safeModeRendering.ts     # Safe-mode globals: render budget + windowed live decorations (LIVE_WINDOW_*, prune margins)
-│   ├── lists/ordered.ts         # Ordered-list display labels and live-preview source renumbering
-│   ├── parse/                   # Lezer Markdown, math, footnote, HTML-entity, and gemoji helpers
-│   │   └── chars.ts             # Named ASCII char-code constants (no magic numbers)
-│   ├── modes/livePreview.ts     # Live/source compartment and Mod-e keymap
-│   ├── paste/                   # Rich-HTML paste → Markdown (htmlPaste) + block-boundary normalization (blockBoundaries)
-│   ├── export/html.ts           # Document → HTML projection (not CM widget DOM)
-│   └── decorations/
-│       ├── build.ts             # StateField live decorations (seed + pending model) and incremental updates
-│       ├── buildDriver.ts       # Idle-sliced ViewPlugin that drains LiveDeco.pending (viewport priority)
-│       ├── inline.ts            # Inline and marker decorations
-│       ├── blocks.ts            # Block detection and widget selection
-│       ├── blockWidget.ts       # Shared widget lifecycle and edit transition
-│       ├── icons.ts             # Vendored inline SVG icons (lucide/Tabler — THIRD_PARTY_NOTICES.md)
-│       └── widgets/             # Code, math, table, Mermaid, and image renderers
-├── test/                        # Vitest tests
-└── test/fixtures/               # Markdown regression inputs
+│   ├── index.ts                 # Public barrel: editorExtensions, collectOutline, exportHtml, shortcuts, nav/table APIs
+│   ├── outline.ts · stats.ts    # Read-only heading outline and word/character counts
+│   ├── docText.ts               # Streamed-chunk → CM Text assembly (LARGE-tier open ingest)
+│   ├── safeModeRendering.ts · performancePolicy.ts · performancePolicyDiagnostics.ts
+│   ├── links.ts · footnotesNav.ts · fenceInfo.ts
+│   ├── lists/ordered.ts         # Ordered-list display labels and reversible normalization StateField
+│   ├── modes/livePreview.ts     # Live/source compartment, Mod-e keymap, toggleShortcutLabels
+│   ├── navigation/              # caretClamp.ts (lineContentStart clamp) + blockEntry.ts (ArrowUp/Down into blocks)
+│   ├── parse/                   # Lezer Markdown + dialect extensions + complexTable.ts (see src/parse/AGENTS.md)
+│   ├── semantic/                # linkParts, imageParts, escapeParts, hardBreakParts, referenceIndexExtension
+│   ├── decorations/             # StateField live preview + widgets (see src/decorations/AGENTS.md)
+│   ├── format/                  # Editing commands + keymaps (see src/format/AGENTS.md)
+│   ├── tables/                  # Lezer-range table model + edits (see src/tables/AGENTS.md)
+│   ├── paste/                   # Semantic clipboard importer (prepareSmartPaste, planSmartPaste, serializeComplexTable, blockBoundaries)
+│   ├── export/                  # html.ts (sync exportHtml + async exportRichHtml), styles.ts, shikiExport.ts, mathHtmlCache.ts
+│   ├── shiki/ · highlight/      # Lazy single-flight Shiki highlighter + code syntax highlighting
+│   └── cache/boundedLru.ts      # Bounded LRU cache
+└── test/                        # Vitest suite + fixtures/
 ```
 
-## Domain Boundaries
+## Public Surface & Domain Rules
 
-1. Keep Markdown syntax knowledge, Lezer tree inspection, and Markdown-specific CodeMirror decorations in this package.
-2. Do not import React, Tauri APIs, desktop modules, or native filesystem APIs.
-3. DOM use is allowed inside CodeMirror widgets. Keep it localized and compatible with the `happy-dom` test environment.
-4. The engine emits semantic `omd-*` class names; visual declarations belong in `apps/desktop/src/styles.css`.
-5. Expose desktop-facing behavior through `src/index.ts`: `editorExtensions(options)`, plus read-only `collectOutline(state)` and `exportHtml(state)`, plus the ordered-list normalization commands (`getPendingOrderedListNormalization`, `acceptOrderedListNormalization`, `rejectOrderedListNormalization`), plus navigation lookups (`classifyLink`, `footnoteAt`, `footnoteDefinitionPosition`, `footnoteReferencePosition`), plus table range edits (`replaceTableCell`, `insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn` from `tables/edit.ts`) and the cell-escaping utility `escapeTableCellValue`. The range-edit helpers are pure: each takes the table source plus table-relative model data and returns `readonly TableSourceChange[]` range edits (`from`/`to`/`insert`, table-relative) or `null` for stale/out-of-range input — never a serialized whole-table string. `escapeTableCellValue` returns an escaped string suitable for insertion. Do not make desktop consumers assemble engine internals or re-parse Markdown. Command helpers stay pure: ordered-list normalization returns a `TransactionSpec` (or a `"stale"` result) and table edits return range changes; neither dispatches. Read pending and build accept/reject transactions in the same tick as the triggering update; stale offsets if deferred.
-6. Keep generic host choices such as editor dimensions, base typography, history, and non-Markdown keymaps in `apps/desktop/src/Editor.ts`.
-7. **Shortcut labels are derived, not duplicated.** The formatting keymap is data: `markdownKeyBindings` (`format/commands.ts`) and `toggleKeyBindings` (`modes/livePreview.ts`) carry `id`/`key`/`display`/`run`; the CM keymap uses `key` and the desktop palette imports the derived `markdownShortcutLabels` / `toggleShortcutLabels` via `src/index.ts`. Change a shortcut in the binding entry only and keep `display` matching `key` — `test/shortcuts.test.ts` guards the pair.
+1. **Expose host APIs only through `src/index.ts`:** Desktop code must consume `editorExtensions(options)` and exported pure helpers (`collectOutline`, `exportHtml`, `exportRichHtml`, `prepareSmartPaste`, `planSmartPaste`, `preparePlainTextFallback`, `normalizeBlockPaste`, semantic accessors/reference contexts, link/footnote nav, table range edits, ordered-list normalization commands) — never reach into internal engine submodules or re-parse Markdown.
+2. **Pure command helpers:** Table edit helpers return range changes and formatting specs return `TransactionSpec | null`. Ordered-list accept/reject helpers return discriminated results: check `kind` before consuming `.transaction`; `stale` has no transaction. These helpers never dispatch.
+3. **Host-injected capabilities:** Resolve image URLs via `EngineOptions.resolveImageSrc` and localized fallback strings via `EngineOptions.imageBrokenLabel` (never import desktop i18n or Tauri APIs).
+4. **No stock completion/pairing:** Only the `:`-only `emojiCompletion` and `format/autoPair.ts` are permitted; never enable stock `closeBrackets`, `indentOnInput`, or generic `autocompletion`.
+5. **Module boundaries:** Apply the root size policy. Keep parsing in `parse/`, projection in `decorations/`, and editing plans in `format/`/`tables/`; put new responsibilities in cohesive modules rather than growing the widget or block dispatchers.
 
-## Ordered-list normalization invariants
+## Ordered-List Normalization Invariants (`lists/ordered.ts`)
 
-1. `orderedNormalizationState` is a top-level `StateField` mounted directly in `editorExtensions()`, never inside `livePreviewCompartment`, so pending and post-reject session suppression survive Source/Live toggles.
-2. Preview-entry batches merge under one pending id: keep the first `original`, take the latest `normalized`, leave `markerCount` unchanged. Follow-up batches (complete tree after a user edit) may refresh markers already pending but must not add new pending entries.
-3. `rejectOrderedListNormalization` restores first-recorded `original` markers; markers the user edited in Source (or that follow-up batches overwrote) are skipped. Preview labels stay consecutive via `widget:ordered-mark` even when source markers are gapped after reject.
-4. Session-local suppression after reject prevents further auto-renumbering until a fresh `EditorState` (reopen/reload). A new tab or document gets default behavior.
-5. Compare pending notices by `id`, not object reference — `getPendingOrderedListNormalization` returns a new object each call.
+1. Mount `orderedNormalizationState` directly in `editorExtensions()`, never inside `livePreviewCompartment`, so pending notices and post-reject suppression survive Source/Live toggles.
+2. Classify batches via `normalizationTrigger(hasUserDocChange, treeLength, docLength)`: passes while `treeLength < docLength` merge into one `preview-entry` notice (keeping first `original` and latest `normalized`); complete-tree passes after a user edit are `user-followup` and only refresh already-pending markers.
+3. `rejectOrderedListNormalization` restores unedited markers, suppresses further rewrites for that `EditorState` session, and keeps consecutive preview numbers via `widget:ordered-mark`. Compare notices by `.id`, not object reference.
 
-## Decoration and Widget Invariants
+## Semantic Projection & Smart Paste Invariants
 
-1. Decorations must be sorted and non-overlapping where CodeMirror requires it.
-2. When a block widget replaces a syntax node, skip that node's subtree and filter enclosed outer decorations; overlapping replace ranges can make `Decoration.set` throw.
-3. Provide block/replacing decorations from a `StateField`, never a `ViewPlugin`. Update incrementally from mapped unchanged ranges, changed syntax blocks, selection-adjacent lines/blocks, and syntax-tree progress. Off-screen widgets are left to CodeMirror's DOM virtualization. Rebuild ranges end at `endLine.to + 1` (exclusive). Treat removal overlap as half-open so the next line's point decorations stay put; dedupe additions against retained specs. Empty ranges stay closed. **Equivalent widget specs must be reused, not recreated** (`updateLiveDecorations` `removedByKey` pass): CM's heightmap treats a Decoration identity change as height-relevant and resets that region's measured heights to `estimatedHeight` (`heightRelevantDecoChanges` never calls `eq`) — the estimate↔measured oscillation showed up as scroll rollback and scrollbar-thumb drift. Reuse is gated on `oldWidget.eq(newWidget)`; content edits must still rotate instances (`test/specIdentity.test.ts`). Every `block: true` widget declares an `estimatedHeight` from `decorations/widgetHeights.ts` (`test/widgetHeights.test.ts`).
-3a. Live decoration builds are progressive: field create/reconfigure only builds the cursor seed (`seedLiveDecorations`), the rest is `LiveDeco.pending` (sorted, disjoint, closed; point ranges are valid targets). `liveBuildDriver` (in `livePreviewExt()`, same compartment as the field) drains pending in microtask/idle callbacks only — never dispatch inside `ViewPlugin.update`. Never call `drainPendingLiveBuild` from production code; it is the synchronous test-only drain.
-3b. Safe-mode windowing (`src/safeModeRendering.ts`, Task 3): when `setSafeModeRendering(true)`, the driver no longer drains to completion — it builds only pending inside the build window (each visible range ± `LIVE_WINDOW_CHARS`) and, after viewport/doc/selection changes, dispatches `livePruneOutside` with the prune window (± `LIVE_WINDOW_CHARS` + `LIVE_PRUNE_MARGIN_CHARS`; the margin is hysteresis so edge decorations do not flip between built and pending). The field removes specs/deco/atomic entries entirely outside every prune region and returns their line-aligned spans to pending; decorations partially overlapping a region stay. Default off keeps Task 2 drain-to-completion semantics byte-identical. Consequence of 3a+3b: decorations far from the viewport may be absent at any moment — production code must never assume a decoration exists outside the viewport window, and tests needing a complete build use the test-only `drainPendingLiveBuild` (see the「Decorations are seeded and windowed」entry in `docs/memory/gotchas-engine.md`).
-4. Preserve the source document, except for live-preview ordered-list marker normalization in `lists/ordered.ts`. That rewrite must stay reversible: every batch carries a trigger from `normalizationTrigger` (preview entry while the syntax tree does not yet cover the document, follow-up only for a complete-tree pass after a user edit) and records the replaced markers in `orderedNormalizationState`, which is mounted directly in `editorExtensions()` (never inside `livePreviewCompartment`) so a pending notice and its post-reject suppression survive Source/Live toggles. Preview-entry batches merge under one id; follow-up batches only refresh markers already pending. Never gate reversibility on pass count. A preview widget renders a projection and enters source editing from its current decoration range, never a captured constructor offset or opaque-block `posAtCoords`. `TableWidget` also edits cells in place: the wrap itself never enters source (`enterSourceOnClick() → false` — wrap padding/border/toolbar-gap clicks must not unmount the widget to pipe soup); cell/toolbar `mousedown` still `stopPropagation` so the wrap handler does not steal focus mid-cell-click; opening a cell editor places a caret instead of calling `input.select()` (which misleadingly paints the whole cell dark blue). The explicit source entry for such blocks is the `</>` button (`omd-block-edit`, own mousedown handler in `BlockWidget.toDOM`).
-5. Treat a block as editable when the selection overlaps its source range **including both boundaries** *and does not fully cover it* (`!(sel.from <= from && sel.to >= to)`). A fully-covering selection (Cmd+A, drag across, Shift+↓) keeps the widget mounted with the `omd-block-covered` overlay from `decorations/blockSelectionOverlay.ts`; only a caret entering or a partial overlap reveals source. Do not replace selected source with a widget.
-6. Fold `QuoteMark` unless the selection is inside `>` / `> ` itself. Do not reuse line-based `nearCursor` for quote markers; the cursor stays on the quote line while typing content. Inline marks inside a quote (`**`, links, images) also use `cursorInside`, so clicking quote content does not unfold syntax. A whole-line selection (triple-click) is not "inside" a mark. Nested quotes emit one `omd-blockquote-N` class per line from the innermost quote. List indent inside a quote starts after `> `, never from `line.from`. A list inside a quote keeps `omd-li-N` (hanging indent, quote bar at x=0). A quote inside a list item emits `omd-quote-in-li-N` instead, so the bar starts at the list indent and hanging indent stays off. Fold leading spaces before `>` as `QuoteIndent`. Fenced code in Live mode: lang blocks use `CodeWidget` only while the caret is outside (`blockSelected` → `styleCodeblockLines` so ↑/↓ edits native source). A fence still being typed (FencedCode covering only its opening line, caret on it) gets NO block styling — plain text until Enter; `continueFenceSpec` (`format/fences.ts`, `fenceKeymap` at `Prec.high` Enter) then completes it: inserts the closing marker line and places the caret on the content line. The command refuses inside quotes/lists, for non-empty selections, and never hijacks a complete block. Fence label + language live in the info string (`parseFenceInfo` / `formatFenceInfo` / `replaceFenceInfo`); never write a title as the language token. Code chrome (title, lang, copy) is always visible in BOTH states — while the widget is mounted, and while editing via the `CodeChromeWidget` that replaces the opening fence line (`styleEditingCodeblock`: numbered container classes, Setext-style closing-fence collapse, raw fence fallback when the caret sits on a fence line; mermaid stays plain); clicking the code **body** enters source at the clicked content line (`span.line` index → `doc.line`), dispatched on click with a 4px drift guard so drag-select stays a native widget text selection, and header chrome / read-only views never enter; metadata writes use the live widget range, never constructor offsets. Mermaid/table/math still use block widgets and inherit quote/list depth via `BlockWidget.embed`; mermaid carries the same `blockSelected` gate as lang-code (a gate-less branch leaves the caret inside the replaced, invisible source range — the pencil button and ↑/↓ entry appear dead).
-7. `BlockWidget.eq` compares source text and `embed`. If rendering also depends on another input (`lang`, `alt`, table cells, resolver output), that input must participate in widget equality or trigger a safe rebuild. Range lookup must prefer widget identity before `eq()` because two distinct blocks can have identical source.
-7a. `MathBlockWidget` reuse/refresh contract — 逐键回写文档不得重建 widget DOM: its `eq` compares `src` + `embed` (with an `instanceof` guard against cross-type pairing). CodeMirror's findWidget pass 0 reuses DOM of tiles whose `eq` succeeds WITHOUT calling `updateDOM`; `updateDOM` only runs (pass 1, matched by constructor) when `eq` FAILED. So `eq` must return false whenever the content changed, and `updateDOM` is the in-place refresh path: it re-syncs the popup's inner editor (no focus guard — Undo/Redo and external edits must re-sync too; during normal typing the write-back makes the sync a no-op) and re-renders the KaTeX preview via the rAF-coalesced `throwOnError: false` render. The popup's `ResizeObserver` is stored on the widget and disconnected on close and in `destroy()`. Editing happens in a click-opened popup (`omd-math-popup` hosting an inner CodeMirror 6 `EditorView` under `.omd-math-editor`): `enterSourceOnClick` returns `false`, `onWrapClick` opens/refocuses it; each inner change re-reads the block text from the **current document** via `blockWidgetRange` (the wrap listener's `this.src` is stale after the first write-back) and dispatches a same-position replace; the selection stays outside the block so the widget stays mounted. The inner view instance lives on the popup DOM node (`__omdMathPopupView`), never on widget fields — instances rotate across pass-1 reuse. Inner extensions: stex `StreamLanguage` highlight (colors reuse the `--omd-syn-*` tokens), `lineWrapping`, its own `history()` + `historyKeymap` (the outer keymap never sees popup keys — `ignoreEvent` covers keydown/keyup/keypress/input/click **and the composition family**, since the inner editor is a contenteditable), plus highest-prec Escape (close) and Tab (insert spaces — unbound Tab follows browser focus-nav, blurs, and closes the popup). `updateDOM` sync rules: extract with `mathEditorTexOf` (exact inverse of `rebuildMathSrc`; `mathTexOf`'s trim eats leading/trailing spaces and would roll back Tab/indent input), clamp the caret instead of letting the full-doc replace map it to a boundary, skip while `view.composing` (IME pre-edit), and skip when the live range fails to resolve — the inner dispatch → write-back → outer rebuild is re-entrant, where `this.src` is stale, `posAtDOM` throws, and the syntax tree lags the doc (`liveRange` shape-validates its slice for exactly this reason); syncing on stale data rolls back fresh input. Closing (Escape or popup-level `focusout`) guards with an explicit `closed` flag: `inner.destroy()` fires a synchronous focusout that an `isConnected` check cannot intercept, double-destroying the view. `destroy(dom)` also destroys the inner view when CM discards the wrap (caret entering the block never fires focusout). Escape/blur (outside the popup) close it; read-only views never open it.
-8. Async block widgets must install a synchronous source-shaped placeholder during `toDOM()` before CodeMirror's first layout measurement, then refresh the decoration StateField after the final DOM write. Failures must stay contained inside the widget and display actionable fallback content; they must not reject into the editor lifecycle.
-8a. Live code highlighting keeps the synchronous plain `<pre>` placeholder/fallback path even when Shiki later succeeds. The widget HTML cache stays engine-local and bounded via `createCodeHtmlCache()` (`src/decorations/widgets/codeHtmlCache.ts`): 128 entries, 8 MiB total, UTF-16 sizing (`html.length * 2`), key = `${lang}:${src}`. Do not replace it with an unbounded `Map`, and do not cache plain fallback output separately from highlighted HTML.
-8b. The live code-widget Shiki loader stays lazy and single-flight: only `getCodeHighlighter()` (`src/shiki/codeHighlighter.ts`) may `import()` `shiki/core`, `shiki/engine/javascript`, and the GitHub themes for this path; concurrent callers share one in-flight promise, and a rejected initialization must clear that promise so the next render retries. Do not reintroduce eager top-level Shiki imports into the live widget path.
-9. Image paths are resolved through the `EngineOptions.resolveImageSrc` host callback. The engine must not assume Tauri file URLs.
-10. **Route A mark folding** (`decorations/types.ts` documents the split): paired emphasis marks, ATX/Setext heading marks, and list marks fold **unconditionally** — the caret never reveals them, so clicking text only places the caret and lines never reflow. Editing goes through `format/commands.ts` toggles, or Backspace at a folded boundary (mid-line atoms delete whole via `skipAtomic`; line-start marks delete one char = progressive demotion). Syntax whose source is the sole editing entry (link URL/title, image, inline math, footnote reference/definition) reveals via **node-level `cursorInside`** — the caret must enter that syntax's own span, never just its line (line-level reveal made any click in a soft-wrapped paragraph unfold every link on it). Gate at the whole node, never per-child: the caret in link text is inside the LinkMark span but outside the URL span, and per-child gating yields a half-revealed `[text](` state. `cursorInside` also serves QuoteMark, fence marks, and entities/emoji. Never reintroduce caret-driven reveal for decorative marks — that is the click-flash regression this model removed.
-11. **Blank lines keep natural height with zero decorations**: blank lines emit zero `line:omd-empty` decorations and keep full natural height at all times; this prevents viewport jitter when the caret moves onto or off an empty line. Never hide blank lines with `display:none` — CM's line measurement and click mapping need a real box. Blank lines inside a block widget's replaced range are filtered like any other covered decoration.
-
-12. **Table edits are Lezer-range-based, per-view, and byte-minimal.** `tables/model.ts::tableDataFromNode` owns extracting `TableData` from the current `Table` node: every cell/row offset is table-relative, `lineFrom`/`lineTo` include quote/list continuation source inside the table span, an empty source-backed slot is a zero-length `TableCellData`, and only a missing ragged tail is `null`. `blocks.ts` must feed that model to `TableWidget` and never reduce an editable table to a display-only/string model — widget range edits would then stop addressing the document. Widget continuity is per `EditorView`: `pendingTableEdits`/`pendingTableTools` are `WeakMap<EditorView, …>` values keyed to the table's live position (`livePos()`, not a captured constructor offset), deleted by the rebuilt widget in its render pass and acted on in a microtask — never module-global tokens that leak across tabs. The widget stores table-relative offsets and turns them into live absolute offsets (`pos + change.from/to`) only inside `TableWidget.replace()` at dispatch; failing dispatch clears both pending maps. Cell/row/column edits preserve every source byte outside their exact ranges — spacing, one-sided outer pipes, alignment markers, and quote/list row prefixes stay untouched.
-## Parsing Rules
-
-- Extend Lezer Markdown instead of introducing a second Markdown parser.
-- Preserve existing syntax limitations unless the task explicitly changes them; encode intentional limitations in tests.
-- Keep format-specific parsing in `parse/` and rendering decisions in `decorations/`.
-- Use the named ASCII constants in `parse/chars.ts` (`CHAR_EQ`, `CHAR_UNDERSCORE`, …) when inspecting `cx.char(...)` — never bare character codes.
-- Check child and parent node behavior when adding rules; block replacements can suppress inline decorations by design.
+1. **One semantic reader per syntax family (`src/semantic/`, `parse/cell.ts`):** `linkParts`, `imageParts`, `escapeParts`/`hardBreakParts`, and `parseCell` are the sole owners of Link/Autolink, Image, Escape/HardBreak, and table-cell inline semantics. `referenceIndexExtension` is mounted at top level in `editorExtensions()` (incremental over changed/newly covered blocks; never scans the full document or calls `ensureSyntaxTree`). `widgets/tableCell.ts` is the sole preview cell DOM projection; reference-dependent widgets (`Image`, `Table`) invalidate on `resolveReference` identity in `build.ts::semanticProjections` and `TableWidget.eq`.
+2. **One-parse validated Smart Paste (`src/paste/`):** `normalizeHtml.ts` (iterative DOM walk bounded by `MAX_PASTE_DOM_DEPTH`/`MAX_PASTE_DOM_NODES`), `urlPolicy.ts::normalizePasteUrl`, `triggerPolicy.ts::escapePasteText`, `serialize.ts`, `validate.ts::validatePasteCandidate`, and `smartPaste.ts::planSmartPaste` each have a single owner. Candidate validation performs at most one synthetic parse on `prefix + candidate + suffix` from the already-covered syntax tree; rejected or over-limit candidates degrade directly to whole-fragment strict literal.
+3. **Closed Complex Table HTMLBlock (`parse/complexTable.ts`, `paste/serializeComplexTable.ts`, `decorations/widgets/complexTable.ts`):** Spanned/multi-block tables at top-level `Document`/`Paragraph` serialize to canonical CommonMark Type 6 `<table>...</table>` `HTMLBlock` (`boundary.end === "htmlBlock"`, no blank lines inside); inside lists/blockquotes they downgrade to GFM/plain text (`unsupportedTable`). `parseComplexTableBlock` is the closed-whitelist validator (2D occupancy grid, `normalizePasteUrl`, zero `innerHTML`) shared by `ComplexTableWidget` (`HTMLBlock` in `SELECTION_BLOCKS`) and `exportHtml`/`exportRichHtml`; non-conforming `HTMLBlock`s stay raw source in preview and escaped text in export.
 
 ## Testing
 
-Run:
-
 ```sh
 pnpm test
+pnpm --filter @omd/desktop test
 pnpm --filter @omd/engine bench
 ```
 
-- `pnpm test` performs `tsc --noEmit` and then runs Vitest.
-- `pnpm --filter @omd/engine bench` 跑 advisory 大文档基准（typing p95 / 冷解析 / 装饰重建 / 字数统计 / 切 Live 种子（toggle.bench）/ open-live 摄入与分块 Text 对照（open.bench）/ 安全模式窗口化 typing / 表格滚动（tables.bench：高度估算增益 + 表格滚入视口成本））；预算超限只告警不阻断，CI 中 continue-on-error。
-- Use `test/helpers.ts::makeState` when tests require a fully available syntax tree; it forces synchronous parsing with `ensureSyntaxTree`.
-- Production code must never advance parsing to `doc.length` (`forceParsing`/`ensureSyntaxTree`) — the complete-tree trap in `docs/memory/gotchas-engine.md` makes every subsequent keystroke O(fragment restart) at MB scale; `apps/desktop/test/crossLayerNoFullTree.test.ts` guards it.
-- Add focused tests for parser node shapes, decoration tags/ranges, widget editing state, and live/source round trips.
-- Add a fixture when a Markdown sample is useful across snapshot or regression tests. Keep fixtures deterministic and small unless testing large-document behavior.
-- Async widgets require explicit timing/error assertions; do not rely on incidental microtask completion.
-- Valid Mermaid diagrams can stall in `happy-dom`; mock `mermaid` for success SVG and keep the real library for invalid-syntax view tests.
-- Incremental updates should match a full rebuild on the affected document and keep selection/local-edit spec churn far below the full spec list, plus a lenient `large.md` timing gate.
-- For changes affecting appearance or interaction, also build the desktop frontend and perform the relevant items in `docs/manual-qa.md`.
-
-## Common Pitfalls
-
-- A correct parser node does not guarantee a valid decoration set; inspect overlaps and ordering separately.
-- Cursor proximity and selection are part of rendering state. Test both collapsed cursors and non-empty selections.
-- CodeMirror widgets create real DOM even though the package has no React dependency.
-- CSS regressions cannot usually be fixed in this package because engine tests assert structure and ranges, not final desktop appearance.
-- Mermaid, Shiki, and KaTeX may render asynchronously or throw on invalid source; preserve the original Markdown in error output.
-- Do not add `indentOnInput`, `closeBrackets`, or generic `autocompletion` to compensate for preview behavior. Fix the underlying parse/decoration interaction. A `:`-only emoji completion override in `parse/emojiComplete.ts` is the exception; keep it in the engine and do not turn on default word completion in `createEditor`.
-- Engine keymaps that must beat desktop `defaultKeymap` (`Enter`, `Tab`, `ArrowUp`/`ArrowDown`) need `Prec.high`. Desktop registers `defaultKeymap` before `editorExtensions()`, and earlier bindings win.
-- **Selection is visual, the caret is editing**: `nearCursor`/`cursorInside` return false for any non-empty selection, and a fully-covering selection keeps block widgets rendered (see known-gotchas). Never reintroduce selection-driven source reveal — it relayouts lines mid-drag and pushes pointer-selection endpoints across newlines (atomicRanges Rule 3). Under Route A (invariant 10), decorative marks also never reveal to a collapsed caret.
-
-## Documentation Maintenance
-
-Before concluding engine work, check:
-
-- [ ] Did public engine options or exports change?
-- [ ] Did a parser or widget invariant change?
-- [ ] Does a new regression belong in `docs/memory/gotchas-engine.md` (plus an index line in `known-gotchas.md`)?
-- [ ] Do fixtures, snapshots, or `docs/manual-qa.md` need updating?
-- [ ] Did an approved architecture decision in the product spec change?
+- Use `test/helpers.ts::makeState` when a test requires a complete syntax tree (`ensureSyntaxTree`). Production code must **never** force full-document parsing (`apps/desktop/test/crossLayerNoFullTree.test.ts`).
+- Use `drainPendingLiveBuild(view)` in tests that need all progressive decorations built synchronously.
+- Every new widget type must have a real `EditorView` smoke test in `test/view.test.ts` asserting `EditorView.exceptionSink` stays empty.
+- For decoration changes, compare incremental updates with a fresh rebuild and cover collapsed, partial, and fully covering selections. Async widgets need explicit completion/degradation assertions, not incidental microtask timing.
+- Mock `mermaid` for happy-dom SVG success cases; keep the real library for invalid-syntax fallback tests.

@@ -128,7 +128,8 @@ only |`
     const { data } = firstTable(escapedAndRagged)
 
     expect(data.header.cells[0]?.source).toBe("a\\|b")
-    expect(data.header.cells[0]?.text).toBe("a|b")
+    // `text` is trimmed raw Markdown; unescaping `\|` → `|` belongs to parseCell.
+    expect(data.header.cells[0]?.text).toBe("a\\|b")
     expect(data.rows[0].cells).toHaveLength(2)
     expect(data.rows[0].cells[1]).toMatchObject({ source: "", text: "" })
     expect(data.rows[1].cells).toEqual([

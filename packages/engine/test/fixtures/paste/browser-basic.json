@@ -1,0 +1,173 @@
+[
+  {
+    "name": "heading-atx-levels",
+    "html": "<h1>Title</h1><h2>Section</h2>",
+    "plainText": "Title\nSection",
+    "context": "lineStart",
+    "expectedMarkdown": "# Title\n\n## Section",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "heading-with-inline-emphasis",
+    "html": "<h3>Read <em>this</em></h3>",
+    "plainText": "Read this",
+    "context": "lineStart",
+    "expectedMarkdown": "### Read *this*",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "paragraphs-blank-line-separated",
+    "html": "<p>First paragraph</p><p>Second paragraph</p>",
+    "plainText": "First paragraph\n\nSecond paragraph",
+    "context": "lineStart",
+    "expectedMarkdown": "First paragraph\n\nSecond paragraph",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "inline-semantics-strong-em-strike-highlight-code",
+    "html": "<p><strong>bold</strong> <em>italic</em> <del>gone</del> <mark>marked</mark> <code>x_y</code></p>",
+    "plainText": "bold italic gone marked x_y",
+    "context": "paragraph",
+    "expectedMarkdown": "**bold** *italic* ~~gone~~ ==marked== `x_y`",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "unordered-list-nested",
+    "html": "<ul><li>parent<ul><li>child</li><li>second child</li></ul></li><li>sibling</li></ul>",
+    "plainText": "parent\nchild\nsecond child\nsibling",
+    "context": "lineStart",
+    "expectedMarkdown": "- parent\n  - child\n  - second child\n- sibling",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "ordered-list-nested-unordered-child",
+    "html": "<ol><li>first<ul><li>bullet</li></ul></li><li>second</li></ol>",
+    "plainText": "first\nbullet\nsecond",
+    "context": "lineStart",
+    "expectedMarkdown": "1. first\n   - bullet\n2. second",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "ordered-list-start-three",
+    "html": "<ol start=\"3\"><li>third</li><li>fourth</li></ol>",
+    "plainText": "third\nfourth",
+    "context": "lineStart",
+    "expectedMarkdown": "3. third\n4. fourth",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "task-list-checked-and-unchecked",
+    "html": "<ul><li><input type=\"checkbox\" checked> shipped</li><li><input type=\"checkbox\"> pending</li></ul>",
+    "plainText": "shipped\npending",
+    "context": "lineStart",
+    "expectedMarkdown": "- [x] shipped\n- [ ] pending",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "blockquote-multi-paragraph",
+    "html": "<blockquote><p>quoted line</p><p>second paragraph</p></blockquote>",
+    "plainText": "quoted line\nsecond paragraph",
+    "context": "lineStart",
+    "expectedMarkdown": "> quoted line\n>\n> second paragraph",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "fenced-code-with-language",
+    "html": "<pre><code class=\"language-js\">const a = 1</code></pre>",
+    "plainText": "const a = 1",
+    "context": "lineStart",
+    "expectedMarkdown": "```js\nconst a = 1\n```",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "link-inline-https",
+    "html": "<p>See <a href=\"https://example.com/docs\">the docs</a> now</p>",
+    "plainText": "See the docs now",
+    "context": "paragraph",
+    "expectedMarkdown": "See [the docs](https://example.com/docs) now",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "image-url",
+    "html": "<p><img src=\"https://example.com/chart.png\" alt=\"chart\"></p>",
+    "plainText": "chart",
+    "context": "paragraph",
+    "expectedMarkdown": "![chart](https://example.com/chart.png)",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "table-simple-header-body",
+    "html": "<table><thead><tr><th>name</th><th>role</th></tr></thead><tbody><tr><td>Ada</td><td>engineer</td></tr><tr><td>Lin</td><td>designer</td></tr></tbody></table>",
+    "plainText": "name\trole\nAda\tengineer\nLin\tdesigner",
+    "context": "lineStart",
+    "expectedMarkdown": "| name | role |\n| --- | --- |\n| Ada | engineer |\n| Lin | designer |",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "hard-break-from-br-crlf-plain",
+    "html": "<p>first line<br>second line</p>",
+    "plainText": "first line\r\nsecond line",
+    "context": "paragraph",
+    "expectedMarkdown": "first line\\\nsecond line",
+    "expectedPath": "markdown",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "cjk-paragraph",
+    "html": "<p>中文段落，包含标点。</p>",
+    "plainText": "中文段落，包含标点。",
+    "context": "paragraph",
+    "expectedMarkdown": "中文段落，包含标点。",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "rtl-paragraph",
+    "html": "<p dir=\"rtl\">שלום עולם</p>",
+    "plainText": "שלום עולם",
+    "context": "paragraph",
+    "expectedMarkdown": "שלום עולם",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "emoji-paragraph",
+    "html": "<p>Ship it 🚀✨</p>",
+    "plainText": "Ship it 🚀✨",
+    "context": "paragraph",
+    "expectedMarkdown": "Ship it 🚀✨",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "entity-decoded-paragraph",
+    "html": "<p>fish &amp; chips &#169; 2026</p>",
+    "plainText": "fish & chips © 2026",
+    "context": "paragraph",
+    "expectedMarkdown": "fish & chips © 2026",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  },
+  {
+    "name": "nbsp-preserved-paragraph",
+    "html": "<p>keep&nbsp;together</p>",
+    "plainText": "keep\u00a0together",
+    "context": "paragraph",
+    "expectedMarkdown": "keep\u00a0together",
+    "expectedPath": "plain",
+    "expectedDiagnostics": []
+  }
+]

@@ -12,6 +12,9 @@ html[data-theme="light"] {
   --omd-link: #0969da;
   --omd-code-bg: rgba(0, 0, 0, 0.04);
   --omd-code-block-bg: #f8f8f8;
+  /* 真等宽（不跟随用户选择的编辑器字体 --omd-font-family）：表格源码网格要
+     靠等宽让管道符纵向对齐。 */
+  --omd-font-family-mono: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --omd-quote: #555555;
   --omd-bar: #d0d0d0;
   --omd-error-bg: #fff5f5;
@@ -51,6 +54,7 @@ html[data-theme="dark"] {
   --omd-link: #79b8ff;
   --omd-code-bg: rgba(255, 255, 255, 0.06);
   --omd-code-block-bg: #2d2d2d;
+  --omd-font-family-mono: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --omd-quote: #b0b0b0;
   --omd-bar: #555555;
   --omd-error-bg: #3a1f1f;
@@ -142,10 +146,29 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .cm-editor .cm-content :focus {
   caret-color: var(--omd-cursor) !important;
 }
-.editor-host .omd-h1 { font-size: 1.8em; font-weight: 700; }
-.editor-host .omd-h2 { font-size: 1.5em; font-weight: 700; }
-.editor-host .omd-h3 { font-size: 1.25em; font-weight: 700; }
-.editor-host .omd-h4, .editor-host .omd-h5, .editor-host .omd-h6 { font-weight: 700; }
+/* 六级单调递减（Typora github 主题同构）：px 换算 27/22.5/18.8/16.9/15/13.1。
+h4 不取 Typora 的 1em —— 源编辑器里整行加粗的正文会与 1em 的 h4 撞脸，1.125em 独立成档。
+h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。 */
+.editor-host .omd-h1 { font-size: 1.8em;   font-weight: 700; }
+.editor-host .omd-h2 { font-size: 1.5em;   font-weight: 700; }
+.editor-host .omd-h3 { font-size: 1.25em;  font-weight: 700; }
+.editor-host .omd-h4 { font-size: 1.125em; font-weight: 700; }
+.editor-host .omd-h5 { font-size: 1em;     font-weight: 700; }
+.editor-host .omd-h6 { font-size: 0.875em; font-weight: 700; color: var(--omd-quote); }
+/* 光标所在标题行左缘的级别徽标（折叠的 `#` 唯一替代线索）：overlay 定位零宽，
+不推动正文 —— 行宽不抖动是路线 A 的核心不变量。仅编辑态可见，阅读态零噪音。 */
+.editor-host .omd-h-active { position: relative; }
+.editor-host .omd-h-active::before {
+  content: "H" attr(data-omd-h);
+  position: absolute;
+  left: -3em;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: inherit;
+  color: var(--omd-quote);
+  opacity: 0.75;
+  pointer-events: none;
+}
 .editor-host .omd-strong { font-weight: 700; }
 .editor-host .omd-em { font-style: italic; }
 .editor-host .omd-del { text-decoration: line-through; }
@@ -154,20 +177,27 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-footnote-def { font-size: 0.9em; color: var(--omd-quote); }
 .editor-host .omd-highlight { background: rgba(255, 229, 100, 0.55); }
 .editor-host .omd-u { text-decoration: underline; }
+/* 固定 `<kbd>` 键帽：Live Preview 的 omd-kbd 标记（无元素的 span）与 cell 投影里的
+   真实 <kbd> 元素共用同一套外观。只声明视觉，不改源。 */
+.editor-host .omd-kbd,
+.editor-host .omd-table kbd {
+  font-family: var(--omd-font-family-mono);
+  font-size: 0.88em;
+  color: var(--omd-fg);
+  background: var(--omd-code-bg);
+  border: 1px solid var(--omd-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
 .editor-host .omd-inline-code { font-family: var(--omd-font-family, ui-monospace, monospace); background: var(--omd-code-bg); }
 .editor-host .omd-blockquote,
 .editor-host .omd-blockquote-1,
 .editor-host .omd-blockquote-2,
 .editor-host .omd-blockquote-3,
 .editor-host .omd-blockquote-4,
-.editor-host .omd-li-1,
-.editor-host .omd-li-2,
-.editor-host .omd-li-3,
-.editor-host .omd-li-4,
-.editor-host .omd-quote-in-li-1,
-.editor-host .omd-quote-in-li-2,
-.editor-host .omd-quote-in-li-3,
-.editor-host .omd-quote-in-li-4 {
+.editor-host .omd-li,
+.editor-host .omd-quote-in-li {
   padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px));
   text-indent: var(--omd-li-hang, 0px);
 }
@@ -176,7 +206,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 1em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -186,7 +216,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 2em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -200,7 +230,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 3em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -218,7 +248,7 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   --omd-bq-pad: 4em;
   --omd-bq-bar: 0px;
   color: var(--omd-quote);
-  background-image: linear-gradient(to right,
+  --omd-bq-image: linear-gradient(to right,
     transparent var(--omd-bq-bar),
     var(--omd-bar) var(--omd-bq-bar),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3px),
@@ -235,6 +265,17 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
     var(--omd-bar) calc(var(--omd-bq-bar) + 3em),
     var(--omd-bar) calc(var(--omd-bq-bar) + 3em + 3px),
     transparent calc(var(--omd-bq-bar) + 3em + 3px));
+}
+
+/* 引用条只存在于 background-image 上：每个深度把渐变登记为 --omd-bq-image，
+   再由本条规则统一画上；自身带不透明背景的元素（代码块/编辑态 chrome）在下方
+   显式重画同一条渐变 —— 否则 background 简写会清掉它，引用条在代码块处断开。 */
+.editor-host .omd-blockquote,
+.editor-host .omd-blockquote-1,
+.editor-host .omd-blockquote-2,
+.editor-host .omd-blockquote-3,
+.editor-host .omd-blockquote-4 {
+  background-image: var(--omd-bq-image);
 }
 .editor-host .omd-hr { border-top: 1px solid var(--omd-bar); }
 .editor-host .omd-block.omd-hr-block { padding: 0.4em 0; }
@@ -254,20 +295,15 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .omd-list-mark { color: var(--omd-link); }
 .editor-host .omd-ordered-mark { color: var(--omd-link); }
 .editor-host .omd-codeblock { font-family: var(--omd-font-family, ui-monospace, monospace); background-color: var(--omd-code-bg); }
-/* Nested list hanging indent: padding shifts the whole line, negative
-   text-indent pulls the first line back so wrapped lines align to the text. */
-.editor-host .omd-li-1 { --omd-li-pad: 1.2em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-2 { --omd-li-pad: 2.4em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-3 { --omd-li-pad: 3.6em; --omd-li-hang: -1.2em; }
-.editor-host .omd-li-4 { --omd-li-pad: 4.8em; --omd-li-hang: -1.2em; }
-.editor-host .omd-quote-in-li-1 { --omd-li-pad: 1.2em; --omd-bq-bar: 1.2em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-2 { --omd-li-pad: 2.4em; --omd-bq-bar: 2.4em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-3 { --omd-li-pad: 3.6em; --omd-bq-bar: 3.6em; --omd-li-hang: 0; }
-.editor-host .omd-quote-in-li-4 { --omd-li-pad: 4.8em; --omd-bq-bar: 4.8em; --omd-li-hang: 0; }
-.editor-host .omd-block.omd-li-1,
-.editor-host .omd-block.omd-li-2,
-.editor-host .omd-block.omd-li-3,
-.editor-host .omd-block.omd-li-4 { --omd-li-hang: 0; }
+/* Nested list indent, unbounded: the engine writes the semantic depth as
+   `--omd-list-depth` on one stable class, the width is derived here (no class
+   per depth). Padding shifts the whole line, negative text-indent pulls the
+   first line back so wrapped lines align to the text. */
+.editor-host .omd-li,
+.editor-host .omd-quote-in-li { --omd-li-pad: calc(var(--omd-list-depth) * 1.2em); }
+.editor-host .omd-li { --omd-li-hang: -1.2em; }
+.editor-host .omd-quote-in-li { --omd-bq-bar: var(--omd-li-pad); --omd-li-hang: 0; }
+.editor-host .omd-block.omd-li { --omd-li-hang: 0; }
 
 /* M2 block widgets
    CodeMirror's height map does not include vertical margins on block
@@ -313,6 +349,21 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   max-width: 100%;
   padding: 0.8em 0;
 }
+/* 源码态表格：等宽 + 底色 + 左边线。不用 padding（会改变行内起始位置），
+   左边线也不能用 border-left：边框参与布局，2px 会把整张网格（连同光标）推到
+   正文右侧 2px。改用 inset 阴影画同一根竖条 —— 只画、不占布局。
+   底色只能用 background-color：源码态表格行在引用里同时带 omd-blockquote 类，
+   而引用条只画在 background-image 上（见上方 .omd-blockquote 规则）——
+   background 简写会把它一并重置成 none，引用内每行表格的竖条都会断开。 */
+.editor-host .omd-table-src {
+  font-family: var(--omd-font-family-mono);
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  background-color: var(--omd-code-bg);
+  box-shadow: inset 2px 0 0 var(--omd-border);
+}
+.editor-host .omd-table-src-head { font-weight: 600; }
+.editor-host .omd-table-src-delim { opacity: 0.65; }
 .editor-host .omd-table .omd-block-body {
   overflow-x: auto;
   border-radius: 6px;
@@ -326,6 +377,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   font-size: 0.93em;
   line-height: 1.6;
 }
+/* Keep sibling columns still while the active cell's text grows. */
+.editor-host .omd-table:has(.omd-table-cell-input) table { table-layout: fixed; }
 .editor-host .omd-table th, .editor-host .omd-table td {
   border: 1px solid var(--omd-border);
   padding: 6px 8px;
@@ -382,22 +435,38 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-color: var(--omd-link);
   background: color-mix(in srgb, var(--omd-link) 12%, transparent);
 }
-/* Active row/column highlight while a cell editor is open: background-only so
-   cell geometry never changes. The edited intersection honors both classes. */
-.editor-host .omd-table :is(td, th).omd-table-row-active {
-  background: color-mix(in srgb, var(--omd-link) 8%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 5%, transparent);
-}
-.editor-host .omd-table :is(td, th).omd-table-row-active.omd-table-col-active {
-  background: color-mix(in srgb, var(--omd-link) 14%, transparent);
-}
 /* Synthetic ragged cells (no source slot) read as inert placeholders. */
 .editor-host .omd-table td.omd-table-cell-missing {
   color: var(--omd-muted);
   background: color-mix(in srgb, var(--omd-chrome) 60%, transparent);
   opacity: 0.65;
+}
+.editor-host .omd-table .omd-table-cell-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  font: inherit;
+  color: inherit;
+  background: inherit;
+}
+/* Empty span. A 1px border and a matching negative margin draw the bar
+   without advancing the following text. */
+.editor-host .omd-table .omd-table-caret {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  border-left: 1px solid var(--omd-cursor);
+  margin-left: -1px;
+  vertical-align: text-bottom;
+  pointer-events: none;
+  animation: omd-table-caret-blink 1.2s step-end infinite;
+}
+@keyframes omd-table-caret-blink {
+  50% { opacity: 0; }
 }
 /* Unavailable structural actions: keep layout, communicate inertness. */
 .editor-host .omd-table-toolbar button:disabled {
@@ -405,16 +474,27 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   opacity: 0.45;
   cursor: default;
 }
-.editor-host .omd-table-edit {
-  /* width:100% contributes the input's default 20ch intrinsic width to an
-     auto-layout table and makes the column jump on click. This equivalent
-     fill pattern keeps the input inside the already-sized cell. */
-  display: block; width: 0; min-width: 100%; box-sizing: border-box;
-  font: inherit; font-size: inherit; font-family: inherit; font-weight: inherit;
-  line-height: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
-  vertical-align: top;
-  border: none; outline: none;
-  margin: 0; padding: 0; background: transparent;
+/* 源码态表格浮层工具栏（引擎 tableSourceToolbar）：表格聚焦时整表以源码网格呈现、
+   没有块 widget，上面那套住在 widget 里的工具栏此时不可达。定位由引擎按
+   coordsAtPos 写成行内 top/left，这里只管外观。 */
+.editor-host .omd-table-toolbar-floating {
+  position: absolute; display: flex; gap: 2px; z-index: 6;
+  padding: 2px; border-radius: 6px;
+  background: var(--omd-chrome); border: 1px solid var(--omd-border);
+}
+/* `display: flex` 会盖掉 UA 的 [hidden] 规则，显式补回：引擎靠 dom.hidden 收起浮层。 */
+.editor-host .omd-table-toolbar-floating[hidden] { display: none; }
+.editor-host .omd-table-toolbar-floating button {
+  display: flex; align-items: center;
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 3px 5px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--omd-muted);
+  cursor: pointer;
+}
+.editor-host .omd-table-toolbar-floating button:hover {
+  color: var(--omd-fg);
+  border-color: var(--omd-border);
+  background: color-mix(in srgb, var(--omd-link) 10%, transparent);
 }
 .editor-host .omd-code pre {
   margin: 0; padding: 6px 12px 10px 10px; border-radius: 0 0 12px 12px;
@@ -480,6 +560,28 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
   border-bottom: 1px solid var(--omd-border);
   border-radius: 12px 12px 0 0;
   background: var(--omd-chrome);
+}
+/* 代码块与编辑态 chrome 自带不透明底色（.omd-code / .omd-code-header 用
+   background 简写），引用条必须显式重画；chrome 的 padding 简写同样要补回引用
+   缩进，否则标题与下方代码内容左边缘错位。 */
+.editor-host .omd-code.omd-blockquote,
+.editor-host .omd-code.omd-blockquote-1,
+.editor-host .omd-code.omd-blockquote-2,
+.editor-host .omd-code.omd-blockquote-3,
+.editor-host .omd-code.omd-blockquote-4,
+.editor-host .omd-code-header.omd-blockquote,
+.editor-host .omd-code-header.omd-blockquote-1,
+.editor-host .omd-code-header.omd-blockquote-2,
+.editor-host .omd-code-header.omd-blockquote-3,
+.editor-host .omd-code-header.omd-blockquote-4 {
+  background-image: var(--omd-bq-image);
+}
+.editor-host .omd-code-header.omd-blockquote,
+.editor-host .omd-code-header.omd-blockquote-1,
+.editor-host .omd-code-header.omd-blockquote-2,
+.editor-host .omd-code-header.omd-blockquote-3,
+.editor-host .omd-code-header.omd-blockquote-4 {
+  padding-left: calc(var(--omd-bq-pad, 0px) + 10px);
 }
 .editor-host .omd-code-title {
   flex: 1;
@@ -664,6 +766,31 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 }
 .editor-host .omd-math { overflow-x: auto; padding: 4px 0; cursor: pointer; }
 .editor-host .omd-block.omd-math:hover { background: var(--omd-code-bg); border-radius: 6px; }
+/* 列表深度落在块 widget 自己身上（引擎 applyBlockEmbed 写在 widget 根），而这些
+   合写规则（.omd-block / .omd-math / .omd-table / .omd-code 都是后写的同权重声明）
+   会把左侧 padding 清零，深度缩进因此从来没生效。下面的规则在合写之后按更高特异性
+   重新声明左侧：深度 N 的块整体位移 N * 1.2em，且只位移一次，垂直 padding 不动。 */
+.editor-host .omd-block.omd-li,
+.editor-host .omd-block.omd-quote-in-li {
+  padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px));
+}
+/* 代码块的 wrapper 独占那一次列表偏移（边框盒连同 header/body 一起位移），
+   所以它里面的 header 不能再加一次。引用缩进仍留在 header 上 —— 不透明的 chrome
+   底色是它自己画的，引用条也得由它重画；这条 header 的边框盒已经跟着 wrapper 的
+   缩进走了，渐变必须从自己左边（--omd-bq-bar: 0）起画，否则条会落到第二个偏移上。 */
+.editor-host .omd-block.omd-code.omd-li,
+.editor-host .omd-block.omd-code.omd-quote-in-li {
+  padding-left: var(--omd-li-pad, 0px);
+}
+.editor-host .omd-code > .omd-code-header { --omd-bq-bar: 0px; }
+.editor-host .omd-code-header.omd-li,
+.editor-host .omd-code-header.omd-quote-in-li { --omd-li-hang: 0; }
+/* 编辑态 chrome 是独立块 widget（没有 .omd-code wrapper，直接挂在 .cm-content 下），
+   整段缩进由它自己承担：列表偏移 + 引用缩进 + 10px 基准内缩。 */
+.editor-host .cm-content > .omd-code-header.omd-li,
+.editor-host .cm-content > .omd-code-header.omd-quote-in-li {
+  padding-left: calc(var(--omd-bq-pad, 0px) + var(--omd-li-pad, 0px) + 10px);
+}
 .editor-host .omd-inline-math { padding: 0 2px; cursor: pointer; border-radius: 4px; }
 .editor-host .omd-inline-math:hover { background: var(--omd-code-bg); }
 .editor-host .omd-image { max-width: 100%; border-radius: 4px; }
@@ -1444,6 +1571,24 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.filetree-item.is-renaming { cursor: default; }
+.filetree-rename-input {
+  flex: 1 1 auto; min-width: 0; width: 100%; height: 22px;
+  box-sizing: border-box; padding: 0 4px;
+  border: 1px solid var(--omd-link); border-radius: 3px;
+  outline: none; font: inherit; color: var(--omd-fg);
+  background: var(--omd-panel-bg);
+}
+.filetree-rename-input[aria-invalid="true"] { border-color: var(--omd-error-fg); }
+.filetree-rename-input[readonly] { opacity: 0.7; }
+/* 反馈不改变虚拟行高；失焦和滚动都不会隐式提交。 */
+.filetree-rename-feedback {
+  position: sticky; bottom: 0; z-index: 2;
+  padding: 6px 10px; background: var(--omd-panel-bg);
+  color: var(--omd-muted); font-size: 11px; overflow-wrap: anywhere;
+}
+.filetree-rename-feedback:empty { display: none; }
+.filetree-rename-feedback.is-error { color: var(--omd-error-fg); }
 .outline-item {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -1512,6 +1657,18 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
 .editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
+/* 源码态表格同理，而且更致命：源码态要求光标就在表格里，所以缺了这条规则，
+   光标那一行永远丢掉网格底色。这里用 background-color 而非简写，紧挨着的
+   .omd-blockquote.cm-activeLine 规则画的引用条因此不会被清掉（同为 0,5,0，
+   它在后，background-image 照常生效）。 */
+.editor-host .cm-content .cm-line.omd-table-src.cm-activeLine { background-color: var(--omd-code-bg); }
+/* 但 .cm-activeLine 与 .cm-line.omd-codeblock.cm-activeLine（以及 CodeMirror
+   基础主题的 activeLine）都用 background 简写，会把 background-image 一起清成
+   none —— 光标停在引用段落上时，那一行的引用竖条会缺一节。引用条必须在本规则
+   里按同样的高优先级重画。 */
+.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine {
+  background-image: var(--omd-bq-image);
+}
 html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 
 /* Modal / Settings dialog */

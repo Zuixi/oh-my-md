@@ -9,6 +9,10 @@ $ErrorActionPreference = "Stop"
 $ROOT = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ROOT
 
+Write-Host "==> quality (module-size gate + behavior tests)"
+pnpm check:quality
+if ($LASTEXITCODE -ne 0) { throw "quality checks failed" }
+
 Write-Host "==> engine (tsc --noEmit + vitest)"
 pnpm test
 if ($LASTEXITCODE -ne 0) { throw "engine tests failed" }

@@ -55,7 +55,10 @@ export interface UpdateCoordinatorDependencies {
   readonly flushPendingEdits: () => void
   readonly checkRestartReadiness: () => UpdateRestartReadiness
   readonly prepareRestart: () => Promise<PrepareUpdateRestartResult>
+  /** Open the generic releases page (fallback when the direct asset link fails). */
   readonly openReleasePage: () => Promise<void>
+  /** Deep-link the versioned NSIS setup.exe for check-only installs. */
+  readonly openManualDownload: (version: string) => Promise<void>
   readonly reportManualFailure: (failure: UpdateFailureKind) => void
   /** Startup-check failure log sink (spec §10/§14): no user UI, only a structured log entry. */
   readonly logFailure: (failure: UpdateFailureKind) => void
@@ -83,6 +86,7 @@ export function createUpdateCoordinator(dependencies: UpdateCoordinatorDependenc
     checkRestartReadiness,
     prepareRestart,
     openReleasePage,
+    openManualDownload,
     reportManualFailure,
     logFailure,
     notifyLatest,
@@ -165,11 +169,16 @@ export function createUpdateCoordinator(dependencies: UpdateCoordinatorDependenc
     if (disposed || operationActive) return
     const state = current
     if (state.kind !== "available") return
-    // Check-only packages (MSI, deb/rpm Linux) route to the Release page.
+    // Check-only packages (former MSI installs, deb/rpm Linux) deep-link the
+    // versioned installer asset; fall back to the generic Release page.
     if (!state.installSupported) {
       operationActive = true
       try {
-        await openReleasePage()
+        try {
+          await openManualDownload(state.update.version)
+        } catch {
+          await openReleasePage()
+        }
       } finally {
         operationActive = false
       }

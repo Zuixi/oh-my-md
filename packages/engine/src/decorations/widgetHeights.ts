@@ -21,6 +21,7 @@
 // 首绘实测后校正 —— 复用 spec 身份（build.ts）保证校正只发生一次而不振荡。
 
 import type { TableCellData, TableData } from "../tables/model"
+import type { ComplexTableCell, ComplexTableInline, ComplexTableModel } from "../parse/complexTable"
 
 // 表格单行基础高度：th/td padding 8px×2 + 边框 ~2px ≈ 18px（不含文本行）。
 export const TABLE_ROW_BASE_PX = 18
@@ -103,6 +104,62 @@ export function estimateTableHeightPx(table: TableData): number {
   let height = TABLE_BLOCK_CHROME_PX + estimateTableRowPx(table.header.cells, colPx)
   for (const row of table.rows) {
     height += estimateTableRowPx(row.cells, colPx)
+  }
+  return height
+}
+
+function complexInlineText(nodes: readonly ComplexTableInline[]): string {
+  let out = ""
+  for (const node of nodes) {
+    switch (node.type) {
+      case "text":
+      case "code":
+        out += node.value
+        break
+      case "image":
+        out += node.alt || "img"
+        break
+      case "break":
+        out += "\n"
+        break
+      default:
+        out += complexInlineText(node.children)
+        break
+    }
+  }
+  return out
+}
+
+function estimateComplexRowPx(cells: readonly ComplexTableCell[], colPx: number): number {
+  let lines = 1
+  for (const cell of cells) {
+    const text = complexInlineText(cell.children)
+    const spanColPx = Math.max(TABLE_MIN_COL_PX, colPx * Math.max(1, cell.colSpan))
+    const segments = text.split("\n")
+    let wrappedLines = 0
+    for (const seg of segments) {
+      wrappedLines += Math.max(1, Math.ceil(cellTextWidthPx(seg) / spanColPx))
+    }
+    const perRow = Math.min(
+      TABLE_CELL_MAX_LINES,
+      Math.max(1, Math.ceil(wrappedLines / Math.max(1, cell.rowSpan))),
+    )
+    if (perRow > lines) lines = perRow
+  }
+  return lines * TABLE_TEXT_LINE_PX + TABLE_ROW_BASE_PX
+}
+
+/** 复杂 HTML 表格估算高度：按单元格文本与跨列/跨行换算行高。 */
+export function estimateComplexTableHeightPx(model: ComplexTableModel): number {
+  const rows = model.rows
+  const cols = Math.max(
+    1,
+    ...rows.map(row => row.reduce((sum, cell) => sum + Math.max(1, cell.colSpan), 0)),
+  )
+  const colPx = Math.max(TABLE_MIN_COL_PX, ((TABLE_CONTENT_WIDTH_PX - cols) / cols) * TABLE_COL_WIDTH_SLACK)
+  let height = TABLE_BLOCK_CHROME_PX
+  for (const row of rows) {
+    height += estimateComplexRowPx(row, colPx)
   }
   return height
 }

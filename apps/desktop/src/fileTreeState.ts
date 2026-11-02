@@ -1,3 +1,5 @@
+import { baseName, pathWithinDir } from "./workspace"
+
 export interface TreeEntry {
   name: string
   path: string
@@ -78,4 +80,41 @@ function rowsFor(dir: string, depth: number, model: FileTreeModel): VisibleRow[]
 
 export function pathsToRefresh(root: string, model: FileTreeModel): string[] {
   return [...new Set([root, ...Object.keys(model.childrenByPath)])]
+}
+
+export function replaceTreePrefix(path: string, from: string, to: string): string {
+  if (!pathWithinDir(path, from)) return path
+  const suffix = path.replace(/\\/g, "/").slice(from.replace(/\\/g, "/").length)
+  return to + (to.includes("\\") ? suffix.replace(/\//g, "\\") : suffix)
+}
+
+export function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
+  const prefix = `${path}/`
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath)
+      .filter(([key]) => key !== path && !key.startsWith(prefix))
+      .map(([key, entries]) => [
+        key,
+        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
+      ]),
+  )
+  const expanded = new Set(
+    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
+  )
+  return { childrenByPath, expanded }
+}
+
+export function renameTreePath(model: FileTreeModel, from: string, to: string): FileTreeModel {
+  const childrenByPath = Object.fromEntries(
+    Object.entries(model.childrenByPath).map(([key, entries]) => [
+      replaceTreePrefix(key, from, to),
+      entries.map(entry => ({
+        ...entry,
+        name: entry.path === from ? baseName(to) : entry.name,
+        path: replaceTreePrefix(entry.path, from, to),
+      })),
+    ]),
+  )
+  const expanded = new Set([...model.expanded].map(path => replaceTreePrefix(path, from, to)))
+  return { childrenByPath, expanded }
 }

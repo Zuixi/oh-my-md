@@ -130,6 +130,46 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-warning-path")).toBeNull()
   })
 
+  it("renders the three auto pair checkboxes checked by default", () => {
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+
+    const contractIds: Array<[string, string]> = [
+      ["Auto pair brackets", "setting-auto-pair-brackets"],
+      ["Auto pair quotes", "setting-auto-pair-quotes"],
+      ["Auto pair Markdown syntax", "setting-auto-pair-markdown"],
+    ]
+    for (const [label, id] of contractIds) {
+      const checkbox = screen.getByLabelText(label) as HTMLInputElement
+      expect(checkbox.id).toBe(id)
+      expect(checkbox.checked).toBe(true)
+    }
+  })
+
+  it("saves a cleared auto pair toggle without disturbing the other two", () => {
+    const onSave = vi.fn()
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByLabelText("Auto pair quotes"))
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    }))
+  })
+
   it("calls onSave when changing settings", () => {
     const onSave = vi.fn()
     render(
@@ -176,6 +216,7 @@ describe("SettingsModal", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
       verboseLogging: false,
     }
@@ -203,6 +244,7 @@ describe("SettingsModal", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
+      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
       verboseLogging: false,
     }

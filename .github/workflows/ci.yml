@@ -17,6 +17,28 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    name: Quality (module size + gate tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          install: "false"
+      - name: Check module sizes against the change base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: pnpm check:modules --base "$BASE_SHA"
+      - run: pnpm test:quality
+      - name: Check Git hook routing and dispatch
+        run: |
+          python3 .githooks/test-classify.py
+          python3 .githooks/test-precommit.py
+          python3 .githooks/test-commit-msg.py
+
   changes:
     name: Detect changed domains
     runs-on: ubuntu-latest

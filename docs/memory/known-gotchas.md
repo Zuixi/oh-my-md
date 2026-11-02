@@ -1,7 +1,7 @@
 # Known Gotchas — Index
 
-> **How to use this file.** Before non-trivial work in a domain, read the matching domain
-> file end to end (they are targeted, ~25 entries each): engine →
+> **How to use this file.** Before non-trivial work in a domain, read the matching,
+> targeted domain file end to end: engine →
 > [`gotchas-engine.md`](./gotchas-engine.md), desktop → [`gotchas-desktop.md`](./gotchas-desktop.md),
 > Rust/IPC → [`gotchas-rust.md`](./gotchas-rust.md). Come back here to find a trap by symptom.
 > A new trap gets a full entry in the domain file plus one index line; delete entries that
@@ -24,22 +24,61 @@
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
 - **Horizontal rules are block widgets when unselected** — keep `HorizontalRule` in `SELECTION_BLOCKS`.
-- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; cell `mousedown` stops propagation; the cell input gets a caret, never `select()`.
-- **Table edits are Lezer-range-based and per-view** — no whole-table serialize/parse revival; pending focus lives in per-view `WeakMap`s; real-`EditorView` tests are mandatory.
+- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; the rendered table has no in-cell editor (two states only), and a per-cell `mousedown` intercept is the bug — the wrap handler owns the flip into cell-exact source.
+- **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
+- **A focused table must skip its subtree** — after emitting `line:omd-table-src*` the `Table` branch must `return true`, or `inlineRules` folds `**` inside cells and source mode renders "half a preview".
+- **Table Tab must not fall through to indentation when the tree is unresolved** — 树未覆盖光标时 `tableAt` 返回 null，放行 Tab 会让 `indentMore` 把空白写进表格行首；按行首形状吞键，Enter 不套这条兜底。
+- **Table Enter exits on the final row; only Tab appends** — 末行 Enter 复用 `exitTableSpec`（否则每按一次多一行）；返回 null 会写原始换行把表拆开，返回「什么都不做」才安全。
+- **Table keymap only sees non-composing keydown** — CM6 calls `ignoreDuringComposition` before the keymap; do not add a second `isComposing` guard (it drops the IME candidate confirm on Windows).
+- **CM widget reuse keeps the NEW instance with the OLD DOM** — pass-1 `updateDOM` gets the old widget as its third argument; resolve DOM ownership through a WeakMap (wrap + block body), never `this` or a captured position.
+- **Fenced code splits by state, not location** — rendered language blocks are widgets inside quotes too; language-less rendered stays line styles; the editing state always uses the opening-line chrome.
+- **A line-start regex cannot see the real block prefix** — `>x`, `  > x`, `- > x`, `> - [x]` need the tree-driven `blockPrefixOf`; remove a mark plus exactly one space.
+- **List editing columns, container transitions, and deletion are engine-owned structure** — `listFrameAt`/`itemMarkAt`/`listContentColumn` over line regexes; same-line `ListItem`s, adjacent ordered↔bullet containers, new ordered children reset to `1`, innermost non-task owner, 4-column tab stops, 1–4 padding with a one-column fallback, 9-digit ordered cap, single-cursor fail-closed. Empty top-level list Backspace must beat lang-markdown's marker-to-indent behavior or replacing `2. ` with `- ` silently nests; a no-op list Tab must still consume native focus navigation.
+- **List depth is one stable class + `--omd-list-depth`, not `omd-li-N`** — unbounded `BlockEmbed.listDepth`; `applyBlockEmbed` must re-sync (and clear first) on every successful `updateDOM`; widget padding shorthands silently zeroed the offset, so desktop re-declares left padding after them and adds it exactly once.
+- **Resolve a fence's parent from the line END** — `line.from` lands on `QuoteMark`/`QuoteIndent` and the parent walk never reaches `FencedCode`/`ListItem`.
+- **Fence tokens must resolve on both highlight paths** — a Shiki-only token loses its highlight when the caret enters the block; the alias-parity test guards the gap list.
+- **`markdown()` bundles its own `Prec.high` Enter/Backspace keymap** — engine structural Enter and empty top-level list Backspace commands need `Prec.highest`; assert ownership signatures (exit-one-level, caret placement, no marker-to-indent conversion), not outcomes both implementations share.
+- **A continuation command must set an explicit selection** — inserting at a collapsed caret leaves the caret on the previous line (`assoc = -1`).
+- **Line block prefixes are structural** — clamp clicks/Home/↑↓ to the content start; never make line-start marks atomic; prefix = mark + exactly one space.
+- **There is no indentation service inside a fence** — `getIndentation` is always null there; `{`-style auto-indent is the engine's job.
+- **`alive` is instance-scoped, CM's `destroy` is tile-scoped** — a re-tiled widget gets a second `toDOM` on the same instance and may receive the old tile's `destroy` afterwards; `toDOM` must reactivate and `destroy` must only retire the current DOM.
+- **Async widgets need an observable degrade marker** — a silent `catch {}` / early return turned "render never landed" into an invisible placeholder; emit `data-omd-highlight` / `data-omd-render` and assert it in e2e.
+- **Block tiles are rebuilt during mount settling** — the selection-adjacent rebuild can intersect a widget's replace range, so the same instance gets `destroy` + a second `toDOM`; this is by design, and both "skip the measure rebuild" and "keep equivalent specs" were measured not to change it.
+- **Narrowing the selection rebuild ranges is a measured no-op** — the mount-time rebuild comes from CM's `DocTile.sync` reacting to the caret line's own decoration change, not from the block being in the dirty range.
+- **Block widgets leak on repeated mount/unmount** — flipping the caret in and out of a table/fence rebuilds the DOM each time and the heap keeps growing even after forced GC (2000 flips ≈ +1.8GB, not released by `view.destroy()`); engine-side state and the block registry are provably bounded, so the retention is elsewhere.
 - **Async widgets can outlive their original DOM** — check `isConnected` after awaits; `eq` compares `src`+`embed` (plus `lang`/cells/resolver when they feed rendering).
 - **Lezer has runtime-only internals missing from the typings** — cast with a comment; `tsc --noEmit` catches what vitest silently accepts.
-- **Desktop `defaultKeymap` is registered before engine keymaps** — engine Enter/Tab/arrow bindings need `Prec.high`.
+- **Desktop `defaultKeymap` is registered before engine keymaps** — `Prec.high` beats it, but every structural Enter and list Tab/Shift-Tab needs `Prec.highest` to beat `markdown()`'s bundled `Prec.high` Enter; list Tab must return true even when no rewrite applies, or the browser moves focus; arrow/caret-clamp bindings stay at `Prec.high`.
 - **Parser character codes are named, not magic** — use `parse/chars.ts` constants.
 - **Doc-start `---` is front matter, not a thematic rule** — unclosed front matter swallows to EOF.
 - **The complete-tree trap** — production code must never `forceParsing`/`ensureSyntaxTree` to `doc.length` (`crossLayerNoFullTree.test.ts` guards it).
 - **Decorations are seeded and windowed** — never assume a decoration exists outside the viewport window; `drainPendingLiveBuild` is test-only.
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.
+- **Link/Image/cell semantics are one shared projection** — `semantic/{link,image,inlineText}.ts` is the only node interpretation; Preview, sync export, rich export, and `parseCell` must consume it, never re-derive a destination/alt from `getChild("URL")`.
+- **Reference definitions are one incremental index** — `referenceIndexExtension` sits outside the live/source compartment; never rescan the document per new `Tree`, and never call `snapshotReferenceContext` from an update path.
+- **Current-state slice, stable resolver** — reuse the resolver while definitions are unchanged, but rebuild `sliceString` from the state at hand; a cached context silently reads stale label/alt text.
+- **Escape/HardBreak fold only the marker** — `\` and the line-end space run fold; the escaped character and the newline never do, and `replace:HardBreakMark` is explicitly non-atomic (Rule 4).
+- **Raw table-cell source stays raw; GFM pipe shielding is a separate pass** — `parseCell(..., { pipeEscapes: "gfm-table" })` strips exactly one shielding backslash per odd run (inline code included); never `replace(/\\\|/g, "|")` a whole cell again.
+- **Reference-dependent widgets invalidate by resolver identity** — `TableWidget.eq` + `build.ts::semanticProjections` rebuild already-built specs; a reference image that never rendered cannot appear later without a document-wide scan (accepted boundary).
 - **`Text.append` continues the last line** — batched assembly needs an empty junction line (`docText.ts`).
 - **Pasted blocks normalize their own boundaries** — blank line before/after + opaque-end newline in `paste/blockBoundaries.ts`; never "fix" paste rendering with a decoration-layer boundary exception.
+- **Rich paste inside verbatim syntax must preserve `text/plain`** — the desktop controller checks code/math/front matter before conversion; never run semantic HTML import inside literal syntax.
+- **Pasted assets stay pending until Markdown dispatch** — Rust owns exact batch paths; stale targets discard, successful dispatch commits, and an ambiguous commit acknowledgement must never delete files already referenced by the document.
+- **Complex Table `HTMLBlock` is a closed Type 6 contract, never general HTML** — serialized `<table>...</table>` must contain zero blank lines and end with `\n\n` (`boundary.end: "htmlBlock"`), downgrade inside lists/blockquotes, and pass `parseComplexTableBlock` (2D grid + `normalizePasteUrl`) before `ComplexTableWidget` or HTML export will render it; keep `HTMLBlock` in `SELECTION_BLOCKS`.
+- **Code-line Enter needs an exit branch** — on the final blank content line immediately before the closing fence, move after the fence instead of inserting blank lines inside forever.
+- **Paired `{}` needs its own Enter branch** — auto-pair and code-line continuation are separate handlers; `{|}` + Enter must align the existing `}`, not push it onto the indented inner line.
+- **Code render→source transitions anchor the clicked row** — rendered and editing line heights can differ across fonts/WebKit; compensate in `requestMeasure`, not with fixed heights.
+- **Auto pair: type-over before insertion** — checking insertion first turns a hand-typed `*bold*` closer into `*bold**`; the adapter's order is the contract.
+- **Auto pair: a `Prec.high` Backspace binding must `return false` when it does not apply** — otherwise it steals `skipAtomic`'s whole-atom delete at folded marker boundaries.
+- **Auto pair: line-start `*` and `$` are block structure** — the paired `* *` becomes a list item and `$$` becomes a MathBlock that swallows to EOF; rule 2b suppresses exactly those two, never `` ` ``/`_`.
+- **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
+- **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
+- **`coordsAtPos` throws inside `ViewPlugin.update`** — layout reads are illegal during an update; position overlays in `requestMeasure` (read coords / write DOM separately) or the toolbar silently never appears while happy-dom tests stay green.
+- **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
 
-- **Right-click paste on macOS deletes extra lines** — the paste handler must dispatch from a saved `posAtCoords` position, not CM's `doPaste`.
+- **Right-click paste on macOS deletes extra lines** — dispatch from a saved `posAtCoords` position, and register the desktop paste handler before engine rich paste so HTML-bearing clipboards cannot bypass it.
 - **Dispatching changes without a selection leaves the caret before the insert** — always set an explicit anchor; never `replaceSelection` on async paths.
 - **Normalization banner accessibility** — `aria-disabled`, never native `disabled`; the live-region host mounts on the first frame.
 - **Relative image source and filesystem path are different concerns** — resolve through the `resolveImageSrc` host callback only.
@@ -54,6 +93,7 @@
 - **Editing hot path owns zero O(doc) work** — no doc string on the update path; materialize on the trailing cadence.
 - **Open-path scale policy has one entry point** — `resetTabDocument` and `ensureViews`; budget/windowing globals follow the active tab only.
 - **Path containment checks must normalize separators** — use `pathWithinDir`.
+- **`revealItemInDir` fails on forward-slash Windows paths** — `\\?\C:\…` + UI `/` separators → `//?/C:/…`, which the plugin cannot simplify and the Shell cannot parse; restore `\` at the call site.
 - **Bounded waits on the save queue** — `awaitWithTimeout`; the save chain keeps running after a timeout.
 - **Stock `drawSelection` extends line ends to the content edge** — the vendored `tightSelection.ts` is the only selection layer; re-diff it on every `@codemirror/view` bump (guard test enforces).
 - **`highlightActiveLine` paints nothing but is load-bearing** — focus mode needs the class; overrides need more classes than the base theme (it is injected later); `.omd-codeblock.cm-activeLine` must repaint.
@@ -62,6 +102,7 @@
 - **Font family names must be quoted** — route through `cssFamily`; presets pass through unchanged.
 - **`html[data-theme]` only restyles the webview** — native chrome needs `color-scheme` plus `set_window_theme`, applied pre-paint from Rust; the frontend must not push before settings load.
 - **CM base-theme `&dark` variants never apply** — theme via CSS variables, never `EditorView.theme(..., {dark: true})`.
+- **Opaque `background` shorthands erase the quote bar** — the bar is a gradient painted by `--omd-bq-image`; `.omd-code` / `.omd-code-header` use the `background` shorthand and must repaint it.
 - **JS `listen()` defaults to Any — `emit_to` alone does not scope delivery** — targeted listeners pin `{ kind: "AnyLabel", label }` via `listenTarget()` (session-flush, menu, open-file); broadcast `emit` still reaches AnyLabel.
 - **Non-`main` windows must never call `restoreDraft()`** — the mount-flow `windowScope.isMainWindow()` branch keeps a fresh editor window from hijacking the main window's recovery record.
 - **`localStorage` is shared across same-origin webviews** — `STORAGE_KEY_SESSION` is a last-writer-wins fallback only; the Rust per-window shard is the truth.
@@ -84,12 +125,41 @@
 - **Menu events carry no window identity** — route through the registry MRU (`menu.rs` `focused_label`); zero windows means the command is dropped.
 - **FlushGate rounds are counting** — one global deadline over the target set; `ack` carries the calling window label and non-target acks are ignored; empty targets complete immediately.
 - **Session shards drop on window close, survive app exit** — removal runs in the CloseRequested finisher under `SessionFileLock`; a crash may restore a window closed after its last flush (accepted).
-
-## Tooling and process
-
 - **`tauri-plugin-log` defaults destroy evidence** — `Builder::default()` is `LevelFilter::Trace` in release too, and `KeepOne` calls `fs::remove_file` at 40 KB; set level, `max_file_size`, and `KeepSome`.
 - **A plugin `setup` failure panics before any window appears** — a file-open error propagates out of `build()`'s `initialize_plugins(handle)?`; never let a filesystem-touching plugin `setup` be load-bearing for startup.
 - **The app `.setup()` hook runs on the event loop's `Ready` event, and a non-`Ok` return becomes `panic!("Failed to setup app: {e}")`** — that is what makes late plugin registration possible *and* what makes an error from setup fatal.
+
+## Tooling and process
+
+## Playwright only cleans up processes it owns
+
+Local e2e used to set `reuseExistingServer: true`. When port 9420 was already
+occupied, Playwright reused that Vite process instead of starting it, so it did
+not own or stop the process after the suite. A concurrent worktree could also
+silently test the other worktree's served `src/`. Separately,
+`scroll-audit.mjs` and `calibrate-heights.mjs` put `browser.close()` at the end
+of the happy path; any earlier exception left system-Chrome children running.
+
+The ownership contract is now:
+
+- `test:e2e` runs in the foreground and lets Playwright own Vite. The config
+  uses `url`, `--strictPort`, and defaults `reuseExistingServer` to false.
+- Human-managed reuse is explicit: `PW_REUSE_SERVER=1`. Whoever starts that
+  server also owns stopping it.
+- Concurrent worktrees use different `PW_PORT` values. An occupied port is a
+  useful failure, not a reason to reuse an unknown server.
+- Standalone browser audits require an externally managed Vite server: start it
+  on a dedicated `PW_PORT`, retain its PID/command handle, and stop that exact
+  process after the audit. The audit itself requires `browser.close()` in
+  `finally`, so normal failures still release Chrome.
+
+No in-process cleanup can run after an unconditional kill or IDE crash. In
+that case, inspect listeners and command lines, then stop only the confirmed
+PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
+Win32_Process`; on macOS/Linux, use `lsof -i :<port>` and `ps`. Never kill all
+`chrome`/`node` processes by name: e2e deliberately uses the installed Chrome
+channel, and automation flags are also used by legitimate MCP browser
+sessions.
 
 ## Tauri updater signing keys and macOS targets are exact contracts
 
@@ -139,6 +209,10 @@ Two environment gaps produce stray warnings in `pnpm verify` if you break their 
 - **Node 25 shadows `localStorage`.** Node 25 ships an experimental file-backed `globalThis.localStorage` that warns `--localstorage-file was provided without a valid path` on any access, and the happy-dom vitest env wires `window.localStorage` to that same Node object — so a bare `localStorage.getItem()` in app code (recents, outline toggle) warns in every desktop worker. Fix: `apps/desktop/test/setup.ts` installs an in-memory `Storage` on both `globalThis.localStorage` and `window.localStorage`. If you drop that override, the warning returns and tests still pass.
 - **happy-dom leaves `document.compatMode` undefined.** KaTeX checks `document.compatMode !== "CSS1Compat"` at module load and warns "doesn't work in quirks mode" (rendering still works because `renderToString` bypasses the disabled DOM `render`). Fix: `packages/engine/test/setup.ts` pins `compatMode` to `"CSS1Compat"` via `Object.defineProperty`. Keep the engine's `setupFiles` entry in `vitest.config.ts`.
 - **happy-dom's default user agent advertises `X11`, so `isMacOS()` is false in every desktop test.** The default agent is `Mozilla/5.0 (X11; Darwin arm64) …` and `detectPlatform` maps `X11` to linux — even on a Mac dev machine. Any test exercising macOS-only behavior (e.g. the `MACOS_ONLY_COMMANDS` export gating in `exportGating.test.ts`, `App.test.tsx`'s native export tests) must stub the agent with `Object.defineProperty(window.navigator, "userAgent", { value: <mac UA>, configurable: true })` before `renderApp()` and restore it in `afterEach`. Tests that don't care about platform run as "linux" — do not assert mac glyphs or mac-only commands in them. When restoring, note the stub may be the *only own* property on `navigator` (the real `userAgent` lives on the prototype): if `getOwnPropertyDescriptor` returned `undefined` before the stub, restore with `delete (window.navigator as { userAgent?: string }).userAgent` — skipping the restore leaves the stub active and silently breaks every later test in the file (a mac stub makes `AppMenu` render `null`).
+
+## Chromium editor E2E proves the projection, not the clipboard
+
+`apps/desktop/e2e/*.spec.ts` runs in system Chrome against `e2e/harness.html`. It can assert decorations, inline widget DOM, table-cell DOM, and the source text a synthetic paste produces — but Playwright/CDP clipboard emulation never exercises the native path: NSPasteboard flavors, the WebKitGTK right-click workaround, WebView2 differences, and the Rust-side image write are all outside it. A green paste spec therefore means "the engine projects these bytes correctly", never "pasting from Finder/Safari/Word works". Those conclusions belong in `manual-qa.md` with a real `pnpm dev` window.
 
 ## Benchmark jitter is real — budgets warn, they never gate
 

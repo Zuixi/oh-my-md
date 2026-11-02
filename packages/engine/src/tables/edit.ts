@@ -49,11 +49,24 @@ function cellMatches(source: string, cell: TableCellData): boolean {
   )
 }
 
+/** Length of the line break starting at `pos` (0 when there is none). */
+function lineBreakAt(source: string, pos: number): number {
+  if (source.startsWith("\r\n", pos)) return 2
+  const char = source[pos]
+  return char === "\n" || char === "\r" ? 1 : 0
+}
+
+/** Length of the line break ending at `pos` (0 when there is none). */
+function lineBreakBefore(source: string, pos: number): number {
+  if (pos >= 2 && source.startsWith("\r\n", pos - 2)) return 2
+  return pos > 0 ? lineBreakAt(source, pos - 1) : 0
+}
+
 /**
  * Validate every table-relative offset against the captured source before any
- * structural operator runs. `lineTo` must rest on a newline (or the document
- * end) because the changes own exactly one newline per row boundary; a row
- * whose line boundary drifted fails here and the operator returns `null`.
+ * structural operator runs. `lineTo` must rest on a line break (or the document
+ * end) because the changes own exactly one break per row boundary; a row whose
+ * line boundary drifted fails here and the operator returns `null`.
  *
  * `source` is the table substring itself (`Table` node text), so no absolute
  * base is needed: cell, line, and prefix slices all address `source` directly.
@@ -62,11 +75,15 @@ function rowMatches(source: string, row: TableRowData): boolean {
   if (row.lineFrom < 0 || row.lineFrom > row.from || row.from > row.to || row.to > row.lineTo) return false
   if (row.lineTo > source.length) return false
   if (row.lineFrom !== row.from && source.slice(row.lineFrom, row.from) !== row.prefix) return false
-  if (row.lineTo < source.length && source[row.lineTo] !== "\n") return false
+  if (row.lineTo < source.length && lineBreakAt(source, row.lineTo) === 0) return false
   return row.cells.every(cell => cell === null || cellMatches(source, cell))
 }
 
-function tableMatches(source: string, table: TableData): boolean {
+/**
+ * Range validation shared by every table operator: every cell slice must still
+ * match the captured source. Engine-internal — not part of the public barrel.
+ */
+export function tableSourceMatches(source: string, table: TableData): boolean {
   if (table.header.cells.length === 0) return false
   if (table.delimiter.cells.length !== table.header.cells.length) return false
   if (!rowMatches(source, table.header)) return false
@@ -90,7 +107,7 @@ export function setTableColumnAlignment(
   column: number,
   alignment: TableAlignment,
 ): TableSourceChange | null {
-  if (!tableMatches(source, table)) return null
+  if (!tableSourceMatches(source, table)) return null
   if (column < 0 || column >= table.delimiter.cells.length) return null
   const cell = table.delimiter.cells[column]
   if (!cell) return null
@@ -111,7 +128,7 @@ export function insertTableRow(
   afterRow: number,
 ): readonly TableSourceChange[] | null {
   if (afterRow < 0 || afterRow > table.rows.length) return null
-  if (!tableMatches(source, table)) return null
+  if (!tableSourceMatches(source, table)) return null
 
   const cols = table.header.cells.length
   const neighbor: TableRowData =
@@ -140,20 +157,16 @@ export function deleteTableRow(
   row: number,
 ): readonly TableSourceChange[] | null {
   if (row < 0 || row >= table.rows.length || table.rows.length <= 1) return null
-  if (!tableMatches(source, table)) return null
+  if (!tableSourceMatches(source, table)) return null
   const target = table.rows[row]
   const lineFrom = target.lineFrom
   const lineTo = target.lineTo
   if (lineTo > source.length) return null
   // 拥有恰好一个换行：行内或表尾有换行则吞并它，否则吞并行首的前置换行，
-  // 保证剩下的表与下一个块不粘连。
+  // 保证剩下的表与下一个块不粘连。CRLF 的换行是两个字符。
   const hasTrailingNewline = lineTo < source.length
-  const from = hasTrailingNewline
-    ? lineFrom
-    : lineFrom > 0 && source[lineFrom - 1] === "\n"
-      ? lineFrom - 1
-      : lineFrom
-  const to = hasTrailingNewline ? lineTo + 1 : lineTo
+  const from = hasTrailingNewline ? lineFrom : lineFrom - lineBreakBefore(source, lineFrom)
+  const to = hasTrailingNewline ? lineTo + Math.max(1, lineBreakAt(source, lineTo)) : lineTo
   return [{ from, to, insert: "" }]
 }
 
@@ -164,7 +177,7 @@ export function insertTableColumn(
 ): readonly TableSourceChange[] | null {
   const cols = table.header.cells.length
   if (cols === 0 || afterColumn < 0 || afterColumn >= cols) return null
-  if (!tableMatches(source, table)) return null
+  if (!tableSourceMatches(source, table)) return null
 
   const changes: TableSourceChange[] = []
   const insertAfter = (row: TableRowData, fill: string): boolean => {
@@ -211,7 +224,7 @@ export function deleteTableColumn(
 ): readonly TableSourceChange[] | null {
   const cols = table.header.cells.length
   if (cols <= 1 || column < 0 || column >= cols) return null
-  if (!tableMatches(source, table)) return null
+  if (!tableSourceMatches(source, table)) return null
 
   const changes: TableSourceChange[] = []
   const dropFrom = (row: TableRowData) => {

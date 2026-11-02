@@ -83,8 +83,10 @@ Typora 证明了 Markdown 编辑器可以像现代文字处理器一样顺滑—
 | 平台 | 下载文件 | 说明 |
 | --- | --- | --- |
 | macOS | Universal `.dmg` | 同时支持 Apple Silicon 与 Intel Mac |
-| Windows x64 | `-setup.exe` **（推荐）** 或 `.msi` | NSIS 安装器最简便；MSI 适合受管环境 |
+| Windows x64 | `-setup.exe` | Windows 只发布这一个 NSIS 安装包；受管环境见下方说明 |
 | Linux x64 | `.AppImage` 或 `.deb` | AppImage 可直接运行；deb 适用于 Debian/Ubuntu 系发行版 |
+
+> **之前装过 MSI 版本？** 运行一次 `-setup.exe` 安装向导即可——它会引导你卸载旧的 MSI 安装；完成后桌面若出现两个图标，删除较旧的那个即可。MSI 不再随 Release 发布；受管环境（Intune / SCCM 等）可从源码自行构建：`pnpm --filter @omd/desktop tauri build --bundles msi`，详见 [docs/guides/windows-installer.md](./docs/guides/windows-installer.md)。
 
 ### 未签名安装包提示
 
@@ -119,11 +121,10 @@ sudo apt install ./oh-my-md_*.deb
 | --- | --- |
 | macOS（DMG 安装的 app） | ✅ |
 | Windows NSIS（`-setup.exe`） | ✅ |
-| Windows MSI | — ¹ |
 | Linux AppImage | ✅ |
 | Linux deb | — ¹ |
 
-¹ 这些安装包会检查更新，但改为打开官方 GitHub Release 页面手动安装——updater 绝不会替换 MSI 或 deb 安装。
+¹ deb 包会检查更新，但改为打开官方 GitHub Release 页面手动安装——updater 绝不会替换 deb 安装。历史 MSI 安装同此路径，且下载按钮会直达对应版本的 `-setup.exe`，运行一次即完成迁移（见上方说明）。
 
 - **从 `0.0.1` 开始**：最初发布的构建无法自行更新。请先手动安装一个更新器就绪版本（`0.1.0` 或更高）；此后更高的版本即可在应用内更新。
 - **updater 信任独立于安装包签名**：上面的安装包未签名（见上方警告），但 updater 本身仍然可信——每个更新包都用项目的 minisign 私钥签名，应用用内置的公钥校验签名。签名校验失败会停止安装并指向官方 GitHub Release，绝不回退到未经验证的 URL。

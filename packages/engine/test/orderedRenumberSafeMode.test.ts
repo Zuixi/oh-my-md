@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { EditorView } from "@codemirror/view"
-import { ChangeSet, EditorState } from "@codemirror/state"
+import { ChangeSet, EditorState, Transaction } from "@codemirror/state"
 import { forceParsing } from "@codemirror/language"
+import { history, undo } from "@codemirror/commands"
 import { makeState } from "./helpers"
+import { tableAt } from "../src/tables/navigate"
+import {
+  beginTableEdit,
+  experimentalTableDirectEdit,
+  getTableEditSession,
+  tableCellInputSpec,
+} from "../src/tables/directEdit"
 import {
   editorExtensions,
+  editorPerformancePolicy,
   getPendingOrderedListNormalization,
+  SAFE_PERFORMANCE_POLICY,
+  STANDARD_PERFORMANCE_POLICY,
+  setEditorPerformancePolicy,
   setSafeModeRendering,
 } from "../src/index"
 import {
@@ -100,6 +112,52 @@ function mount(doc: string) {
 
 const tick = () => new Promise(r => setTimeout(r, 100))
 
+const ORDERED_TABLE = "1. first\n\n   | A | B |\n   | --- | --- |\n   | 1 | 2 |\n\n2. second"
+const ORDERED_TABLE_STALE = ORDERED_TABLE.replace("2. second", "7. second")
+const TABLE_PROBE = ORDERED_TABLE.indexOf("| A | B |")
+
+function mountDirectEdit(doc: string, freezeRenumber: boolean) {
+  const parent = document.createElement("div")
+  document.body.appendChild(parent)
+  const errors: unknown[] = []
+  const view = new EditorView({
+    state: EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        editorExtensions(),
+        history(),
+        experimentalTableDirectEdit,
+        EditorView.exceptionSink.of(e => { errors.push(e) }),
+      ],
+    }),
+    parent,
+  })
+  Object.defineProperty(view, "composing", { configurable: true, writable: true, value: freezeRenumber })
+  return { view, errors, cleanup: () => { view.destroy(); parent.remove() } }
+}
+
+function release(view: EditorView) {
+  Object.defineProperty(view, "composing", { configurable: true, writable: true, value: false })
+}
+
+function editOrderedTableCell(view: EditorView, value: string) {
+  const table = tableAt(view.state, TABLE_PROBE)
+  if (!table) throw new Error("expected a table inside the ordered list item")
+  view.dispatch({
+    effects: beginTableEdit({
+      tableFrom: table.from,
+      tableTo: table.to,
+      row: 1,
+      column: 1,
+      source: table.source,
+    }),
+  })
+  const spec = tableCellInputSpec(view.state, value, "typing")
+  if (!spec) throw new Error("expected a table cell input spec")
+  view.dispatch(view.state.update(spec, { annotations: Transaction.time.of(1_000) }))
+}
+
 describe("orderedRenumber safe-mode windowed scans", () => {
   afterEach(() => {
     setSafeModeRendering(false)
@@ -186,6 +244,103 @@ describe("orderedRenumber safe-mode windowed scans", () => {
     cleanup()
   })
 
+  it("keeps an ordered-list table marker unchanged through the first direct edit", async () => {
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE, false)
+    forceParsing(view, ORDERED_TABLE.length, 10000)
+    await tick()
+    const original = view.state.doc.toString()
+    expect(original).toBe(ORDERED_TABLE)
+    editOrderedTableCell(view, "9")
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toContain("2. second")
+    expect(view.state.doc.toString()).toContain("   | 1 | 9 |")
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe(original)
+    cleanup()
+  })
+
+  it("keeps an ordered-list table marker unchanged in safe mode too", async () => {
+    setSafeModeRendering(true)
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE, false)
+    forceParsing(view, ORDERED_TABLE.length, 10000)
+    await tick()
+    const original = view.state.doc.toString()
+    expect(original).toBe(ORDERED_TABLE)
+    editOrderedTableCell(view, "9")
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toContain("2. second")
+    expect(view.state.doc.toString()).toContain("   | 1 | 9 |")
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe(original)
+    cleanup()
+  })
+
+  it("leaves a stale ordered-list marker alone after a suppressed table edit", async () => {
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE_STALE, true)
+    forceParsing(view, ORDERED_TABLE_STALE.length, 10000)
+    await tick()
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    release(view)
+    editOrderedTableCell(view, "9")
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toContain("7. second")
+    expect(view.state.doc.toString()).toContain("   | 1 | 9 |")
+    cleanup()
+  })
+
+  // 撤销发生在表格会话仍存活时：撤销事务不携带抑制注解，但把文档退回原字节
+  // 不得让陈旧标记被重编号 —— 否则「编辑一格再撤销」就不再是字节恒等操作。
+  it("keeps a stale ordered-list marker unchanged when the table edit is undone", async () => {
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE_STALE, true)
+    forceParsing(view, ORDERED_TABLE_STALE.length, 10000)
+    await tick()
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    release(view)
+    editOrderedTableCell(view, "9")
+    await tick()
+    expect(view.state.doc.toString()).toContain("   | 1 | 9 |")
+    expect(getTableEditSession(view.state)).not.toBeNull()
+    expect(undo(view)).toBe(true)
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    cleanup()
+  })
+
+  it("keeps a stale ordered-list marker unchanged when the table edit is undone in safe mode", async () => {
+    setSafeModeRendering(true)
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE_STALE, true)
+    forceParsing(view, ORDERED_TABLE_STALE.length, 10000)
+    await tick()
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    release(view)
+    editOrderedTableCell(view, "9")
+    await tick()
+    expect(view.state.doc.toString()).toContain("   | 1 | 9 |")
+    expect(getTableEditSession(view.state)).not.toBeNull()
+    expect(undo(view)).toBe(true)
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    cleanup()
+  })
+
+  it("renumbers the same stale marker after an ordinary document edit", async () => {
+    const { view, errors, cleanup } = mountDirectEdit(ORDERED_TABLE_STALE, true)
+    forceParsing(view, ORDERED_TABLE_STALE.length, 10000)
+    await tick()
+    expect(view.state.doc.toString()).toBe(ORDERED_TABLE_STALE)
+    release(view)
+    view.dispatch({ changes: { from: 8, insert: "x" }, annotations: Transaction.userEvent.of("input.type") })
+    await tick()
+    expect(errors.map(String)).toEqual([])
+    expect(view.state.doc.toString()).toContain("2. second")
+    cleanup()
+  })
+
   it("deduplicates a list straddling two disjoint scan ranges", () => {
     // 一个 OrderedList 横跨两个归并后仍不相邻的扫描区间（如可见窗口与远端变更
     // 区间的间隙足够窄、列表足够长）时会被 enter 两次，两次遍历产出完全相同的
@@ -206,5 +361,55 @@ describe("orderedRenumber safe-mode windowed scans", () => {
     // 去重后的变更经 ChangeSet.of 落盘得到正确文档
     const applied = state.update({ changes: ChangeSet.of(left, doc.length) }).state.doc.toString()
     expect(applied).toBe("1. a\n2. b\n3. c")
+  })
+})
+
+// 按视图策略（performancePolicy.ts）的扫描范围：显式本地策略优先于全局开关，
+// 缺省仍走全局 —— 两个视图同文档同时持有相反策略时互不影响。
+describe("per-editor ordered renumber scan policy", () => {
+  afterEach(() => {
+    setSafeModeRendering(false)
+  })
+
+  it("scans the whole tree for a view whose local policy disables windowing", async () => {
+    setSafeModeRendering(true)
+    const { doc } = farListDoc()
+    const windowed = mount(doc)
+    const fullTree = mount(doc)
+    setEditorPerformancePolicy(fullTree.view, STANDARD_PERFORMANCE_POLICY)
+    expect(editorPerformancePolicy(fullTree.view.state)).toEqual(STANDARD_PERFORMANCE_POLICY)
+    expect(editorPerformancePolicy(windowed.view.state)).toBeNull()
+    forceParsing(windowed.view, doc.length, 10000)
+    forceParsing(fullTree.view, doc.length, 10000)
+    await tick()
+    expect(windowed.errors.map(String)).toEqual([])
+    expect(fullTree.errors.map(String)).toEqual([])
+    // 全局窗口化：远端乱序列表原样保留；本地标准策略：全树扫描立即修复
+    expect(windowed.view.state.doc.toString()).toBe(doc)
+    expect(windowed.view.state.doc.toString()).not.toContain("2. b")
+    expect(fullTree.view.state.doc.toString().endsWith("1. a\n2. b\n3. c")).toBe(true)
+    expect(getPendingOrderedListNormalization(fullTree.view.state)?.markerCount).toBe(2)
+    windowed.cleanup()
+    fullTree.cleanup()
+  })
+
+  it("windows scans for a view whose local policy enables windowing", async () => {
+    const { doc } = farListDoc()
+    const local = mount(doc)
+    setEditorPerformancePolicy(local.view, SAFE_PERFORMANCE_POLICY)
+    expect(editorPerformancePolicy(local.view.state)).toEqual(SAFE_PERFORMANCE_POLICY)
+    const legacy = mount(doc)
+    forceParsing(local.view, doc.length, 10000)
+    forceParsing(legacy.view, doc.length, 10000)
+    await tick()
+    expect(local.errors.map(String)).toEqual([])
+    expect(legacy.errors.map(String)).toEqual([])
+    // 同文档同视口，唯一变量是策略来源：本地安全策略与遗留全局开关行为一致
+    expect(local.view.state.doc.toString()).toBe(doc)
+    expect(legacy.view.state.doc.toString().endsWith("1. a\n2. b\n3. c")).toBe(true)
+    expect(getPendingOrderedListNormalization(local.view.state)).toBeNull()
+    expect(getPendingOrderedListNormalization(legacy.view.state)?.markerCount).toBe(2)
+    local.cleanup()
+    legacy.cleanup()
   })
 })

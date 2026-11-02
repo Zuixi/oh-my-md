@@ -58,8 +58,16 @@ describe("continueFence (Enter completes an unclosed fence)", () => {
     expect(apply("hello", 5).fired).toBe(false)
   })
 
-  it("refuses inside a blockquote", () => {
-    expect(apply("> ```", 5).fired).toBe(false)
+  // Task 5：引用内的围栏同样补全，前缀逐行续写（`> ` 之下再嵌套也照抄）。
+  it("completes inside a blockquote and repeats the quote prefix", () => {
+    const r = apply("> ```js", 7)
+    expect(r.fired).toBe(true)
+    expect(r.doc).toBe("> ```js\n> \n> ```")
+    expect(r.caret).toBe(r.doc.indexOf("\n") + 3)
+  })
+
+  it("refuses inside a list item (no correct content indent)", () => {
+    expect(apply("- ```js", 7).fired).toBe(false)
   })
 
   it("refuses when the selection is not empty", () => {

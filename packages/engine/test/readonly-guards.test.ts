@@ -11,9 +11,10 @@ import {
   outdentList,
   toggleBold,
 } from "../src/index"
+import { autoPairSpec, deletePairSpec, type AutoPairOptions } from "../src/format/autoPair"
 
 // Task 6 修复回归：readOnly facet 是建议性的 —— typed input 被 view 层忽略，
-// 但 keymap 命令与 ViewPlugin 直接 dispatch 事务。HUGE 档只读 Live 文档挂满
+// 但 keymap 命令与 ViewPlugin 直接 dispatch 事务。只读 Live 文档挂满
 // 引擎扩展，引擎自己的命令/重编号入口必须拒绝一切文档改写。
 
 function readonlyState(doc: string, head: number) {
@@ -42,9 +43,11 @@ describe("engine keymaps refuse to mutate readonly docs", () => {
   })
 
   it("indentList / outdentList (Tab / Shift-Tab) return false and leave the doc unchanged", () => {
-    const state = readonlyState("  - hello", 9)
-    expect(run(indentList, state)).toEqual({ handled: false, doc: "  - hello" })
-    expect(run(outdentList, state)).toEqual({ handled: false, doc: "  - hello" })
+    // 两份文档都在可编辑态确实能改写（下面的对照用例），所以拒绝只能来自只读守卫。
+    const indented = readonlyState("- parent\n- child", 16)
+    expect(run(indentList, indented)).toEqual({ handled: false, doc: "- parent\n- child" })
+    const outdented = readonlyState("- parent\n  - child", 18)
+    expect(run(outdentList, outdented)).toEqual({ handled: false, doc: "- parent\n  - child" })
   })
 
   it("markdownKeymap formatting (toggleBold) returns false and leaves the doc unchanged", () => {
@@ -59,6 +62,13 @@ describe("engine keymaps refuse to mutate readonly docs", () => {
     expect(run(continueList, list)).toEqual({ handled: true, doc: "- hello\n- " })
     const word = makeState("hello world").update({ selection: { anchor: 6 } }).state
     expect(run(toggleBold, word)).toEqual({ handled: true, doc: "hello **world**" })
+  })
+
+  it("keeps Tab / Shift-Tab working on editable list lines", () => {
+    const indentable = makeState("- parent\n- child").update({ selection: { anchor: 16 } }).state
+    expect(run(indentList, indentable)).toEqual({ handled: true, doc: "- parent\n  - child" })
+    const outdentable = makeState("- parent\n  - child").update({ selection: { anchor: 18 } }).state
+    expect(run(outdentList, outdentable)).toEqual({ handled: true, doc: "- parent\n- child" })
   })
 })
 
@@ -110,12 +120,11 @@ describe("orderedRenumber skips readonly docs", () => {
   })
 })
 
-// Round 2：widget/paste 改写路径不经过 DOM 输入层（view 层的 readOnly 拦截只覆盖
-// typed input / drop / paste 内建处理器），checkbox 点击、表格编辑、富文本粘贴都
-// 直 dispatch 事务 —— 只读档必须逐一拒绝。
-describe("widget and paste mutation paths refuse readonly docs", () => {
+// Round 2：widget 改写路径不经过 DOM 输入层，checkbox 点击、表格编辑会直接
+// dispatch 事务 —— 只读档必须逐一拒绝。粘贴由 desktop host 独立覆盖。
+describe("widget mutation paths refuse readonly docs", () => {
   // makeState 挂临时视图排空渐进装饰，拿到的 state 已含全部 widget 装饰，
-  // 再用真实 EditorView 挂载让 widget DOM 真正渲染（htmlPaste 也随 editorExtensions 装配）。
+  // 再用真实 EditorView 挂载让 widget DOM 真正渲染。
   function mountDecorated(doc: string, readonly: boolean) {
     const state = makeState(doc, [
       ...(readonly ? [EditorState.readOnly.of(true)] : []),
@@ -150,7 +159,7 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     cleanup()
   })
 
-  it("table widget disables edit affordances and toolbar clicks never dispatch", async () => {
+  it("table widget disables its toolbar and readonly clicks never dispatch", async () => {
     const doc = "intro\n\n| a | b |\n|---|---|\n| 1 | 2 |"
     const { view, cleanup } = mountDecorated(doc, true)
     await settle()  // renderInto 走微任务
@@ -158,47 +167,59 @@ describe("widget and paste mutation paths refuse readonly docs", () => {
     expect(wrap).toBeTruthy()
     expect(Array.from(wrap!.querySelectorAll<HTMLButtonElement>(".omd-table-toolbar button"))
       .every(btn => btn.disabled)).toBe(true)
-    // 单元格 mousedown 不开行内编辑器
+    // hover 到某个格给出目标行列后按钮仍 disabled（readOnly 优先），
+    // 程序化 click 绕过 disabled 的用户交互语义 —— applyTableToolAt 的只读守卫拒绝改写。
     wrap!.querySelector("td")!
-      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-    expect(wrap!.querySelector("input.omd-table-edit")).toBeNull()
-    // 程序化触发工具栏（disabled 只挡用户交互），源码不被改写
+      .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
     const insertRow = wrap!.querySelector<HTMLButtonElement>("[data-act='insert-row']")!
+    expect(insertRow.disabled).toBe(true)
     insertRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
     insertRow.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+    await settle()
     expect(view.state.doc.toString()).toBe(doc)
     cleanup()
   })
 
-  // htmlPaste 的 domEventHandlers 先于 @codemirror/view 内建 paste 处理器运行，
-  // 内建的 readOnly 分支到不了 —— 扩展自身必须消费事件并拒绝插入。
-  function pasteEvent(html: string) {
-    const data = new Map([
-      ["text/html", html],
-      ["text/plain", "plain"],
-    ])
-    const event = new Event("paste", { cancelable: true, bubbles: true })
-    Object.defineProperty(event, "clipboardData", {
-      value: { getData: (type: string) => data.get(type) ?? "" },
-    })
-    return event
-  }
+})
 
-  it("rich paste is consumed but inserts nothing when readonly", async () => {
-    const { view, cleanup } = mountDecorated("intro", true)
-    const event = pasteEvent("<p><strong>bold</strong></p>")
-    view.contentDOM.dispatchEvent(event)
-    await settle()
-    expect(event.defaultPrevented).toBe(true)
-    expect(view.state.doc.toString()).toBe("intro")
-    cleanup()
+// 自动配对：键入路径由 @codemirror/view 的 readOnly 拦截，但 Backspace 的成对删除是
+// Prec.high 的 keymap 命令、直接 dispatch —— 必须自己看 readOnly；两个 spec 同理。
+describe("auto pair refuses to mutate readonly docs", () => {
+  const ALL: AutoPairOptions = { brackets: true, quotes: true, markdownSyntax: true }
+
+  // 两个判定都在第一行对 state.readOnly 短路，且 `(`/`)` 从不查语法树 —— 文档有多大
+  // 对结果毫无影响，所以这里用最小文档把「只读 → null、可编辑 → 非 null」钉死，
+  // 而不是摆一个大文件假装覆盖了性能。
+  it("a readonly state rejects pairing at a position an editable one accepts", () => {
+    const readonly = EditorState.create({
+      doc: "()",
+      selection: { anchor: 1 },
+      extensions: [EditorState.readOnly.of(true)],
+    })
+    expect(deletePairSpec(readonly, ALL)).toBeNull()
+    expect(autoPairSpec(readonly, 1, 1, "(", ALL)).toBeNull()
+    // 非只读对照：同一位置两个 spec 都成立（唯一变量是 readOnly）。
+    const editable = EditorState.create({ doc: "()", selection: { anchor: 1 } })
+    expect(deletePairSpec(editable, ALL)).not.toBeNull()
+    expect(autoPairSpec(editable, 1, 1, "(", ALL)).not.toBeNull()
   })
 
-  it("rich paste still inserts markdown when editable", async () => {
-    const { view, cleanup } = mountDecorated("intro", false)
-    view.contentDOM.dispatchEvent(pasteEvent("<p><strong>bold</strong></p>"))
-    await settle()
-    expect(view.state.doc.toString()).toContain("**bold**")
-    cleanup()
+  it("Backspace between a pair leaves a readonly view untouched", () => {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "()",
+        selection: { anchor: 1 },
+        extensions: [EditorState.readOnly.of(true), editorExtensions()],
+      }),
+      parent,
+    })
+    view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Backspace", bubbles: true, cancelable: true,
+    }))
+    expect(view.state.doc.toString()).toBe("()")
+    view.destroy()
+    parent.remove()
   })
 })

@@ -9,6 +9,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+echo "==> quality (module-size gate + behavior tests)"
+pnpm check:quality
+
 echo "==> engine (tsc --noEmit + vitest)"
 pnpm test
 

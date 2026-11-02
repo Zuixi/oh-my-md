@@ -1,160 +1,394 @@
+import { isolateHistory, redo, undo } from "@codemirror/commands"
+import { Facet, type EditorState, type StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
-import { parseCell, type CellNode } from "../../parse/cell"
 import {
-  deleteTableColumn,
-  deleteTableRow,
-  insertTableColumn,
-  insertTableRow,
-  replaceTableCell,
-  setTableColumnAlignment,
-  type TableSourceChange,
-} from "../../tables/edit"
-import type { TableAlignment, TableData } from "../../tables/model"
-import { BlockWidget, type BlockEmbed } from "../blockWidget"
+  beginTableEdit,
+  closeTableEdit,
+  getTableEditSession,
+  setTableComposition,
+  tableCellInputSpec,
+} from "../../tables/directEdit"
+import type { CellParseOptions } from "../../parse/cell"
+import type { TableAlignment, TableCellData, TableData } from "../../tables/model"
+import { nextCell, tableAt, type TableContext } from "../../tables/navigate"
+import { applyTableToolAt } from "../../tables/sourceToolbar"
+import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
+import { revealTableSource } from "../../tables/sourceReveal"
+import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
+import {
+  bindRenderedTableCellOpener,
+  focusEditableCell,
+  freezeEditableTableColumns,
+  mountEditableCell,
+  syncEditableCell,
+} from "./tableCellEdit"
+import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
-import { icon, type IconName } from "../icons"
+import { icon } from "../icons"
+// cell 的 DOM 投影独立成文件（table.ts 已到增长上限）：这里只保留兼容再导出，
+// 既有调用方（tables.test.ts 等）继续从 table.ts 取 renderTableCellContent。
+import { renderTableCellContent, type ResolveSrc } from "./tableCell"
 
-interface PendingTableEdit {
-  readonly pos: number
-  readonly row: number
-  readonly col: number
-}
+export { renderTableCellContent }
+export type { ResolveSrc }
 
-const pendingTableEdits = new WeakMap<EditorView, PendingTableEdit>()
+/** 表格外的引用定义解析器（来自 EditorState 的 reference context，见 blocks.ts）。 */
+export type ResolveReference = CellParseOptions["resolveReference"]
 
-/** 把对齐 action 装回为单条 marker 替换 change；列索引越界时返回 null。 */
-function alignColumnChange(
-  self: TableWidget,
-  alignment: TableAlignment,
-  col: number,
-): TableSourceChange | null {
-  return setTableColumnAlignment(self.src, self.table, col, alignment)
-}
-
-type TableToolAction =
-  | "insert-row"
-  | "insert-col"
-  | "delete-row"
-  | "delete-col"
-  | "align-left"
-  | "align-center"
-  | "align-right"
-
-const pendingTableTools = new WeakMap<
-  EditorView,
-  { readonly pos: number; readonly act: TableToolAction; readonly row: number; readonly col: number }
->()
-
-function changesNonOverlapping(changes: readonly TableSourceChange[]): boolean {
-  // changes 已按 from 升序；相邻区间不允许重叠（零宽插入允许贴边）。
-  for (let index = 1; index < changes.length; index++) {
-    if (changes[index].from < changes[index - 1].to) return false
-  }
-  return true
-}
-
-function reportViewError(view: EditorView, error: unknown): void {
-  for (const report of view.state.facet(EditorView.exceptionSink)) report(error)
-}
-
-type ResolveSrc = (src: string) => string
-
+/**
+ * 渲染输入 → 结构键（表头/表体每个单元格的 source + 行列数 + 对齐）。
+ * 旧实现是 `JSON.stringify(table)`：装饰重建（选区在表格附近移动也会重建 specs）
+ * 每次都做整表序列化和转义。这里按 source 直接拼接，覆盖同样的渲染输入但不做转义；
+ * 调用点还改成惰性求值 —— eq 先比 src，提交热路径 src 必变，结构键整段跳过。
+ * `null`（ragged 行缺失源码槽）与空 source 是两种不同渲染，用独立标记区分。
+ */
 export function tableEqualityKey(table: TableData): string {
-  return JSON.stringify(table)
+  const parts: string[] = []
+  const encode = (cells: readonly (TableCellData | null)[]) =>
+    cells.map(cell => (cell === null ? "\u0002" : cell.source)).join("\u0000")
+  parts.push(encode(table.header.cells))
+  for (const row of table.rows) parts.push(encode(row.cells))
+  parts.push(table.aligns.join(","))
+  return parts.join("\u0001")
 }
 
-function renderCellContainer(
-  parent: HTMLElement,
-  tag: string,
-  children: CellNode[],
-  resolveSrc?: ResolveSrc,
-): void {
-  const el = document.createElement(tag)
-  for (const child of children) renderCellNode(el, child, resolveSrc)
-  parent.appendChild(el)
+/**
+ * DOM 事件监听器是旧实例在 toDOM/renderInto 里挂上的，而 CM 的 pass-1 复用会保留新实例：
+ * `docview.ts findWidget` → `widget.updateDOM(tile.dom, view, tile.widget)` 成功后
+ * `return new WidgetTile(tile.dom, length, widget, flags)` —— DOM 和它的监听器仍属于旧
+ * 实例，tile.widget 却换成了新实例（实例轮换，见 engine AGENTS 7a / math widget 先例）。
+ * 所以监听器一律按 DOM 容器解析"当前 owner"，绝不闭包 this。
+ * 键含两个元素：widget 根 wrap（toDOM/updateDOM 的 dom）与 renderInto 收到的
+ * `.omd-block-body`（单元格和工具栏监听器都挂在 body 子树里）。
+ */
+const domOwner = new WeakMap<HTMLElement, TableWidget>()
+
+const TABLE_INPUT_CLASS = "omd-table-cell-input"
+const TABLE_INPUT_EVENT_TYPES = new Set([
+  "keydown", "keyup", "keypress", "beforeinput", "input", "click",
+  "compositionstart", "compositionupdate", "compositionend",
+])
+
+interface TableInputController {
+  readonly input: HTMLInputElement
+  readonly host: HTMLElement
+  readonly row: number
+  readonly column: number
+  composing: boolean
+  /** True while `commit()` dispatches its own table input transaction. */
+  committing: boolean
+  /** Session revision this controller last saw; a mismatch means history moved the doc. */
+  revision: number
+  paint(): void
+  focusAt(clientX?: number, clientY?: number, cellCaret?: number): void
+  destroy(): void
 }
 
-function renderCellNode(parent: HTMLElement, node: CellNode, resolveSrc?: ResolveSrc): void {
-  switch (node.type) {
-    case "text": parent.appendChild(document.createTextNode(node.text)); return
-    case "code": {
-      const el = document.createElement("code")
-      el.textContent = node.text
-      parent.appendChild(el)
+const tableInputControllers = new WeakMap<HTMLElement, TableInputController>()
+const viewInputControllers = new WeakMap<EditorView, TableInputController>()
+let tableInputControllerCount = 0
+
+export function activeTableInputControllerCountForTest(): number {
+  return tableInputControllerCount
+}
+
+function tableCellElements(body: HTMLElement): HTMLElement[][] {
+  const head = Array.from(body.querySelectorAll<HTMLElement>("thead th"))
+  const rows = Array.from(body.querySelectorAll<HTMLElement>("tbody tr"))
+    .map(tr => Array.from(tr.children) as HTMLElement[])
+  return head.length > 0 ? [head, ...rows] : rows
+}
+
+function tableCellDataRows(table: TableData): readonly (readonly (TableCellData | null)[])[] {
+  return [table.header.cells, ...table.rows.map(row => row.cells)]
+}
+
+function restoreTableCell(host: HTMLElement, row: number, column: number): void {
+  const owner = domOwner.get(host)
+  const el = tableCellElements(host)[row]?.[column]
+  if (!owner || !el) return
+  renderCellSlot(
+    el,
+    tableCellDataRows(owner.table)[row]?.[column] ?? null,
+    owner.resolveSrc,
+    owner.resolveReference,
+  )
+}
+
+function activeCellStart(state: EditorState, row: number, column: number): number | null {
+  const session = getTableEditSession(state)
+  if (!session) return null
+  const table = tableAt(state, session.target.tableFrom)
+  if (!table) return null
+  const cell = tableCellDataRows(table.data)[row]?.[column]
+  return cell ? table.from + cell.from : null
+}
+
+function editingCellOptions(host: HTMLElement): CellParseOptions {
+  const owner = domOwner.get(host)
+  return { pipeEscapes: "gfm-table", resolveReference: owner?.resolveReference }
+}
+
+function createTableInputController(
+  view: EditorView,
+  host: HTMLElement,
+  cellEl: HTMLElement,
+  row: number,
+  column: number,
+  source: string,
+): TableInputController {
+  const input = document.createElement("input")
+  input.type = "text"
+  input.className = TABLE_INPUT_CLASS
+  input.value = source
+  let destroyed = false
+  const frozenColumns = freezeEditableTableColumns(cellEl)
+  const projection = mountEditableCell(cellEl, input)
+  const repaint = () => {
+    if (destroyed) return
+    syncEditableCell(projection, cellEl, input, editingCellOptions(host))
+  }
+  const onSelectionChange = () => {
+    if (destroyed || document.activeElement !== input) return
+    repaint()
+  }
+
+  const commit = (value: string, kind: "typing" | "composition") => {
+    const spec = tableCellInputSpec(view.state, value, kind)
+    if (!spec) return
+    // 本次 dispatch 内部会同步跑 updateDOM，而版本推进属于 directEdit 的事务：此时控制器
+    // 版本还没变。用本地显式守卫标记"正在派发自己的事务"，让 updateDOM 跳过解析值回写
+    // （解析值会 trim，会把用户刚打的尾空格擦掉）；dispatch 之后（含异常退出）再按真实
+    // EditorState 校正版本。
+    controller.committing = true
+    try {
+      view.dispatch(spec)
+    } finally {
+      controller.committing = false
+      const session = getTableEditSession(view.state)
+      if (session) controller.revision = session.revision
+    }
+    repaint()
+  }
+
+  const close = () => {
+    if (destroyed) return
+    view.dispatch({ effects: closeTableEdit(), annotations: isolateHistory.of("after") })
+    controller.destroy()
+    restoreTableCell(host, row, column)
+  }
+
+  const moveToAdjacentCell = (step: 1 | -1) => {
+    const pos = activeCellStart(view.state, row, column)
+    if (pos === null) return
+    const slot = nextCell(view.state, pos, step)
+    if (!slot) return
+    const table = tableAt(view.state, slot.from)
+    if (table) activateTableCellInput(view, host, slot.row, slot.col, table)
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault()
+      view.dispatch({ annotations: isolateHistory.of("after") })
       return
     }
-    case "math": {
-      const el = document.createElement("code")
-      el.className = "omd-cell-math"
-      el.textContent = node.text
-      parent.appendChild(el)
+    if (event.key === "Tab") {
+      event.preventDefault()
+      moveToAdjacentCell(event.shiftKey ? -1 : 1)
+      // 末格 Tab / 首格 Shift-Tab 没有相邻格可去，仍须结束当前历史组。
+      view.dispatch({ annotations: isolateHistory.of("after") })
       return
     }
-    case "em": renderCellContainer(parent, "em", node.children, resolveSrc); return
-    case "strong": renderCellContainer(parent, "strong", node.children, resolveSrc); return
-    case "del": renderCellContainer(parent, "del", node.children, resolveSrc); return
-    case "mark": renderCellContainer(parent, "mark", node.children, resolveSrc); return
-    case "underline": renderCellContainer(parent, "u", node.children, resolveSrc); return
-    case "link": {
-      const a = document.createElement("a")
-      a.href = node.href
-      a.target = "_blank"
-      a.rel = "noopener noreferrer"
-      a.className = "omd-link"
-      for (const child of node.children) renderCellNode(a, child, resolveSrc)
-      parent.appendChild(a)
+    if (event.key === "Escape") {
+      event.preventDefault()
+      close()
       return
     }
-    case "image": {
-      const img = document.createElement("img")
-      img.src = resolveSrc ? resolveSrc(node.src) : node.src
-      img.alt = node.alt
-      img.className = "omd-image"
-      img.onerror = () => {
-        img.replaceWith(Object.assign(document.createElement("span"), {
-          className: "omd-image-broken",
-          textContent: node.src,
-        }))
-      }
-      parent.appendChild(img)
-      return
-    }
-    case "br": parent.appendChild(document.createElement("br")); return
-    case "hr": parent.appendChild(document.createElement("hr")); return
-    case "ul": renderCellContainer(parent, "ul", node.children, resolveSrc); return
-    case "ol": renderCellContainer(parent, "ol", node.children, resolveSrc); return
-    case "li": renderCellContainer(parent, "li", node.children, resolveSrc); return
-    case "blockquote": renderCellContainer(parent, "blockquote", node.children, resolveSrc); return
-    case "pre": {
-      const pre = document.createElement("pre")
-      const code = document.createElement("code")
-      code.textContent = node.text
-      pre.appendChild(code)
-      parent.appendChild(pre)
-      return
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault()
+      if (event.shiftKey) redo(view)
+      else undo(view)
     }
   }
+
+  const onInput = (event: Event) => {
+    const detail = event as InputEvent
+    if (detail.isComposing || detail.inputType === "insertCompositionText") return
+    commit(input.value, "typing")
+  }
+
+  const onCompositionStart = () => {
+    controller.composing = true
+    view.dispatch({ effects: setTableComposition(true) })
+  }
+
+  const onCompositionEnd = () => {
+    controller.composing = false
+    commit(input.value, "composition")
+    view.dispatch({ effects: setTableComposition(false) })
+  }
+
+  const onFocusOut = () => {
+    if (destroyed) return
+    close()
+  }
+
+  const controller: TableInputController = {
+    input,
+    host,
+    row,
+    column,
+    composing: false,
+    committing: false,
+    revision: 0,
+    paint: repaint,
+    focusAt(clientX?: number, clientY?: number, cellCaret?: number) {
+      if (destroyed) return
+      focusEditableCell(projection, cellEl, input, clientX, clientY, editingCellOptions(host), cellCaret)
+    },
+    destroy() {
+      if (destroyed) return
+      destroyed = true
+      tableInputControllerCount--
+      document.removeEventListener("selectionchange", onSelectionChange)
+      input.removeEventListener("keydown", onKeyDown)
+      input.removeEventListener("input", onInput)
+      input.removeEventListener("compositionstart", onCompositionStart)
+      input.removeEventListener("compositionend", onCompositionEnd)
+      input.removeEventListener("focusout", onFocusOut)
+      if (tableInputControllers.get(host) === controller) tableInputControllers.delete(host)
+      if (viewInputControllers.get(view) === controller) viewInputControllers.delete(view)
+      input.remove()
+      frozenColumns?.remove()
+    },
+  }
+
+  input.addEventListener("keydown", onKeyDown)
+  input.addEventListener("input", onInput)
+  input.addEventListener("compositionstart", onCompositionStart)
+  input.addEventListener("compositionend", onCompositionEnd)
+  input.addEventListener("focusout", onFocusOut)
+  document.addEventListener("selectionchange", onSelectionChange)
+  tableInputControllerCount++
+  tableInputControllers.set(host, controller)
+  viewInputControllers.set(view, controller)
+  return controller
 }
 
-// cell 内容按引擎自有的 markdown parser 解析后再渲染（任意语法：粗体/斜体/删除线/
-// 高亮/下划线/行内代码/行内数学/链接/autolink/图片/emoji/HTML 实体/`<br>`/列表/引用/
-// 代码块/分隔线），不再是手写正则。
-export function renderTableCellContent(parent: HTMLElement, text: string, resolveSrc?: ResolveSrc): void {
-  for (const node of parseCell(text)) renderCellNode(parent, node, resolveSrc)
+function activateTableCellInput(
+  view: EditorView,
+  host: HTMLElement,
+  row: number,
+  column: number,
+  table: TableContext,
+  clientX?: number,
+  clientY?: number,
+  cellCaret?: number,
+): void {
+  if (view.state.readOnly) return
+  const cell = tableCellDataRows(table.data)[row]?.[column]
+  const cellEl = tableCellElements(host)[row]?.[column]
+  if (!cell || !cellEl) return
+  const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
+  if (existing && existing.host === host && existing.row === row && existing.column === column) {
+    existing.focusAt(clientX, clientY, cellCaret)
+    return
+  }
+  if (existing) {
+    existing.destroy()
+    restoreTableCell(existing.host, existing.row, existing.column)
+  }
+  view.dispatch({
+    effects: beginTableEdit({
+      tableFrom: table.from,
+      tableTo: table.to,
+      row,
+      column,
+      source: table.source,
+    }),
+  })
+  const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
+  controller.revision = getTableEditSession(view.state)?.revision ?? 0
+  controller.focusAt(clientX, clientY, cellCaret)
+}
+
+export const tableDirectEditEnabled = Facet.define<boolean, boolean>({
+  combine: values => values.some(Boolean),
+})
+
+function ownDom(widget: TableWidget, dom: HTMLElement): void {
+  domOwner.set(dom, widget)
+  const body = dom.querySelector<HTMLElement>(".omd-block-body")
+  if (body) domOwner.set(body, widget)
+}
+
+function releaseDom(widget: TableWidget, dom: HTMLElement): void {
+  if (domOwner.get(dom) === widget) domOwner.delete(dom)
+  const body = dom.querySelector<HTMLElement>(".omd-block-body")
+  if (body && domOwner.get(body) === widget) domOwner.delete(body)
+}
+
+/** 结构未变才能走 updateDOM 原地补丁；行列数变化一律返回 false 交给 toDOM 全量重建。 */
+function sameTableShape(a: TableData, b: TableData): boolean {
+  return a.header.cells.length === b.header.cells.length
+    && a.rows.length === b.rows.length
+    && a.aligns.length === b.aligns.length
+    && a.rows.every((row, index) => row.cells.length === b.rows[index].cells.length)
+}
+
+/** 单个单元格槽位的完整视觉状态（内容 + ragged 缺失槽语义），renderInto 与 updateDOM 共用。 */
+function renderCellSlot(
+  el: HTMLElement,
+  cell: TableCellData | null,
+  resolveSrc?: ResolveSrc,
+  resolveReference?: ResolveReference,
+): void {
+  el.style.removeProperty("position")
+  el.replaceChildren()
+  if (cell === null) {
+    // ragged 行缺失源码槽的视觉填充：语义标识为不可用（没有源码可改）。
+    el.classList.add("omd-table-cell-missing")
+    el.setAttribute("aria-disabled", "true")
+    el.title = MISSING_CELL_TITLE
+    return
+  }
+  el.classList.remove("omd-table-cell-missing")
+  el.removeAttribute("aria-disabled")
+  el.removeAttribute("title")
+  // 表格层已经吃掉 `\|` 的屏蔽反斜杠，cell 源是 GFM 表格语义；定义来自表格外。
+  renderTableCellContent(el, cell.text, resolveSrc, { pipeEscapes: "gfm-table", resolveReference })
+}
+
+/** 对齐按钮的 active 高亮必须跟着目标列的对齐方式走（渲染态与原地补丁态共用）。 */
+function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): void {
+  for (const act of ["align-left", "align-center", "align-right"] as const) {
+    const btn = toolbar.querySelector<HTMLElement>(`[data-act='${act}']`)
+    if (btn) btn.classList.toggle("omd-table-tool-active", act === `align-${currentAlign}`)
+  }
 }
 
 /** 合成缺失单元格（ragged 行的视觉填充）的语义标注。 */
 const MISSING_CELL_TITLE = "Missing source cell; add a column or edit Markdown source"
 
+/**
+ * 表格的**渲染态**：光标在表外时的投影 + 结构工具栏。
+ *
+ * 表格只有两个状态（见 plan D1/D2）：光标进表即整表变源码网格（`omd-table-src`
+ * 行装饰），本 widget 连同其工具栏一起卸载。所以这里**没有**编辑态、没有输入框、
+ * 也不持有"正在编辑哪一格"——渲染态唯一需要知道的行/列来自鼠标 hover，
+ * 只为让工具栏按钮有明确目标。
+ */
 export class TableWidget extends BlockWidget {
   readonly table: TableData
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
+  /** 工具栏目标格的行列（行序与源码槽一致：0 = 表头，1 = 首数据行）。 */
   private row = 0
   private col = 0
-  private editing: { el: HTMLElement; row: number; col: number } | null = null
-  private cells: HTMLElement[][] = []
-  private readonly equalityKey: string
+  /** 用户是否 hover 过某个 td/th：没 hover 就没有目标，工具栏按钮保持 disabled。 */
+  private hovered = false
+  private equalityKeyCache: string | undefined
 
   constructor(
     src: string,
@@ -162,15 +396,28 @@ export class TableWidget extends BlockWidget {
     table: TableData,
     embed?: BlockEmbed,
     readonly resolveSrc?: ResolveSrc,
+    readonly directEdit = false,
+    readonly resolveReference?: ResolveReference,
   ) {
     super(src, pos, embed)
     this.table = table
-    this.equalityKey = tableEqualityKey(table)
+  }
+
+  cellDataAt(row: number, column: number): TableCellData | null {
+    return tableCellDataRows(this.table)[row]?.[column] ?? null
+  }
+
+  private get equalityKey(): string {
+    return (this.equalityKeyCache ??= tableEqualityKey(this.table))
   }
 
   eq(other: TableWidget) {
     // resolveSrc 不参与相等性：由宿主 facet 注入，只在编辑器配置重建时变化。
-    return super.eq(other) && this.equalityKey === other.equalityKey
+    // 引用解析器**必须**参与：引用定义增删改只换 resolver 身份，src 一字不变。
+    // 先比 src/embed（提交热路径必变，直接短路），相同才比较结构键。
+    return super.eq(other)
+      && this.equalityKey === other.equalityKey
+      && this.resolveReference === other.resolveReference
   }
 
   // 滚动性能：整表一个块，缺省按一行行高估算会让视口换算严重过绘（见
@@ -183,46 +430,235 @@ export class TableWidget extends BlockWidget {
   override toDOM(view: EditorView) {
     this.view = view
     this.wrap = super.toDOM(view)
+    ownDom(this, this.wrap)
     return this.wrap
   }
 
-  override ignoreEvent(event: Event) {
-    return super.ignoreEvent(event)
-      || event.type === "keydown"
-      || event.type === "keyup"
-      || event.type === "keypress"
-      || event.type === "input"
-      || event.type === "click"
+  // pass 1 原地刷新（仅 eq 失败才到这里）：CM 复用旧实例建的 DOM 与监听器，却把
+  // tile.widget 换成这个新实例。这里把 DOM 重新认领为新实例的当前状态，只补丁变化的
+  // 单元格 —— 表格渲染不再整块重建（无闪烁、O(变化格)）。
+  // 结构变化（行列数）返回 false 让 CM 走 toDOM 全量重建：结构性操作本就低频。
+  override updateDOM(dom: HTMLElement, view: EditorView, prev: TableWidget): boolean {
+    const before = prev.table
+    const after = this.table
+    if (!sameTableShape(before, after)) return false
+    const body = dom.querySelector<HTMLElement>(".omd-block-body")
+    const cells = tableCellElements(body ?? dom)
+    if (cells.length === 0) return false
+    // resolver 身份变了：所有非活动格的渲染输入都变了（源码没变也一样）。
+    const referencesChanged = prev.resolveReference !== this.resolveReference
+    const active = body ? tableInputControllers.get(body) : undefined
+    const viewActive = viewInputControllers.get(view)
+    this.view = view
+    this.wrap = dom as HTMLDivElement
+    ownDom(this, dom)
+
+    const session = (active !== undefined || viewActive !== undefined) && view.state
+      ? getTableEditSession(view.state)
+      : null
+    const sessionOnThisTable = session !== null
+      && this.src === session.target.source
+      && this.livePos() === session.target.tableFrom
+    const keepInput = active !== undefined && sessionOnThisTable
+      && session.target.row === active.row && session.target.column === active.column
+    const moveInput = !keepInput && sessionOnThisTable && (active !== undefined || viewActive !== undefined)
+
+    // 旧 DOM 上的嵌入类/深度属于上一个实例（CM pass-1 只换了 tile.widget）：
+    // 整块刷新成当前嵌入值，深度变深/离开列表/进出引用都不会留旧状态。
+    applyBlockEmbed(dom, this.embed)
+    // 迁移上一实例的工具栏目标：行列不变时 hover 语义延续（没有 hover 就仍是没有）。
+    this.row = prev.row
+    this.col = prev.col
+    this.hovered = prev.hovered
+
+    if (active && !keepInput) {
+      active.destroy()
+      const el = cells[active.row]?.[active.column]
+      if (el) {
+        renderCellSlot(
+          el, this.cellDataAt(active.row, active.column), this.resolveSrc, this.resolveReference,
+        )
+      }
+    } else if (moveInput && viewActive && viewActive.host !== body) {
+      viewActive.destroy()
+      restoreTableCell(viewActive.host, viewActive.row, viewActive.column)
+    }
+    // 历史回放（撤销/重做）把文档换成了另一版格内容：输入框节点保持不动，内容按
+    // 恢复后的格同步。用户自己输入推进的版本一致，所以不会被解析值回写。
+    // 提交中的同一次 dispatch 会同步调到这里、且版本尚未推进，但那正是用户刚打的字，
+    // 由控制器自身的 committing 守卫排除，不靠预测版本号。
+    // 版本已变即证明文档是被历史移动的，此时必须按精确值比较：trim 比较会让
+    // 只有空白的差异（`"X "` → `"X"`）漏同步，输入框停在旧内容上。
+    if (keepInput && active && session && !active.committing
+      && !active.composing && !session.composing) {
+      const stale = session.revision !== active.revision
+      active.revision = session.revision
+      const source = this.cellDataAt(active.row, active.column)?.source
+      if (stale && source !== undefined && active.input.value !== source) {
+        active.input.value = source
+        active.paint()
+      }
+    }
+
+    for (let r = 0; r < cells.length; r++) {
+      const beforeRow = r === 0 ? before.header : before.rows[r - 1]
+      const afterRow = r === 0 ? after.header : after.rows[r - 1]
+      for (let c = 0; c < cells[r].length; c++) {
+        const el = cells[r][c]
+        // source 相同即同一渲染输入（text 是 source 的纯函数）；null ↔ 非 null 也在此区分。
+        const keepCellInput = (keepInput && r === active.row && c === active.column)
+          || (moveInput && session !== null && r === session.target.row && c === session.target.column)
+        if (!keepCellInput) {
+          const was = beforeRow?.cells[c] ?? null
+          const now = afterRow?.cells[c] ?? null
+          if (referencesChanged || was?.source !== now?.source) {
+            renderCellSlot(el, now, this.resolveSrc, this.resolveReference)
+          }
+        }
+        const align = after.aligns[c] ?? ""
+        if (align) el.style.textAlign = align
+        else el.style.removeProperty("text-align")
+      }
+    }
+    if (moveInput && body && session) {
+      const targetEl = cells[session.target.row]?.[session.target.column]
+      const targetCell = this.cellDataAt(session.target.row, session.target.column)
+      if (targetEl && targetCell) {
+        const moved = createTableInputController(
+          view,
+          body,
+          targetEl,
+          session.target.row,
+          session.target.column,
+          targetCell.source,
+        )
+        moved.revision = session.revision
+        moved.focusAt()
+      }
+    }
+    const toolbar = dom.querySelector<HTMLElement>(".omd-table-toolbar")
+    if (toolbar) this.syncToolbar(toolbar)
+
+    registerBlockWidget(this, dom)
+    if (prev !== this) unregisterBlockWidget(prev)
+    return true
   }
 
-  // wrap（padding/边框/工具栏空隙等非单元格表面）点击不注入光标：单元格就地
-  // 编辑是主入口，误触 wrap 整表翻源码就是表格闪烁。显式源码入口只剩 `</>`
-  // 按钮（blockWidget 基类自带处理器）与键盘 ↑/↓（blockMotionKeymap 有意进源码）。
-  protected enterSourceOnClick(): boolean { return false }
+  override destroy(dom?: HTMLElement) {
+    const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
+    if (host) tableInputControllers.get(host)?.destroy()
+    if (dom) releaseDom(this, dom)
+    super.destroy(dom)
+  }
+
+  override ignoreEvent(event: Event) {
+    if (TABLE_INPUT_EVENT_TYPES.has(event.type)) {
+      const target = event.target
+      const input = target instanceof Element ? target.closest(`.${TABLE_INPUT_CLASS}`) : null
+      const host = input?.closest(".omd-block-body")
+      if (input && host instanceof HTMLElement
+        && tableInputControllers.get(host)?.input === input) return true
+    }
+    return super.ignoreEvent(event)
+  }
+
+  protected nativePointerInteraction(event: MouseEvent): boolean {
+    if (!this.directEdit) return false
+    const target = event.target
+    if (!(target instanceof Element)) return false
+    if (target.closest(`.${TABLE_INPUT_CLASS}`)) return true
+    const cellEl = target.closest<HTMLTableCellElement>("td, th")
+    const host = cellEl?.closest<HTMLElement>(".omd-block-body")
+    const owner = host ? domOwner.get(host) : undefined
+    const view = owner?.view ?? this.view
+    if (!cellEl || !host || !owner || !owner.directEdit || !view) return false
+    if (view.state.readOnly) return false
+    const row = cellEl.parentElement instanceof HTMLTableRowElement
+      ? cellEl.parentElement.rowIndex
+      : 0
+    const column = cellEl.cellIndex
+    const table = tableAt(view.state, owner.livePos())
+    if (!table || !owner.cellDataAt(row, column)) return false
+    event.preventDefault()
+    // 打开会话，不把文档选区派发进表格。
+    activateTableCellInput(view, host, row, column, table, event.clientX, event.clientY)
+    return true
+  }
+
+  /** 工具栏是否有可操作的目标格（用户 hover 过某个 td/th）。 */
+  hasRowCol(): boolean { return this.hovered }
+
+  protected editButtonEffects(): readonly StateEffect<unknown>[] {
+    return [revealTableSource.of(null), closeTableEdit()]
+  }
+
+  // 直接编辑打开时，单元格点击交给 nativePointerInteraction，不把选区派进表格。
+  // wrap 的 padding/边框/工具栏空隙仍不进源码；`</>` 按钮经 editButtonEffects 展开源码。
+  protected enterSourceOnClick(): boolean { return !this.directEdit }
+
+  protected shouldEnterSource(event: MouseEvent): boolean {
+    const target = event.target
+    return target instanceof Element && target.closest("td, th") !== null
+  }
+
+  protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
+    const cellEl = event.target instanceof Element
+      ? event.target.closest<HTMLTableCellElement>("td, th")
+      : null
+    // 无单元格命中（padding 已被 shouldEnterSource 挡掉，剩下的是 `</>` 按钮）：直接回退，
+    // 不查表 —— 该路径的 view 可能来自没有真实 EditorState 的调用方。
+    // 若直接编辑态输入框仍挂在当前表格里，先在进入源码事务前卸载，防止随后 view.focus()
+    // 触发的同步 focusout 发送 closeTableEdit 而打断外层历史或留下瞬态残留。
+    if (!cellEl) {
+      const host = _wrap.querySelector<HTMLElement>(".omd-block-body")
+      const active = host ? tableInputControllers.get(host) : undefined
+      if (active) {
+        active.destroy()
+        restoreTableCell(active.host, active.row, active.column)
+      }
+      return this.livePos()
+    }
+    const table = tableAt(view.state, this.livePos())
+    if (!table) return this.livePos()
+    // rowIndex 含 thead：表头 = 0，与 CellSlot.row 同一口径。
+    const rowIndex = cellEl.parentElement instanceof HTMLTableRowElement
+      ? cellEl.parentElement.rowIndex
+      : 0
+    const slots = [table.data.header, ...table.data.rows]
+    const cell = slots[rowIndex]?.cells[cellEl.cellIndex]
+    if (!cell) return this.livePos()
+    const leading = cell.source.length - cell.source.trimStart().length
+    return table.from + cell.from + leading
+  }
 
   protected get cssClass() { return "omd-table" }
 
-  protected renderInto(el: HTMLElement) {
-    // 只读档（HUGE Live 预览）禁用表格编辑 affordance；readOnly 建档时固定，
-    // widget 生命周期内无翻转路径。replace() 的 dispatch 守卫仍是权威防线。
+  /**
+   * 工具栏按钮的可用性：只读、尚未 hover 到任何格、以及单行/单列的结构删除都禁用，
+   * 顺带把当前列的对齐方式高亮到对齐按钮上。
+   */
+  private syncToolbar(toolbar: HTMLElement): void {
     const readonly = this.view?.state?.readOnly ?? false
-    // 仅剩一行/一列时结构性删除无效：工具栏按当前模型禁用对应按钮，
-    // 用户在编辑状态下点 disabled 控件不会落入「先提交、后 no-op」路径。
+    // 仅剩一行/一列时结构性删除无效：按当前模型禁用对应按钮。
     const canDeleteRow = this.table.rows.length > 1
     const canDeleteCol = this.table.header.cells.length > 1
+    for (const btn of toolbar.querySelectorAll<HTMLButtonElement>("button")) {
+      const act = btn.dataset.act
+      btn.disabled = readonly
+        || !this.hovered
+        || (act === "delete-row" && !canDeleteRow)
+        || (act === "delete-col" && !canDeleteCol)
+    }
+    applyAlignActive(toolbar, this.table.aligns[this.col] ?? "")
+  }
+
+  protected renderInto(el: HTMLElement) {
+    // 渲染态结构工具栏。readOnly 建档时固定、widget 生命周期内无翻转路径，因此
+    // disabled 只在 syncToolbar 里按当前状态重算；applyTableToolAt 的 readOnly 守卫
+    // 仍是权威防线（disabled 只挡用户交互，程序化 click 仍会到达）。
     const toolbar = document.createElement("div")
     toolbar.className = "omd-table-toolbar"
-    // 当前活动列的对齐方式 —— 用于工具栏按钮高亮「当前状态」
-    const currentAlign: TableAlignment = this.table.aligns[this.col] ?? ""
-    for (const [act, iconName, title] of [
-      ["align-left", "align-left", "Align column left"],
-      ["align-center", "align-center", "Align column center"],
-      ["align-right", "align-right", "Align column right"],
-      ["insert-row", "row-insert-bottom", "Insert row below"],
-      ["insert-col", "column-insert-right", "Insert column right"],
-      ["delete-row", "row-remove", "Delete row"],
-      ["delete-col", "column-remove", "Delete column"],
-    ] as const satisfies readonly [string, IconName, string][]) {
+    for (const [act, iconName, title] of TABLE_TOOL_BUTTONS) {
       const btn = document.createElement("button")
       btn.type = "button"
       btn.dataset.act = act
@@ -230,17 +666,6 @@ export class TableWidget extends BlockWidget {
       btn.title = title
       btn.setAttribute("aria-label", title)
       btn.tabIndex = -1
-      btn.disabled = readonly
-        || (act === "delete-row" && !canDeleteRow)
-        || (act === "delete-col" && !canDeleteCol)
-      // 对齐按钮按下时高亮该对齐方式（active state），与表格实际对齐语义同步
-      if (
-        (act === "align-left" && currentAlign === "left")
-        || (act === "align-center" && currentAlign === "center")
-        || (act === "align-right" && currentAlign === "right")
-      ) {
-        btn.classList.add("omd-table-tool-active")
-      }
       btn.addEventListener("mousedown", e => {
         e.preventDefault()
         e.stopPropagation()
@@ -248,319 +673,80 @@ export class TableWidget extends BlockWidget {
       btn.addEventListener("click", e => {
         e.preventDefault()
         e.stopPropagation()
-        this.tool(act)
+        // 实例轮换后工具栏按钮仍绑在旧实例上：按 wrap 取当前 owner。
+        const owner = domOwner.get(el)
+        if (!owner || !owner.hasRowCol()) return
+        const view = owner.view
+        if (!view) return
+        // 直接编辑态输入框处于输入法合成中时，未提交的草稿只存在于 DOM input 中；
+        // 若先关闭控制器，外层结构操作将用旧源码覆盖草稿。反之非合成态下先优雅关闭
+        // 控制器并还原单元格，再执行整表结构重写，保证会话与 DOM 干净结束。
+        const active = tableInputControllers.get(el)
+        if (active?.composing) return
+        if (active) {
+          view.dispatch({ effects: closeTableEdit(), annotations: isolateHistory.of("after") })
+          active.destroy()
+          restoreTableCell(active.host, active.row, active.column)
+        }
+        // 行列来自 hover；偏移与源码一律由 applyTableToolAt 校验，陈旧输入直接拒绝。
+        applyTableToolAt(view, owner.livePos(), owner.src, owner.table, owner.row, owner.col, act)
       })
       toolbar.appendChild(btn)
     }
+    // 未 hover 任何格：按钮全部 disabled，点击也不会到 applyTableToolAt。
+    this.syncToolbar(toolbar)
     el.appendChild(toolbar)
 
-    this.cells = []
     const table = document.createElement("table")
     const thead = document.createElement("thead")
     const hr = document.createElement("tr")
-    const head: HTMLElement[] = []
     for (const [i, c] of this.table.header.cells.entries()) {
       const th = document.createElement("th")
-      renderTableCellContent(th, c?.text ?? "", this.resolveSrc)
+      renderCellSlot(th, c ?? null, this.resolveSrc, this.resolveReference)
       if (this.table.aligns[i]) th.style.textAlign = this.table.aligns[i]
-      this.bindCell(th, 0, i)
-      head.push(th)
+      if (c) this.bindCellHover(el, th, 0, i)
       hr.appendChild(th)
     }
-    this.cells.push(head)
     thead.appendChild(hr)
     table.appendChild(thead)
     const tbody = document.createElement("tbody")
     for (const [r, row] of this.table.rows.entries()) {
       const tr = document.createElement("tr")
-      const line: HTMLElement[] = []
       for (let i = 0; i < this.table.header.cells.length; i++) {
         const cell = row.cells[i]
         const td = document.createElement("td")
-        renderTableCellContent(td, cell?.text ?? "", this.resolveSrc)
-        // ragged 行缺失源码槽的视觉填充：语义标识为不可用，不能打开输入框
-        // （没有可写源码范围，输入也无法提交）。
-        if (!cell) {
-          td.className = "omd-table-cell-missing"
-          td.setAttribute("aria-disabled", "true")
-          td.title = MISSING_CELL_TITLE
-        }
+        renderCellSlot(td, cell ?? null, this.resolveSrc, this.resolveReference)
         if (this.table.aligns[i]) td.style.textAlign = this.table.aligns[i]
-        this.bindCell(td, r + 1, i)
-        line.push(td)
+        // ragged 行的合成占位格没有源码槽：不参与工具栏目标（点它无事可做）。
+        if (cell) this.bindCellHover(el, td, r + 1, i)
         tr.appendChild(td)
       }
-      this.cells.push(line)
       tbody.appendChild(tr)
     }
     table.appendChild(tbody)
     el.appendChild(table)
-
-    const pending = this.view && pendingTableEdits.get(this.view)
-    if (pending && pending.pos === this.livePos()) {
-      pendingTableEdits.delete(this.view!)
-      const cell = this.cells[pending.row]?.[pending.col]
-      if (cell && this.cellData(pending.row, pending.col)) {
-        queueMicrotask(() => {
-          if (cell.isConnected) this.startEdit(cell, pending.row, pending.col)
-        })
-      }
-    }
-
-    // 两阶段工具栏操作（删除 active 行/列与单元格提交重叠时）：单元格已先提交，
-    // 重建后的本表在此消费 pending，在微任务里对 fresh Lezer 元数据派发结构操作。
-    // Consume before scheduling：删除 entry 后再排微任务，任何后续失败都不会留下
-    // 可被其他表/视图消费的残留；位置不匹配（不同表/不同位置）则不触碰 entry。
-    const pendingTool = this.view && pendingTableTools.get(this.view)
-    if (pendingTool && pendingTool.pos === this.livePos()) {
-      pendingTableTools.delete(this.view!)
-      const { act, row, col } = pendingTool
-      queueMicrotask(() => {
-        try {
-          this.runPendingTool(act, row, col)
-        } catch (error) {
-          if (this.view) reportViewError(this.view, error)
-        }
-      })
-    }
   }
 
-  private cellData(row: number, col: number) {
-    return row === 0 ? this.table.header.cells[col] : this.table.rows[row - 1]?.cells[col]
-  }
-
-  private bindCell(el: HTMLElement, row: number, col: number) {
-    el.addEventListener("mousedown", e => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (e.target instanceof HTMLInputElement) return
-      if (!this.cellData(row, col)) return
-      this.row = row
-      this.col = col
-      this.startEdit(el, row, col)
+  /**
+   * 渲染态工具栏的落点来源：hover 只记录行列，不翻源码、不改选区（翻源码只由
+   * mousedown 触发的 shouldEnterSource/clickPos 决定）。
+   * 结构操作会改变行列数 → `updateDOM` 返回 false、CM 全量重建 → hover 目标清空：
+   * 旧下标在新形状里已经指向别处，宁可要求重新 hover 也不猜。
+   */
+  private bindCellHover(wrap: HTMLElement, el: HTMLElement, row: number, col: number) {
+    el.addEventListener("mouseover", () => {
+      // 监听器闭包的是建 DOM 的那个实例；CM pass-1 复用后 owner 已轮换成新实例
+      // （见 domOwner 注释），所以每次事件都按 wrap 解析当前 owner。
+      const owner = domOwner.get(wrap)
+      if (!owner) return
+      // mouseover 在她同一格内部的子元素上也会冒泡：目标格没变就别重算工具栏。
+      if (owner.hovered && owner.row === row && owner.col === col) return
+      owner.row = row
+      owner.col = col
+      owner.hovered = true
+      const toolbar = wrap.querySelector<HTMLElement>(".omd-table-toolbar")
+      if (toolbar) owner.syncToolbar(toolbar)
     })
-  }
-
-  private clearActive() {
-    for (const line of this.cells) {
-      for (const el of line) {
-        el.classList.remove("omd-table-row-active")
-        el.classList.remove("omd-table-col-active")
-      }
-    }
-  }
-
-  private applyActive(row: number, col: number) {
-    this.cells[row]?.forEach(el => el.classList.add("omd-table-row-active"))
-    for (const line of this.cells) line[col]?.classList.add("omd-table-col-active")
-  }
-
-  private startEdit(el: HTMLElement, row: number, col: number) {
-    // 只读档不开行内编辑器（开了也无法提交 —— replace() 会拒绝 dispatch）。
-    // 防御所有入口（点击与重建后的键盘续编）：合成 ragged cell 没有可写源码范围。
-    if (this.view?.state.readOnly || !this.cellData(row, col)) return
-    if (this.editing?.el === el) return
-    this.cancelEdit()
-    this.row = row
-    this.col = col
-    this.clearActive()
-    this.applyActive(row, col)
-    const input = document.createElement("input")
-    input.type = "text"
-    input.className = "omd-table-edit"
-    input.value = this.cellData(row, col)?.source ?? ""
-    el.replaceChildren(input)
-    this.editing = { el, row, col }
-    input.addEventListener("mousedown", e => {
-      e.stopPropagation()
-    })
-    input.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault()
-        const tab = e.key === "Tab"
-        const shift = e.shiftKey
-        if (tab) {
-          // Tab 仍走横向遍历：右/左换格，末列 Tab 自动追加新行
-          this.commitEdit(shift ? -1 : 1, shift ? "shift-tab" : "tab")
-        } else {
-          // Enter 改为纵向录入：移动到「正下方同行 / Shift+Enter 正上方同行」，
-          // 末行 Enter 自动追加新行并停留在同列，对齐 Excel / Numbers 的高频录入手感。
-          this.commitEditVertical(shift ? -1 : 1)
-        }
-      } else if (e.key === "Escape") {
-        e.preventDefault()
-        this.cancelEdit()
-      }
-    })
-    input.focus()
-    const caret = input.value.length
-    input.setSelectionRange(caret, caret)
-  }
-
-  private cancelEdit() {
-    const edit = this.editing
-    if (!edit) return
-    this.editing = null
-    this.clearActive()
-    edit.el.replaceChildren()
-    renderTableCellContent(edit.el, this.cellData(edit.row, edit.col)?.text ?? "", this.resolveSrc)
-  }
-
-  private commitEdit(move: 1 | -1 | 0, fromKey?: "tab" | "shift-tab" | "enter") {
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    if (!edit || !input) return
-    const cell = this.cellData(edit.row, edit.col)
-    if (!cell) return
-    const change = replaceTableCell(this.src, cell, input.value)
-    if (!change) return
-    this.editing = null
-    this.clearActive()
-    const neighbor = move === 0 ? null : this.neighbor(edit.row, edit.col, move)
-    let dest = neighbor && this.cellData(neighbor.row, neighbor.col) ? neighbor : null
-    let changes: TableSourceChange[] = [change]
-
-    // 末格 Tab：同一事务提交当前单元格并在表尾追加一个空行，重建后聚焦新行首格
-    // （oldRowCount + 1 行、0 列）。只有按键是 Tab 才插行 —— Enter 在末格只提交、
-    // 不扩展行；Shift-Tab 在首格只提交、不开表外输入框。绝不凭 move 推断插行意图。
-    if (!neighbor && move === 1 && fromKey === "tab") {
-      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
-      if (inserted && changesNonOverlapping([change, ...inserted])) {
-        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
-        dest = { row: this.table.rows.length + 1, col: 0 }
-      }
-    }
-    this.replace(changes, dest)
-  }
-
-  // Enter 键的纵向录入：同列换行（dir=+1）/ Shift+Enter 上行（dir=-1）。
-  // 越界表尾自动追加新行并停留同列，模拟 Excel / Numbers 的高频录入手感。
-  // 失败时（首格 Shift+Enter 越界）保持输入框挂载，等价于 commitEdit 的「陈旧元数据」兜底。
-  private commitEditVertical(dir: 1 | -1) {
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    if (!edit || !input) return
-    const cell = this.cellData(edit.row, edit.col)
-    if (!cell) return
-    const change = replaceTableCell(this.src, cell, input.value)
-    if (!change) return
-    this.editing = null
-    this.clearActive()
-    const targetRow = edit.row + dir
-    const totalRows = this.table.rows.length + 1
-    let dest: { row: number; col: number } | null = null
-    let changes: TableSourceChange[] = [change]
-
-    if (targetRow === 0) {
-      // 进入表头（一般不发生；保留对称语义）。
-      if (this.table.header.cells[edit.col]) {
-        dest = { row: 0, col: edit.col }
-      }
-    } else if (targetRow > 0 && targetRow - 1 < this.table.rows.length) {
-      // 数据行实际存在：检查该行 ragged 槽可用性。
-      const rowCells = this.table.rows[targetRow - 1]?.cells
-      if (rowCells && rowCells[edit.col]) {
-        dest = { row: targetRow, col: edit.col }
-      }
-    } else if (targetRow >= totalRows && dir === 1) {
-      // 末行 Enter：同一事务追加新行并停留同列（oldRowCount + 1 行、edit.col）
-      const inserted = insertTableRow(this.src, this.table, this.table.rows.length)
-      if (inserted && changesNonOverlapping([change, ...inserted])) {
-        changes = [...changes, ...inserted].sort((a, b) => a.from - b.from)
-        dest = { row: this.table.rows.length + 1, col: edit.col }
-      }
-    }
-    // dir === -1 越界到 -1（首格 Shift+Enter）或合成格不可用：等同于 no-op 提交
-    this.replace(changes, dest)
-  }
-
-  private neighbor(row: number, col: number, dir: 1 | -1) {
-    const cols = this.table.header.cells.length
-    const rows = this.table.rows.length + 1
-    const i = row * cols + col + dir
-    if (i < 0 || i >= rows * cols) return null
-    return { row: Math.floor(i / cols), col: i % cols }
-  }
-
-  private tableToolChanges(act: TableToolAction, row: number, col: number) {
-    if (act === "insert-row") return insertTableRow(this.src, this.table, row)
-    if (act === "insert-col") return insertTableColumn(this.src, this.table, col)
-    if (act === "delete-row") return deleteTableRow(this.src, this.table, row - 1)
-    if (act === "delete-col") return deleteTableColumn(this.src, this.table, col)
-    if (act === "align-left") {
-      const change = alignColumnChange(this, "left", col)
-      return change ? [change] : null
-    }
-    if (act === "align-center") {
-      const change = alignColumnChange(this, "center", col)
-      return change ? [change] : null
-    }
-    if (act === "align-right") {
-      const change = alignColumnChange(this, "right", col)
-      return change ? [change] : null
-    }
-    return null
-  }
-
-  private tool(act: TableToolAction) {
-    // 只读守卫（replace() 是最终权威，此处提前拒绝主路径）。
-    if (this.view?.state.readOnly) return
-    const edit = this.editing
-    const input = edit?.el.querySelector("input.omd-table-edit") as HTMLInputElement | null
-    let committed: TableSourceChange | null = null
-    if (edit && input) {
-      const cell = this.cellData(edit.row, edit.col)
-      committed = cell ? replaceTableCell(this.src, cell, input.value) : null
-      // 陈旧元数据导致提交失败：保持输入框挂载，不静默销毁用户文本。
-      if (!committed) return
-      const isNoop = committed.insert === this.src.slice(committed.from, committed.to)
-      if (!isNoop) {
-        if (act === "insert-row" || act === "insert-col") {
-          const inserted =
-            act === "insert-row"
-              ? insertTableRow(this.src, this.table, this.row)
-              : insertTableColumn(this.src, this.table, this.col)
-          // 结构插入被拒绝（越界/陈旧）→ 保留输入框。
-          if (!inserted) return
-          // 单元格提交与结构 change 互不重叠时合并为一个排序、非重叠事务。
-          const merged = [committed, ...inserted].sort((a, b) => a.from - b.from)
-          if (changesNonOverlapping(merged)) {
-            this.editing = null
-            this.replace(merged)
-            return
-          }
-          // 意外重叠：退化为两阶段（与删除路径一致）。
-        }
-        // 删除 active 行/列必然覆盖正编辑的单元格：先提交单元格，重建后补结构操作。
-        this.deferTool(act, committed, edit)
-        return
-      }
-      // 输入值未变（no-op 提交）：等效于“无编辑”。保持 this.editing 不动，
-      // 单事务结构操作失败（next === null）时输入框继续挂载。
-    }
-    // `this.row` 是 1-based（0=表头，1=首数据行），tableToolChanges 映射到
-    // deleteTableRow 的 0-based 数据行索引；表头映射到 -1，自然成为 no-op。
-    const next = this.tableToolChanges(act, this.row, this.col)
-    if (!next) return
-    this.editing = null
-    this.replace(next)
-  }
-
-  private deferTool(act: TableToolAction, committed: TableSourceChange, edit: { el: HTMLElement; row: number; col: number }) {
-    this.editing = null
-    const pos = this.livePos()
-    pendingTableTools.set(this.view!, { pos, act, row: edit.row, col: edit.col })
-    // 只派发单元格提交；结构操作等重建后的本表消费 pending 再补做。
-    this.replace([committed])
-  }
-
-  private runPendingTool(act: TableToolAction, row: number, col: number) {
-    // 检测 widget 已断开（销毁/切源码）：pending 已被消费，直接放弃补派发。
-    if (!this.view || !this.wrap?.isConnected) return
-    // 对重建后的 fresh Lezer 元数据（this.src/this.table）执行结构操作。
-    const next = this.tableToolChanges(act, row, col)
-    if (!next) return  // 目标缺失或操作被拒绝 → 不再派发。
-    this.replace(next)
   }
 
   private livePos() {
@@ -570,27 +756,6 @@ export class TableWidget extends BlockWidget {
     }
     return this.pos
   }
-
-  private replace(changes: readonly TableSourceChange[], dest: { row: number; col: number } | null = null) {
-    // 权威只读守卫：commitEdit/tool 的所有源码改写都汇入此处。readOnly 是建议性
-    // facet，widget 直 dispatch 绕过输入拦截 —— 只读档不派发（也不设置 pending edit，
-    // 微任务渲染恢复路径不会误开编辑器）。disabled 按钮只挡用户交互，程序化
-    // click 仍可到达 tool()，故此处必须显式拒绝。
-    if (changes.length === 0 || !this.view || this.view.state.readOnly) return
-    const pos = this.livePos()
-    if (dest) pendingTableEdits.set(this.view, { pos, row: dest.row, col: dest.col })
-    const translated = changes.map(change => ({
-      from: pos + change.from,
-      to: pos + change.to,
-      insert: change.insert,
-    }))
-    try {
-      this.view.dispatch({ changes: translated.length === 1 ? translated[0] : translated })
-    } catch (error) {
-      // 派发失败：清除本视图所有 pending（键盘续编与两阶段工具），不让其泄漏。
-      if (dest) pendingTableEdits.delete(this.view)
-      pendingTableTools.delete(this.view)
-      throw error
-    }
-  }
 }
+
+bindRenderedTableCellOpener(activateTableCellInput)

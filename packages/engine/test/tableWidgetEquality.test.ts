@@ -72,6 +72,21 @@ describe("table widget equality", () => {
     expect(compact.eq(expanded)).toBe(false)
   })
 
+  it("distinguishes a missing ragged slot from an empty cell", async () => {
+    const { tableEqualityKey } = await import("../src/decorations/widgets/table")
+    // 两者渲染不同（缺失槽带 omd-table-cell-missing 且不可编辑），键必须不同。
+    const missing: TableData = {
+      ...table(["a", "b"], []),
+      rows: [{ ...row(["1"]), cells: [cell("1"), null] }],
+      aligns: ["", ""],
+    }
+    const empty: TableData = {
+      ...missing,
+      rows: [{ ...row(["1"]), cells: [cell("1"), cell("")] }],
+    }
+    expect(tableEqualityKey(missing)).not.toBe(tableEqualityKey(empty))
+  })
+
   it("does not reuse a table widget when its embed context changes", async () => {
     const { TableWidget } = await import("../src/decorations/widgets/table")
     const data = table(["a"], [["1"]])

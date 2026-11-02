@@ -14,6 +14,7 @@
       {
         "label": "main",
         "title": "oh-my-md",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HideCursorWhileTyping",
         "width": 800,
         "height": 600
       }
@@ -42,7 +43,12 @@
       }
     ],
     "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
+        "installMode": "currentUser",
         "displayLanguageSelector": true,
         "languages": ["English", "SimpChinese"],
         "installerIcon": "icons/icon.ico",

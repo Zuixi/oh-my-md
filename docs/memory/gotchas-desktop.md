@@ -23,7 +23,7 @@ paste fires
 
 The `skipAtomsForSelection` call expands the WebKit selection outward to the nearest atomic-range boundary, which can push `selection.to` past one or more newlines on empty lines.
 
-**Fix**: in `imagePasteHandler` (`apps/desktop/src/imagePaste.ts`), a `contextmenu` handler captures `view.posAtCoords({ x, y })` (pixel coordinates are immune to native-selection state). The `paste` handler, when `contextMenuTarget` is set, dispatches its own transaction from the saved position and returns `true`, preventing CM's `doPaste` from running at all. Keyboard paste (`Ctrl/Cmd-V`) leaves `contextMenuTarget = null` and falls through to CM's default handler unchanged. An `updateListener` drops the saved target as soon as the selection moves off it — without that, right-click (without pasting) followed by moving the caret and pressing `Ctrl/Cmd-V` pastes at the stale right-click position.
+**Fix**: `clipboardPasteExtension` captures `view.posAtCoords({ x, y })`, restores that mapped target before dispatch, and owns every rich paste event. Keyboard, menu, image-only, and right-click routes now share the same queued identity/path/range validation. An `updateListener` drops a saved right-click target as soon as the selection moves away.
 
 ## Dispatching changes without a selection leaves the caret before the insert
 
@@ -40,7 +40,7 @@ view.dispatch({
 })
 ```
 
-Do not "simplify" this to `view.state.replaceSelection(insert)` on async paths (rich-paste conversion, clipboard reads, image writes): `replaceSelection` re-reads the selection at dispatch time, racing the user moving the caret during the `await`. The captured `from`/`to` plus an explicit anchor is the correct shape. Verified 2026-08-20 across `htmlPaste.ts`, `pastePlainText.ts`, `imagePaste.ts` (text and image inserts), and the App menu-paste command; view-level caret assertions live in `packages/engine/test/htmlPaste.test.ts` and `apps/desktop/test/imagePaste.test.ts`.
+Do not "simplify" this to `view.state.replaceSelection(insert)` on async paths: it re-reads the selection after `await`. `pasteBookmark.ts` maps captured ranges and `pasteJob.ts` revalidates identity/path/readOnly immediately before effects and dispatch.
 
 Related trap: `ViewUpdate` exposes `selectionSet`, not `selectionChanged` — the latter is `undefined` at runtime and vitest does not type-check, so the mistake only surfaces as a silently inert listener.
 
@@ -60,9 +60,7 @@ Keep the Markdown source relative; resolve only for preview display.
 
 ## Image paste is a two-step consistency operation
 
-`imagePaste.ts` first calls the Rust `write_image` command, then inserts the Markdown reference. Reversing this order can leave a document pointing to a file that was never written.
-
-The operation also requires a saved document path. It captures the path, document identity/value, and selection before asynchronous work, then passes that path to `write_image` as required `documentPath`. Paste operations for one view are serialized and revalidated before filesystem writes and editor dispatches; do not remove that queue without replacing its race guarantees. Clipboard content that is not an image must fall through to CodeMirror's default paste behavior. Local preview URLs require `allow_document_assets` for the opened/saved document directory; the static asset protocol scope stays empty.
+Rust `write_paste_assets` validates bytes and creates collision-safe paths without accepting caller-selected destinations. The host dispatches Markdown while the returned batch is pending, then commits cleanup ownership; stale/error paths discard the exact registered files. Never discard after a successful document dispatch, even when the commit acknowledgement fails. Local preview URLs still require `allow_document_assets`; the static asset protocol scope stays empty.
 
 ## Window listeners can capture stale React state
 
@@ -113,20 +111,23 @@ Since the menu gained Format/View items, macOS menu accelerators also bind engin
 `EditorState.readOnly.of(true)` only blocks typed input in the view layer.
 Keymap commands (engine format/lists `dispatchSpec`s, `markdownKeymap`),
 `orderedRenumber` normalization dispatches, widget interactions (checkbox
-click, table toolbar/cell edit), and `domEventHandlers` all dispatch
+click, the rendered and floating table toolbars), and `domEventHandlers` all dispatch
 transactions directly and sail past the view's readOnly interception. The
 `domEventHandlers` family covers more than `htmlPaste` (which runs **before**
 the builtin paste handler's readOnly branch; handlers are first-true-wins):
 the image **drop** handler in `apps/desktop/src/imagePaste.ts` likewise runs
 before the builtin drop branch, and the drop/paste/pick paths all funnel
 through `insertImageFile` — which guards `state.readOnly` itself before any
-asset read/write. Belt and braces: `pickAndInsertImage` refuses to open the
+asset read/write. The earlier desktop paste handler also guards `readOnly`
+before its saved context-menu target dispatch; otherwise moving it ahead of
+engine rich paste would let right-click plain text mutate a read-only document.
+Belt and braces: `pickAndInsertImage` refuses to open the
 file picker, the App insert-image command checks `readonlyTabsRef`, and App
 autosave never schedules for a readonly tab, so no mutation path can persist
 changes to the user's ≥50MiB HUGE file. Every doc-changing dispatch site must
 still check `state.readOnly` itself. Guard suite:
 `packages/engine/test/readonly-guards.test.ts` plus the desktop cases in
-`apps/desktop/test/imagePaste.test.ts` and
+`apps/desktop/test/Editor.test.ts`, `apps/desktop/test/imagePaste.test.ts`, and
 `apps/desktop/test/App.largeDocOpen.test.tsx` ("read-only tabs never mutate or
 persist") — add a case there whenever a new mutation path lands.
 
@@ -201,6 +202,47 @@ files cost a stat, not a 50MB read), but poll still re-reads **changed** files
 in full (correctness first): a banner-without-contents divergence for huge docs
 is a recorded follow-up.
 
+## `revealItemInDir` fails on forward-slash Windows paths (Shell ITEMIDLIST)
+
+"在文件管理器显示" reported `Failed to convert path //?/E:/… to ITEMIDLIST` on Windows
+even though the file was there. Paths reaching the service mix two conventions:
+Rust `canonicalize()` yields the verbatim form `\\?\E:\…`, and `parentDir()`
+(workspace.ts) rewrites every `\` to `/` for UI display, producing `//?/E:/…` when
+that display string is later used as a native source (tree roots, tab paths).
+
+The opener plugin normalizes in this order: `dunce::simplified()` **then** its own
+`absolute()` (GetFullPathNameW, with a verbatim passthrough). Rust parses the
+forward-slash spelling as `Prefix::UNC("?", "X:")`, **not** `VerbatimDisk`, and
+`dunce::simplified` only strips the latter — so the prefix survives, `absolute()`
+emits the backslash verbatim form `\\?\X:\…`, and `ILCreateFromPathW` rejects
+**any** verbatim path (`FailedToConvertPathToItemIdList`). Existence checks stay
+healthy because `std::fs` resolves it fine — which is why this looks like "the
+file is right there but Explorer won't open".
+
+Verified 2026-10-28 by replicating the plugin's exact pipeline (dunce + its
+`absolute()`) against a real file:
+
+| input | prefix parsed as | canonical | ITEMIDLIST |
+| --- | --- | --- | --- |
+| `F:\…\AGENTS.md` | `Disk` | `F:\…` | ok |
+| `\\?\F:\…\AGENTS.md` | `VerbatimDisk` | `F:\…` (stripped) | ok |
+| `//?/F:/…/AGENTS.md` | `UNC("?", "F:")` | `\\?\F:\…` | **fails** |
+| `F:/…/AGENTS.md` | `Disk` | `F:\…` | ok |
+
+Fix: `desktopServices.revealInFinder` restores `\` for Windows before the plugin
+call, which turns the third row into the second (strip → reveal). Rows 1 and 4 are
+unaffected, so no working case changes. Guarded by the Windows/macOS cases in
+`test/desktopServices.test.ts` (the previous mock-only test asserted argument
+forwarding and could not catch this). Do not delete `\\?\` globally — it carries
+long-path and non-`MAX_PATH` semantics — and keep the path policy at this one
+shared entry point rather than re-implementing an `explorer.exe /select` command
+line.
+
+Residual limitation (upstream, not introduced here): `dunce` refuses to strip a
+verbatim path longer than `MAX_PATH`, so a >260-character target still reaches the
+Shell as `\\?\…` and fails. The Shell cannot consume verbatim paths at all, so
+"reveal" cannot be repaired from this side.
+
 ## Bounded waits on the save queue; a timed-out open races the save
 
 `runOpen` awaits the active tab's in-flight save queue through
@@ -247,7 +289,7 @@ The fake-view harness in `apps/desktop/test/tightSelection.test.ts` originally m
 
 ## Selection colors must be driven by `--omd-selection-bg`; CM's dark flag is never set
 
-Selections are painted by two systems. Editor text is drawn by the vendored `tightSelection()` layer as `.cm-selectionLayer .cm-selectionBackground` rectangles behind the text; block-widget DOM (table cells, code blocks) and focused nested editors (the table cell `<input>`) paint through the browser's native `::selection`. The two diverge the moment either stops consuming the theme token (verified 2026-08-28: dark mode painted light lavender behind light text; light mode painted native blue inside tables/code):
+Selections are painted by two systems. Editor text is drawn by the vendored `tightSelection()` layer as `.cm-selectionLayer .cm-selectionBackground` rectangles behind the text; block-widget DOM (table cells, code blocks) and focused nested editors (the code-block title `<input>`, the math popup's CodeMirror) paint through the browser's native `::selection`. The two diverge the moment either stops consuming the theme token (verified 2026-08-28: dark mode painted light lavender behind light text; light mode painted native blue inside tables/code):
 
 - CM's `&light`/`&dark` base-theme rules key off the editor's internal dark flag (`EditorView.theme(spec, {dark: true})` → `darkTheme` facet). Nothing in the app ever sets it, and `html[data-theme]` is CSS-only, so the editor is permanently "light" as far as CM is concerned: base `#d7d4f0` (focused layer) / `#d9d9d9` behind dark-mode text `#e8e8e8` is light-on-light, contrast ~1.2:1.
 - `tightSelection.ts` vendors upstream's `.cm-content :focus ::selection → Highlight !important` rule for focused nested editors, and widget DOM outside `.cm-line` keeps native selection while dragging — both are native blue unless overridden.
@@ -392,3 +434,30 @@ Rule: never build per-window state on unsuffixed localStorage keys — key by
 The same shared-store caveat applies to any other same-origin persistence a
 window touches (settings are safe: they are Rust-owned and identical across
 windows by design).
+## Opaque `background` shorthands erase the quote bar
+
+The quote bar is a `background-image: linear-gradient(...)` on `.omd-blockquote`
+/ `.omd-blockquote-1..4` (the gradient is the bar; there is no border element).
+Any later rule that sets the `background` **shorthand** on an element that also
+carries a quote class silently removes it — which is exactly what `.omd-code`
+(`background: var(--omd-code-block-bg)`) and `.omd-code-header`
+(`background: var(--omd-chrome)`) do, so an in-quote code block lost its bar and
+the quote looked like it ended there. The fix keeps the composition explicit:
+each depth registers its gradient as `--omd-bq-image`, one shared rule paints
+`background-image: var(--omd-bq-image)` on the quote classes, and the
+code-specific rules (`.omd-code.omd-blockquote*`, `.omd-code-header.omd-blockquote*`)
+repaint the same variable after the shorthand. The editing chrome also needs the
+quote `padding-left` restored (`calc(var(--omd-bq-pad, 0px) + 10px)`) or its
+title stops lining up with the code below. When adding any new opaque background
+to an element that can live inside a quote, repaint `--omd-bq-image` — a
+`background-color` shorthand (`.omd-codeblock` uses one) is safe, `background` is
+not.
+
+The same shorthand family bites the caret's own line: `.editor-host .cm-content .cm-activeLine`
+sets `background: transparent` (and `.cm-line.omd-codeblock.cm-activeLine` sets
+`background: var(--omd-code-bg)`), which resets `background-image` and makes the quote bar
+disappear exactly where the user is typing. Both are neutralized by a later rule at higher
+specificity — `.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine { background-image:
+var(--omd-bq-image) }` — and `e2e/quote-code.spec.ts` asserts the bar on every quoted line,
+including the active one. Every quote line carries both `omd-blockquote` and `omd-blockquote-N`,
+so the base class alone is enough to match; do not enumerate depths in new rules.

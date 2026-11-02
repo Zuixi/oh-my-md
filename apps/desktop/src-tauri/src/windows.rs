@@ -267,6 +267,13 @@ pub fn create_editor_window<R: tauri::Runtime>(
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("oh-my-md");
+    // WebView2 全局姿态：HideCursorWhileTyping 修“键入时隐藏指针”把光标藏进另存为对话框；
+    // msWebOOUI/msPdfOOUI/msSmartScreenProtection 关 WebView2 内嵌下载/PDF UI 与信誉检查，
+    // 对本地编辑器无意义但属全局放宽（对所有导航生效），改动前先在 Windows 实机复核。
+    #[cfg(target_os = "windows")]
+    if let Some(args) = &app.config().app.windows[0].additional_browser_args {
+        builder = builder.additional_browser_args(args);
+    }
     match opts.bounds {
         Some(b) => {
             builder = builder

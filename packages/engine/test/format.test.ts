@@ -144,6 +144,29 @@ describe("blockquote", () => {
     const off = run(toggleBlockquote, on.doc.toString(), { from: 2, to: 9 })
     expect(off.doc.toString()).toBe("one\ntwo")
   })
+
+  it("recognizes quote forms that startsWith('> ') used to miss", () => {
+    expect(run(toggleBlockquote, ">x", { from: 2 }).doc.toString()).toBe("x")
+    expect(run(toggleBlockquote, "  > x", { from: 5 }).doc.toString()).toBe("  x")
+    expect(run(toggleBlockquote, "- > x", { from: 5 }).doc.toString()).toBe("- x")
+    expect(run(toggleBlockquote, "> - x", { from: 5 }).doc.toString()).toBe("- x")
+  })
+
+  it("removes one nesting level and keeps the content indentation", () => {
+    expect(run(toggleBlockquote, "> > x", { from: 5 }).doc.toString()).toBe("> x")
+    expect(run(toggleBlockquote, "  >   x", { from: 7 }).doc.toString()).toBe("    x")
+  })
+
+  it("quotes every line when any line in the selection is unquoted", () => {
+    const doc = "> one\ntwo"
+    const next = run(toggleBlockquote, doc, { from: 0, to: doc.length })
+    expect(next.doc.toString()).toBe("> one\n> two")
+  })
+
+  it("quotes a list line without breaking the list", () => {
+    const next = run(toggleBlockquote, "- item", { from: 6 })
+    expect(next.doc.toString()).toBe("> - item")
+  })
 })
 
 describe("code block", () => {

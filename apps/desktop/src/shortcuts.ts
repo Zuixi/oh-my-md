@@ -55,6 +55,7 @@ export const EDIT_SHORTCUT_BINDINGS: Readonly<Record<string, string>> = {
   cut: "Mod+x",
   copy: "Mod+c",
   paste: "Mod+v",
+  pastePlainText: "Mod+Shift+v",
   "select-all": "Mod+a",
 }
 

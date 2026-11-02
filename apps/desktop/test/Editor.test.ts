@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { undo } from "@codemirror/commands"
-import { RectangleMarker } from "@codemirror/view"
+import { EditorView, RectangleMarker } from "@codemirror/view"
 import {
   acceptOrderedListNormalization,
+  editorPerformancePolicy,
   getPendingOrderedListNormalization,
   isLivePreview,
   rejectOrderedListNormalization,
@@ -16,9 +17,11 @@ import {
   activateLink,
   makeImageResolver,
   resetEditorDocument,
+  setEditorAutoPair,
   type CreateEditorOptions,
   type EditorDocumentUpdate,
 } from "../src/Editor"
+import { sanitizeSettings } from "../src/settings"
 import { NUB_PX, tightSelectionMarkers } from "../src/tightSelection"
 import { pastePlainText } from "../src/pastePlainText"
 import { isMacOS } from "../src/platform"
@@ -47,6 +50,17 @@ function editorOptions(
 /** Lets the engine's queued preview-entry normalization reach the update listener. */
 function tick(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+/**
+ * Drives the input handlers the way CodeMirror's DOM pipeline does: the first
+ * handler returning true claims the keystroke and prevents the default insert.
+ * Mirrors the engine's own `autoPairView.test.ts` adapter probe.
+ */
+function typeChar(view: EditorView, text: string): boolean {
+  const main = view.state.selection.main
+  const insert = () => { throw new Error("the default insert callback must not run") }
+  return view.state.facet(EditorView.inputHandler).some(h => h(view, main.from, main.to, text, insert))
 }
 
 describe("desktop editor lifecycle", () => {
@@ -102,6 +116,18 @@ describe("desktop editor lifecycle", () => {
     expect(undo(view)).toBe(true)
     expect(view.state.doc.toString()).toBe("1. a\n3. b")
     expect(undo(view)).toBe(false)
+    view.destroy()
+  })
+
+  it("mounts with an initial per-editor performancePolicy when provided", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), "alpha"),
+      performancePolicy: { windowLiveDecorations: true, blockRenderBudgetLines: 42 },
+    })
+    expect(editorPerformancePolicy(view.state)).toEqual({
+      windowLiveDecorations: true,
+      blockRenderBudgetLines: 42,
+    })
     view.destroy()
   })
 
@@ -345,6 +371,63 @@ describe("desktop editor lifecycle", () => {
     view.destroy()
   })
 
+  it("pairs through the engine handler and honors the autoPair option", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+
+    expect(typeChar(view, "(")).toBe(true)
+    expect(view.state.doc.toString()).toBe("()")
+    // quotes off: the engine handler declines, so this probe would fall back to
+    // CodeMirror's bare insert (the stub throws instead of writing the char).
+    expect(typeChar(view, '"')).toBe(false)
+    expect(view.state.doc.toString()).toBe("()")
+    view.destroy()
+  })
+
+  it("reconfigures auto pair on a mounted view without a reopen", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+    expect(typeChar(view, '"')).toBe(false)
+
+    setEditorAutoPair(view, { brackets: true, quotes: true, markdownSyntax: true })
+
+    expect(typeChar(view, '"')).toBe(true)
+    expect(view.state.doc.toString()).toBe('""')
+    view.destroy()
+  })
+
+  it("honors a changed autoPair when the document is reset", () => {
+    const view = createEditor(document.createElement("div"), {
+      ...editorOptions(vi.fn(), ""),
+      autoPair: { brackets: true, quotes: false, markdownSyntax: true },
+    })
+    expect(typeChar(view, '"')).toBe(false)
+
+    resetEditorDocument(view, {
+      ...editorOptions(vi.fn(), "second"),
+      autoPair: { brackets: false, quotes: true, markdownSyntax: true },
+    })
+
+    expect(view.state.doc.toString()).toBe("second")
+    view.dispatch({ selection: { anchor: view.state.doc.length } })
+    expect(typeChar(view, '"')).toBe(true)
+    expect(view.state.doc.toString()).toBe('second""')
+    expect(typeChar(view, "(")).toBe(false)
+    view.destroy()
+  })
+
+  it("defaults the auto pair toggles on for settings saved before they existed", () => {
+    expect(sanitizeSettings({}).autoPair).toEqual({
+      brackets: true,
+      quotes: true,
+      markdownSyntax: true,
+    })
+  })
+
   it("configures line wrapping on the editor view", () => {
     const view = createEditor(
       document.createElement("div"),
@@ -505,7 +588,7 @@ describe("desktop editor lifecycle", () => {
       editorOptions(vi.fn(), "hello"),
     )
     view.dispatch({ selection: { anchor: 5 } })
-    await pastePlainText(view)
+    await pastePlainText(view, { getTabId: () => 1, getDocumentId: () => 1, getDocPath: () => "/tmp/test.md", onError: vi.fn() })
     expect(view.state.doc.toString()).toBe("hello**bold**")
     view.destroy()
   })
@@ -548,9 +631,165 @@ describe("desktop editor lifecycle", () => {
       document.createElement("div"),
       editorOptions(vi.fn(), "hello"),
     )
-    await pastePlainText(view)
+    await pastePlainText(view, { getTabId: () => 1, getDocumentId: () => 1, getDocPath: () => "/tmp/test.md", onError: vi.fn() })
     expect(view.state.doc.toString()).toBe("hello")
     expect(readText).toHaveBeenCalled()
     view.destroy()
+  })
+})
+
+const MACOS_WEBKIT_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+const DEFAULT_USER_AGENT = window.navigator.userAgent
+
+function setUserAgent(userAgent: string): void {
+  Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
+}
+
+interface PasteFlavors {
+  readonly html?: string
+  readonly text?: string
+  readonly items?: readonly DataTransferItem[]
+}
+
+/** Dispatches a cancelable, bubbling `paste` with the given clipboard flavors. */
+function firePaste(view: EditorView, flavors: PasteFlavors = {}): Event {
+  const data: Record<string, string> = {
+    "text/html": flavors.html ?? "",
+    "text/plain": flavors.text ?? "",
+  }
+  const event = new Event("paste", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: (type: string) => data[type] ?? "", items: flavors.items ?? [] },
+  })
+  view.contentDOM.dispatchEvent(event)
+  return event
+}
+
+/** Mounts the real assembled editor with the desktop-owned paste controller. */
+function mountEditor(options: Partial<CreateEditorOptions> = {}) {
+  const host = document.createElement("div")
+  document.body.appendChild(host)
+  const view = createEditor(host, { ...editorOptions(vi.fn(), "alpha"), ...options })
+  const teardown = () => {
+    view.destroy()
+    host.remove()
+  }
+  return { view, host, teardown }
+}
+
+describe("assembled editor paste ownership", () => {
+  it("keeps mixed rich HTML in the semantic importer without guessing File identity", async () => {
+    const onError = vi.fn()
+    const onDocumentUpdate = vi.fn()
+    const { view, teardown } = mountEditor({ onError, onDocumentUpdate })
+    try {
+      const file = new File([new Uint8Array([1, 2, 3])], "clip.png", { type: "image/png" })
+      const items = [
+        { kind: "file", type: "image/png", getAsFile: () => file },
+      ] as unknown as DataTransferItem[]
+
+      const event = firePaste(view, {
+        html: "<p><b>screenshot</b></p>",
+        text: "screenshot",
+        items,
+      })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => expect(view.state.doc.toString()).toBe("**screenshot**alpha"))
+      expect(onError).not.toHaveBeenCalled()
+      expect(onDocumentUpdate).toHaveBeenCalled()
+    } finally {
+      teardown()
+    }
+  })
+
+  it("converts keyboard HTML paste to Markdown at the selection", async () => {
+    const { view, teardown } = mountEditor({ doc: "body" })
+    try {
+      view.dispatch({ selection: { anchor: 0 } })
+
+      const event = firePaste(view, { html: "<h2>Title</h2>", text: "Title" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        expect(view.state.doc.toString()).toBe("## Title\n\nbody")
+      })
+    } finally {
+      teardown()
+    }
+  })
+
+  it("imports rich HTML at the saved right-click target on macOS", async () => {
+    setUserAgent(MACOS_WEBKIT_UA)
+    const onError = vi.fn()
+    const { view, teardown } = mountEditor({ doc: "hello world", onError })
+    try {
+      view.dispatch({ selection: { anchor: 0 } })
+      vi.spyOn(view, "posAtCoords").mockReturnValue(6)
+
+      view.contentDOM.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
+      )
+      // macOS workaround moves the caret to the right-click target.
+      expect(view.state.selection.main.head).toBe(6)
+
+      const event = firePaste(view, { html: "<p><b>XY</b></p>", text: "XY" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        expect(view.state.doc.toString()).toBe("hello **XY**world")
+      })
+      expect(view.state.selection.main.head).toBe(12)
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+      setUserAgent(DEFAULT_USER_AGENT)
+    }
+  })
+
+  it("consumes HTML paste on a read-only editor and keeps the document", async () => {
+    const onDocumentUpdate = vi.fn()
+    const { view, teardown } = mountEditor({
+      doc: "locked",
+      readOnly: true,
+      onDocumentUpdate,
+    })
+    try {
+      const event = firePaste(view, { html: "<h1>Title</h1>", text: "Title" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await tick()
+      expect(view.state.doc.toString()).toBe("locked")
+      expect(onDocumentUpdate).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+    }
+  })
+
+  it("consumes context-menu paste on a read-only editor and keeps the document", async () => {
+    setUserAgent(MACOS_WEBKIT_UA)
+    const onDocumentUpdate = vi.fn()
+    const { view, teardown } = mountEditor({
+      doc: "locked",
+      readOnly: true,
+      onDocumentUpdate,
+    })
+    try {
+      vi.spyOn(view, "posAtCoords").mockReturnValue(3)
+      view.contentDOM.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: 100, clientY: 200, bubbles: true }),
+      )
+
+      const event = firePaste(view, { html: "<b>XY</b>", text: "XY" })
+
+      expect(event.defaultPrevented).toBe(true)
+      await tick()
+      expect(view.state.doc.toString()).toBe("locked")
+      expect(onDocumentUpdate).not.toHaveBeenCalled()
+    } finally {
+      teardown()
+      setUserAgent(DEFAULT_USER_AGENT)
+    }
   })
 })

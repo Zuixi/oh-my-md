@@ -30,8 +30,8 @@ Boundary positions are intentionally different:
 - QuoteMark is the exception among block marks: it folds unless the **caret** is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Non-empty selections never count as `cursorInside` — selection is visual.
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
 - List indent inside a quote must start after the folded `> `; using `line.from` overlaps `replace:QuoteMark` and can make `Decoration.set` throw. List marks fold unconditionally (Route A) in and out of quotes.
-- A list inside a quote and a quote inside a list must not share `omd-li-N`. List-in-quote keeps `omd-blockquote-N` + `omd-li-N` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li-N` instead, which sets `--omd-bq-bar` to the list indent and disables hang. Reusing `omd-li-N` for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
-- Ordinary fenced code without language or inside a quote must stay as line styles (`omd-codeblock` + optional quote classes). Without a language specified, rendering an opaque `widget:block:code` collapses character-level line positions and breaks coordinate mapping / right-click cursor placement. A `widget:block:code` replace inside a quote also removes those lines from the document view and splits the quote into fragments. Fold `CodeMark` / `CodeInfo` with `cursorInside`. Mermaid still needs a widget; put quote/list depth on `BlockWidget.embed` so its chrome aligns. Quote-bar CSS should use `background-image` so it composes with `omd-codeblock`'s `background-color`.
+- A list inside a quote and a quote inside a list must not share `omd-li`. List-in-quote keeps `omd-blockquote-N` + `omd-li` (bar at `--omd-bq-bar: 0`, hanging indent on). Quote-in-list emits `omd-quote-in-li` instead, which sets `--omd-bq-bar` to the list indent and disables hang. (These were numbered `omd-li-N` classes capped at four until depth became a CSS variable — see the depth entry below — so old symptoms name the numbered classes.) Reusing the list class for both makes the quote bar jump inward on list lines. Fold leading spaces before `>` as `QuoteIndent`.
+- Fenced code splits by state, not by location: **rendered** language blocks (in or out of a quote) are a `widget:block:code`; a **rendered** language-less block stays line styles (`omd-codeblock` + quote classes) because there is nothing to highlight and an opaque widget would collapse character-level positions; the **editing** state (caret inside, any language, language-less included) replaces only the opening fence line with `CodeChromeWidget` (`styleEditingCodeblock`), which is also the only GUI path to add a language to a block that has none. Fold `CodeMark` / `CodeInfo` with `cursorInside`. Mermaid still needs a widget; put quote/list depth on `BlockWidget.embed` so its chrome aligns (that is what makes an in-quote code block render like any other block — the older "in-quote fences stay line-styled" rule is gone). Two consequences worth remembering: the opening-line replace drops that line's `line:omd-blockquote-N` decoration, so the chrome must carry its own quote classes; and `.omd-code` / `.omd-code-header` set an opaque `background` shorthand that erases the quote bar painted by `.omd-blockquote*` (see the desktop gotcha on `--omd-bq-image`).
 - HTML entities (`&#x1f4da;`, `&#128218;`, `&copy;`) are built-in Lezer `Entity` nodes. Preview-replace them with `widget:entity` when the cursor is not inside the entity; do not rewrite the source. Decode numeric references with `String.fromCodePoint` (DOMParser in happy-dom truncates supplementary-plane emoji). Do not render arbitrary HTML tags. Unicode emoji in the source are already literal text.
 - GitHub gemoji shortcodes (`:tada:`, `:+1:`) are a Lezer `Emoji` node only when the alias is in `parse/emoji.json` (unicode gemoji, no `:octocat:` images). Preview-replace with `widget:emoji` using `cursorInside`, not line-based `nearCursor`. Typing `:` opens a dedicated completion override that inserts Unicode and replaces the `:query`; do not enable generic `autocompletion()` in `createEditor`. Do not parse inside code, after a word character (`12:00`, `hello:smi`), or as `:)` emoticons.
 - Headings fold `#` / Setext underlines unconditionally (Route A), in and out of quotes — the title can always be edited without showing the ATX marks.
@@ -134,6 +134,14 @@ Before the fix, clicks could land on an arbitrary nearby line (depending on docu
 
 Status update (implemented): code, math, and Mermaid blocks install synchronous source placeholders during `toDOM()` before CodeMirror's first layout measurement, then refresh the owning StateField after async DOM changes. Generic opaque blocks enter source from their current `livePreviewField.specs` range instead of stale constructor offsets or quantized `posAtCoords`; code clicks additionally map rendered `.line` rows to source lines. Identity-first lookup keeps duplicate blocks separate. All block whitespace is padding inside the measured DOM, never a vertical wrapper margin.
 
+The rendered and source-editing forms can still have different per-row heights
+under WebKit or user font/line-height settings. A click on rendered row N must
+record that row's viewport top, dispatch the source selection, then use
+`requestMeasure` to read the new `.cm-line` top and adjust `scrollDOM.scrollTop`
+by the delta. Fixed pixel heights only hide the problem for one font; immediate
+DOM reads race CodeMirror's measure phase. The real-browser guard deliberately
+changes source-row line height and asserts that the clicked row stays anchored.
+
 ## Block widgets must declare `estimatedHeight` — CM assumes one line otherwise
 
 Verified 2026-09-09 against `@codemirror/view` 6.43.8 source (root cause of scroll jank on table-heavy ~200 KB documents). `WidgetType.estimatedHeight` defaults to `-1`, and the height mapper estimates any block widget with an unknown height as **one line height** (`HeightMapper.point`: `if (height < 0) height = this.oracle.lineHeight`). A 20-row table (~900 px) is estimated at ~26 px until first draw. The viewport (visible px ± 1000 px `VP.Margin`) is converted to a character range **using those estimates**, so under-estimation makes one scroll step cover far more content than fits: many heavy widgets get `toDOM()` in a single update, then `measureVisibleLineHeights` (forced layout reads) corrects the map, `contentHeight` jumps, the viewport recomputes, and the redraw/measure loop repeats — the classic "scroll through big block widgets is janky and the scrollbar jumps" (upstream: codemirror/CodeMirror#5873, discuss.codemirror.net/t/9372).
@@ -198,19 +206,83 @@ Facts to remember:
 
 - Because cells parse as a **block-level mini-document**, cells are a superset of GFM: `- item` → `ul>li`, `> quote` → `blockquote`, `` ```js ... ``` `` → `pre>code`, `# h` → `strong`, `<br>` → real `<br>`, plus every inline form (bold/italic/del/mark/u/code/math/autolink/emoji/entity/image). Paragraph nodes are flattened (no `<p>` in `<td>`), and the space after a list/quote marker is trimmed from `li`/`blockquote` text.
 - Cells are **single-line**, so multi-row block content cannot be expressed; list/quote/fence content in a cell comes only from markers on that one line.
-- Reference-style links (`[text][id]`) do not resolve inside cells: the cell parse is isolated from the document tree, so `linkHref`'s document-scoped reference lookup does not run. Only inline `[text](url)` and autolinks work.
+- Reference-style links and images (`[text][id]`, `![alt][img]`) resolve inside cells only
+  when the caller supplies a document-scoped resolver: `parseCell` takes
+  `{ resolveReference }`, and the table widget (`decorations/blocks.ts` → `TableWidget` →
+  `renderCellSlot`), `exportHtml`, and `exportRichHtml` all pass one from the same
+  `MarkdownReferenceContext`. The no-resolver convenience `renderTableCellContent(parent, text)`
+  has only the cell itself as context, so a cell referencing a definition elsewhere renders
+  the reference as literal text — not a bug, but do not call it from a document-backed path.
+  Unresolved references stay visible source in every path.
 - Image `src` is threaded through the host `imageResolver` facet into `TableWidget` (constructor arg, not part of `eq` — it is stable per editor config). `renderTableCellContent(parent, text)` is the public no-resolver convenience used by tests.
-- Widget `eq` compares the full `TableData` model via `JSON.stringify` — every cell's `source` and table-relative range (`model.ts`), not just display strings — so an unchanged table reuses its DOM and any authored range change rebuilds. The model is extracted once per build by `tableDataFromNode` (Lezer-derived, see the table-editing entry below); never re-derive it from re-serialized strings, and never store it in a module-global.
-- Cell `mousedown` must `preventDefault` + `stopPropagation`. `BlockWidget.toDOM` moves selection into the table source on wrap `mousedown`, which unmounts the widget; without stopping the bubble, in-place `input.omd-table-edit` never stays mounted.
-- Opening the cell input must place a collapsed caret, not call `input.select()`: native selected input text is a dark-blue rectangle that looks like a selected table cell. The input chrome is intentionally transparent/borderless. With `table-layout:auto`, `input { width:100% }` also contributes its default 20ch intrinsic width and makes the column jump; use `width:0; min-width:100%` to fill the already-sized cell without changing the table's intrinsic column calculation.
+- Widget `eq` compares `src` + `embed` first and then the cheap lazy `tableEqualityKey` (cell `source`s + alignments + shape) — never `JSON.stringify(table)`, which serialized every cell on every rebuild pass. An unchanged table reuses its DOM; a changed cell reaches `updateDOM`, which patches only the changed cells in place (see the table in-place-refresh entry below). The model is extracted once per build by `tableDataFromNode` (Lezer-derived); never re-derive it from re-serialized strings, and never store it in a module-global.
+- **Rendered cells open a session, not source.** With direct edit on (default), `td`/`th` `mousedown` goes through `TableWidget.nativePointerInteraction` → `tableCellEdit` session + `.omd-table-caret`; the document selection stays outside the table (`table.from`). Wrap `mousedown` on padding/toolbar does not reveal source. The `</>` button dispatches `revealTableSource` + `closeTableEdit` and moves the CM caret into the table for the source grid. Toolbar buttons on the rendered widget must still `preventDefault` + `stopPropagation` on `mousedown`.
+- **The cell input is an IME anchor only.** Visible text comes from `renderEditableCell` in `tableCellEdit.ts`. Durable edits must go through `tableCellInputSpec` / outer `EditorView` transactions (`directEdit.ts` session + history replay). Do not give the input its own commit queue, cancel state, or history — that breaks undo, find, autosave, and crash recovery. `tableCaretFollower` reopens a session when a collapsed caret lands inside an unrevealed table that still has a rendered `TableWidget`; Source mode has no widget host, so the follower no-ops and the CM caret stays put.
 
-## Table edits are Lezer-range-based and per-view; ragged cells are deliberate placeholders
+## Table edits are Lezer-range-based and validated at dispatch; ragged cells are deliberate placeholders
 
-The GFM render parser accepts ragged rows (missing tail cells) and escaped pipes, while the edit model (`tables/model.ts::tableDataFromNode`) is stricter: it needs a real header + separator, and a ragged row's missing tail is a `null` cell in `TableData`. The preview grid therefore shows synthetic cells that have no source slot — they render with `omd-table-cell-missing` / `aria-disabled="true"` and cannot open an input (there is no source range to commit). That visibility-without-editability is intentional: ragged synthetic cells stay disabled, and Tab from a real cell toward a synthetic slot commits the current cell without opening it. Refining ragged cells (e.g. filling slots on Tab) is a deferred manual-check follow-up, never hidden support.
+The GFM render parser accepts ragged rows (missing tail cells) and escaped pipes, while the edit model (`tables/model.ts::tableDataFromNode`) is stricter: it needs a real header + separator, and a ragged row's missing tail is a `null` cell in `TableData`. The preview grid therefore shows synthetic cells that have no source slot — they render with `omd-table-cell-missing` / `aria-disabled="true"`, never take a toolbar hover target, and are skipped by source-mode navigation because `tables/navigate.ts::slotsOf` only emits slots that have a source range. That visibility-without-editability is intentional; refining ragged cells (e.g. filling slots on Tab) is a deferred manual-check follow-up, never hidden support.
 
-- **Never restore a whole-table `splitCells`/serialize parser for edits.** All five helpers (`replaceTableCell`, `insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`) return table-relative `TableSourceChange` ranges; the widget adds `livePos()` only at dispatch, so every source byte outside the edited cell/row/column — spacing, one-sided outer pipes, alignment markers, quote/list prefixes — stays byte-identical.
-- **Never use module-global focus continuation.** `pendingTableEdits`/`pendingTableTools` are `WeakMap<EditorView, …>` values keyed to the table's live position (`livePos()`, not a captured constructor offset), consumed in the rebuild's microtask. A module-global resume token makes one tab's Tab/Shift-Tab continuation open an input in another tab's table (two tabs "steal" each other's focus).
-- **Real `EditorView` tests are mandatory.** Mock dispatch proves the transaction shape, but only a real view rebuild proves the widget focuses the next cell, final-cell Tab appends a row, prefix insertion keeps positioning, and two views never share pending focus (`view.test.ts`); `exceptionSink` must stay empty across rebuilds.
+- **Never restore a whole-table `splitCells`/serialize parser for edits.** All structural helpers (`insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`, `setTableColumnAlignment`) return table-relative `TableSourceChange` ranges; `tables/sourceToolbar.ts::applyTableToolAt` converts them to absolute offsets, so every source byte outside the edited row/column — spacing, one-sided outer pipes, alignment markers, quote/list prefixes — stays byte-identical.
+- **Rendered-toolbar targets come from hover, never from remembered state.** `TableWidget` records row/col on `td/th` `mouseover`, keeps the buttons `disabled` until `hasRowCol()`, and each click calls `applyTableToolAt(view, livePos(), src, table, row, col, act)`. That core re-checks `(from, source)` against the live document and returns `false` on any mismatch — a widget that rendered before an unrelated edit must never write its stale offsets. Never re-add a pending-action queue: a remembered target that outlives the click is how two views "steal" each other's edits.
+- **Real `EditorView` tests are mandatory.** Mock dispatch proves the transaction shape, but only a real view proves hover → toolbar → `applyTableToolAt` lands on the right table/row/column after a widget passes through `updateDOM` instance rotation (`view.test.ts`, `tableUpdateDOM.test.ts`, and `tables.test.ts`'s two-view isolation case); `exceptionSink` must stay empty across rebuilds.
+
+## A focused table must skip its subtree after emitting source lines
+
+`decorations/blocks.ts` 的 `case "Table"`：`isRevealedTableRange` 且 `blockSelected` 时调用
+`styleTableSource()` 产出 `line:omd-table-src*` 源码网格，然后**必须 `return true`**
+跳过子树。`return false` 会让 `inlineRules` 走进单元格，折叠 `**` 并加粗文字 ——
+源码态直接变成"半个预览"（用户要看的是原始标记，不是渲染效果）。渲染态分支同样
+`return true`（推完 `widget:block:table` 就返回），所以漏写这行的改动在渲染态测试里
+毫无反应，只在源码态可见。
+
+唯一守卫：`test/tableSourceDecorations.test.ts` 的 `INLINE_DOC` 用例 —— 先证明表格
+确实在源码态（三条 `line:omd-table-src`、无 `replace:`），再断言没有 `mark:omd-strong`。
+前两条断言不是凑数：删掉它们，"没有 mark"会因为"什么都没生成"而假绿。
+
+## Table keymap only sees non-composing keydown
+
+`@codemirror/view` 6.43.8（`dist/index.js:4553`）在派发 keymap **之前**调用
+`this.ignoreDuringComposition(event)`：`this.composing > 0` 的按键直接丢弃；Safari 上
+还包括 `compositionend` 之后 100ms 内的 `compositionPendingKey`（那台浏览器会把
+compositionend 与 keydown 的顺序颠倒，确认用的 Enter 因此晚到）。组词中的 Enter/Tab
+根本不会进入 `tableKeymap` —— "IME 会不会被抢键"这个问题上游已经答了。
+
+不要因为这份担心在 `format/tableKeymap.ts` 的命令里再加一层 `isComposing` 守卫：
+重复守卫会让输入法在 Windows 上丢候选确认（Enter 被吞，候选字永远不落格），
+而这正是已删除的 cell `<input>` 曾经需要自带守卫的原因 —— 主机级 keymap 不需要。
+
+## Table Tab must not fall through to indentation when the tree is unresolved
+
+`tables/navigate.ts::tableAt` 依赖 `syntaxTreeAvailable`：大文档刚打开、刚滚到未解析区、
+或刚粘贴时，语法树还没覆盖光标，查表一律返回 `null`。此时 `Tab` 若直接 `return null`，
+按键会落到 `defaultKeymap` 的 `indentMore` —— 它把空白写进表格行首，静默破坏表结构
+（`| a | b |` 变成 `  | a | b |`，缩进超过 3 空格 GFM 就不再认这一行）。
+
+`format/tableKeymap.ts::unresolvedTableRowSpec` 因此只在**树答不上来**时启用一条形状
+兜底：光标所在行匹配 `^[ \t]*(?:>[ \t]*)*\|` 就吞掉 Tab/Shift-Tab（返回一个
+selection-only spec），否则照常放行。树可用时一律以语法树为准，绝不把"以 `|` 开头的
+普通段落"也吞掉。Enter/Shift-Enter 刻意不套这条兜底：换行是用户可见、可撤销的常规
+编辑，吞掉它比让用户重敲一次更意外。
+
+守卫：`test/tableKeymap.test.ts`「unresolved syntax tree inside a table row」三条用例
+（构造 12KB 未解析文档，断言 Tab 被吞、Shift-Tab 被吞、普通段落仍放行）。
+
+## Table Enter exits on the final row; only Tab appends
+
+Enter 在表格里只做「同列下移」。到了末行（以及 `Table.to` 边界 —— 末行 End / Cmd+→ 可达）
+它必须复用 `exitTableSpec`，和 Mod-Enter 同一套幂等规则：后面已有空行就只移光标，表格
+在文末则补 `\n\n`。曾经的末行分支是 `appendRowSpec`：手指停在 Enter 上就把表无限加长
+（每按一次多一行 `|  |  |`），而这份源码增长用户完全没要。加行因此是 Tab 的专属动作
+（`tableNextCellSpec` 仍走 `appendRowSpec`），Enter 与 Shift-Enter 一行都不会加。
+
+死路一条：末行 `return null` 会落到上游 `insertNewlineContinueMarkup` / host 的
+`insertNewlineAndIndent`，那不是「不做事」而是往表格源码里写一个原始换行 —— 表被拆开。
+表格分支返回 null 和返回「什么都不做」是两件不同的事。
+
+守卫：`test/tableKeymap.test.ts`（末行两格都退出、末行文末补空段、非末行照常下移、
+`Table.to` 与前一字符等价）+ `test/tableKeymapWiring.test.ts`（真实 keymap 链下末行 Enter
+文档不变、光标落到空段，末格 Tab 仍加行）+ `apps/desktop/e2e/table-navigation.spec.ts`。
 
 ## Async widgets can outlive their original DOM
 
@@ -234,9 +306,9 @@ Pattern used in `parse/footnotes.ts` and `parse/math.ts`: cast `(line as unknown
 
 ## Desktop `defaultKeymap` is registered before engine keymaps
 
-CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding uses `Prec.high`.
+CodeMirror concatenates keymap facets in extension order and **runs earlier bindings first**. Desktop `createEditorState` mounts `keymap.of([...defaultKeymap, ...historyKeymap])` *before* `editorExtensions()`, so `Enter` is `insertNewlineAndIndent` unless the engine binding carries an explicit `Prec`.
 
-`@codemirror/lang-markdown` already wraps its markup-continue Enter in `Prec.high`. `listKeymap` must do the same (`packages/engine/src/format/lists.ts`), or list Tab/Enter lose whenever the markdown command returns false (incomplete syntax tree, non-list markup). Spec-only `continueListSpec` tests cannot see this — instantiate a real `EditorView` with host keymaps first.
+`Prec.high` is the right level only for bindings nothing upstream competes for (`blockMotionKeymap`, `caretClampKeymap`, the auto-pair Backspace). Every structural **Enter**, list `Tab`/`Shift-Tab`, and empty top-level list Backspace must sit at **`Prec.highest`**: `@codemirror/lang-markdown` pushes its own `Prec.high` Enter (`insertNewlineContinueMarkup`) and Backspace (`deleteMarkupBackward`), and `markdownLanguageSupport()` is the first extension, so at equal precedence the upstream command wins. The upstream Backspace deliberately replaces an empty `2. ` marker with three spaces to make nesting convenient; in Live editing this means replacing `2. ` with `- ` silently produces `   - ` under item 1. The engine owns the narrower Typora-style rule: only a prefix-only, top-level list line with the caret at its end exits the list; nested items, non-empty items, and explicit marker editing still yield upstream. Spec-only tests cannot prove ownership — use the real keymap chain and browser E2E (`test/enter-ownership.test.ts`, `e2e/list-editing.spec.ts`).
 
 ## Parser character codes are named, not magic
 
@@ -277,6 +349,66 @@ Tests that need a complete build must use the exported `drainPendingLiveBuild`
 helper — the synchronous test-only drain (production must never call it; same
 guard family as `crossLayerNoFullTree.test.ts`).
 
+## 逐键基准有三种口径，不能互相替代
+
+`bench/measure.ts::measureTyping` 的 `{ tree, drain }` 组合是三个**不同**问题，报告时
+必须写明是哪一种（`prepareTypingView` 就是这段准备逻辑的导出形态，`measureTyping`
+只计时 dispatch 循环）：
+
+| 口径 | 组合 | 回答的问题 |
+|---|---|---|
+| 种子后立刻打字 | `tree:"steady"`（默认） | 挂载/切 Live 后 pending 还满着时的最坏瞬时成本 |
+| 生产窗口已消化 | `tree:"steady", drain:true` | 用户停留一瞬后逐键面对的稳态（树仍在 ParseWindow，未推到 `doc.length`） |
+| 全树 + 全量装饰 | `tree:"complete", drain:true` | 绝对上限参考；生产禁止制造该状态，**永不作为优化门禁** |
+
+本机实测（`makeBenchmarkDoc` 档位，2026-10-27，happy-dom 无布局，含增量重解析，
+不含 layout/paint；两轮完整 bench 的采样区间）。三档 steady drained 统一从
+`bench/typing.bench.ts::STEADY_DRAINED_CARET = 50_000` 起笔：
+
+| 用例 | p50 | p95 |
+|---|---|---|
+| steady drained 10k（175k 字符） | 8.03–8.88ms | 9.37–11.51ms |
+| steady drained 30k（531k 字符） | 7.98–9.34ms | 9.10–11.81ms |
+| steady drained 50k（899k 字符） | 8.08–9.06ms | 8.97–11.14ms |
+| complete drained 10k（worst case，无预算） | 12.15–13.38ms | 13.81–17.48ms |
+
+**起点必须落在已 materialize 的区间内，否则三档不可比。** 树只解析到
+`viewport.to + 100000`（happy-dom 无布局 ⇒ 约前 10 万字符），而 `measureTyping` 的默认
+起点是 `doc.length / 2`：10k 档（175k 字符）的中点还在解析窗口内，30k/50k 的中点已经在
+窗口外。只改 `drain` 不改起点时量到的「30k/50k 比 10k 快好几倍」，测的是**窗口外**的一次
+编辑（那里没有装饰要映射），不是同一稳态。固定同一 `caret` 后三档都在同一个 materialized
+生产窗口内编辑，数字基本持平（p50 8–9ms、p95 9–12ms，区间重叠）；剩下的差异只能归因于
+文档/解析器状态，而不是「窗口外的活」。
+
+门禁（本计划 Task 1，只用修正后的 steady drained 30k p95）：两轮最大 11.81ms，
+≪ `TYPING_P95_BUDGET_MS`(16ms) ⇒ **不做 always-on windowing**；complete-tree 数字再差
+也不触发生产改动。
+
+## `documentStats` 用一条全局 Unicode 词法正则，别回到逐字符测试
+
+原实现是「每个字符跑一次 CJK 脚本正则 + sticky Latin 正则」，即 175k 字符的 50k 档要做
+~90 万次单字符 `test`。改成一条 `/CJK脚本|[A-Za-z0-9]+/gu` 全量扫描（`while
+(WORD.exec(text))` 循环计数）后语义完全不变（`test/stats.test.ts` 覆盖混合 Latin/CJK/Hangul/Katakana、em dash 分词、
+front-matter 剔除），成本减半。
+
+`documentStats 50k` 本机两轮（同一命令 `vitest bench --run bench/typing.bench.ts -t
+"documentStats 50k" --reporter=verbose`，报告列为 vitest 的 mean / p75）：
+
+| | mean | p75 |
+|---|---|---|
+| 改前 run1 / run2 | 11.74 / 11.91ms | 11.93 / 11.96ms |
+| 改后 run1 / run2 | 8.15 / 8.08ms | 8.42 / 8.24ms |
+| 提升 | 30.6% / 32.1% | 29.4% / 31.1% |
+
+两轮均 ≥25% ⇒ **采纳该实现**。仍然贴着 `STATS_BUDGET_MS`(8ms) 上限：50k 档单次
+`measureStatsMs` 实测 7.7–9.2ms，`documentStats 50k` 用例会继续报 OVER BUDGET 是预期的
+advisory 结果，不要为把它压到 8ms 以内引入 StateField/worker/增量统计（纯函数 + debounce
+已经够用）。
+
+**陷阱：全局正则带 `lastIndex`，跨调用会残留。** `WORD.test()`/`exec()` 循环前必须
+`WORD.lastIndex = 0`，否则同一进程里第二次统计更长/更短的文档会从上次的偏移开始，词数
+静默偏低。sticky Latin→global 全扫描的迁移最容易漏这一行。
+
 ## Pasted blocks normalize their own boundaries — never "fix" paste rendering in the decoration layer
 
 Rich-paste (turndown HTML→Markdown) used to dispatch with the caret at
@@ -315,6 +447,20 @@ doc string is literal content. Guards: the real-view paste test in
 `test/tables.test.ts` "keeps a caret resting exactly on the end boundary in
 source editing" — the decoration rule must never grow a paste exception.
 
+Rich conversion must also stop before `preventDefault` when the selection is
+inside the shared verbatim set (`InlineCode`, `FencedCode`, `CodeBlock`,
+`InlineMath`, `MathBlock`, `FrontMatter`). IDEs and rendered math pages put
+styled HTML beside the plain clipboard flavor; turndown turns each HTML row
+into a paragraph and escapes identifiers/LaTeX such as `DASHCAM_CMD_NONE` or
+`\frac{a_b}{c}`, corrupting literal source with blank lines, `\_`, and doubled
+backslashes. Let CodeMirror (or the desktop right-click paste owner) insert
+`text/plain` instead. The named set and tree walk live in
+`parse/verbatim.ts`; auto-pair, emoji completion, and paste must reuse it rather
+than declaring local node sets. When Markdown is mounted but the syntax tree
+does not cover the selection yet, preserve bytes rather than guessing that rich
+conversion is safe; an isolated `htmlPaste()` extension with no language keeps
+its existing rich-conversion behavior.
+
 ## Multi-line link constructs leave a dangling empty preview row
 
 Multi-line link constructs (`[text](url\n"title")` — a newline in the
@@ -322,6 +468,139 @@ URL/title separator) leave a dangling empty visual row in live preview because
 the title fold's backward scan correctly stops at `line.from`; this is
 cosmetic and rare with no crash (verified: StateField-provided replaces
 spanning line breaks are safe in CM 6.43.8).
+
+## Link/Image/Escape/HardBreak/cell semantics are one shared projection
+
+`src/semantic/` is the only place that turns an inline node into facts. Preview
+(`decorations/inline.ts`, `decorations/widgets/tableCell.ts`), sync export
+(`exportHtml`), rich export (`exportRichHtml`), `parse/cell.ts`, and `links.ts::linkHref`
+all consume `semantic/link.ts`, `semantic/image.ts`, `semantic/breaks.ts`, and
+`semantic/references.ts`. Re-deriving a destination, alt, or title locally (the old
+`node.getChild("URL")` + `head.indexOf("](")` shape) is exactly what made preview, sync
+export, rich export, and table cells disagree on titles, formatted/entity alt text, and
+autolink normalization.
+
+Rules that must survive refactors:
+
+- **One reference index, not one scan per tree.** `semantic/references.ts`
+  (`referenceIndexField`) seeds definitions from the committed tree, maps every definition
+  range through edits, and rescans only the changed or newly covered top-level blocks
+  (`referenceIndexScanStats.scannedBlocks` is the test counter: a concrete edit must not
+  rescan the document; tree growth may only add blocks). It is mounted **outside**
+  `livePreviewCompartment` (`index.ts`) so a Source/Live toggle never re-seeds it.
+- **No per-new-Tree live scan.** `growIndex` compares coverage against
+  `treeExtent(state)` (`min(tree.length, doc.length)`, never a forced parse) and scans only
+  the gaps — a fresh `Tree` object with the same coverage is a no-op. `snapshotReferenceContext`
+  collects every definition on a tree cache miss and is for export / one-off reads only; call
+  it from an update path and every keystroke pays a whole-document definition scan (same family
+  as the complete-tree trap).
+- **Current-state slice with a stable resolver.** `resolve` is reused whenever
+  `sameTargets` holds, so resolver identity survives text edits — but `sliceString` is rebuilt
+  per call from the state being asked (`contextFor(state, resolve)`). Caching a whole context,
+  or a slice bound to an older `EditorState`, reads stale label/alt text after an edit that
+  changed no definitions (`test/semanticReferences.test.ts`).
+- **Escape/HardBreak markers are explicit two-part semantics.** `escapeParts` = leading `\`
+  marker + escaped value; `hardBreakParts` = marker (one `\` or a run of ≥2 spaces) +
+  `newlineFrom/To` covering LF or CRLF, with `kind` read from the marker bytes only. Preview
+  folds `[markerFrom, markerTo)` and nothing else: replacing the newline would merge two
+  rendered lines, and replacing the escaped character would hide real content. Cell projection
+  keeps only the escaped value; export emits the value / `<br>`.
+- **`replace:HardBreakMark` is never atomic (atomicRanges Rule 4).** The marker ends flush
+  against the line break, so `skipAtomsForSelection` would push a line-end cursor across the
+  newline (end-of-line click or ← landing on the next line, drag selection grabbing it). The
+  exclusion in `build.ts::isAtomicTag` is by tag on purpose — do not re-derive it from boundary
+  arithmetic.
+- **Raw table-cell source stays raw; GFM pipe shielding is a separate pass.**
+  `tables/model.ts` keeps the Lezer `TableCell` source verbatim (`source.trim()`, no `\\|`
+  pre-decode). Two distinct domains: outside inline code the cell's own parser yields an
+  `Escape` node and `semantic/breaks.ts` drops exactly one backslash (`a\|b` → `a|b`); inside
+  inline code the backslash is opaque content (`InlineCode` has no `Escape` child), yet GFM
+  says the shielding backslash is not part of the code text — so
+  `parseCell(..., { pipeEscapes: "gfm-table" })` removes exactly one backslash from an
+  odd-length run followed by `|` (`decodeShieldedPipes`) and leaves even-length runs
+  untouched (an even run escapes itself, so the pipe is not shielded). The default
+  `pipeEscapes: "markdown"` performs no such rewrite — a cell string handed to `parseCell`
+  by an independent caller is a Markdown
+  fragment, not a GFM row. Never restore `replace(/\\\|/g, "|")` over a whole cell (the old
+  `cellText`), which also decoded literal backslashes in code.
+- **Reference-dependent widgets invalidate by resolver identity, not by source bytes.**
+  Editing a definition changes no `[text][id]` bytes, so `src`-based reuse would freeze the
+  old destination: `TableWidget.eq` compares `resolveReference`, `updateDOM` re-renders every
+  inactive cell when the resolver identity changed, and `build.ts::semanticProjections` maps
+  `widget:image` / `widget:block:table` specs to the resolver identity and rebuilds the ranges
+  of specs that are already built (never a document scan to find candidates). Accepted
+  boundary: a reference image that never rendered (unresolved ⇒ no spec) does not appear when
+  its definition is added later; only ranges still pending mount on their own chunk. Do not
+  "fix" that with a whole-document `Image` walk on definition change.
+- **Unresolved references stay visible as source.** `imageParts`/`linkParts` return `null` when
+  there is no definition; callers keep the raw text rather than rendering an empty
+  `![]()` widget or a link with no destination.
+
+## Smart Paste importer: one owner per rule, one parse per candidate
+
+`packages/engine/src/paste/` is the semantic clipboard importer. It deliberately mounts no DOM
+handler: the desktop controller calls `prepareSmartPaste` and `planSmartPaste`, while other
+hosts can reuse the same pure boundary. An edit here has to keep all seven contracts true.
+
+1. **Trigger policy drifts silently when the parser changes.** `paste/triggerPolicy.ts::
+   escapePasteText` is the only Markdown rule source for serialized literal text: `minimal`
+   escapes only where the engine would read semantics (`access_token` stays intact), `strict`
+   escapes every CommonMark-escaped ASCII punctuation and entity-encodes ambiguous line-start
+   indentation. It mirrors `parse/` extensions one by one, and
+   `test/pasteTriggerPolicy.test.ts` enumerates `markdownLanguageSupport()`'s extension list so
+   adding a syntax extension without a matching policy class fails the suite. Never add a
+   second escaping layer in the serializer "for safety" — double escaping is a visible defect,
+   and a locally invented rule (regex `*`/`_` handling in `serialize.ts`) is exactly the drift
+   the test exists to catch.
+2. **One paste performs at most one parse, and the candidate is final before it.** The candidate
+   is chosen before validation (plain fast path, else the minimal serializer), boundary-normalized
+   once by `blockBoundaries.ts::normalizeBlockPaste`, then handed to
+   `validate.ts::validatePasteCandidate` unchanged; the validator reads only the committed
+   context window (`MAX_PASTE_VALIDATION_CONTEXT_CHARS`) and parses `prefix + candidate + suffix`
+   once. A rejection is final: the plan goes straight to whole-fragment strict literal. Do not
+   add a retry, a second candidate, a trim, or an "accept anyway" branch; `planSmartPaste`
+   already cannot produce a second parse because `pasteValidationTestParseCalls` is asserted at
+   ≤ 1 in `test/pasteValidation.test.ts` and in `bench/paste.bench.ts`.
+3. **The Paste AST has no node identity, no source map, no DOM path.** `model.ts` nodes are
+   temporary, readonly, and positionless; asset keys (`paste-embedded-N`, `paste-unavailable-N`)
+   identify bytes only — never an output range, never a correspondence to clipboard `File`
+   array order (`normalizeHtml.ts` explicitly refuses to imply one). Once normalized, a node
+   cannot be traced back to the DOM element it came from, so no consumer may ask "which source
+   element changed" or diff a candidate against a tree; the planner re-derives the whole plan
+   from the AST plus the host boundary. Anything that needs per-node reconciliation is a new
+   design, not a small fix.
+4. **Presentation styles are dropped, not translated.** Only `font-weight`, `font-style`, and
+   `text-decoration` are read as strong-semantic facts; every other declaration (color,
+   background, font size/family, letter spacing, class, `data-*`) is counted in
+   `droppedStyle` and discarded. Unknown/media/form elements keep only their safe visible
+   descendants — no attribute strings, no `<span>` passthrough. "Preserve this one style as
+   HTML" reopens the whole escape hatch the importer exists to close.
+5. **Unresolved image identity is never guessed.** `data:image/(png|jpeg|webp)` is extracted into
+   `PasteAsset` before the URL gate; `blob:`/`file:` become an `unavailable` key plus alt and are
+   listed in `unavailableImageKeys`; when no resolver supplies bytes the image lowers to its alt
+   text with one `unresolvedAsset` diagnostic. Equal counts or matching MIME types do not prove
+   identity between HTML images and clipboard `File` entries — never zipper them by index.
+6. **Fallback is whole-fragment strict literal, never partial and never a fragment rewrite.**
+   Limit overflow, a host conversion failure, a rejected candidate, or an uncovered tree all end
+   in `serializePasteDocument(document, { mode: "strict" })` plus block isolation; the visible
+   text is preserved and every Markdown trigger is escaped. That is also why a large candidate is
+   *not* inserted as Markdown: `MAX_PASTE_VALIDATED_INSERT_CHARS` (262,144 chars) is a cost gate,
+   so a 1 MiB or 5 MiB clipboard fragment normalizes/serializes and then takes the strict path
+   with **zero** validation parses (measured in `bench/paste.bench.ts`). Do not "fix" that by
+   raising the guard to fit the benchmark.
+7. **`DOMParser` allocation is not bounded by the traversal guards.** `MAX_PASTE_DOM_DEPTH` /
+   `MAX_PASTE_DOM_NODES` are counted **after** `parseFromString` has already built the whole
+   detached document, so an oversize clipboard pays the allocation first and only then degrades
+   to `preparePlainTextFallback` (one `strictFallback` diagnostic, never a truncated AST).
+   Measured density for the bench generator: ~31 nodes/KiB for the mixed paragraph+table shape,
+   i.e. `MAX_PASTE_DOM_NODES = 200_000` sits near ~6.4 MiB of that shape but is reached at ~2.8 MiB
+   of a table-only (Sheets-shaped) fragment. A tag-dense 5 MiB fragment therefore parses fully and
+   then falls back — the guard bounds traversal, not the freeze. Escape hatch if a real user hits
+   it: bound the input by length before parsing (a new guard in `limits.ts`), never by weakening
+   the tree checks.
+
+Evidence and advisory baselines: `bench/paste.bench.ts` (raw `DOMParser`, `prepareSmartPaste`,
+serialization, one-parse planning, and the large-document reference index).
 
 ## Text.append continues the last line; batched Text assembly needs a junction line
 
@@ -336,3 +615,684 @@ suite (`test/docText.test.ts`, every-chunk-boundary scans against
 `Text.of(s.split(/\r\n?|\n/))`) is the guard. Related trap in the same file:
 an empty streaming chunk must not adjudicate a pending chunk-trailing `\r`
 (`"\r" + "" + "\n"` is one `\r\n` separator, not two).
+
+## CodeMirror's widget reuse keeps the NEW instance but the OLD DOM and listeners
+
+`docview.findWidget` reuses a widget tile's DOM when pass 0 finds an `eq` match
+(no `updateDOM`, no `destroy`), and on pass 1 — constructor match with a failed
+`eq` — it calls `tile.widget.updateDOM(tile.dom, view, newWidget)` where `this`
+is the **new** widget and the third argument is the **old** one, then stores
+`new WidgetTile(tile.dom, length, widget, flags)`. So after any in-place refresh
+the DOM, its event listeners, and any closure state belong to the *previous*
+instance while CodeMirror holds the *new* one. A listener that closes over
+`this.row` / `this.col` / `this.hovered` reads state that no longer exists once the
+widget is replaced, which is why `TableWidget` resolves its live owner through the
+module-level `domOwner` WeakMap — registered under **both** the wrap returned by
+`toDOM` and the `.omd-block-body` that `renderInto` actually hands to the
+renderer (registering only the wrap silently drops every cell/toolbar click) —
+and re-registers both keys inside `updateDOM`. Never close over `this` in widget
+DOM listeners; never key that lookup on a captured position.
+
+Related: `updateDOM` may run against detached DOM (CodeMirror diffs before it
+inserts), so "migration" checks must be structural — `TableWidget.updateDOM`
+migrates the hover target (`row` / `col` / `hovered`) from the previous instance
+because the shape (and therefore every index) still means the same thing — never
+`el.isConnected`. There is no in-cell editor left to "still be inside that cell":
+the table's two states are the widget and `omd-table-src` source lines.
+
+## Resolve a fence's enclosing node from the line END, not the line start
+
+`tree.resolveInner(line.from, …)` on a quoted or indented fence lands on the
+`QuoteMark`/`QuoteIndent` that *starts* the line, and the parent walk from there
+never sees the `FencedCode` or `ListItem` that owns the fence — so
+`continueFenceSpec` never completed `> ```js`. Resolving from `Math.max(line.from,
+line.to - 1)` (the caret at the line end, where Enter actually fires) finds the
+real parent, and then the explicit range guards (`node.from < line.from ||
+node.from > line.to`, `mark.from < line.from || mark.to > line.to`) are what keep
+the command from hijacking a fence whose CodeMark belongs to another line. Same
+family as the earlier entry about `lineAt(node.to)` for unterminated fences:
+line-start/line-end position choice *is* the bug in tree-driven commands.
+
+## Fence tokens must resolve on BOTH highlight paths
+
+Rendered code uses Shiki (`src/shiki/languages.ts`), the editing state uses
+Lezer/legacy grammars (`src/parse/codeLanguages.ts`). A token that only one side
+knows makes the same block change appearance when the caret enters it (highlight
+present in preview, plain text while editing, or the reverse). `test/
+codeLanguages.test.ts` asserts the CM table covers **every** token
+`LANGUAGE_ALIASES` resolves, except an explicit five-token gap list (`tf`, `gql`,
+`latex`, `lt`, `vim`) — adding a Shiki language means either adding the CM side or
+justifying the gap there. Legacy grammars are wrapped as `new
+LanguageSupport(StreamLanguage.define(parser))`: `LanguageDescription.load()` is
+typed (and consumed) as a `LanguageSupport`, and the loader stays a dynamic
+`import()` inside `legacyMode` so no legacy mode reaches the main bundle.
+
+## A line-start regex cannot see the real block prefix
+
+Quote/list line handling used `/^(?:> )*/` and `line.text.startsWith("> ")`. Both
+only ever matched the canonical `> ` spelling, so `>x`, `  > x` (indented),
+`- > x` (quote in a list item), `> > nested` and `> - [x] task` silently lost
+their prefix on Enter, and the toggle un-quoted lines it never recognized.
+`format/blockPrefix.ts::blockPrefixOf` reads the prefix from the Lezer tree
+instead: leading indent + each `QuoteMark`/`ListMark`/`TaskMarker` plus the
+whitespace that follows it, stopping at the first non-prefix content. Both
+`continueQuote` (Enter) and `toggleQuoteSpec` (Mod-Alt-9) consume that one model —
+do not reintroduce regexes. Two consequences: removing a mark deletes the mark
+plus exactly **one** following space (`markRemovalRange`; the remaining
+whitespace is content indentation, and eating it turned `  >   x` into `x`), and
+prefix-only lines exit one level by rebuilding the source up to the *second to
+last* mark's end rather than by deleting a fixed number of characters.
+
+## `markdown()` bundles its own `Prec.high` Enter keymap
+
+`@codemirror/lang-markdown`'s `markdown()` support pushes
+`Prec.high(keymap.of(markdownKeymap))` (Enter → `insertNewlineContinueMarkup`)
+into the returned support — and `markdownLanguageSupport()` is the FIRST entry of
+`editorExtensions()`. For equal precedence the earlier keymap wins, so an engine
+Enter binding left at `Prec.high` is silently shadowed: the engine's
+`continueQuote` / `continueList` only ran where upstream bails (inside fences,
+`getContext` returns early on `FencedCode`). The symptom is subtle because both
+implementations agree on the happy path (`> hello` → `> hello\n> `) — what
+differs is the prefix-only line (upstream leaves a bare `>` line, the engine
+exits one level), the `>x` (space-less) style, and in-fence caret placement.
+Engine Enter commands therefore sit at **`Prec.highest`**, ordered
+`codeLineKeymap` → `fenceKeymap` → `quoteKeymap` → `listKeymap`, each returning
+`false` for lines it does not own.
+
+The testing lesson is the reusable part: assert **ownership signatures** — an
+outcome only one implementation can produce (exit-one-level on `> `, caret moved
+onto the new code line, style-faithful `>x\n>x`) — never just the visible result
+both produce. `test/enter-ownership.test.ts` drives the real keymap chain
+(`keymap.of([...defaultKeymap, ...historyKeymap])` before `editorExtensions()`)
+for exactly this reason.
+
+## A continuation command must set an explicit selection
+
+`changes: {from: head, to: head, insert: "\n> "}` does NOT move the caret: a
+collapsed selection maps through an insertion at its own position with
+`assoc = -1`, so the caret stays on the **previous** line. Upstream's
+`insertNewlineContinueMarkup` sets the selection explicitly, which is why the
+missing `selection` in `continueQuoteSpec`/`continueListSpec` went unnoticed
+until the engine actually took Enter ownership — and why it showed up first in
+quoted code lines (the one place upstream had already bailed, so the engine's
+command was live). Every continuation spec returns
+`selection: { anchor: insertStart + insert.length }`; `test/enter-ownership.test.ts`
+asserts the caret's line and offset, not just the document text.
+
+## List editing columns are CommonMark structure, not source offsets
+
+列表 Enter/Tab/Shift-Tab 的每一处宽度都来自树，不来自正则或源码偏移。旧实现用一条
+`LINE` 正则 + 固定两个空格：它看不到嵌套层级（空子项该退到哪层）、把 `10. ` 和
+`-\t` 当同样宽、也判不出 `> - ` 这行到底归引用还是归列表。现在 `format/lists.ts` 只
+向 `format/blockPrefix.ts::listFrameAt` 要结构：行块前缀 + 最内层 `ListItem` + 父
+`ListItem`，另加 `itemMarkAt`（父/兄弟条目**自己**的 `ListMark`）与
+`listContentColumn`（标记的 CommonMark 内容列）。四条容易踩的前提：
+
+- **同一物理行可以有多个 `ListItem`**（`- - x`、`> - - [x] x`）。父条目那一行的前缀
+  含多个列表标记，所以退层/对齐的截断点必须是 `itemMarkAt(item)` 找到的那个
+  `ListMark`，拿整行最内层标记会把子层当父层（退层变成原地不动）。
+- **引用/列表归属看最内层非任务标记**（`enterOwnerMark`）。`> - ` 的空条目归列表：
+  `continueQuote` 返回 `null`，`continueList` 退一层列表并保留 `> `；`- > x` 归引用。
+  任务框永远不是 owner（`> - [x] x` 是列表语义）。
+- **列是视觉列**：制表位每 4 列（`visualColumn`），`-\t- x` 的父层内容列是 4，不是
+  `mark.text.length` 的 2。源码偏移相减在含 tab 的行上直接把新条目写成外层兄弟。
+- **标记后的空白不全是内容缩进**：CommonMark 只有 1–4 列算 padding；0 列或 5+ 列退化
+  成一列（`-     parent` 的正文其实是缩进代码块）。`BlockPrefixMark.to` 含全部后随
+  空白，直接当内容列会让 Tab 插六格、新条目重解析成 `CodeBlock`。
+- **不同 marker 类型是相邻列表容器，不是同一组 siblings**：`1. parent` 后紧跟
+  `- child` 时，Lezer 给出相邻 `OrderedList` / `BulletList`；当前 bullet 是自己容器的
+  首项，单查 `item.prevSibling` 必然得不到 parent。Tab 只允许跨到**紧邻且物理行连续**
+  的前一列表容器末项；空行或其它块会切断关系。
+- **新建的有序子列表必须从 `1` 开始**：`1. parent\n2. child` 仅插三格会得到
+  `1. parent\n   2. child`，CommonMark/GFM 把 `2. child` 当段落，不是子列表。Tab 在
+  parent 尚无末尾 `OrderedList` 时把当前 marker 改为 `1.`/`1)`；若 parent 已以有序
+  子列表结尾，则保留 marker，作为该子列表的下一项。
+- **spec 的 `null` 不等于按键可以交还浏览器**：首项或已在目标列时不应改文档，但
+  list command 仍返回 `true` 消费 Tab；返回 `false` 会触发原生 focus navigation。
+- **空顶层条目的 Backspace 不能交给 lang-markdown**：其 `deleteMarkupBackward` 会把
+  `2. ` 替换成三个空格并把光标留在第 3 列；用户接着输入 `- ` 就得到 `   - `，被解析为
+  上一项的嵌套列表。`deleteEmptyTopLevelListSpec` 只接管“无父 `ListItem` + 前缀为空内容
+  + 光标在行末”，删除当前列表前缀并保留外层引用；嵌套项与 marker 内编辑继续 fail closed。
+
+有序标记上限 1–9 位数字（`ORDERED_MARKER_MAX`）：递增到 `999999999` 就**重复**该
+标记而不是回绕到 1 —— 回绕像列表重新开始，超限标记会重解析成段落。
+
+失败一律 fail closed：多个 range（哪怕都是空光标）或非空选区返回 `null`，树没覆盖该
+行/祖先也返回 `null`（复写选区是破坏性操作、猜层级会插错空格），绝不猜。唯一的命令层
+例外是“已确认处于列表、但没有合法 Tab rewrite”：不 dispatch、仍消费按键以保持焦点。
+其余交给上游或 host 命令。
+
+守卫都在解析层，不要只测“看起来对”：`test/list-continue.test.ts` 断言每个 spec 的精确
+文档与选区（含同一行嵌套、tab 列、padding 兜底、9 位上限、各类拒绝），
+`test/enter-ownership.test.ts` 走真实 keymap 链（`defaultKeymap` 先注册）确认同一批
+用例在 `Prec.highest` 下确实由引擎命令拿下。
+
+## Dynamic list depth crosses engine DOM reuse and desktop cascade
+
+列表深度现在是一个**值**而不是一组类：引擎发稳定类 `omd-li` / `omd-quote-in-li` +
+行内自定义属性 `--omd-list-depth`（行装饰与块 widget 都一样），视觉换算全在 desktop
+CSS。深度**不封顶**（`BlockEmbed.listDepth` 是 `ListItem` 祖先计数；`MAX_QUOTE_DEPTH`
+只管引用）。行装饰的 `tag` 仍带深度（`line:omd-li-N`）：增量装饰身份必须随深度变化，
+否则缩进变了旧行装饰会被复用。
+
+块 widget 这条路上有两个真实坑：
+
+- **`applyBlockEmbed` 必须跑在每一条成功的 `updateDOM` 路径里。** CM pass-1 复用旧 DOM
+  配新实例（`eq` 失败才调 `updateDOM`），新实例的 `embed` 才是当前深度；漏掉一次同步，
+  源码缩进已经变了、widget 还停在旧缩进。该函数同时负责**先清后写**：先移除 `omd-li` /
+  `omd-quote-in-li` / `omd-blockquote*` 与 `--omd-list-depth`，再写当前值 —— 叠加式写法
+  会留下旧深度、或让 `omd-li` 与 `omd-quote-in-li` 并存。
+- **desktop 的 `padding` 简写会静默吃掉左侧缩进。** `.omd-block` / `.omd-math` /
+  `.omd-table` / `.omd-code` 在列表规则之后用同特异性重声明 `padding` 简写，把左侧
+  padding 归零过 —— 深度属性写了却“从来没生效”。现在的规则在这些简写之后按更高特异性
+  重新声明左侧，并且**只偏移一次**：代码块 wrapper 独占那一次偏移（header 在它里面，
+  不再加一次），编辑态 chrome 是 `.cm-content` 的直接子节点、没有 wrapper，所以由它
+  自己承担偏移 + 10px 基准内缩。改动这块要连带看引用条位置（`--omd-bq-bar`）。
+
+守卫：`packages/engine/test/blocks.test.ts`（第 5 级发出 `--omd-list-depth: 5`，类仍是
+`omd-li`）+ `test/tableUpdateDOM.test.ts` / `test/blockwidgets.test.ts`（updateDOM 后
+嵌入类与深度是新值）+ `apps/desktop/test/listDepthStyles.test.ts`（把真实 styles.css
+挂进 happy-dom 跑级联，并断言没有 per-depth 类）+ `apps/desktop/e2e/list-depth.spec.ts`
+（happy-dom 解不了带 fallback 的第二层 `var()`，所以 padding 简写存活、偏移只加一次、
+引用条落在同一次偏移上，这三件事只在真实 Chromium 里断言）。
+
+## Line block prefixes are structural — clamp the caret, never make them atomic
+
+The folded `> ` / `> - ` / `- [ ] ` prefix is block structure, but `cursorInside`
+reveals a marker whose range contains the caret (invariant 10). Clicking the left
+edge of a quoted line (or pressing Home) resolves to `line.from` = inside the
+prefix, so the marker unfolds and the next typed character lands **before** it —
+the user sees the `>` being pushed right (`abc> `). `navigation/caretClamp.ts`
+clamps the three accidental entry points (mousedown via `posAtCoords`, Home /
+Shift-Home, ArrowUp/Down after running the host command) to
+`format/blockPrefix.ts::lineContentStart`. Two rules:
+
+- Do **not** try `EditorView.atomicRanges` for line-start prefixes: the
+  atomicRanges invariants forbid line-start and cross-line atoms (they break
+  cross-line selection and drag endpoints).
+- "Prefix" means each mark plus **exactly one** following space
+  (`markRemovalRange`). The remaining whitespace is content indentation —
+  classifying it as prefix breaks Tab/Shift-Tab on quoted code lines and makes
+  indentation inheritance accidental.
+
+## There is no indentation service inside a fence
+
+`getIndentation(new IndentContext(state, { simulateBreak: pos }), pos)` returns
+`null` at every position inside a fenced code block: `@codemirror/lang-markdown`
+only declares `indentNodeProp: { Document: () => null }`, and the nested language
+does not contribute one through the mounted tree. So `insertNewlineAndIndent`'s
+"copy the current line's leading whitespace" fallback is all CM can offer, and
+`{`-style auto-indent has to come from the engine:
+`format/codeLines.ts` (`continueCodeLineSpec`) copies the current line's content
+indentation and adds one level when the text before the caret ends with
+`{ ( [ :`. Making this language-aware means providing an `indentService` (or a
+per-language provider table) — a deliberate follow-up, not a config flag.
+
+Auto-pair and that Enter branch are two independent handlers, so each can be
+green alone while the pair is wrong: typing `{` leaves `{|}` (the closer on the
+*same* line), and plain continuation pushes `}` onto the indented new line —
+`{\n  }`. `continueCodeLineSpec` therefore checks the two adjacent content
+characters around the caret: `{|}` inserts `\n<prefix><base><INDENT>\n<prefix><base>`
+and selects the inner line, leaving the existing `}` in place (never
+reinserted, and `base` is the line's own leading content whitespace so `  {}`
+keeps its indent). Keep this branch O(1) and stateless — it runs before the
+ordinary continuation path and after the terminal-blank-line exit.
+
+The same highest-priority command must not treat every empty content line as
+"continue forever". When the caret is at the end of the final blank content line
+and the next line is the closing fence, Enter preserves that blank source line
+and moves after the closing fence. It reuses an existing blank line after the
+block, or inserts one with the same quote prefix. Empty lines with later code
+content still use ordinary continuation. The real-keymap cases live in
+`test/enter-ownership.test.ts`; testing only `continueCodeLineSpec` misses
+ownership conflicts with the bundled Markdown Enter command.
+
+## `alive` is instance-scoped, but CM's `destroy` is tile-scoped
+
+Async block widgets (code / mermaid / math) end their render with
+`if (this.isActive(el)) el.innerHTML = html`, and `isActive()` is
+`BlockWidget.alive`. That flag was set by `destroy()` — but CodeMirror's
+`destroy(dom)` fires when a **tile** is dropped, which is not the same event as
+"this widget instance is finished": the live-decoration rebuild reuses the same
+`Decoration`/widget object (the `removedByKey` pass in `decorations/build.ts`)
+while CM still re-creates the tile, so `toDOM` runs a second time **on the same
+instance** and the previous tile's `destroy` can arrive after it. Instrumented
+timeline in a real browser for a quoted fence that starts the document:
+
+```
+toDOM#1 pos=2 body=false     ← first tile
+toDOM#2 pos=2 body=true      ← same instance re-tiled (this.wrap already set)
+destroy#2 pos=2              ← previous tile dropped → alive = false
+render  alive=false elConnected=true elProbe=2   ← new DOM is connected and on screen
+after debounce alive=false → EARLY-RETURN dead after debounce
+```
+
+Result: the synchronous placeholder `<pre>` stayed forever — no Shiki, no
+`.line` spans, no error (the `catch {}` swallowed everything). The same block
+preceded by any paragraph built once and rendered fine, which is why the bug hid
+in "obvious" fixtures.
+
+Rules:
+
+- `toDOM` **reactivates** the instance: set `alive = true` and record the DOM it
+  produced (`BlockWidget.activateDom`). Every `toDOM` override must call it —
+  `CodeWidget` builds its own wrap and therefore calls it directly instead of
+  going through `super.toDOM`.
+- `destroy(dom)` only retires the instance when `dom` is the **current** DOM (or
+  when called without a DOM); a stale tile's destroy must never kill a widget
+  that has already been re-added. Same idea as `domOwner` in the table widget,
+  in the opposite direction.
+- Never gate the *final* DOM write on a bare connectivity check either
+  (`isConnected` is transiently false while CM diffs/measures) — after the two
+  rules above, `isActive()` is the correct predicate.
+
+## Async widgets must expose an observable degrade marker
+
+`if (!lang) return` plus a `catch {}` made "the async render never landed" a
+silent, invisible failure: the DOM simply kept the synchronous `<pre>`, and the
+only way to notice was asserting Shiki's `.line` spans. Emit an explicit marker
+instead — `.omd-code-body[data-omd-highlight]` = `placeholder | shiki |
+unknown-lang | error` and `.omd-block-body[data-omd-render]` = `placeholder |
+svg | katex | error` (mermaid/math) — and log the swallowed error once via
+`console.debug`. This is what turned the doc-start quoted fence into a failing
+e2e assertion (`Received: "placeholder"`, 14 retries) instead of a mystery.
+
+## Auto pair: decide type-over before insertion, or the closing marker doubles
+
+Hand-typing `*bold*` only converges if the closing keystroke is compared against the
+character after the caret **before** the insertion gate runs. Insertion first turns that
+final `*` into a fresh pair (`*bold**`, caret parked between the two new markers); the
+type-over check first sees the marker the extension already inserted, steps the caret
+over it, and the document stays `*bold*`. `format/autoPair.ts::autoPairExtension` only
+ever tries `autoPairTypeOverSpec` and *then* `autoPairSpec` — swapping those two lines is
+silent one-character source corruption on the most common Markdown gesture, and no
+happy-path test notices. The adapter's dispatch order is mirrored and pinned by
+`test/autoPair.test.ts` (`typeAll`, the character-by-character `**bold**` case); the same
+rule covers the folded-emphasis path in the editor.
+
+## Auto pair: a pair-delete Backspace binding must `return false` when it does not apply
+
+`deletePairSpec` is bound at `Prec.high` because desktop's `defaultKeymap`
+(`deleteCharBackward`) is registered first and would otherwise always win. But a
+high-priority binding that claims *every* Backspace steals the key from `skipAtomic`'s
+whole-atom delete at folded marker boundaries. With the caret at the right edge of the
+folded `**` in `foo **bold** baz`, `deletePairSpec` returns `null` (prev is `*`, next is
+`b`); the binding must `return false` so `deleteCharBackward` removes the whole atom
+(→ `foo bold** baz`), not one character (→ `foo *bold** baz`). Pinned by
+`test/autoPairView.test.ts` ("yields to skipAtomic at a folded mid-line marker
+boundary"), which drives the real keymap chain — a spec-only test cannot see precedence.
+
+## Auto pair: on an empty line `*` and `$` are block structure, not typing convenience
+
+Rule 2b (`EMPTY_LINE_MARKERS` in `format/autoPair.ts`) suppresses pairing for exactly `*`
+and `$` when the caret's line is empty before the caret:
+
+- `*` plus a space would become `* *`, which Lezer parses as an unordered **list item**
+  whose content is a literal `*` (muya carries a dedicated special case for the same
+  trap).
+- `$` would pair into `$$`, and `parse/math.ts` claims `rest.startsWith("$$")` as a
+  **MathBlock**; an unclosed one swallows to EOF (KaTeX error widget plus the whole rest
+  of the document inside one block).
+
+`` ` `` and `_` are deliberately **not** suppressed: a single line-start backtick has no
+block semantics (and `` `npm run build` `` at line start is the highest-frequency case),
+and `_` has no block meaning at all. The recorded cost is that a suppressed `*`/`$`
+becomes a manually closed marker, so the closing keystroke may still pair once (one extra
+character to delete) — a known limitation, not something to "fix" with marker-parity
+tracking. Covered by `test/autoPair.test.ts` (the 2b matrix) and `e2e/auto-pair.spec.ts`
+(asserts the document text *and* that no `.omd-math` widget appears, with a real `$$`
+control that must mount one).
+
+## `EditorView.inputHandler` returning `true` is `preventDefault` — and you are not the only handler
+
+`@codemirror/view` asks the facet with `.some(...)`: the first handler returning `true`
+wins and the default DOM-change pipeline is skipped entirely. Two consequences for the
+auto pair adapter (`format/autoPair.ts::autoPairExtension`):
+
+- **The facet is not ours alone.** `markdown()` mounts the default `htmlTagLanguage` —
+  the module-level `html({ matchClosingTags: false })` — into its **own** support list
+  (`@codemirror/lang-markdown/dist/index.js:402,407,411`), and `html()` bundles
+  `autoCloseTags` (`@codemirror/lang-html/dist/index.js:604-609`, the handler itself at
+  `:627`), so `state.facet(EditorView.inputHandler)[0]` is *not* the auto pair handler
+  even for a plain Markdown document. `markdownCodeLanguages()` cannot be the source: it
+  returns lazy `LanguageDescription`s, and lang-markdown feeds a code region only
+  `found.support.language.parser` to its own parser
+  (`@codemirror/lang-markdown/dist/index.js:85-86`), so a code
+  language's `LanguageSupport` extensions are never mounted on the view. Tests must mirror
+  CM's dispatch (`facet(...).some(h => h(view, from, to, text, insert))`) instead of indexing.
+- **`from`/`to` always describe the focused (main) range.** The other cursors' DOM diffs
+  never reach the handler, so returning `true` after handling only the main range silently
+  drops every character the other cursors typed. Every path (insert, type-over, and the
+  pair-delete keymap) therefore runs through `state.changeByRange(...)` and bails out
+  *entirely* (`null` → `return false` → CM's default pipeline inserts the bare character
+  for every range) when any range fails its gates (D10). No partial dispatch is allowed.
+
+`test/autoPairView.test.ts` drives the real facet chain for exactly this (its `input()`
+helper), including the "bail out without any side effect" case. The e2e specs add no
+multi-cursor case on purpose: the host never enables
+`EditorState.allowMultipleSelections`, so CM6 collapses multi-range selections and such a
+test would assert nothing.
+
+## An unparsed tree makes `resolveInner` lie — marker gating must fail safe
+
+`inVerbatim()` walks `syntaxTree().resolveInner(pos, -1)` up to find
+`InlineCode`/`FencedCode`/`CodeBlock`/`InlineMath`/`MathBlock`/`FrontMatter`. On a large
+document, or right after open/paste, the tree is not parsed up to the caret and
+`resolveInner` resolves the position inside whatever ancestor *is* known — frequently the
+wrong one — so a purely tree-based marker gate would pair `*`/`$` inside a code block.
+`format/autoPair.ts` checks `syntaxTreeAvailable(state, pos + 1)` first and returns `true`
+(suppress) when the tree is not there: the failure directions are asymmetric (a missing
+pair costs one keystroke; a wrong pair inserts characters the user never asked for), which
+is the same "do not guess structure from an incomplete tree" rule as
+`format/blockPrefix.ts`. `syntaxTreeAvailable` is O(1) and does not force parsing, so it
+does not violate the complete-tree rule; keep it on the marker branch only, so T1
+brackets/quotes stay tree-free.
+
+Suppression is deliberate, and one boundary is easy to misread: `syntaxTreeAvailable` *is*
+`ParseContext.isDone`, which requires the parse to have started at 0. A document whose
+parse context began at a skipped/restored position therefore reports the tree as
+unavailable for the whole viewport, turning D9 into silent suppression of the four
+Markdown markers (`*`, `_`, `` ` ``, `$`); brackets and quotes are unaffected. Do not
+"fix" that by scanning backwards for markers — the manual-qa auto-pair block records the
+matching caret-at-the-end-boundary case (see "verbatim 结束边界").
+
+## The engine and desktop tsconfigs disagree about dead code
+
+`packages/engine/tsconfig.json` sets `strict` but neither `noUnusedLocals` nor
+`noUnusedParameters`, while `apps/desktop/tsconfig.json` sets both — and type-checks the
+engine sources transitively, because the workspace `@omd/engine` import resolves to
+`packages/engine/src/index.ts`. A dead parameter or unused local added inside the engine
+therefore passes `pnpm test` (engine `tsc --noEmit` + Vitest) and fails
+`pnpm --filter @omd/desktop build`. This blocked a whole round on the auto pair work:
+`rangeAccepts` kept an `options: AutoPairOptions` argument it no longer read, and only the
+desktop build caught it. When touching engine sources, run the desktop build (or
+`pnpm verify`) before concluding — the engine's own green gate is not sufficient
+evidence.
+## 块 tile 会在挂载稳定期被重建 —— 同一个 widget 实例会收到 destroy + 二次 toDOM
+
+实测（文档首块是「引用内的围栏」时，widget DOM 在挂载期被插入 3 次；前面有段落的同样
+块只插入 1 次）。插桩得到的更新序列：
+
+```
+update#1  doc=false sel=true effects=(none) ranges=0-8,29-34   ← 宿主把光标从 0 移到文末
+update#2  doc=false sel=true effects=measure ranges=
+```
+
+- `rebuildRanges` 的**选择分支**会为旧选区和新区各扩出一段
+  （`expandRange(..., SELECTION_BLOCKS)`）。初始光标在 0，于是重建区间是 `0-8`；而该块的
+  replace 区间是 `2-27` —— 二者相交，移除范围必须覆盖整块（新块 widget 可能从脏区内开始
+  却吞并后续旧块），于是这个块在同一次更新里被丢弃并重建。
+- 重建后 CodeMirror 丢弃旧 tile 并重新构建 DOM（调用栈：`CodeWidget.toDOM` ←
+  `_WidgetTile.of` ← `Object.point`，即 CM 自己的内容构建，**不是引擎直接调用 toDOM**）。
+  由于引擎的 spec 身份复用会把**同一个 widget 对象**交回给新 tile，这个实例会先收到
+  `destroy(旧 dom)`、再收到第二次 `toDOM`。这正是上面「`alive` 是实例级、destroy 是 tile 级」
+  那条 gotcha 的触发源。
+- 这是**设计使然**，不是缺陷：邻域重建用于重新评估 `blockSelected`（光标进入块必须卸载
+  widget）。不要为了消除重建去改这条路径。
+
+两个被实测否掉的"顺手优化"，记下来避免重复走：
+
+1. **`measureBlockWidget` 的连线不是原因**：临时切断"measure 效果 → 重建该块"后，
+   挂载期插入次数仍是 3（挂载期第 3 次插入来自 CM 自身的首次布局）。
+2. **"等价 widget spec 不删不增"也是无效的**：在 `updateLiveDecorations` 里对脏区内的
+   等价 block widget 做保留（跳过 filter-remove + add）后，插入次数不变 —— 因为 CM 重建
+   tile 是因为**与块相交的行被重建**，与 deco 对象的身份无关（reuse pass 早已保证身份一致）。
+
+要真正减少这次重建，只能改 `rebuildRanges` 的选择分支（例如只在块的 `blockSelected`
+真正翻转时才重建该块）—— 那是核心热路径，需单独设计并配 `blockSelected` 全套回归。
+
+回归守卫：`apps/desktop/e2e/code-block-rendered.spec.ts` 的「a block widget is rebuilt a
+bounded number of times and not after settling」——插入次数 ≤ 3 + 稳定后 DOM 身份不变 +
+最终 `data-omd-highlight="shiki"`（即异步渲染没有被 tile 重建吞掉）。
+
+## `coordsAtPos` throws inside `ViewPlugin.update` — read layout in `requestMeasure`
+
+任何"跟着光标/块跑的浮层"（`tables/sourceToolbar.ts` 的表格浮层工具栏就是第一例）都会
+在 `update(update: ViewUpdate)` 里算坐标。那里调 `view.coordsAtPos(pos)` 会穿到
+`readMeasured()`，而 `updateState === Updating` 时它**直接抛**
+`Reading the editor layout isn't allowed during an update`；`view.dom.getBoundingClientRect()`
+这类布局读取同样是更新期禁读的。
+
+危险之处是它安静地失败：按 Task 7 草案的写法（`update()` 里 `try { coordsAtPos } catch { hidden = true }`）
+浮层在**每一次**事务后都走 catch 分支，于是永远不显示，而引擎单元测试（happy-dom 无布局、
+且断言只看 `applyTableTool()` 的文档结果）全绿。只有真实浏览器的 e2e 才看得见。
+
+正确形状：
+
+```ts
+update(update: ViewUpdate) {
+  if (!tableAt(update.state, update.state.selection.main.head)) { this.dom.hidden = true; return } // 纯 state 查询，随时可做
+  this.view.requestMeasure<Placement | null>({
+    key: this,                          // 同一插件实例，连续 update 合并成一次测量
+    read: view => /* coordsAtPos + getBoundingClientRect，Idle 态可读 */,
+    write: placement => /* 只写 dom.hidden/style，不再读布局 */,
+  })
+}
+```
+
+`read` 在测量后、`write` 在 Updating 期执行，所以 `write` 里**不能再读布局**。`read`
+返回 `null` 时 `write` 仍会被调用（只有抛异常才是 `BadMeasure`），"算不出来就收起"可以直接
+用 `null` 表达。定位基准取 `view.dom`（`.cm-editor` 在 CM 基础主题里是 `position: relative`），
+坐标用 `coords - hostRect` 换算。
+
+回归守卫：`apps/desktop/e2e/table-toolbar.spec.ts`（光标进入表格 → 浮层可见 → 点按钮改源码 →
+光标离开 → 收起）。写这类浮层时先跑一次真实浏览器探针，别只信 happy-dom。
+
+
+## 「缩小选择分支的重建范围」不能消除挂载期重建 —— 但沿路挖出一个真实泄漏
+
+针对上一条（块 tile 在挂载稳定期被重建），曾有一个看起来天经地义的优化：既然是邻域重建
+把块卷进去，那就**把「前后两态都没被选中」的块从选择分支的重建范围里扣掉**。实现了
+（`stableRenderedBlocks` + `selectionRebuildRanges`：只对纯选区事务、只扣块自己的 replace
+区间、块外同一行的部分仍重建）并且全量 669 条引擎测试通过 —— 但实测把假设证伪：
+
+| 量测 | 有优化 | 无优化 |
+|---|---|---|
+| 文档首块引用围栏：挂载期 widget DOM 插入次数 | 3 | 3 |
+| 目标场景（引用围栏 + 光标在前缀里往返）p50 / p95 | 0.322 / 0.738 ms | 0.334 / 0.743 ms |
+| 同场景 `toDOM` 次数 | 0 | 0 |
+
+**原因**：挂载期那几次重建来自 CM 自己的内容构建（DOM 插入栈全部落在 `DocTile.sync`），
+而光标离开块首行时该行的 QuoteMark 折叠状态**必须**改变 —— 行被重建，CM 就顺带重建了
+起始于该行的块 tile。选择分支范围窄不窄改变不了这一点；而目标场景本来就不产生重建
+（`toDOM = 0`），所以扣不扣都一样。**结论：不要为了减少 tile 重建去动 `rebuildRanges`
+的选择分支。**
+
+## 块 widget 反复挂载/卸载会持续占用内存（聚合增长仍复现，根因 `inconclusive`）
+
+同一次排查中撞到的**真实缺陷**：让光标在"块内（编辑态）↔ 块外（渲染态）"之间反复翻转，
+每次翻转都会重建整块 DOM（设计使然：光标进块必须卸载 widget），但**强制 GC 后堆仍线性增长**：
+
+```
+NODE_OPTIONS=--expose-gc（每轮 500 次翻转后显式 global.gc() 两次）
+round 1 ( 500 flips):  480.3MB
+round 2 (1000 flips):  927.4MB
+round 3 (1500 flips): 1374.0MB
+round 4 (2000 flips): 1820.5MB
+after view.destroy() + gc: 1820.5MB     ← 不回收 ⇒ 强引用保留，不是 GC 滞后
+```
+
+复现用的文档只需一张引用内表格（`> | a | b |` + 若干行），光标在 `0` 与文末之间往返即可。
+
+**有界的部分**（别再从这儿查）：
+
+- `livePreviewField` 的 `specs` / `deco` / `pending` / `atomic`：400 次翻转后逐一相等
+  （`test/widgetChurnBounds.test.ts` 第一条用例把这条钉死）；
+- `blockSelectionOverlay` 的 `liveWraps`：条目数恒定（按 widget 实例存 DOM，注销只走
+  `destroy()`，`refresh` 每轮还清扫未连接的 DOM）；
+- 引擎侧没有按 pos/按 transaction 累积的容器（`widgetMeasure` 只有一个 `StateEffect` 定义）。
+
+⚠️ 本条早期版本把 `liveRanges` 也算进“有界”（当时读到 `wraps=0 ranges=1` 恒定）。那个
+采样是错的：它只数了**当前一轮**的条目，而 `liveRanges` 是模块级 `Map`，历史条目一直在堆里
+累积 —— 这一点由 pre-change 快照证实（见下文“所有权缺陷”一节），但它只解释那批 detached
+DOM，**不足以**解释聚合增长。凡是“注册表条目数恒定”这类结论，都必须在**churn 之后**重新数，
+不能在单轮快照里数。
+
+**当时的排查方向（历史）**：表/代码 widget 自己在 `toDOM` 里挂的观察者或闭包、
+`decorations/widgets/*` 里的模块级缓存、以及 CM 侧 tile/DOM 是否被我们的实例字段或
+注册表间接强引用。定位手法：逐个把可疑注册/观察者改成 `WeakMap`/显式解绑后跑同一段
+复现脚本看堆是否回落；修好后把上面那段脚本变成带 `global.gc` 守卫的回归用例。
+
+### 真实浏览器复核：不是 happy-dom 独有的假象
+
+上面的数字来自 happy-dom，真实浏览器里可能的保留者是布局/CM tile 而不是引擎，所以在动
+生命周期抽象之前先量了一次真实 Chromium。工具：`apps/desktop/e2e/widget-memory-audit.mjs`
+（手动工具，不在 `test:e2e` 里）：
+
+```bash
+PW_PORT=9420 pnpm --filter @omd/desktop dev --port 9420 --strictPort   # 终端 A
+PW_PORT=9420 pnpm --filter @omd/desktop audit:widget-memory            # 终端 B
+```
+
+需要堆快照时加 `PW_HEAP_SNAPSHOTS=1`（同一终端 B 命令）：
+
+```bash
+PW_PORT=9420 PW_HEAP_SNAPSHOTS=1 pnpm --filter @omd/desktop audit:widget-memory
+```
+
+快照写到 `/tmp/omd-widget-baseline.heapsnapshot` 与
+`/tmp/omd-widget-after-1000.heapsnapshot`（脚本每次先删旧文件，`addHeapSnapshotChunk`
+的 chunk 同步写 fd，不在 Node 里拼整份字符串）。这两份是诊断产物，**不进仓库**。
+
+脚本用 `e2e/harness.html` 载入一张引用内表格（20 行 + 尾随 `tail`），光标在 `0` 与文末
+之间往返（每次往返 = 一次块 widget 卸载/挂载），累计 100 / 500 / 1000 次翻转；每个采样点
+前 `HeapProfiler.collectGarbage`，再用 `Runtime.getHeapUsage` 取值。
+
+实测（2026-10-27 macOS 26.2 arm64，Chrome 156.0.8078.48，同一会话内独立两次运行，字节值
+相差 <32 KB）：
+
+```text
+baseline        6.6 MB   (6,876,232)
+flips  100      7.6 MB   (7,969,720)
+flips  500      9.1 MB   (9,575,068)
+flips 1000     10.7 MB  (11,246,292)
+afterDestroy   10.7 MB  (11,229,856)   ← 峰值 10.73 MB 的 99.9%，仍在堆上
+```
+
+**分类：`production-browser reproduced`** —— 100→500 与 500→1000 两个窗口都单调增长，且
+`view.destroy()` 后 used heap 仍是峰值的 ~100%（判定阈值为 >75%）。即：happy-dom 里看到的
+「翻转让堆线性增长且 destroy 不回收」在真实 Chromium 同样成立，不是测试环境的假象。
+
+**这里不下结论**：上面这批数字只量了总量，快照只能回答“谁强引用着哪批对象”，不能单独把
+聚合增长归因到某一条路径（下文的分析最终落在 `inconclusive`）。真实浏览器复现的意义是：
+即便最终根因落在 CM tile 或某个 widget 的观察者上，也不能用「happy-dom 的锅」推掉这条缺陷。
+
+### 已确认的一处所有权缺陷：`liveRanges` 是模块级 `Map`，DOM 作键就是强引用
+
+`PW_HEAP_SNAPSHOTS=1` 在 baseline / after-1000 各取一份快照，按
+“谁强引用着 detached DOM”排序，直接指认了 `packages/engine/src/decorations/blockSelectionOverlay.ts`
+里那个模块级缓存。
+
+**快照证据（pre-change，1000 次翻转后）**：
+
+```text
+system / Context / scope #28797 --(context:liveRanges)--> Map #35608
+Map #35608 keys = 1002
+  ↳ 1000 个键是 detachedness=2 的
+     <div class="omd-block omd-table omd-blockquote omd-blockquote-1"
+          title="Click to edit source" contenteditable="false">
+  ↳ 1001 个键本身带 {from,to} 值对象；每个键对应一次翻转
+```
+
+即：每翻转一次就 `liveRanges.set(dom, {...})`，而 `dom` 是下一次翻转就会被卸载的整块
+widget wrap。条目数 = 翻转次数（1000 次 → 1000 个 detached 块 div），`view.destroy()` 也不
+回收（模块级 `Map` 的键是强引用，跟 view 生命周期无关）。
+
+这批死键在 pre-change 快照里确实由 `Map` 强引用住：单个死键的直接 retainer 是
+`_WidgetTile.dom` 与它自己的 `<div class="omd-block-body">`（一个自引用的 tile/DOM 环），
+而该环唯一的模块级入口是 `Map` 的 table 数组；采样到的 1000 个 detached 键全部经由该
+`Map` 可达。`liveWraps` 在同一次 churn 里条目数为 1。
+
+**但这只说明“这 1000 个 wrap 被一个强引用钉住”，不说明聚合增长的来源**：同一脚本在换成
+`WeakMap` 之后聚合增长一点没变（见下节），所以它是需要修掉的所有权缺陷，不是那条聚合
+增长的根因。
+
+**修法：一处，`Map` → `WeakMap`**
+
+```ts
+// 前
+const liveRanges = new Map<HTMLElement, { from: number; to: number }>()
+// 后
+const liveRanges = new WeakMap<HTMLElement, { from: number; to: number }>()
+```
+
+`get` / `set` / `delete` 的用法一行没改（`WeakMap` 三者都有），缓存语义不变：键是 DOM，值
+只是一个 `{from, to}` 的小对象，没有“需要按 DOM 回收时跑清理”的东西。`liveWraps` 保持
+`Map`：它按 widget 实例存 DOM 且要被 `refresh` 遍历清扫，弱化会让“实例还在但 DOM 已被 GC”
+这种状态不可见。
+
+### 改完之后：聚合增长没有变化（独立复核）
+
+同一脚本、同一文档、同样的 100 / 500 / 1000 次翻转，`liveRanges` 换成 `WeakMap` 之后重新
+量了一次（2026-10-28 macOS 26.2 arm64，Chrome 156.0.8078.48，端口 9438，
+`PW_PORT=9438 pnpm --filter @omd/desktop audit:widget-memory`）：
+
+```text
+baseline        6.6 MB   (6,866,952)
+flips  100      7.6 MB   (7,960,528)
+flips  500      9.1 MB   (9,566,068)
+flips 1000     10.7 MB  (11,237,248)
+afterDestroy   10.7 MB  (11,220,844)
+```
+
+和上面那批 pre-change 数字（6,876,232 / 7,969,720 / 9,575,068 / 11,246,292 / 11,229,856）
+逐点比对：**没有变化**。100 → 1000 仍是 +41%（11,237,248 / 7,960,528 = 1.41）。
+
+判定阈值 `afterDestroy / flips100 ≤ 1.20`：
+
+```text
+pre-change : 11,229,856 / 7,969,720 = 1.41     ✗
+post-change: 11,220,844 / 7,960,528 = 1.4096   ✗
+```
+
+把 GC 次数加码也救不回来：每采样点三次 `HeapProfiler.collectGarbage`、`view.destroy()` 之后
+再追加五次，终点仍是 **11,316,564 bytes**。增量的来源不是“GC 没跑够”。
+
+**聚合增长的分类仍是 `production-browser reproduced`，并且未解决。**
+
+### 修正后的快照分析：根因 `inconclusive`
+
+早期版本把 pre-change 快照里 `Map #35608 keys = 1002` 当作整条缺陷的根因，这是错的：它只
+解释被它钉住的那批 detached DOM，解释不了同时出现的 MB 级聚合增长 —— 换成 `WeakMap` 之后
+聚合增长纹丝不动，就是反证。
+
+重做 retainer 分析时还纠正了一个方法学错误：**V8 的 heap snapshot 会把 `WeakMap` 的键经
+ephemeron table 边画进图里，但那条边不是强引用。** 按“图上可达”统计，会把只是尚未回收、
+已经不可强达的键算成“仍被强引用”，从而把 `WeakMap` 之后残留的 DOM 误读成仍在泄漏。
+排除 ephemeron 边、只保留真正的强引用路径后：
+
+```text
+采样的 retained islands：16
+  14 / 16：没有任何强根路径（只剩 ephemeron 边 / 快照残留）
+   2 / 16：由浏览器自身（DevTools/CDP 会话）持有
+   0 / 16：能证明存在 OMD 侧的强根路径
+```
+
+**结论：`inconclusive`。** 聚合堆增长能稳定复现，但现有证据不能把它归到任何一条 OMD 强
+引用上：既不能证明保留者在引擎/CM 侧，也不能证明不在。这类场景下“堆总量 + 快照可达性”
+不是有效证据 —— 它把未回收但不可强达的对象和真正被强保留的对象画在同一张图里。
+
+### 现状：保留的所有权修正 vs 未满足的验收阈值
+
+- **保留 `Map` → `WeakMap`**：它是行为安全的**所有权修正**（模块级 `Map` 用 DOM 作键把卸载
+  后的 wrap 强引用住，这一点由 pre-change 快照确凿证实；`get` / `set` / `delete` 用法一行
+  没改，缓存语义不变）。但它**没有**满足聚合内存验收阈值（`1.4096` > 1.20）。
+- **保留 `liveWraps` 为 `Map`**：它按 widget 实例存 DOM 且要被 `refresh` 遍历清扫，弱化会
+  让“实例还在但 DOM 已被 GC”这种状态不可见。
+- **推迟 disposer / per-view 注册表**：`BlockWidget.own(disposer)` 或 per-view 注册表只有在
+  **某条 OMD 强根路径被证明之后**才值得加；在根因 `inconclusive` 时加，等于给未知保留者
+  套一层“每条 destroy 路径都必须正确”的新失败面。同理不要加 `liveRanges.clear()`：模块级
+  缓存不认识 view 生命周期。
+- **回归防线**：`test/widgetChurnBounds.test.ts` 第三条用例读源码，要求 `liveRanges` 声明为
+  `WeakMap<HTMLElement, { from: number; to: number }>` 且 `liveWraps` 仍是
+  `Map<BlockWidget, HTMLElement>`。它守的是**所有权**（有人手滑改回 `Map` 会立刻红），**不**
+  守内存 —— 堆大小依赖 GC 时机，不适合做断言，真实数值只走上面的手动审计。
+
+## Complex Table `HTMLBlock` is a closed Type 6 contract, never general HTML
+
+Why a pasted `<table>` with `rowspan`/`colspan` has four strict invariants across `paste/`, `parse/`, `decorations/`, and `export/`:
+
+1. **CommonMark Type 6 HTML blocks end at the first blank line.** If `serializeComplexTable` ever emits an empty physical line inside `<table>...</table>` (for example from multi-paragraph cell content), Lezer terminates the `HTMLBlock` mid-table and parses the remainder as paragraphs. And if the block is followed immediately by text without a blank line, Type 6 swallows the following paragraph into the `HTMLBlock`. `serializeComplexTable` therefore flattens multi-block cells with `<br>`, strips any internal blank lines, and sets `boundary: { start: "block", end: "htmlBlock" }` so `normalizeBlockPaste` always closes with `\n\n`.
+2. **Container nesting breaks block closure.** Inside `BulletList`, `OrderedList`, or `Blockquote`, a multi-line `HTMLBlock` without container continuation prefixes splits the enclosing container. `smartPaste.ts::canHostComplexTable` inspects the syntax tree at `from` and only permits `allowComplexTable` at top-level `Document` or a top-level `Paragraph`; any other host context downgrades to a GFM table or plain text and increments `unsupportedTable`.
+3. **One closed validator (`parse/complexTable.ts::parseComplexTableBlock`) gates both preview and export.** Only a single top-level `<table>` with whitelisted tags (`thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `br`, `strong`/`b`, `em`/`i`, `del`/`s`, `mark`, `u`, `kbd`, `sub`, `sup`, `code`, `a`, `img`), whitelisted attributes (`rowspan`, `colspan`, `scope`, `align`, `href`, `src`, `alt`, `title`), URLs accepted by `normalizePasteUrl`, and a rectangular 2D span occupancy grid (no overlap, no dangling row/col span, bounded dimensions) produces a `ComplexTableModel`. Anything else returns `null`, leaving the `HTMLBlock` as raw source in preview and escaped text in `exportHtml` / `exportRichHtml`.
+4. **`HTMLBlock` must be in `SELECTION_BLOCKS` (`decorations/build.ts`).** Because `ComplexTableWidget` replaces the full `HTMLBlock` when unselected and unmounts to `line:omd-table-src` when selected, selection transitions into/out of an `HTMLBlock` must expand the decoration rebuild range to the full block node.

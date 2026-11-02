@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "pnpm --filter @omd/desktop tauri dev",
     "test": "pnpm --filter @omd/engine test",
+    "check:modules": "node scripts/check-module-size.mjs",
+    "test:quality": "node --test scripts/check-module-size.test.mjs",
+    "check:quality": "pnpm check:modules && pnpm test:quality",
     "verify": "node -e \"try{require('child_process').execSync(process.platform==='win32'?'powershell -ExecutionPolicy Bypass -File scripts/test.ps1 && powershell -ExecutionPolicy Bypass -File scripts/build.ps1':'bash scripts/test.sh && bash scripts/build.sh',{stdio:'inherit'})}catch(e){process.exit(e.status||1)}\"",
     "verify:win": "powershell -ExecutionPolicy Bypass -File scripts/test.ps1 && powershell -ExecutionPolicy Bypass -File scripts/build.ps1",
     "verify:unix": "bash scripts/test.sh && bash scripts/build.sh",

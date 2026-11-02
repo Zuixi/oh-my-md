@@ -17,10 +17,13 @@ function findEqClose(cx: InlineContext, pos: number): number {
 const HTML_PAIRS = [
   { tag: "mark", node: "Highlight", mark: "HighlightMark" },
   { tag: "u", node: "Underline", mark: "UnderlineMark" },
+  { tag: "kbd", node: "Kbd", mark: "KbdMark" },
 ] as const
 
 export const Highlight: MarkdownConfig = {
-  defineNodes: ["Highlight", "HighlightMark", "Underline", "UnderlineMark"],
+  defineNodes: [
+    "Highlight", "HighlightMark", "Underline", "UnderlineMark", "Kbd", "KbdMark",
+  ],
   parseInline: [{
     name: "HighlightEq",
     after: "InlineCode",

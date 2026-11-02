@@ -9,10 +9,16 @@ import {
 import { makeBenchmarkDoc, makeBenchmarkDocBytes } from "./generate"
 
 const DOC_10K = makeBenchmarkDoc(10000)
+const DOC_30K = makeBenchmarkDoc(30000)
 const DOC_50K = makeBenchmarkDoc(50000)
 // Spec 05a：超大文档档（UTF-8 字节精确，确定性生成）。
 const DOC_10MB = makeBenchmarkDocBytes(10 * 1024 * 1024)
 const DOC_20MB = makeBenchmarkDocBytes(20 * 1024 * 1024)
+// steady drained 三档的统一起点：必须落在**已解析/已 materialize**的区间内。
+// 默认起点 = doc.length/2 只有 10k 档（175k 字符）落在其中；30k/50k 的中点已在
+// 解析窗口（viewport.to + 100000 ≈ 前 10 万字符）之外，那里的逐键测量是
+// 「窗口外的编辑」，与 10k 档不可比。50_000 三档都在窗口内。
+const STEADY_DRAINED_CARET = 50_000
 
 describe("large document benchmarks (advisory)", () => {
   // 主口径 = steady（部分树，镜像生产 MaxParseAhead 行为）。
@@ -63,6 +69,52 @@ describe("large document benchmarks (advisory)", () => {
   bench("typing 10k lines (live, complete tree — worst case)", () => {
     const r = measureTyping(DOC_10K, { mode: "live", tree: "complete", keystrokes: 50 })
     console.info(`[worst-case] typing p95 10k live complete-tree: ${r.p95Ms.toFixed(2)}ms`)
+  })
+
+  // 生产 ParseWindow 已排空的稳态（drain: true）：树仍停在 steady 区间（不推到
+  // doc.length），只是把「窗口内已解析区间」的 pending 同步消化完 —— 即真实用户
+  // 停留若干秒后逐键面对的装饰集合。既有用例的 pending 非空（种子之后立刻打字），
+  // 两者是不同口径，不可互相替代。
+  bench("typing 10k lines (live, steady drained)", () => {
+    const r = measureTyping(DOC_10K, {
+      mode: "live", tree: "steady", drain: true, keystrokes: 100, caret: STEADY_DRAINED_CARET,
+    })
+    console.info(
+      budgetLine("typing p95 10k live steady drained", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms`,
+    )
+  })
+
+  bench("typing 30k lines (live, steady drained)", () => {
+    const r = measureTyping(DOC_30K, {
+      mode: "live", tree: "steady", drain: true, keystrokes: 60, caret: STEADY_DRAINED_CARET,
+    })
+    console.info(
+      budgetLine("typing p95 30k live steady drained", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms`,
+    )
+  })
+
+  bench("typing 50k lines (live, steady drained)", () => {
+    const r = measureTyping(DOC_50K, {
+      mode: "live", tree: "steady", drain: true, keystrokes: 40, caret: STEADY_DRAINED_CARET,
+    })
+    console.info(
+      budgetLine("typing p95 50k live steady drained", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms`,
+    )
+  })
+
+  // 完整树 + 全量装饰排空的绝对上限参考：故意**不设预算、不做门禁** —— 生产被
+  // 禁止制造该状态（apps/desktop/test/crossLayerNoFullTree.test.ts）。
+  bench("typing 10k lines (live, complete tree drained — worst case)", () => {
+    const r = measureTyping(DOC_10K, {
+      mode: "live", tree: "complete", drain: true, keystrokes: 50,
+    })
+    console.info(
+      `[worst-case] typing p95 10k live complete-tree drained: ${r.p95Ms.toFixed(2)}ms`,
+      `p50 ${r.p50Ms.toFixed(2)}ms`,
+    )
   })
 
   bench("cold parse 10k", () => {

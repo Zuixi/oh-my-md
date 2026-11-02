@@ -55,8 +55,8 @@ describe("headings", () => {
     let state = makeState(doc)
     state = state.update({ selection: { anchor: 0 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
-    expect(t).toContain("line:omd-h1")
     expect(t).toContain("replace:HeaderMark")
+    expect(t.some(tag => tag.startsWith("line:omd-h1"))).toBe(true)
   })
 
   it("keeps the Setext underline hidden when the cursor is on the underline", () => {
@@ -64,7 +64,34 @@ describe("headings", () => {
     let state = makeState(doc)
     state = state.update({ selection: { anchor: 6 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
-    expect(t).toContain("line:omd-h1")
     expect(t).toContain("replace:HeaderMark")
+    expect(t.some(tag => tag.startsWith("line:omd-h1"))).toBe(true)
+  })
+})
+
+describe("heading level badge", () => {
+  it("adds the active line class + data-omd-h attribute only when the cursor is inside the heading", () => {
+    const doc = "##### 深\n\nbody"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: 6 } }).state  // cursor inside the heading text
+    const inside = collectDecorationSpecs(state, 0, state.doc.length)
+    const line = inside.find(d => d.tag.startsWith("line:omd-h"))!
+    expect(line.tag).toBe("line:omd-h5 omd-h-active")
+    expect((line.deco.spec as { class?: string }).class).toBe("omd-h5 omd-h-active")
+    expect((line.deco.spec as { attributes?: Record<string, string> }).attributes)
+      .toEqual({ "data-omd-h": "5" })
+
+    state = state.update({ selection: { anchor: doc.length } }).state  // cursor on 'body'
+    const away = collectDecorationSpecs(state, 0, state.doc.length)
+    expect(away.find(d => d.tag.startsWith("line:omd-h"))!.tag).toBe("line:omd-h5")
+  })
+
+  it("badges Setext headings with the same level", () => {
+    const doc = "Title\n=====\n\nbody"
+    let state = makeState(doc)
+    state = state.update({ selection: { anchor: 2 } }).state  // cursor inside title text
+    const t = collectDecorationSpecs(state, 0, state.doc.length)
+    const line = t.find(d => d.tag.startsWith("line:omd-h"))!
+    expect(line.tag).toBe("line:omd-h1 omd-h-active")
   })
 })

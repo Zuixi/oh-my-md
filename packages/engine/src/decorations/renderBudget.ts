@@ -1,12 +1,12 @@
+import type { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import type { BlockWidget } from "./blockWidget"
+import { editorPerformancePolicy, samePerformancePolicy } from "../performancePolicy"
 
 // 安全模式渲染预算（Spec 05“视口 ±1 屏”的可测映射）：块 widget 的昂贵渲染
 // 只在「距光标行 ≤ 预算」或「已进入 CM 视口估算」时启动；其余挂起，由
-// renderBudgetFlush 在 doc/selection/viewport 变化时重查。默认 Infinity 保持
-// 现行为。全局策略（单窗口应用）；desktop 在安全模式进入/退出时设置。
-export const SAFE_MODE_RENDER_BUDGET_LINES = 60
-
+// renderBudgetFlush 在 doc/selection/viewport/策略变化时重查。默认 Infinity 保持
+// 现行为。全局值是旧控制路径与回退，按视图的显式策略优先。
 let budgetLines = Infinity
 
 export function setBlockRenderBudget(lines: number): void {
@@ -17,9 +17,19 @@ export function blockRenderBudget(): number {
   return budgetLines
 }
 
+export function blockRenderBudgetFor(state: EditorState): number | null {
+  return resolvedBudget(state)
+}
+
+function resolvedBudget(state: EditorState | undefined): number | null {
+  const policy = state && typeof state.facet === "function" ? editorPerformancePolicy(state) : null
+  if (policy) return policy.blockRenderBudgetLines
+  return Number.isFinite(budgetLines) ? budgetLines : null
+}
+
 export function withinRenderBudget(view: EditorView, pos: number): boolean {
-  const budget = budgetLines
-  if (!Number.isFinite(budget)) return true
+  const budget = resolvedBudget(view.state)
+  if (budget === null) return true
   const doc = view.state.doc
   const cursorLine = doc.lineAt(view.state.selection.main.head).number
   const posLine = doc.lineAt(Math.min(Math.max(pos, 0), doc.length)).number
@@ -65,9 +75,13 @@ export function flushDeferredBlockRenders(): number {
   return started
 }
 
-// 挂进 editorExtensions()：光标/文档/视口变化即重查挂起块。
+// 挂进 editorExtensions()：光标/文档/视口变化、或本视图策略被重新配置时重查挂起块。
 export const renderBudgetFlush = () => EditorView.updateListener.of(update => {
-  if (update.docChanged || update.selectionSet || update.viewportChanged) {
+  const policyChanged = !samePerformancePolicy(
+    editorPerformancePolicy(update.startState),
+    editorPerformancePolicy(update.state),
+  )
+  if (update.docChanged || update.selectionSet || update.viewportChanged || policyChanged) {
     flushDeferredBlockRenders()
   }
 })

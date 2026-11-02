@@ -4,29 +4,35 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-ENGINE_SKIP = frozenset({"packages/engine/AGENTS.md"})
-DESKTOP_SKIP = frozenset(
-    {
-        "apps/desktop/AGENTS.md",
-        "apps/desktop/README.md",
-    }
+SOURCE_EXTENSIONS = frozenset(
+    {"ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "rs", "py"}
 )
-CHECK_ORDER = ("engine", "desktop", "rust")
+QUALITY_PATHS = frozenset(
+    {"scripts/module-size-baseline.json", "package.json", ".github/workflows/ci.yml"}
+)
 
 
 def needed_checks(paths: Iterable[str]) -> tuple[str, ...]:
+    modules = False
     engine = False
     desktop = False
     rust = False
     for raw in paths:
         path = raw.replace("\\", "/")
-        if path.startswith("packages/engine/") and path not in ENGINE_SKIP:
+        if path == "AGENTS.md" or path.endswith("/AGENTS.md"):
+            continue
+        if path.rsplit(".", 1)[-1] in SOURCE_EXTENSIONS or path in QUALITY_PATHS:
+            modules = True
+        if path.startswith("packages/engine/"):
             engine = True
+            desktop = True
         elif path.startswith("apps/desktop/src-tauri/"):
             rust = True
-        elif path.startswith("apps/desktop/") and path not in DESKTOP_SKIP:
+        elif path.startswith("apps/desktop/") and path != "apps/desktop/README.md":
             desktop = True
     selected = []
+    if modules:
+        selected.append("modules")
     if engine:
         selected.append("engine")
     if desktop:

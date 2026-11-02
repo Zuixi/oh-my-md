@@ -12,6 +12,8 @@ import {
 import { syntaxTree } from "@codemirror/language"
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view"
 import { safeModeRenderingEnabled } from "../safeModeRendering"
+import { editorPerformancePolicy } from "../performancePolicy"
+import { suppressOrderedRenumberForTableEdit, isTableSessionRestore } from "../tables/directEdit"
 
 export interface OrderedMarkChange {
   from: number
@@ -422,6 +424,12 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
   update(update: ViewUpdate) {
     if (this.isDestroyed) return
     if (update.transactions.some(tr => tr.annotation(orderedRenumberAnn))) return
+    // 表格直接编辑的事务（及其撤销/重做回放）不得触发重编号：回放事务只带历史效果，
+    // 抑制注解留在原始输入事务上。
+    if (update.transactions.some(tr => tr.docChanged && (
+      tr.annotation(suppressOrderedRenumberForTableEdit)
+      || tr.effects.some(isTableSessionRestore)
+    ))) return
     const treeChanged = syntaxTree(update.state) !== syntaxTree(update.startState)
     if (!update.docChanged && !treeChanged) return
     if (update.docChanged) this.hasUserDocChange = true
@@ -485,12 +493,17 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
   private consumeScanRanges(): OrderedRenumberRange[] | null {
     const plan = this.scanPlan
     this.scanPlan = EMPTY_SCAN_PLAN
-    if (!safeModeRenderingEnabled()) return null
+    if (!this.windowed()) return null
     const anchors = plan.visible ? visibleScanAnchors(this.view) : []
     const length = this.view.state.doc.length
     return mergeRenumberRanges([...anchors, ...plan.changed].map(range => ({
       from: Math.max(0, range.from - RENUMBER_SCAN_MARGIN_CHARS),
       to: Math.min(length, range.to + RENUMBER_SCAN_MARGIN_CHARS),
     })))
+  }
+
+  private windowed(state: EditorState = this.view.state): boolean {
+    const policy = editorPerformancePolicy(state)
+    return policy ? policy.windowLiveDecorations : safeModeRenderingEnabled()
   }
 })

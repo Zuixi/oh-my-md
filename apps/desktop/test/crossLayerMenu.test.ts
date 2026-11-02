@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { MENU_TO_COMMAND } from "../src/commands"
 import { APP_MENU_TREE } from "../src/menuTree"
 import { formatBinding } from "../src/platform"
-import { FORMAT_SHORTCUT_BINDINGS, WINDOW_SHORTCUTS } from "../src/shortcuts"
+import { EDIT_SHORTCUT_BINDINGS, FORMAT_SHORTCUT_BINDINGS, WINDOW_SHORTCUTS } from "../src/shortcuts"
 
 /**
  * Drift guard for the native macOS menu (`src-tauri/src/menu.rs`) against the
@@ -54,6 +54,8 @@ function rustAccelToDisplay(accelerator: string): string {
 function shortcutDisplay(commandId: string): string | undefined {
   const windowBinding = WINDOW_SHORTCUTS.find(shortcut => shortcut.id === commandId)?.binding
   if (windowBinding !== undefined) return formatBinding(windowBinding, "macos")
+  const editBinding = EDIT_SHORTCUT_BINDINGS[commandId]
+  if (editBinding !== undefined) return formatBinding(editBinding, "macos")
   const formatBindingId = FORMAT_SHORTCUT_BINDINGS[commandId]
   return formatBindingId !== undefined ? formatBinding(formatBindingId, "macos") : undefined
 }

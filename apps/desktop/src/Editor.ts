@@ -11,10 +11,16 @@ import {
   getPendingOrderedListNormalization,
   isLivePreview,
   linkAt,
+  setAutoPair,
+  type AutoPairOptions,
+  type EditorPerformancePolicy,
   type OrderedListNormalizationNotice,
   type OutlineItem,
 } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
+import { clipboardPasteExtension } from "./clipboardPaste"
+import { pasteBookmarkExtension } from "./pasteBookmark"
+import { pastePlainText } from "./pastePlainText"
 import { typewriterExtension } from "./typewriter"
 import { tightSelection } from "./tightSelection"
 import { isMacOS } from "./platform"
@@ -48,12 +54,17 @@ export interface CreateEditorOptions {
   documentId: number
   getDocPath: () => string | null
   getDocumentId: () => number
+  getTabId?: () => number
   onDocumentUpdate: (update: EditorDocumentUpdate) => void
   onError: (message: string) => void
+  onNotice?: (message: string) => void
+  onConvertingChange?: (active: boolean) => void
   onOpenMarkdownHref?: (href: string) => void
   onOpenExternalHref?: (href: string) => void
   tabSize?: number
   spellcheck?: boolean
+  /** Markdown-aware auto pairing toggles (engine-owned; hot-swapped per view). */
+  autoPair?: AutoPairOptions
   /** Spec 05b HUGE 档：只读（仍挂 Markdown 语言与实时预览，渐进渲染兜底大文档）。 */
   readOnly?: boolean
   /** Construct already in Source (no live decorations at create time). */
@@ -62,6 +73,9 @@ export interface CreateEditorOptions {
   onModeChange?: (isLive: boolean) => void
   /** Notified on every update with a lightweight cursor/mode snapshot. */
   onStatusChange?: (status: EditorStatus) => void
+  /** Per-editor performance policy (`null` or omitted falls back to legacy globals). */
+  performancePolicy?: EditorPerformancePolicy | null
+  experimentalTableDirectEdit?: boolean
 }
 
 export function makeImageResolver(
@@ -186,6 +200,11 @@ export function setEditorSpellcheck(view: EditorView, on: boolean): void {
   view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckAttr(on)) })
 }
 
+/** Hot-applies the engine's auto pair toggles to a mounted view (settings modal). */
+export function setEditorAutoPair(view: EditorView, options: AutoPairOptions): void {
+  view.dispatch({ effects: setAutoPair(options) })
+}
+
 function createEditorState(
   options: CreateEditorOptions,
   reportStatus: (view: EditorView) => void,
@@ -202,19 +221,43 @@ function createEditorState(
       dropCursor(),
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      editorExtensions({
-        resolveImageSrc: makeImageResolver(options.getDocPath),
-        imageBrokenLabel: (src: string) => t("image.broken", { src }),
-        defaultLivePreview: options.defaultLivePreview,
+      pasteBookmarkExtension,
+      clipboardPasteExtension({
+        getTabId: options.getTabId ?? (() => options.tabId),
+        getDocPath: options.getDocPath,
+        getDocumentId: options.getDocumentId,
+        onError: options.onError,
+        onNotice: options.onNotice ?? options.onError,
+        onConvertingChange: options.onConvertingChange ?? (() => {}),
       }),
-      options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
-      options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],
-      typewriterExtension(),
+      keymap.of([{
+        key: "Mod-Shift-v",
+        run: view => {
+          void pastePlainText(view, {
+            getTabId: options.getTabId ?? (() => options.tabId),
+            getDocumentId: options.getDocumentId,
+            getDocPath: options.getDocPath,
+            onError: options.onError,
+          })
+          return true
+        },
+      }]),
       imagePasteHandler({
         getDocPath: options.getDocPath,
         getDocumentId: options.getDocumentId,
         onError: options.onError,
       }),
+      editorExtensions({
+        resolveImageSrc: makeImageResolver(options.getDocPath),
+        imageBrokenLabel: (src: string) => t("image.broken", { src }),
+        defaultLivePreview: options.defaultLivePreview,
+        autoPair: options.autoPair,
+        performancePolicy: options.performancePolicy,
+        experimentalTableDirectEdit: options.experimentalTableDirectEdit,
+      }),
+      options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
+      options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],
+      typewriterExtension(),
       EditorView.domEventHandlers({
         click: (event, view) => activateLink(view, event),
       }),

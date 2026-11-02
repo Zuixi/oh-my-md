@@ -16,16 +16,23 @@ export const imageBrokenLabel = Facet.define<(src: string) => string, (src: stri
 })
 
 export class ImageWidget extends WidgetType {
-  constructor(readonly src: string, readonly alt: string, readonly resolvedSrc: string) { super() }
+  constructor(
+    readonly src: string,
+    readonly alt: string,
+    readonly resolvedSrc: string,
+    readonly title: string | null = null,
+  ) { super() }
   eq(other: ImageWidget) {
     return this.src === other.src &&
       this.alt === other.alt &&
-      this.resolvedSrc === other.resolvedSrc
+      this.resolvedSrc === other.resolvedSrc &&
+      this.title === other.title
   }
   toDOM(view: EditorView) {
     const img = document.createElement("img")
     img.src = this.resolvedSrc
     img.alt = this.alt
+    if (this.title) img.title = this.title
     img.className = "omd-image"
     img.onerror = () => {
       const label = view.state.facet(imageBrokenLabel)(this.src)

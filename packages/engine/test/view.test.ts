@@ -5,7 +5,11 @@ import {
   editorExtensions,
   getPendingOrderedListNormalization,
   rejectOrderedListNormalization,
+  setLivePreview,
 } from "../src/index"
+import { getTableEditSession } from "../src/tables/directEdit"
+import { tableAt } from "../src/tables/navigate"
+import { isTableSourceRevealed } from "../src/tables/sourceReveal"
 import { livePreviewField } from "../src/decorations/build"
 
 // View 级冒烟：纯函数 spec 测试测不到 "Block decorations may not be specified
@@ -33,6 +37,18 @@ function click(el: Element, x = 10, y = 10) {
 
 const tick = (ms = 100) => new Promise(r => setTimeout(r, ms))
 
+function pressKey(view: EditorView, key: string) {
+  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  }))
+}
+
+/** Engine emits depth as a CSS custom property, not one class per depth. */
+const listDepthOf = (el: Element) =>
+  (el as HTMLElement).style.getPropertyValue("--omd-list-depth").trim()
+
 async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   const started = Date.now()
   while (Date.now() - started < timeout) {
@@ -43,29 +59,6 @@ async function waitFor(selector: string, view: EditorView, timeout = 3000) {
   return null
 }
 
-async function openTableBodyCell(view: EditorView, index: number) {
-  const table = await waitFor(".omd-table", view)
-  expect(table).toBeTruthy()
-  const cell = table!.querySelectorAll("tbody td")[index] as HTMLElement | undefined
-  expect(cell).toBeTruthy()
-  cell!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-  const input = cell!.querySelector("input.omd-table-edit") as HTMLInputElement | null
-  expect(input).toBeTruthy()
-  return input!
-}
-
-async function waitForTableEdit(view: EditorView, bodyCellIndex: number) {
-  const started = Date.now()
-  while (Date.now() - started < 3000) {
-    const inputs = view.dom.querySelectorAll("input.omd-table-edit")
-    const cell = view.dom.querySelectorAll(".omd-table tbody td")[bodyCellIndex]
-    if (inputs.length === 1 && cell?.querySelector("input.omd-table-edit") === inputs[0]) {
-      return inputs[0] as HTMLInputElement
-    }
-    await tick(20)
-  }
-  return null
-}
 
 describe("view smoke (real EditorView)", () => {
   it("keeps angle URL/email autolinks and reference labels visible", async () => {
@@ -114,84 +107,16 @@ describe("view smoke (real EditorView)", () => {
   })
 
   it("renders table/code/math blocks without exceptions", async () => {
-    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\ntail")
+    const { view, errors } = makeView("| a |\n|---|\n| 1 |\n\n```js\nlet x = 1\n```\n\n$$a$$\n\n<table>\n<tbody>\n<tr>\n<td rowspan=\"2\">a</td>\n<td>b</td>\n</tr>\n<tr>\n<td>c</td>\n</tr>\n</tbody>\n</table>\n\ntail")
     await tick()
     expect(errors.map(String)).toEqual([])
     expect(view.dom.querySelector(".omd-table table")).toBeTruthy()   // TableWidget 同步渲染
+    expect(view.dom.querySelector(".omd-complex-table table")).toBeTruthy()
     expect(view.dom.querySelector(".omd-code")).toBeTruthy()          // shiki 异步，容器先行
     expect(view.dom.querySelector(".omd-math")).toBeTruthy()
     view.destroy()
   })
 
-  it("table cell keyboard Tab and Shift-Tab restore focus after real rebuilds", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const first = await openTableBodyCell(view, 0)
-      first.value = "x"
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-      expect(view.state.doc.toString()).toContain("| x | 2 |")
-      const second = await waitForTableEdit(view, 1)
-      expect(second).toBeTruthy()
-
-      second!.value = "y"
-      second!.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "Tab",
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-      }))
-      expect(view.state.doc.toString()).toContain("| x | y |")
-      expect(await waitForTableEdit(view, 0)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally {
-      view.destroy()
-    }
-  })
-
-  it("table cell keyboard continuation follows the table live position", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      expect(await waitFor(".omd-table", view)).toBeTruthy()
-      view.dispatch({ changes: { from: 0, insert: "prefix\n\n" } })
-      const first = await openTableBodyCell(view, 0)
-      first.value = "x"
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-
-      expect(view.state.doc.toString()).toContain("prefix\n\n| a | b |")
-      expect(view.state.doc.toString()).toContain("| x | 2 |")
-      expect(await waitForTableEdit(view, 1)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally {
-      view.destroy()
-    }
-  })
-
-  it("table cell keyboard continuation is isolated between editor views", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const first = makeView(doc)
-    const second = makeView(doc)
-    try {
-      const input = await openTableBodyCell(first.view, 0)
-      input.value = "x"
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-      second.view.dispatch({ changes: { from: second.view.state.doc.length, insert: "\n" } })
-
-      expect(await waitForTableEdit(first.view, 1)).toBeTruthy()
-      await tick()
-      expect(second.view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
-      expect(first.errors.map(String)).toEqual([])
-      expect(second.errors.map(String)).toEqual([])
-    } finally {
-      first.view.destroy()
-      second.view.destroy()
-    }
-  })
-
-  // 表格 wrap 点击已改为保持渲染（见下方 non-cell surface 测试）；基类的
-  // “wrap 点击进源码”路径仍服务 hr/front-matter/mermaid，这里用 hr 守门。
   it("clicking an hr block widget moves the cursor into the block (source edit)", async () => {
     const doc = "intro\n\n***\n\ntail"
     const { view, errors } = makeView(doc)
@@ -207,23 +132,27 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("clicking a table's non-cell surface keeps it rendered (no source flash)", async () => {
+  it("clicking a table's non-cell surface keeps it rendered and still focuses the editor", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
     const block = view.dom.querySelector(".omd-table") as HTMLElement
     expect(block).toBeTruthy()
     const headBefore = view.state.selection.main.head
+    // 起点是"编辑器未聚焦"：D3 只禁止 padding 点击翻源码，焦点仍必须进编辑器。
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(view.hasFocus).toBe(false)
 
     block.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
 
     expect(view.dom.querySelector(".omd-table")).toBeTruthy()   // wrap 点击不再注入光标
     expect(view.state.selection.main.head).toBe(headBefore)
+    expect(view.hasFocus).toBe(true)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
 
-  it("clicking a block widget's edit button moves the cursor into the block", async () => {
+  it("clicking a table edit button reveals that table's source lines", async () => {
     const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
     const { view, errors } = makeView(doc)
     await tick()
@@ -233,10 +162,71 @@ describe("view smoke (real EditorView)", () => {
     vi.spyOn(view, "posAtCoords").mockReturnValue(doc.length)
 
     btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
-
-    expect(view.state.selection.main.head).toBe(doc.indexOf("| a |"))
     await tick()
-    expect(view.dom.querySelector(".omd-table")).toBeNull()   // widget 卸载，进入源码
+    expect(view.dom.querySelector(".omd-table")).toBeNull()
+    expect(view.dom.querySelector(".omd-table-src")).toBeTruthy()
+    expect(isTableSourceRevealed(view.state)).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not hijack a source-mode caret inside a table", async () => {
+    const doc = "| a |\n|---|\n| 1 |\n"
+    const { view, errors } = makeView(doc)
+    await tick()
+    view.dispatch(setLivePreview(false))
+    const head = doc.indexOf("| 1 |") + 3
+    view.dispatch({ selection: { anchor: head } })
+    await tick()
+    expect(view.state.selection.main.head).toBe(head)
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-cell-input")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("closes a cell session when revealing table source from the edit button", async () => {
+    const doc = "intro\n\n| a |\n|---|\n| 1 |\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const td = view.dom.querySelector(".omd-table tbody td") as HTMLElement
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    expect(getTableEditSession(view.state)).not.toBeNull()
+    const btn = view.dom.querySelector(".omd-table .omd-block-edit") as HTMLElement
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    await tick()
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(isTableSourceRevealed(view.state)).toBe(true)
+    view.dispatch({ selection: { anchor: doc.length } })
+    await tick()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(isTableSourceRevealed(view.state)).toBe(false)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("opens a caret in the clicked cell without entering table source", async () => {
+    const tableSource = "| 路径 |\n| --- |\n| `journal/` |"
+    const doc = `${tableSource}\n`
+    const { view, errors } = makeView(doc)
+    await tick()
+    // 表头是 th，第二个单元格才是正文 td。
+    const td = view.dom.querySelectorAll<HTMLElement>(".omd-table th, .omd-table td")[1]
+    expect(td?.tagName).toBe("TD")
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(td.querySelector(".omd-table-caret")).toBeTruthy()
+    const code = td.querySelector("code")
+    expect(code?.textContent).toBe("journal/")
+    expect(code?.textContent).not.toContain("`")
+    const input = td.querySelector(".omd-table-cell-input")
+    expect(input).toBeTruthy()
+    expect(td.childNodes.length).toBeGreaterThan(1)
+    const tableFrom = doc.indexOf(tableSource)
+    const tableTo = tableFrom + tableSource.length
+    const sel = view.state.selection.main
+    expect(sel.from <= tableTo && sel.to >= tableFrom).toBe(false)
+    expect(getTableEditSession(view.state)?.target).toMatchObject({ row: 1, column: 0 })
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -323,13 +313,13 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     view.dispatch({ changes: { from: 0, insert: "prefix\n" } })
     await tick()
-    // happy-dom 无 layout：posAtCoords 和 posAtDOM 均返回 0，光标落在文档开头而非块内，
-    // widget 不会因 mousedown 自然卸载。精确的鼠标定位需手动 QA 在真实浏览器中验证。
-    // 这里验证：把选区显式移进表格块内后，blockSelected 逻辑使 widget 卸载。
+    // happy-dom 无 layout：posAtCoords 和 posAtDOM 均返回 0，光标落在文档开头而非块内。
+    // 精确的鼠标定位需手动 QA 在真实浏览器中验证。
+    // 把选区放进表格源码后，未展开的表仍保持渲染。
     const tableStart = doc.indexOf("| a |") + "prefix\n".length
     view.dispatch({ selection: { anchor: tableStart } })
     await tick()
-    expect(view.dom.querySelector(".omd-block")).toBeNull()  // 选区在块内，widget 已卸载
+    expect(view.dom.querySelector(".omd-table")).toBeTruthy()
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -361,6 +351,52 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
+
+  it("keeps identical widgets isolated across views", async () => {
+    // 同一份字节级相同的文档挂两个 EditorView：两个视图各自建 widget 实例，但模块级
+    // 注册表（liveWraps）是进程共享的。这里锁死：点击 / 覆盖态都不得串到另一个视图。
+    const doc = "before\n\n```js\nconst x = 1\nconst y = 2\n```\n\nafter"
+    const first = makeView(doc, 0)          // 光标在块外
+    const second = makeView(doc)            // 光标在文末（块外）
+    const parents = [first.view.dom.parentElement, second.view.dom.parentElement]
+    try {
+      expect(await waitFor(".omd-code .line", first.view)).toBeTruthy()
+      expect(await waitFor(".omd-code .line", second.view)).toBeTruthy()
+      const firstHead = first.view.state.selection.main.head
+      const rows = second.view.dom.querySelectorAll<HTMLElement>(".omd-code .line")
+      expect(rows.length).toBeGreaterThanOrEqual(2)
+
+      click(rows[1])   // 只点第二个视图里的代码行
+      await tick()
+
+      // 第二个视图进入源码，光标落在被点击的那一行
+      expect(second.view.dom.querySelector(".omd-code")).toBeNull()
+      expect(second.view.state.selection.main.head).toBe(doc.indexOf("const y = 2"))
+      // 第一个视图原样不动
+      expect(first.view.dom.querySelector(".omd-code")).toBeTruthy()
+      expect(first.view.state.selection.main.head).toBe(firstHead)
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+
+      // 第二个视图移出块 → 两块都重新渲染
+      second.view.dispatch({ selection: { anchor: doc.length } })
+      await tick()
+      expect(await waitFor(".omd-code .line", second.view)).toBeTruthy()
+      expect(first.view.dom.querySelector(".omd-code")).toBeTruthy()
+
+      // 只在第一个视图做整篇选区 → 覆盖态只属于它
+      first.view.dispatch({ selection: { anchor: 0, head: doc.length } })
+      await tick()
+      expect(first.view.dom.querySelector(".omd-block-covered")).toBeTruthy()
+      expect(second.view.dom.querySelector(".omd-block-covered")).toBeNull()
+      expect(first.errors.map(String)).toEqual([])
+      expect(second.errors.map(String)).toEqual([])
+    } finally {
+      first.view.destroy()
+      second.view.destroy()
+      for (const parent of parents) parent?.remove()
+    }
+  })
 
   it("keeps checkbox edit position correct after inserting before it", async () => {
     const doc = "before\n\n- [ ] task\n"
@@ -445,17 +481,19 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  it("renders fenced code inside a quote without splitting the quote", async () => {
+  it("renders fenced code inside a quote as a code widget with the quote bar", async () => {
     const doc = "> 运行：\n>\n> ```bash\n> npm install\n> npm start\n> ```\n>\n> 完成\n\noutside"
     const { view, errors } = makeView(doc)
     await tick()
-    expect(view.dom.querySelector(".omd-code")).toBeNull()
-    const codeLines = [...view.dom.querySelectorAll(".omd-codeblock")]
-    expect(codeLines.length).toBeGreaterThanOrEqual(2)
-    expect(codeLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
-    expect(codeLines.some(el => el.textContent?.includes("npm install"))).toBe(true)
-    expect(codeLines.some(el => el.textContent?.includes("npm start"))).toBe(true)
-    expect(codeLines.every(el => !el.textContent?.includes(">"))).toBe(true)
+    const code = view.dom.querySelector(".omd-code")
+    expect(code).not.toBeNull()
+    // widget 容器自带引用类：代码背景不透明，行的引用条画不到它上面。
+    expect(code!.classList.contains("omd-blockquote-1")).toBe(true)
+    expect(code!.textContent).toContain("npm install")
+    expect(code!.textContent).toContain("npm start")
+    expect(code!.textContent).not.toContain(">")
+    // 引用在代码块前后仍然是同一条引用（前后两段都有引用行装饰）。
+    expect(view.dom.querySelectorAll(".omd-blockquote-1").length).toBeGreaterThan(0)
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -488,8 +526,9 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     const quoteLines = [...view.dom.querySelectorAll(".omd-blockquote-1")]
     expect(quoteLines.length).toBeGreaterThanOrEqual(2)
-    expect(quoteLines.every(el => el.classList.contains("omd-quote-in-li-1"))).toBe(true)
-    expect(quoteLines.every(el => !el.classList.contains("omd-li-1"))).toBe(true)
+    expect(quoteLines.every(el => el.classList.contains("omd-quote-in-li"))).toBe(true)
+    expect(quoteLines.every(el => !el.classList.contains("omd-li"))).toBe(true)
+    expect(quoteLines.every(el => listDepthOf(el) === "1")).toBe(true)
     expect(quoteLines.some(el => el.textContent === "菜鸟教程")).toBe(true)
     expect(quoteLines.some(el => el.textContent === "学的不仅是技术更是梦想")).toBe(true)
     expect(errors.map(String)).toEqual([])
@@ -513,10 +552,37 @@ describe("view smoke (real EditorView)", () => {
     await tick()
     expect(view.dom.querySelectorAll(".omd-ordered-mark")).toHaveLength(2)
     expect(view.dom.querySelectorAll(".omd-bullet")).toHaveLength(3)
-    const listLines = [...view.dom.querySelectorAll(".omd-li-1")]
+    const listLines = [...view.dom.querySelectorAll(".omd-li")]
     expect(listLines.length).toBeGreaterThanOrEqual(5)
     expect(listLines.every(el => el.classList.contains("omd-blockquote-1"))).toBe(true)
-    expect(listLines.every(el => !el.classList.contains("omd-quote-in-li-1"))).toBe(true)
+    expect(listLines.every(el => !el.classList.contains("omd-quote-in-li"))).toBe(true)
+    expect(listLines.every(el => listDepthOf(el) === "1")).toBe(true)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("keeps the visual list depth past 4 as one class plus --omd-list-depth", async () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const line = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("L5"))
+    expect(line?.classList.contains("omd-li")).toBe(true)
+    expect(line ? listDepthOf(line) : null).toBe("5")
+    expect(view.dom.querySelector("[class*='omd-li-']")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("renders a quote nested in a depth-5 list with the quote-in-list class", async () => {
+    const doc = "- L1\n  - L2\n    - L3\n      - L4\n        - L5\n          > deep quote\n\noutside"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const quote = [...view.dom.querySelectorAll(".cm-line")]
+      .find(el => el.textContent?.includes("deep quote"))
+    expect(quote?.classList.contains("omd-quote-in-li")).toBe(true)
+    expect(quote?.classList.contains("omd-li")).toBe(false)
+    expect(quote ? listDepthOf(quote) : null).toBe("5")
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
@@ -628,25 +694,92 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
   })
 
-  function makeInteractView(doc: string) {
-    const parent = document.createElement("div")
-    document.body.appendChild(parent)
-    const errors: unknown[] = []
-    let docChanged = 0
-    const view = new EditorView({
-      state: EditorState.create({
-        doc,
-        selection: { anchor: doc.length },
-        extensions: [
-          editorExtensions(),
-          EditorView.exceptionSink.of(e => { errors.push(e) }),
-          EditorView.updateListener.of(u => { if (u.docChanged) docChanged++ }),
-        ],
-      }),
-      parent,
-    })
-    return { view, errors, count: () => docChanged }
-  }
+  it("opens the header cell when ArrowDown enters a rendered table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("before") + "before".length)
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    pressKey(view, "ArrowDown")
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(getTableEditSession(view.state)?.target.row).toBe(0)
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("opens the last data cell when ArrowUp enters a rendered table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("after"))
+    expect(await waitFor(".omd-table td", view)).toBeTruthy()
+    pressKey(view, "ArrowUp")
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(getTableEditSession(view.state)?.target.row).toBe(1)
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).toBeTruthy()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("reopens the landed cell on the next frame and parks the selection on the table start", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc)
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    expect(table).toBeTruthy()
+    view.dispatch({ selection: { anchor: table!.from + 2 } })
+    expect(getTableEditSession(view.state)).toBeNull()
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(getTableEditSession(view.state)?.target).toMatchObject({ row: 0, column: 0 })
+    expect(view.state.selection.main.head).toBe(table!.from)
+    expect(view.dom.querySelector(".omd-table-caret")).toBeTruthy()
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not open a cell when a read-only caret lands inside the table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc, doc.length, [EditorState.readOnly.of(true)])
+    expect(await waitFor(".omd-table th", view)).toBeTruthy()
+    const table = tableAt(view.state, doc.indexOf("| h |"))
+    view.dispatch({ selection: { anchor: table!.from + 2 } })
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("does not open a cell when the caret lands in a source-revealed table", async () => {
+    const doc = "before\n\n| h |\n|---|\n| x |\n\nafter"
+    const { view, errors } = makeView(doc)
+    const button = await waitFor(".omd-table .omd-block-edit", view)
+    button!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+    await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+    expect(view.dom.querySelector(".omd-table-src")).toBeTruthy()
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("ArrowDown into a thematic break still enters its source", async () => {
+    const doc = "before\n\n***\n\nafter"
+    const { view, errors } = makeView(doc, doc.indexOf("before") + "before".length)
+    expect(await waitFor(".omd-hr-block hr", view)).toBeTruthy()
+    pressKey(view, "ArrowDown")
+    expect(view.state.selection.main.head).toBe(doc.indexOf("***"))
+    expect(view.dom.querySelector(".omd-hr-block")).toBeNull()
+    expect(view.dom.querySelector(".omd-table-caret")).toBeNull()
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
 
   it("does not write mermaid output after the widget is destroyed", async () => {
     const mermaid = [
@@ -662,229 +795,6 @@ describe("view smoke (real EditorView)", () => {
     view.destroy()
     await tick(700)
     expect(errors.map(String)).toEqual([])
-  })
-
-  it("merges an open cell edit with an insert-row into one doc-changing transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
-      const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-row']") as HTMLElement
-      expect(btn).toBeTruthy()
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      await tick()
-      // 合并为单一 doc 变更事务；单元格新值与新插入的行一次落盘。
-      expect(count() - before).toBe(1)
-      const out = view.state.doc.toString()
-      expect(out).toContain("| 9 | 2 |")
-      expect(out).toContain("|  |  |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-  it("merges an open cell edit with an insert-column into one doc-changing transaction", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
-      const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='insert-col']") as HTMLElement
-      expect(btn).toBeTruthy()
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      await tick()
-      // 合并为单一 doc 变更事务；单元格新值与新插入的列一次落盘。
-      expect(count() - before).toBe(1)
-      const out = view.state.doc.toString()
-      expect(out).toContain("| a |  | b |")
-      expect(out).toContain("| 9 |  | 2 |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-
-  it("two-phase delete-current-row completes against the rebuilt model", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
-      const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      // 两次 doc 事务：先提交单元格，重建后对 fresh 元数据删除 active 行。
-      const started = Date.now()
-      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
-      expect(count() - before).toBe(2)
-      // active 行(row 1)被删；剩余 row 2 原样保留其值。
-      expect(view.state.doc.toString()).toBe("| a | b |\n|---|---|\n| 3 | 4 |\n\ntail")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("two-phase delete-current-column completes against the rebuilt model", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors, count } = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(view, 0)
-      input.value = "9"
-      const before = count()
-      const btn = view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-col']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      const started = Date.now()
-      while (Date.now() - started < 3000 && count() - before < 2) await tick(20)
-      expect(count() - before).toBe(2)
-      // active 列被删；剩余列 b / 2 / 4 原样保留。
-      expect(view.state.doc.toString()).toBe("| b |\n|---|\n| 2 |\n| 4 |\n\ntail")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("does not leak a deferred delete to another editor view", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const first = makeInteractView(doc)
-    const second = makeInteractView(doc)
-    try {
-      const input = await openTableBodyCell(first.view, 0)
-      input.value = "9"
-      const btn = first.view.dom.querySelector(".omd-table .omd-table-toolbar [data-act='delete-row']") as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      const started = Date.now()
-      while (Date.now() - started < 3000 && first.view.state.doc.toString().includes("| 9 | 2 |")) {
-        await tick(20)
-      }
-      expect(first.view.state.doc.toString()).not.toContain("| 9 | 2 |")
-      // 第二个视图未派发任何结构删除：文档逐字节未变。
-      expect(second.view.state.doc.toString()).toBe(doc)
-      expect(first.errors.map(String)).toEqual([])
-      expect(second.errors.map(String)).toEqual([])
-    } finally { first.view.destroy(); second.view.destroy() }
-  })
-
-  it("does not run a deferred delete on a table at another position", async () => {
-    const doc = [
-      "| a | b |",
-      "|---|---|",
-      "| 1 | 2 |",
-      "| 3 | 4 |",
-      "",
-      "intro",
-      "",
-      "| c | d |",
-      "|---|---|",
-      "| 5 | 6 |",
-      "",
-      "tail",
-    ].join("\n")
-    const { view, errors } = makeInteractView(doc)
-    try {
-      const tbl = await waitFor(".omd-table", view)
-      const firstCell = tbl!.querySelectorAll("tbody td")[0] as HTMLElement
-      firstCell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      const input = firstCell.querySelector("input.omd-table-edit") as HTMLInputElement
-      expect(input).toBeTruthy()
-      input.value = "9"
-      const btn = view.dom.querySelectorAll(".omd-table .omd-table-toolbar [data-act='delete-row']")[0] as HTMLElement
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      btn.click()
-      // 等待结构删除真正发生：带 "9" 的 active 行消失（提交后、删除前仍含 "| 9 | 2 |"）。
-      const started = Date.now()
-      while (Date.now() - started < 3000 && view.state.doc.toString().includes("| 9 | 2 |")) {
-        await tick(20)
-      }
-      const out = view.state.doc.toString()
-      // 第一张表删除了 active 行；第二张表（不同位置）原样未动，pending 未串台。
-      expect(out).toContain("| a | b |\n|---|---|\n| 3 | 4 |\n\nintro")
-      expect(out).toContain("| c | d |\n|---|---|\n| 5 | 6 |")
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("final-cell Tab appends one blank row and focuses its first cell", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const last = await openTableBodyCell(view, 1)
-      last.value = "x"
-      last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))
-      expect(view.state.doc.toString()).toContain("| 1 | x |\n|  |  |")
-      // 重建后新行首格（tbody 第 2 行的第 1 格 = td index 2）成为编辑焦点
-      expect(await waitForTableEdit(view, 2)).toBeTruthy()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("Shift-Tab in the first cell commits and opens no input outside the table", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      // 线性网格的首格 = 表头第一格（row 0, col 0）。
-      const table = await waitFor(".omd-table", view)
-      const firstTh = table!.querySelector("th") as HTMLElement
-      firstTh.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
-      const input = firstTh.querySelector("input.omd-table-edit") as HTMLInputElement
-      expect(input).toBeTruthy()
-      input.value = "z"
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }))
-      expect(view.state.doc.toString()).toContain("| z | b |")
-      await tick()
-      // 边界提交：打开任何新输入框（含回到表尾的环绕）都不会发生。
-      expect(view.dom.querySelectorAll("input.omd-table-edit")).toHaveLength(0)
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("disables delete-row for a single data row and delete-column for a single column", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      await waitFor(".omd-table", view)
-      const delRow = view.dom.querySelector("[data-act='delete-row']") as HTMLButtonElement
-      expect(delRow.disabled).toBe(true)
-      const delCol = view.dom.querySelector("[data-act='delete-col']") as HTMLButtonElement
-      expect(delCol.disabled).toBe(false)
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("highlights the active row and column while editing, and clears on cancel", async () => {
-    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      const input = await openTableBodyCell(view, 1)  // row1 col1
-      const tbl = view.dom.querySelector(".omd-table")
-      const tds = tbl!.querySelectorAll("tbody td")
-      expect((tds[1] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
-      expect((tds[1] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-      expect((tds[0] as HTMLElement).classList.contains("omd-table-row-active")).toBe(true)
-      expect((tds[0] as HTMLElement).classList.contains("omd-table-col-active")).toBe(false)
-      expect((tds[3] as HTMLElement).classList.contains("omd-table-col-active")).toBe(true)
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
-      expect(tbl!.querySelector(".omd-table-row-active")).toBeNull()
-      expect(tbl!.querySelector(".omd-table-col-active")).toBeNull()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
-  })
-
-  it("renders synthetic ragged cells disabled and input-less", async () => {
-    const doc = "| a | b |\n|---|---|\n| only |\n\ntail"
-    const { view, errors } = makeView(doc)
-    try {
-      await waitFor(".omd-table tbody td", view)
-      const missing = view.dom.querySelector(".omd-table tbody tr td:nth-child(2)") as HTMLElement
-      expect(missing).toBeTruthy()
-      expect(missing.classList.contains("omd-table-cell-missing")).toBe(true)
-      expect(missing.getAttribute("aria-disabled")).toBe("true")
-      expect(missing.title).toBe("Missing source cell; add a column or edit Markdown source")
-      expect(missing.querySelector("input")).toBeNull()
-      expect(errors.map(String)).toEqual([])
-    } finally { view.destroy() }
   })
 
 })
