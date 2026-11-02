@@ -80,7 +80,7 @@ interface TableInputController {
   /** Session revision this controller last saw; a mismatch means history moved the doc. */
   revision: number
   paint(): void
-  focusAt(clientX?: number, clientY?: number): void
+  focusAt(clientX?: number, clientY?: number, cellCaret?: number): void
   destroy(): void
 }
 
@@ -243,9 +243,9 @@ function createTableInputController(
     committing: false,
     revision: 0,
     paint: repaint,
-    focusAt(clientX?: number, clientY?: number) {
+    focusAt(clientX?: number, clientY?: number, cellCaret?: number) {
       if (destroyed) return
-      focusEditableCell(projection, cellEl, input, clientX, clientY, editingCellOptions(host))
+      focusEditableCell(projection, cellEl, input, clientX, clientY, editingCellOptions(host), cellCaret)
     },
     destroy() {
       if (destroyed) return
@@ -284,6 +284,7 @@ function activateTableCellInput(
   table: TableContext,
   clientX?: number,
   clientY?: number,
+  cellCaret?: number,
 ): void {
   if (view.state.readOnly) return
   const cell = tableCellDataRows(table.data)[row]?.[column]
@@ -291,7 +292,7 @@ function activateTableCellInput(
   if (!cell || !cellEl) return
   const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
   if (existing && existing.host === host && existing.row === row && existing.column === column) {
-    existing.focusAt(clientX, clientY)
+    existing.focusAt(clientX, clientY, cellCaret)
     return
   }
   if (existing) {
@@ -309,7 +310,7 @@ function activateTableCellInput(
   })
   const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
   controller.revision = getTableEditSession(view.state)?.revision ?? 0
-  controller.focusAt(clientX, clientY)
+  controller.focusAt(clientX, clientY, cellCaret)
 }
 
 export const tableDirectEditEnabled = Facet.define<boolean, boolean>({

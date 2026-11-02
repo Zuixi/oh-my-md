@@ -129,6 +129,8 @@ export function trimmedCellCaret(source: string): number {
 }
 
 export function freezeEditableTableColumns(cell: HTMLElement): HTMLTableColElement | null {
+  // shortcut: px 快照不随会话中的窗口 resize/字号变化重算，会话关闭即自愈；
+  // 若出现长会话排版反馈再考虑 ResizeObserver 重冻结。
   const table = cell.closest("table")
   if (!table) return null
   const widths = [...table.querySelectorAll("thead th")].map(th => th.getBoundingClientRect().width)
@@ -172,6 +174,7 @@ export function focusEditableCell(
   clientX: number | undefined,
   clientY: number | undefined,
   options?: CellParseOptions,
+  cellCaret?: number,
 ): void {
   if (projection.childNodes.length === 0) {
     const start = trimmedCellCaret(input.value)
@@ -182,7 +185,8 @@ export function focusEditableCell(
   const hit = clientX !== undefined && clientY !== undefined
     ? cellSourceOffsetAt(projection, clientX, clientY)
     : null
-  const caret = hit ?? trimmedCellCaret(input.value)
+  // 优先级：点击坐标 > 显式落点偏移（外来跳转保留位置）> 格首。
+  const caret = hit ?? (cellCaret !== undefined ? Math.min(Math.max(cellCaret, 0), input.value.length) : null) ?? trimmedCellCaret(input.value)
   input.setSelectionRange(caret, caret)
   syncEditableCell(projection, cell, input, options)
 }
@@ -429,6 +433,8 @@ type RenderedTableCellOpener = (
   table: TableContext,
   clientX?: number,
   clientY?: number,
+  /** 格内选区落点（cell 源码相对）：保留外来跳转（脚注回跳/goto-line）的精确位置。 */
+  cellCaret?: number,
 ) => void
 
 let renderedTableCellOpener: RenderedTableCellOpener | null = null
@@ -443,10 +449,11 @@ export function openRenderedTableCell(
   table: TableContext,
   row: number,
   column: number,
+  cellCaret?: number,
 ): void {
   const host = renderedTableBody(view, table.from)
   if (!host || !renderedTableCellOpener) return
-  renderedTableCellOpener(view, host, row, column, table)
+  renderedTableCellOpener(view, host, row, column, table, undefined, undefined, cellCaret)
 }
 
 function renderedTableBody(view: EditorView, tableFrom: number): HTMLElement | null {
@@ -506,7 +513,10 @@ export const tableCaretFollower = ViewPlugin.fromClass(class {
     if (!hit) return
     const { table, slot } = hit
     if (!renderedTableBody(view, table.from)) return
+    // 落点偏移随会话传递：光标停在 table.from 后，输入框内光标仍在原落点，
+    // 脚注回跳/goto-line 才真正“回到原位”。
+    const cellCaret = Math.min(Math.max(view.state.selection.main.head - slot.from, 0), slot.to - slot.from)
     view.dispatch({ selection: { anchor: table.from }, scrollIntoView: true })
-    openRenderedTableCell(view, table, slot.row, slot.col)
+    openRenderedTableCell(view, table, slot.row, slot.col, cellCaret)
   }
 })
