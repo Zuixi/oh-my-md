@@ -9,7 +9,7 @@ import type { Text } from "@codemirror/state"
 import { createEditorStatusStore } from "./editorStatusStore"
 import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
-  applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
+  applyToggle, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setSafeModeRendering,
   type AutoPairOptions, type OutlineItem,
 } from "@omd/engine"
@@ -23,7 +23,7 @@ import {
   type EditorSession,
 } from "./session"
 import {
-  activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder, findTabByPath,
+  activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder,
   focusTab, openFolder, pathWithinDir, replaceTabSession, resolveMarkdownHref,
   type Workspace,
 } from "./workspace"
@@ -36,6 +36,7 @@ import {
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import { createDocumentOpen, type DocumentOpen, type QuickOpenState } from "./documentOpen"
 import { createFileTreeActions } from "./fileTreeActions"
 import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
 import { restartToApplyLogging } from "./appLoggingActions"
@@ -80,7 +81,7 @@ import { isMainWindow } from "./windowScope"
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
-import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
+import { defaultServices, errorMessage, type DesktopServices, type SnapshotEntry } from "./desktopServices"
 import { flushLogs, logUpdateStartupFailure } from "./logging"
 import { useLoggingState } from "./useLoggingState"
 import { collectMatches, validateFindPattern } from "./findReplace"
@@ -136,9 +137,6 @@ import { createDocumentMaterializer, type DocumentMaterializer } from "./documen
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
-  OPEN_READONLY_THRESHOLD_BYTES,
-  OPEN_SAVE_QUEUE_TIMEOUT_MS,
-  OPEN_STREAM_THRESHOLD_BYTES,
   RELEASES_URL,
   SAFE_MODE_BYTES,
   STARTUP_UPDATE_CHECK_MS,
@@ -177,27 +175,6 @@ const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
 const SESSION_SAVE_DEBOUNCE_MS = 1000
-
-/**
- * Bounded wait: a large-document save (double probe + fsync) can run for
- * minutes under Windows antivirus scanning, and its queue promise is the only
- * unbounded await on the open path. Resolving on timeout lets the open proceed
- * while the save chain keeps running on its own.
- */
-function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
-  return new Promise(resolve => {
-    const timer = window.setTimeout(() => resolve(), ms)
-    promise
-      .catch(() => undefined)
-      .finally(() => {
-        window.clearTimeout(timer)
-        resolve()
-      })
-  })
-}
-
-/** Spec 05b 打开档位：normal 一次读；large 流式 + 默认源码；readonly 只读纯文本。 */
-type OpenTier = "normal" | "large" | "readonly" | "cancel"
 
 function readSidebarOpen(): boolean {
   try {
@@ -266,14 +243,6 @@ export default function App({
   const [doc, setDoc] = useState("")
   const docRef = useRef("")
   const docsRef = useRef(new Map<number, string>([[session.id, ""]]))
-  const openRequestRef = useRef(0)
-  // 已删除路径的作废登记：仅在「删除时该路径存在在途打开」才登记，openPath 在
-  // 让出事件循环的 await 之后自检并放弃（新建→立刻删除的竞态）。命中即移除，
-  // 无条件登记会让同名重建文件的首个打开被静默吞掉。
-  const invalidatedOpenPathsRef = useRef(new Set<string>())
-  // 在途打开的路径集合（openPath 进入 try 时登记、finally 移除），供删除侧判断
-  // 是否需要作废登记。
-  const openInFlightRef = useRef(new Set<string>())
   const tabSaveQueuesRef = useRef<TabSaveQueues>(new Map())
   const operationSeqRef = useRef(0)
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
@@ -284,6 +253,8 @@ export default function App({
   >(async () => {})
   const saveCopyRef = useRef<(tabId: number) => Promise<void>>(async () => {})
   const requestCloseTabRef = useRef<(id: number) => void>(() => {})
+  // activateTab 是随渲染重建的函数声明：打开协调器一次构造，只能经 ref 拿最新实现。
+  const activateTabRef = useRef<(id: number) => void>(() => {})
   const resetTabDocumentRef = useRef<(session: EditorSession, contents: string, docText?: Text) => boolean>(() => false)
   const [transientStatus, setTransientStatus] = useState<string | null>(null)
   const transientStatusTimerRef = useRef<number | null>(null)
@@ -357,20 +328,15 @@ export default function App({
   const documentScaleRegistry = documentScaleRegistryRef.current
   // LARGE 档流式打开的进度（overlay 百分比）。
   const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
-  // LARGE 档确认本会话只需一次；HUGE（只读）每次都问。
-  const largeOpenAcceptedRef = useRef(false)
   const [largeDocNotice, setLargeDocNotice] = useState<
     { sessionId: number; lines: number; safeMode: boolean; readonly?: boolean } | null
   >(null)
   const [statsRequested, setStatsRequested] = useState(0)
   const [openingLabel, setOpeningLabel] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [quickOpenState, setQuickOpenState] = useState<{
-    open: boolean
-    files: string[]
-    truncated: boolean
-    loading: boolean
-  }>({ open: false, files: [], truncated: false, loading: false })
+  const [quickOpenState, setQuickOpenState] = useState<QuickOpenState>(
+    { open: false, files: [], truncated: false, loading: false },
+  )
   const [historyState, setHistoryState] = useState<{
     open: boolean
     path: string | null
@@ -517,6 +483,43 @@ export default function App({
   saveFileRef.current = saveFile
   saveCopyRef.current = saveCopy
 
+  // 文档打开协调器：打开链路（分档预检、流式读取、令牌作废）一次构造、跨渲染
+  // 保活（P2 教训：工厂每渲染重建会重置令牌，并发作废全部失效）。自有可变状态
+  // （请求令牌、在途/作废路径集、LARGE 确认）私有化为实例字段；App 侧只保留
+  // UI 投影（overlay 文案/进度）与 openingRef 布尔（保存/更新侧仍读）。
+  const openRef = useRef<DocumentOpen | null>(null)
+  if (!openRef.current) {
+    openRef.current = createDocumentOpen({
+      services,
+      documentScaleRegistry,
+      tabSaveQueues: tabSaveQueuesRef.current,
+      getWorkspace: () => workspaceRef.current,
+      commitWorkspace,
+      getActiveSession: () => sessionRef.current,
+      getDoc: () => docRef.current,
+      getContents: tabId => docsRef.current.get(tabId) ?? "",
+      setContents: (tabId, contents) => { docsRef.current.set(tabId, contents) },
+      getSaveStates: () => saveStateRef.current,
+      commitSaveState,
+      activateTab: id => { activateTabRef.current(id) },
+      resetTabDocument: (session, contents, docText) =>
+        resetTabDocumentRef.current(session, contents, docText),
+      flushMaterializer: () => { materializer.flush() },
+      syncDoc,
+      revealFolder,
+      rememberRecent,
+      expandToPath: path => expandToPathRef.current(path),
+      reportStatus: showTransientStatus,
+      reportUserError,
+      setOpening: open => { openingRef.current = open },
+      setOpeningLabel,
+      setOpeningProgress,
+      setQuickOpenState,
+      isMounted: () => mountedRef.current,
+    })
+  }
+  const openCoordinator = openRef.current
+
   const showSkippedMarkersStatus = createSkippedStatusNotifier(
     setSkippedMarkersMessage, skippedStatusTimerRef,
     id => { skippedStatusTimerRef.current = id },
@@ -621,7 +624,7 @@ export default function App({
           services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
           return
         }
-        void openPath(resolveMarkdownHref(current, href), true)
+        void openCoordinator.openPath(resolveMarkdownHref(current, href), true)
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
@@ -823,7 +826,7 @@ export default function App({
       viewRef.current = null
       viewsRef.current.forEach(item => item.destroy())
       viewsRef.current.clear()
-      openRequestRef.current += 1
+      openCoordinator.dispose()
     }
   }, [])
 
@@ -1245,198 +1248,8 @@ export default function App({
     resetTabDocument(advanceDocumentIdentity(sessionRef.current), contents)
   }
 
-  /**
-   * Spec 05b 分档预检：先 stat（metadata，不读内容）再决定档位与确认，
-   * 避免为一个大文件白付整读 + IPC。stat 失败按 normal 处理，
-   * 真实错误由后续读取报告。LARGE 档确认一次后本会话不再问。
-   */
-  async function resolveOpenTier(path: string): Promise<OpenTier> {
-    const stat = await services.statDocument?.(path).catch(() => undefined)
-    if (!stat || stat.kind !== "existing") return "normal"
-    const mb = Math.max(1, Math.round(stat.sizeBytes / (1024 * 1024)))
-    const label = baseName(path)
-    if (stat.sizeBytes >= OPEN_READONLY_THRESHOLD_BYTES) {
-      return services.confirmReadonlyOpen?.(label, mb) ? "readonly" : "cancel"
-    }
-    if (stat.sizeBytes >= OPEN_STREAM_THRESHOLD_BYTES) {
-      if (!largeOpenAcceptedRef.current) {
-        if (!services.confirmLargeOpen?.(label, mb)) return "cancel"
-        largeOpenAcceptedRef.current = true
-      }
-      return "large"
-    }
-    return "normal"
-  }
-
-  /**
-   * Spec 05b：LARGE 档走流式（Channel 分块 + 进度，分块间 UI 线程自然让出），
-   * 拼装后复用既有 ExistingDiskSnapshot 下游；其余档一次读。
-   */
-  async function readSnapshotForOpen(path: string, tier: OpenTier): Promise<DiskSnapshot> {
-    if (tier !== "large" || !services.readDocumentStreaming) {
-      return services.readDocument(path)
-    }
-    try {
-      const parts: string[] = []
-      // Task 10：与 parts 同步维护分块 Text 组装 —— chunk 到达途中即做 chunk
-      // 局部切行（跨 chunk 的 \r\n 由 assembler 携带裁决），EditorState.create
-      // 收到 Text 后跳过对整串的 regex 切行。镜像字符串 join 仍只做一次
-      // （05b 偏差 #1 决策：脏检查/保存/恢复继续用字符串口径）。
-      const assembler = createTextAssembler()
-      const stream = await services.readDocumentStreaming(path, event => {
-        if (event.kind === "chunk") {
-          parts.push(event.text)
-          assembler.push(event.text)
-        } else {
-          setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
-        }
-      })
-      if (stream.kind === "missing") {
-        return { kind: "missing", requestedPath: stream.requestedPath }
-      }
-      const contents = parts.join("")
-      setOpeningProgress(null)
-      return {
-        kind: "existing",
-        requestedPath: stream.requestedPath,
-        contents,
-        docText: assembler.finish(),
-        version: stream.version,
-        stats: stream.stats,
-      }
-    } catch {
-      setOpeningProgress(null)
-      return services.readDocument(path)
-    }
-  }
-
-  async function openPath(nextPath: string, inNewTab = false, request?: number) {
-    const existing = findTabByPath(workspaceRef.current, nextPath)
-    if (existing) {
-      activateTab(existing.id)
-      rememberRecent(nextPath)
-      return
-    }
-    // 树/搜索等直开入口没有 runOpen 令牌：自铸一个，使「取消打开」与并发
-    // 打开作废逻辑对所有入口统一（in-flight 的旧打开被更新者取代）。
-    const token = request ?? ++openRequestRef.current
-    const tier = await resolveOpenTier(nextPath)
-    if (tier === "cancel" || token !== openRequestRef.current) return
-    const showOverlay = tier !== "normal"
-    if (showOverlay) setOpeningLabel(baseName(nextPath))
-    try {
-      openInFlightRef.current.add(nextPath)
-      let snapshot
-      try {
-        snapshot = await readSnapshotForOpen(nextPath, tier)
-      } catch (error) {
-        const cmd = toDocumentCommandError(error)
-        if (cmd.code === "invalidPath" && mountedRef.current) {
-          reportUserError(t("error.invalidPath"))
-          return
-        }
-        if (cmd.code === "notUtf8" && mountedRef.current) {
-          reportUserError(t("error.notUtf8"))
-          return
-        }
-        if (token === openRequestRef.current && mountedRef.current) {
-          services.reportError(errorMessage(t("error.openFailed"), error))
-        }
-        return
-      }
-      if (token !== openRequestRef.current) return
-      if (snapshot.kind === "missing") {
-        // 竞态里文件是被用户刚删掉的：静默放弃，不弹「文件不存在」。
-        if (invalidatedOpenPathsRef.current.delete(nextPath)) return
-        if (mountedRef.current) {
-          services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
-        }
-        return
-      }
-      const { contents, docText } = snapshot
-      const byteLength = snapshot.stats?.byteLength
-      await services.allowDocumentAssets(nextPath)
-      // allowDocumentAssets 是提交前最后一个真实 await：删除可能恰在其间完成并
-      // 登记，此处自检覆盖两条提交路径（新 tab 与替换当前 tab）。
-      if (invalidatedOpenPathsRef.current.delete(nextPath)) return
-      revealFolder(nextPath)
-      void expandToPathRef.current(nextPath)
-      rememberRecent(nextPath)
-      if (inNewTab) {
-        const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
-        docsRef.current.set(tab.id, contents)
-        if (docText) documentScaleRegistry.stashText(tab.id, docText)
-        documentScaleRegistry.setBytes(tab.id, byteLength)
-        documentScaleRegistry.setReadOnly(tab.id, tier === "readonly")
-        commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
-        commitWorkspace(addTab(workspaceRef.current, tab))
-        syncDoc(contents, tab.id)
-        void services.clearRecovery?.(recoveryKey(tab))
-        return
-      }
-      // 替换当前 tab：档位与字节数随新文档重置，避免沿用旧档残留。
-      documentScaleRegistry.setBytes(sessionRef.current.id, byteLength)
-      documentScaleRegistry.setReadOnly(sessionRef.current.id, tier === "readonly")
-      if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents, docText)) return
-      void services.clearRecovery?.(recoveryKey(sessionRef.current))
-    } finally {
-      openInFlightRef.current.delete(nextPath)
-      if (token === openRequestRef.current && showOverlay) {
-        setOpeningLabel(null)
-        setOpeningProgress(null)
-      }
-    }
-  }
-
-  /** 作废进行中的打开：读取照旧完成，但结果不再落地。 */
-  function cancelOpening() {
-    openRequestRef.current += 1
-    openingRef.current = false
-    setOpeningLabel(null)
-    setOpeningProgress(null)
-  }
-
-  async function runOpen(pickPath: () => Promise<string | null>) {
-    materializer.flush()
-    const request = ++openRequestRef.current
-    const activeId = workspaceRef.current.activeId
-    await awaitWithTimeout(
-      tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve(),
-      OPEN_SAVE_QUEUE_TIMEOUT_MS,
-    )
-    if (request !== openRequestRef.current || !mountedRef.current) return
-    openingRef.current = true
-    try {
-      if (sessionDirty(sessionRef.current, docRef.current) && !services.confirmDiscard()) return
-      const nextPath = await pickPath()
-      if (!nextPath || request !== openRequestRef.current) return
-      await openPath(nextPath, false, request)
-    } catch (error) {
-      if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage(t("error.openFailed"), error))
-      }
-    } finally {
-      if (request === openRequestRef.current) openingRef.current = false
-    }
-  }
-
   function openRecent(path: string) {
-    return runOpen(async () => path)
-  }
-
-  function openExternal(nextPath: string): Promise<void> {
-    const existing = findTabByPath(workspaceRef.current, nextPath)
-    if (existing) {
-      activateTab(existing.id)
-      rememberRecent(nextPath)
-      return Promise.resolve()
-    }
-    const active = sessionRef.current
-    const activeHasContent =
-      sessionPath(active) !== null
-      || (docsRef.current.get(active.id) ?? "").length > 0
-      || sessionDirty(active, docRef.current)
-    return openPath(nextPath, activeHasContent)
+    return openCoordinator.runOpen(async () => path)
   }
 
   function runUpdateDownload() {
@@ -1450,31 +1263,6 @@ export default function App({
         services.reportError(errorMessage(t("update.releaseOpenFailed"), error))
       }
     })
-  }
-
-  async function openQuickOpen() {
-    const folder = workspaceRef.current.folder
-    if (!folder) {
-      showTransientStatus(t("quickOpen.noFolder"))
-      return
-    }
-    if (!services.listMarkdownFiles) return
-    setQuickOpenState({ open: true, files: [], truncated: false, loading: true })
-    try {
-      const response = await services.listMarkdownFiles(folder)
-      if (!mountedRef.current) return
-      setQuickOpenState({
-        open: true,
-        files: response.paths,
-        truncated: response.truncated,
-        loading: false,
-      })
-    } catch (error) {
-      if (mountedRef.current) {
-        setQuickOpenState(current => ({ ...current, loading: false }))
-        services.reportError(errorMessage(t("error.openFailed"), error))
-      }
-    }
   }
 
   async function openVersionHistory() {
@@ -1525,7 +1313,7 @@ export default function App({
   }
 
   function openFile() {
-    return runOpen(() => services.pickOpenPath())
+    return openCoordinator.runOpen(() => services.pickOpenPath())
   }
 
   function activateTab(id: number) {
@@ -1560,14 +1348,15 @@ export default function App({
   async function loadLazyTab(lazy: EditorSession) {
     const path = sessionPath(lazy)
     if (!path) return
-    const token = ++openRequestRef.current
-    const tier = await resolveOpenTier(path)
-    if (tier === "cancel" || token !== openRequestRef.current) return
+    const open = openCoordinator
+    const token = open.nextRequest()
+    const tier = await open.resolveOpenTier(path)
+    if (tier === "cancel" || token !== open.currentRequest) return
     const showOverlay = tier !== "normal"
     if (showOverlay) setOpeningLabel(baseName(path))
     try {
-      const snapshot = await readSnapshotForOpen(path, tier)
-      if (token !== openRequestRef.current) return
+      const snapshot = await open.readSnapshotForOpen(path, tier)
+      if (token !== open.currentRequest) return
       if (snapshot.kind !== "existing") {
         if (mountedRef.current) {
           services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
@@ -1575,7 +1364,7 @@ export default function App({
         return
       }
       await services.allowDocumentAssets(path)
-      if (token !== openRequestRef.current) return
+      if (token !== open.currentRequest) return
       // await 期间 tab 可能已被关闭（关闭不打断 openRequest 令牌）：装载作废，
       // 不给已死 id 落 docBytes/readonly 档位或在 refs 里暂存整份内容 ——
       // 大档 docText 会常驻到进程结束（M-1 泄漏）。
@@ -1595,11 +1384,11 @@ export default function App({
         syncDoc(snapshot.contents, updated.id)
       }
     } catch (error) {
-      if (token === openRequestRef.current && mountedRef.current) {
+      if (token === open.currentRequest && mountedRef.current) {
         services.reportError(errorMessage(t("error.openFailed"), error))
       }
     } finally {
-      if (token === openRequestRef.current && showOverlay) {
+      if (token === open.currentRequest && showOverlay) {
         setOpeningLabel(null)
         setOpeningProgress(null)
       }
@@ -1680,6 +1469,7 @@ export default function App({
     closeTabInternal(id, { confirm: true, allowReplaceLast: true })
   }
   requestCloseTabRef.current = requestCloseTab
+  activateTabRef.current = activateTab
 
   function revealFolder(path: string) {
     const next = ensureFolder(workspaceRef.current, path)
@@ -1703,8 +1493,8 @@ export default function App({
     commitWorkspace,
     getContents: tabId => docsRef.current.get(tabId) ?? "",
     flushMaterializer: () => materializer.flush(),
-    isOpenInFlight: path => openInFlightRef.current.has(path),
-    invalidateOpen: path => { invalidatedOpenPathsRef.current.add(path) },
+    isOpenInFlight: path => openCoordinator.isOpenInFlight(path),
+    invalidateOpen: path => { openCoordinator.invalidateOpen(path) },
     closeTab: closeTabInternal,
     saveRecovery,
     notifySuccess: message => { services.notifySuccess?.(message) },
@@ -1716,7 +1506,7 @@ export default function App({
     confirmDelete: path => services.confirmDelete?.(path),
     isMounted: () => mountedRef.current,
     setPendingFocus: () => { pendingFocusRef.current = true },
-    openPath,
+    openPath: (path, inNewTab) => openCoordinator.openPath(path, inNewTab),
     treeErrorSignatures: treeErrorSignaturesRef.current,
     treePollInFlight: treePollInFlightRef,
     pendingListDirs: pendingListDirsRef.current,
@@ -1744,12 +1534,12 @@ export default function App({
     return pollFileTabsRef.current().finally(() => { pollInFlightRef.current = false })
   }
   const openRecentRef = useRef(openRecent)
-  const openExternalRef = useRef(openExternal)
+  // 挂载 effect / 监听器经此 ref 调最新打开协调器（协调器一次构造，不变）。
+  const openExternalRef = useRef((path: string) => openCoordinator.openExternal(path))
   const refreshTreeRef = useRef(treeActions.refreshTree)
   const expandToPathRef = useRef(treeActions.expandToPath)
   pollFileTabsRef.current = pollFileTabs
   openRecentRef.current = openRecent
-  openExternalRef.current = openExternal
   refreshTreeRef.current = treeActions.refreshTree
   expandToPathRef.current = treeActions.expandToPath
 
@@ -1811,7 +1601,7 @@ export default function App({
 
   const allCommands: AppCommand[] = [
     { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
-    { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openQuickOpen() },
+    { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openCoordinator.openQuickOpen() },
     { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
     { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
     { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
@@ -1945,8 +1735,8 @@ export default function App({
   // 只有这些 chrome 都关闭时 Escape 才落到「取消打开」。
   const openingLabelRef = useRef<string | null>(null)
   openingLabelRef.current = openingLabel
-  const cancelOpeningRef = useRef(cancelOpening)
-  cancelOpeningRef.current = cancelOpening
+  const cancelOpeningRef = useRef(openCoordinator.cancelOpening)
+  cancelOpeningRef.current = openCoordinator.cancelOpening
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
     paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
@@ -2115,7 +1905,7 @@ export default function App({
               onClose={() => search.setOpen(false)}
               onOpen={hit => {
                 pendingJumpRef.current = hit.line
-                void openPath(hit.path, true)
+                void openCoordinator.openPath(hit.path, true)
               }}
             />
           ) : (
@@ -2125,7 +1915,7 @@ export default function App({
               activePath={activeFilePath}
               activeTabId={workspace.activeId}
               visible={sidebarOpen}
-              onOpenFile={path => void openPath(path, true)}
+              onOpenFile={path => void openCoordinator.openPath(path, true)}
               onToggleDir={path => void treeActions.toggleDir(path)}
               onSearch={() => search.setOpen(true)}
               onNewFile={dir => void treeActions.createTreeFile(dir)}
@@ -2318,7 +2108,7 @@ export default function App({
         <OpeningOverlay
           label={openingLabel}
           progress={openingProgress}
-          onCancel={cancelOpening}
+          onCancel={openCoordinator.cancelOpening}
         />
       ) : null}
       {paletteOpen ? (
