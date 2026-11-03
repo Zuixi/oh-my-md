@@ -1919,6 +1919,29 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 .settings-btn-primary:hover {
   opacity: 0.9;
 }
+/* Logging panel: one row holding an optional "restart now" button next to the
+   two outbound links (guide + issue form). Wraps rather than overflowing: the
+   zh labels are longer than the en ones. */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  justify-content: flex-start;
+}
+.settings-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--omd-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-link:hover {
+  opacity: 0.8;
+}
 
 .find-replace-bar {
   display: flex;

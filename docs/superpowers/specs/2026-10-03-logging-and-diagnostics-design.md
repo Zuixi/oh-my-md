@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-03
 
-**Status:** Draft — awaiting review
+**Status:** Implemented on the logging branch; packaged-platform QA remains pending
 
 **Scope:** Application logging, uncaught-error and panic capture, and the support
 diagnostics bundle for packaged oh-my-md desktop applications
@@ -167,7 +167,7 @@ and the diagnostics manifest so a reader never has to guess what was filtered.
 ### 3.3 Rotation keeps history
 
 - `max_file_size` = 2 MiB
-- `rotation_strategy` = `KeepSome(5)` — a 10 MiB ceiling across six files
+- `rotation_strategy` = `KeepSome(5)` — a 12 MiB nominal ceiling across six files (plus the record that triggers rotation)
 - `timezone_strategy` = `UseLocal`
 - `file_open_strategy` = `Append` (existing default; logs survive restart)
 
@@ -190,7 +190,8 @@ Five mechanisms, each covering a channel that currently produces silence:
    packaged builds. The limit is worth stating plainly: Tauri v2 has no
    synchronous IPC (`@tauri-apps/api` `core.js` exposes only
    `async function invoke`), so this removes the timer delay but cannot
-   *guarantee* delivery. §3.9 supplies the exit path that does.
+   *guarantee* delivery. Clean exit additionally requests a flush through the
+   bounded session-flush protocol (§3.9); this too remains best-effort.
 3. **React error boundary.** Wraps the app, logs the error and component stack,
    and renders a recovery surface with an "Export Diagnostics" action. It must
    not swallow the error silently and must not replace the last-known-good
@@ -204,7 +205,7 @@ Five mechanisms, each covering a channel that currently produces silence:
    in its exiting state (§3.4.5), in which case it logs `Info`: WebKit tears the
    content process down on a normal quit, and an ungated hook would report a
    crash on every clean exit. Whether the hook fires during normal teardown is
-   **unverified** and is the first thing to confirm before this ships (§8).
+   **unverified on real hardware** and must be checked before release (§8).
 5. **Abnormal-exit detection writes no marker file.** The session boundaries are
    already in the log stream — `app started {version}` at `lib.rs:1075` — so
    this design makes them a matched pair and reads it back, rather than adding a
@@ -212,7 +213,7 @@ Five mechanisms, each covering a channel that currently produces silence:
 
    | Written at | Line |
    | ---------- | ---- |
-   | startup | `session start pid=<pid> version=<v> mode=<release-or-debug>` |
+   | startup | `session start pid=<pid> version=<v> mode=<release-or-debug> generation=<n>` |
    | `ExitRequested{code: None}` | `session exit intent=<user-or-update-or-shutdown>` |
    | `RunEvent::Exit` | `session end clean=true` |
 
@@ -235,7 +236,11 @@ Five mechanisms, each covering a channel that currently produces silence:
    Markers from the archive are older than markers from the active log, so the
    two tails are concatenated in that order and the rule is applied to the
    **merged** sequence: find the last `session start`, then look at what follows
-   it.
+   it. The persisted `loggingGeneration` increments whenever the user changes
+   the logging consent toggle. A marker from another generation answers
+   `unknown`, because an intervening run may have written no log at all. In the
+   PID-suffixed temporary fallback, the scanner selects the newest earlier PID
+   file before applying the same check.
 
    | What follows the last `session start` | Determination | Level |
    | ------------------------------------- | ------------- | ----- |
@@ -268,6 +273,71 @@ of this design. It is only needed for symbolicated native crash reports, it cost
 binary size, and §3.4.1 already recovers the identity of a Rust panic. Revisit
 only if OS-level crash reports have to be symbolicated (see §8).
 
+### 3.4a Logging itself is opt-in
+
+Logging is a user choice, default **off**. `install()` resolves the effective
+level first; `LevelFilter::Off` means no probe, no directory creation, no plugin
+registration, no session marker, and a `LogDestination::Off` state that Settings
+renders as a choice rather than a fault. The persisted key is
+`LOGGING_SETTINGS_KEY` (`loggingEnabled`), drift-guarded against TS, and only the
+boolean `true` opts in.
+
+The preference reaches the logger as **data**: the composition root reads the
+settings blob once at startup (it already does for the pre-paint theme) and calls
+`logging_preferences(&raw)` → `install(app, prefs)`. `logging.rs` therefore owns
+the *keys* and the *level policy* but performs no settings IO, which keeps the
+infrastructure module off the domain module's file and makes level resolution a
+pure function of (preferences, `OMD_LOG`, build profile).
+
+The panel must not dead-end. Settings → Logging carries two outbound links
+(the troubleshooting guide and the new-issue form) in every state, and a
+**"Restart now to apply"** action whenever a change is pending:
+
+- The restart reuses the update-restart flush protocol
+  (`prepare_update_restart` → `restart_app`), so pending materialization, session
+  shards, and queued log records are flushed first, and a timeout **aborts** the
+  restart instead of losing state. A bare process restart is rejected: it also
+  skips `ExitRequested`/`Exit`, which would make the next launch report the
+  previous session as abnormal.
+- The command uses `request_restart` (not `restart`) for exactly that reason, and
+  lives in `app_lifecycle.rs` with `quit_app` so `lib.rs` stays at its size cap.
+
+Consequences that are part of the contract:
+
+- `OMD_LOG` cannot turn logging on: it is a level override inside an opted-in
+  install, not consent.
+- `verboseLogging` is meaningful only while logging is on, and the Settings
+  toggle is disabled otherwise.
+- The diagnostics bundle still exports with logging off; it simply contains no
+  log entries and reports `log_destination=off`.
+- Enabling or disabling takes effect on the next launch, like the verbose
+  toggle: the plugin is attached once, during setup.
+
+Rejected: "write a rolling baseline anyway, and let the user turn it off". A
+local-first notes app must not create diagnostic files about a user's documents
+before that user asks for them.
+
+**Accepted trade-off (decided 2026-11): the default install has no crash
+observability.** The previous-session determination (§3.4.5) reads `session`
+markers, and an opted-out install writes none — so on a default install the app
+cannot say whether the last run exited cleanly, crashed, or was interrupted. A
+`session` marker carrying only `pid`/`version`/mode was considered as an
+always-on minimum and **deliberately not adopted**: even a content-free marker
+puts a diagnostic file on disk before the user asked for one, which is the line
+this design refuses to cross.
+
+The consequences are accepted rather than hidden:
+
+- `previous_exit.state` stays `unknown` on a default install, and its `reason`
+  is `PREVIOUS_EXIT_UNKNOWN_LOGGING_OFF` ("logging was off…") so a support
+  reader cannot mistake it for evidence that rotated away.
+- The recovery path for such a report is a **second run**: enable logging,
+  restart, reproduce, then export. A crash that happened before logging was
+  enabled is unrecoverable by design, and `docs/guides/troubleshooting.md` says
+  so instead of implying otherwise.
+- No post-crash "turn on logging?" prompt exists, because the detection that
+  would trigger it is exactly what the opt-out disables.
+
 ### 3.5 Verbose logging is reachable by a non-technical user
 
 Primary path: a Settings toggle, "启用详细日志". It persists a flag, takes effect
@@ -288,23 +358,54 @@ The Settings toggle is not a convenience. On macOS a user launching from Finder
 cannot set an environment variable at all, so an env-var-only escape hatch is
 unreachable for exactly the population that reports bugs.
 
+### 3.5a Uncaught values are described structurally, never serialized
+
+The export promise is "no document content". Capturing `window.onerror` /
+`unhandledrejection` means describing values the app did not create, so the
+description is content-free by construction: an `Error` contributes its name,
+message, and stack; any other object contributes its constructor name, its own
+key **names**, and the message of a nested `cause`/`error` when that is itself an
+`Error`. `JSON.stringify` is never called on a thrown value, so a rejected
+clipboard body, IPC payload, or token cannot reach the log — and formatting cost
+is bounded by the reported key count rather than by payload size.
+
+Rejected: "serialize then redact at export". The redactor owns a path and secret
+grammar, not an arbitrary JSON parser; claiming it makes any payload safe is how
+the promise broke in the first place.
+
+Arrays, `Map`, and `Set` report their **size** rather than their contents. That
+is both the privacy rule and the performance rule: `Object.keys` on a
+million-element array materializes a million strings (~20 ms) inside an error
+handler, before the queue's length cap can apply. A plain object with ~10⁵ own
+keys still costs an enumeration; that shape is exotic and the cost stays below
+the serialization it replaced.
+
 ### 3.6 Instrument boundaries, not internals
 
-The rule: log at layer boundaries and state transitions. Never log keystrokes,
-decoration rebuilds, scroll, or parse activity.
+Default logs answer support questions rather than enumerate activity:
 
-Rust: window create / close / route-open-file; document open, save begin and end
-with duration, rename, delete, conflict detected, external change detected;
-session flush transitions; update check, download, and install-gate blocked
-reason; diagnostics export; and the `Err` arm of every Tauri command, so a
-command that returns `Err` also leaves a line.
+| Event | Default record | Owner |
+| --- | --- | --- |
+| Native save | One terminal `save ok` / `save conflict` / `save failed`; success carries byte count and `duration_ms` | `documents/save.rs` |
+| Handled UI failure | `warn` with the displayed error; success toasts stay silent | `desktopServices.reportError` |
+| Background file outage | First failure per tab/document at `warn`, one recovery at `info`; intervening retries stay silent | `fileTabWatcher.ts`, wired by `documentSaveAppBridge.ts` |
+| Committed divergence | Once when the divergence kind changes; ordinary saving/idle updates stay silent | `saveDiagnostics.ts` at `commitSaveState` |
+| Conflict decision | Confirmed/applied reload or discard, requested overwrite/recreate; a request is not a success record | `conflictActions.ts` |
+| Uncaught failure | Fatal capture, independent of ordinary warning suppression | `globalErrorHandlers.ts`, `ErrorBoundary.tsx`, native panic hook |
 
-TypeScript: document save outcome, recovery-write failures, conflict and
-normalization transitions, settings and session-restore failures, and IPC
-rejections.
+`save begin` is Debug-only. `duration_ms` measures the native operation, including
+its per-path lock wait; it does not measure frontend queueing or IPC latency.
+A slow save or a permission code is evidence, not proof of a specific antivirus,
+cloud-sync provider, or hardware fault.
 
-Every `log::` and `logger.*` call site introduced by this design is enumerated in
-the plan (§9), not left to "log more."
+The polling outage map is retained across React bridge rebuilds and pruned when
+the tab/document identity disappears. It does not alter save/conflict state.
+Revalidate async document identity before applying results or reporting recovery.
+
+Do not log keystrokes, selection movement, scrolling, parse/decorations activity,
+clipboard contents, document text, or success notifications. Logged path fields
+use the shared escaping helpers. The UI-error funnel covers failures that reach
+that reporting API; it does not imply every native/internal failure is instrumented.
 
 ### 3.7 The live log is local and full-fidelity; exports are redacted
 
@@ -362,6 +463,8 @@ Export-time policy, applied in this order:
    guarantee — rules 1–4 are the ones the privacy claim rests on.
 
 The bundle writer shows a pre-export notice naming what will be included.
+`environment.txt` applies the same redaction to `log_dir=` as every other line;
+an external volume name must not escape merely because it holds the logs.
 There is **no** reachable "include full file paths" control in the shipped
 build. The command's `include_full_paths` parameter is plumbed and tested, and
 the TypeScript caller always passes `false`: the only UI seam available at the
@@ -386,10 +489,10 @@ Zip layout (format version recorded in `manifest.json`):
 
 | Entry | Content |
 | ----- | ------- |
-| `manifest.json` | bundle format version, generated-at, app version, OS/arch, log level in effect, per-file size + blake3, and `previous_exit` — the §3.4.5 determination as `{ state, reason, started_at, ended_at, pid, version }` (`started_at`/`ended_at` are `null`: no marker carries a timestamp, and a fabricated one would read as evidence) |
+| `manifest.json` | bundle format version, generated-at, app version, OS/arch, log level in effect, per-file size + blake3, `skipped_logs` (files that could not be read, with reason), and `previous_exit` — the §3.4.5 determination as `{ state, reason, started_at, ended_at, pid, version }` (`started_at`/`ended_at` are `null`: no marker carries a timestamp, and a fabricated one would read as evidence) |
 | `version.txt`, `os.txt` | kept as-is; existing tests and muscle memory depend on them |
 | `diagnostics.txt` | combined redacted log; kept as-is |
-| `<log>.log` | redacted per §3.7 |
+| `<log>.log` | redacted per §3.7. Only the active `{stem}.log` and archives named `{stem}_YYYY-MM-DD_HH-MM-SS.log` are collected |
 | `environment.txt` | webview version, locale, dev/release, log directory path, enabled flags, log-degradation state (§3.9) |
 | `settings.json` | user settings, redacted; never document content |
 | `session.json` | session restore state, paths redacted |
@@ -423,42 +526,57 @@ round's existing deadline.
 No `beforeunload` handler is used. It cannot await an async `invoke`, `invoke`
 has no synchronous form, and a webview killed by a panic never fires it anyway.
 
-**Rate control, in four layers.** A queue cap alone does not bound IPC rate: a
-sustained loop refills and re-flushes the queue indefinitely. Deduplication alone
-does not either, since a loop can emit a *distinct* message every iteration.
+**A failed export is reported, and a partly unreadable one still ships.** A log
+file that cannot be read is listed in `skipped_logs` instead of aborting the
+bundle, and non-UTF-8 bytes are decoded lossily; a support artifact that fails
+because one file is corrupt is useless exactly when it is needed. The export
+command's rejection reaches the user through the normal error channel (the
+crash-surface export writes a log record instead, since the toast layer may be
+what is broken).
 
-| Layer | Mechanism | What it bounds |
-| ----- | --------- | -------------- |
-| 1 | Collapse consecutive identical `(target, level, message)` into `Last message repeated N times` | same-message loops |
-| 2 | Token bucket, ≤50 records/s | steady rate |
-| 3 | Circuit breaker: 1000 drops within 5s disables the facade for 30s, emitting exactly one summary line | worst case |
-| 4 | Per-window record budget on the Rust `log_frontend` command | a wrong or bypassed frontend |
+**Rate and memory limits are independent.** Consecutive duplicates collapse;
+ordinary records share a 50/s frontend allowance and the existing 1000-drops/5s
+breaker with a 30s cooldown. A breaker already open does not repeatedly re-arm
+itself under continued noise.
 
-Layer 3 is the one that actually caps IPC; layers 1–2 only reduce the offered
-load. Thresholds live in `constants.ts` (§3.10).
+The facade retains at most 200 queued records including an omission summary,
+plus one open repeat run and one bounded in-flight batch. Targets are limited to
+128 UTF-16 code units and messages to 8192 before IPC/escaping. Distinct Error
+records obey these hard memory bounds too. Overflow preserves fatal records in
+preference to ordinary traffic, retains the latest failure, and records the
+omitted count rather than silently accumulating an unbounded queue.
 
-**`Error` has a green channel through layers 2, 3, and 4.** The scenario to
-avoid: a misbehaving component spams warnings until the breaker opens, and the
-*real* fatal record — `window.onerror`, `unhandledrejection`, the error
-boundary, the Rust panic hook — lands inside the 30s silence and is swallowed.
-The death certificate must not be collateral damage.
+Rust provides **process-wide**, separate allowances: 200 ordinary records/s and
+50 Error records/s. A warning storm cannot spend the fatal reserve. An Error
+storm is still bounded and collapsed counts are reported. Frontend batches larger
+than 200 are rejected; accepted record formatting and file IO run in
+`spawn_blocking`, never on Tauri's main thread. Message/target limits are enforced
+again at this trust boundary. Escaping can expand a message, so the on-disk size
+may exceed its pre-escape limit by a bounded factor.
 
-- Layers 2, 3, and 4 apply only **below** `Error`. An `Error` record is always
-  offered to the IPC, including during the cooldown.
-- Layer 1 (deduplication) still applies to `Error`. This is deliberate: a fatal
-  error raised in a render loop would otherwise be an unbounded flood, and
-  collapsing consecutive identical records loses no information.
-- A bypassed `Error` does not count toward the breaker's drop thresholds, so a
-  steady trickle of fatal records cannot keep the breaker pinned open.
-- Layer 4 cannot be bypassed in the "unbounded" sense — it is the last line of
-  defence against a caller that ignores the frontend entirely. It satisfies the
-  green channel by **collapsing rather than dropping**: if the budget is
-  exceeded, it emits one `N log records collapsed` line. The wording is `log
-  records`, not `error records`: with the `Error` bypass above, layer 4 can no
-  longer collapse an error at all, so an `error`-worded notice would be false.
-  `Error` is never *silently* lost at any layer.
-- When the breaker closes, it emits the suppressed count, so a reader can tell
-  the log is incomplete rather than assuming nothing happened.
+**Measured bounds (2026-11, `happy-dom` on the dev machine):**
+
+| Path | Cost |
+| --- | --- |
+| Editor input, caret, scroll, selection | 0 logger calls (real-browser test asserts zero batches) |
+| `logger.*` enqueue, 200 records | ~0.2 ms, one IPC batch |
+| `describeThrown`, `Error` | ~0.04 ms |
+| `describeThrown`, 1M-element array / 200k-entry `Map`/`Set` | ~0 ms (size reported, never enumerated) |
+| `describeThrown`, 200k-key plain object | ~20 ms — exotic shape; enumeration cost is inherent to `Object.keys` and early-exit loops do not avoid it (V8 builds the enum cache first). Still far below the `JSON.stringify` it replaced, which serialized every value |
+| Startup, logging off | one small settings read, no probe, no directory, no plugin |
+| Export | `spawn_blocking`; reads each owned log once, ≤12 MiB total, lossy decode |
+
+Neither "all errors are guaranteed" nor "zero performance cost" is promised.
+Concurrent `flush()` callers must wait for whichever batch is currently in
+flight, including a batch another waiter just started. Timer delivery and fatal
+capture coalesce pending flush requests so a stuck transport does not accumulate
+one delivery waiter per record. Before exporting, the current webview requests
+a flush with a one-second deadline; expiry allows the support bundle to proceed
+with the records already on disk.
+Normal editor interactions have no logger call sites. Batching and bounds contain
+work on failure paths; real filesystem stalls and a dying webview can still lose
+records. Tests cover queue pressure, a stalled transport, multi-tab polling
+outages, state transitions, and continued editor interaction.
 
 **Failures degrade; they never propagate.**
 
@@ -507,13 +625,16 @@ are defined on both sides and drift-guarded:
 | `LOG_LEVEL_ENV_VAR` | `OMD_LOG` | same | same |
 | `LOG_FRONTEND_COMMAND` | `log_frontend` | same | same |
 | `DIAGNOSTICS_BUNDLE_FORMAT_VERSION` | 1 | same | same |
-| `LOG_FRONTEND_BUDGET_PER_SEC` | 200 | same | same — it is the Rust-side safety net of §3.9 layer 4 and **must stay above** the TS rate limit below, or the net silently truncates legitimate logs |
+| `LOG_FRONTEND_BUDGET_PER_SEC` | 200 | same | same — ordinary process allowance |
+| `LOG_ERROR_BUDGET_PER_SEC` | 50 | same | same — independent fatal reserve |
+| `LOG_MAX_BATCH_RECORDS` | 200 | same | same — queue/batch bound |
+| `LOG_MAX_MESSAGE_CHARS`, `LOG_MAX_TARGET_CHARS` | 8192 / 128 | same | same — UTF-16 code units before escaping |
 | `SESSION_START_MARKER`, `SESSION_EXIT_MARKER` | see §3.4.5 | Rust only | — |
 | `LOG_FALLBACK_FILE_STEM` | `<app>-{pid}` | Rust only | — |
 | `LOG_TAIL_READ_BYTES` | 64 KiB | same | same — the Rust scanner and the TS-facing docs must not disagree |
 | `LOG_PATH_FIELD_HELPERS` | `path=`, `paths=` | same | shared fixture (§3.7) |
 
-Frontend-only rate control (§3.9 layers 1–3) lives in `constants.ts` with no
+Frontend-only ordinary rate control (§3.9 layers 1–3) lives in `constants.ts` with no
 drift guard, because nothing on the Rust side reads it:
 
 | Constant | Value |
@@ -607,7 +728,7 @@ only — acceptable, since that window contains exactly the `tao`/`wry` traffic
 ```
 TS call sites
   └─ logger.ts facade  (level filter, bounded queue, never throws)
-       └─ invoke("log_frontend", { level, target, message })
+       └─ invoke("log_frontend", { records: [...] })
             └─ Rust log_frontend command
                  └─ log::log!(target, level, ...)
                       └─ tauri-plugin-log  ──┬─ Stdout target
@@ -698,8 +819,8 @@ Settled during review on 2026-10-03, recorded here so they are not relitigated:
 - **The exiting state adds no file** — it is recorded in the log stream and
   summarized into `manifest.json` (§3.4.5, §3.8).
 - **Rate-control thresholds** are the values in §3.10.
-- **`Error` bypasses the breaker, rate limit, and Rust budget** (§3.9), while
-  still being deduplicated. A fatal record must survive a warnings storm.
+- **`Error` bypasses ordinary suppression** (§3.9), while obeying queue bounds
+  and its independent native error reserve. A warning storm cannot starve it.
 - **The probe is a write test, not a permission-bit check** (§3.9) — metadata
   read-only flags do not reflect NTFS ACLs or effective Unix permissions.
 - **The log plugin is registered from inside `.setup()`** (§3.12), because the
@@ -714,6 +835,7 @@ Still open:
    the exiting-state gate in §3.4.4 is load-bearing, and if it does not, the gate
    is merely defensive. Either way it must not be shipped without an observed
    answer.
+   The hook is wired on macOS; this question still needs a packaged-app run.
 2. **macOS shutdown grace period.** `ExitRequested` → `api.prevent_exit()` → up to
    2s of flushing may exceed what logout/shutdown allows before a force-kill.
    The §3.4.5 `session exit intent=…` line is written immediately on arrival, so
@@ -799,7 +921,7 @@ OS crash-report collection stays deferred (§3.8) and is not scheduled.
 - Path field helpers round-trip every case in the shared fixture, including `"`,
   `>`, `]`, `;`, newline, spaces, and CJK.
 - `log_frontend` payload serializes to the expected JSON (the §3.11 contract).
-- Rust per-window budget (`LOG_FRONTEND_BUDGET_PER_SEC`) truncates above the limit
+- Rust process budget (`LOG_FRONTEND_BUDGET_PER_SEC`) truncates above the limit
   and not below it, and **collapses rather than drops** `Error` records.
 - Redaction: the §3.7 case table — `C:\…`, `D:\…`, `\\server\share\…`,
   `/Volumes/…`, spaces, CJK, quotes, `file:///` — plus the existing three cases

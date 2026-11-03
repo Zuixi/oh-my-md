@@ -1,5 +1,6 @@
 import React from "react"
 import { describeThrown, reportFatal } from "./globalErrorHandlers"
+import { t } from "./i18n"
 import type { Logger } from "./logger"
 
 export interface ErrorBoundaryProps {
@@ -43,14 +44,18 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   render(): React.ReactNode {
     if (!this.state.failed) return this.props.children
     return (
+      // A class component cannot use the `useT()` hook, so this reads the
+      // module-level `t`. Every user-visible string in this surface — the one
+      // users see when the app is already broken — must be localized: a crash
+      // that flips the UI back to English is exactly the wrong impression.
       <div role="alert" className="omd-error-boundary">
-        <p>The editor hit an unexpected error.</p>
+        <p>{t("error.boundary.title")}</p>
         <div className="omd-error-boundary-actions">
           <button type="button" onClick={this.handleExportDiagnostics}>
-            Export Diagnostics
+            {t("error.boundary.export")}
           </button>
           <button type="button" onClick={this.handleReload}>
-            Reload
+            {t("error.boundary.reload")}
           </button>
         </div>
       </div>

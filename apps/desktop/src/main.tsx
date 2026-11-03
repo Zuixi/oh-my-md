@@ -7,6 +7,7 @@ import "react-toastify/dist/ReactToastify.css";
 import App from "./App";
 import { defaultServices } from "./desktopServices";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { exportDiagnostics } from "./appDiagnosticsActions";
 import { installGlobalErrorHandlers } from "./globalErrorHandlers";
 import { createLogger, setGlobalLogger } from "./logger";
 
@@ -35,8 +36,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <ErrorBoundary
       logger={logger}
       onExportDiagnostics={() => {
-        // The save dialog can reject; never let that become an unhandled rejection.
-        void defaultServices.exportDiagnostics?.().catch(() => {});
+        // Same path as the palette command: flush, export, and report a failure
+        // through the toast layer (a sibling of this boundary, so it still
+        // renders when the shell is gone).
+        void exportDiagnostics(defaultServices)
       }}
     >
       <App />

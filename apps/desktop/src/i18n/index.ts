@@ -67,7 +67,12 @@ function interpolate(template: string, params?: Record<string, string | number>)
 }
 
 export function t(key: string, params?: Record<string, string | number>): string {
-  const table = messages[current]
+  // Total by construction. Before `initLocale` runs there is no `current`
+  // locale, and `messages[undefined]` is `undefined` — indexing it threw. That
+  // is reachable from the error boundary, which can render before the app's
+  // mount effect initializes i18n, so a missing table would replace the
+  // recovery surface with a blank window. English is the compiled-in fallback.
+  const table = messages[current] ?? messages.en
   const template = table[key]
   if (template === undefined) {
     // Dev-only: the missing key is a bug in this catalog, not a runtime event,

@@ -175,6 +175,7 @@ describe("logger facade", () => {
     tripBreaker(h)
     h.now.t = 1000
     for (let i = 0; i < LOG_BREAKER_DROPS + 10; i += 1) h.logger.error("boom", `e-${i}`)
+    await h.logger.flush() // Drain the bounded queue before checking the cooldown.
     h.now.t = LOG_BREAKER_COOLDOWN_MS + 1
     h.logger.info("back", "resumed")
     await h.logger.flush()
@@ -248,13 +249,10 @@ describe("logger facade", () => {
         throw new Error("ipc down")
       },
     })
-    // Queue one window's allowance per second without flushing, so the single
-    // rejected flush carries the whole breaker budget.
-    const rounds = LOG_BREAKER_DROPS / LOG_RATE_LIMIT_PER_SEC
-    for (let round = 0; round < rounds; round += 1) {
-      for (let i = 0; i < LOG_RATE_LIMIT_PER_SEC; i += 1) logger.debug("tick", `r${round}-${i}`)
-      now.t += 1000
-    }
+    // Rate drops plus failed delivery reach the threshold in the same drop
+    // window. Accumulating twenty seconds of records would violate the queue
+    // bound and would not represent the five-second breaker window.
+    for (let i = 0; i < LOG_BREAKER_DROPS; i += 1) logger.debug("tick", `r${i}`)
     await logger.flush()
     logger.info("late", "after the failed batch")
     await logger.flush()
@@ -312,7 +310,7 @@ describe("logger facade", () => {
     expect(h.runs).toHaveLength(0)
   })
 
-  it("arms one timer per batch and re-arms once the queue drains", () => {
+  it("arms one timer per batch and re-arms once the queue drains", async () => {
     const h = scheduledHarness()
     h.logger.error("boot", "first")
     h.logger.error("boot", "second")
@@ -323,7 +321,9 @@ describe("logger facade", () => {
     h.fireTimers()
     expect(h.sent().map(record => record.message)).toEqual(["first", "second", "third"])
 
-    // A drained queue lets the next record arm a fresh timer.
+    // A completed delivery lets the next record arm a fresh timer. An empty
+    // queue while IPC is still pending must not schedule another waiter.
+    await h.logger.flush()
     h.logger.error("boot", "fourth")
     expect(h.runs).toHaveLength(1)
   })

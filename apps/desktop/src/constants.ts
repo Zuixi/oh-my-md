@@ -28,6 +28,18 @@ export const ASSETS_DIR_NAME = "assets"
 /** GitHub Releases page used by update notifications; matches the release CI target repo. */
 export const RELEASES_URL = "https://github.com/Zuixi/oh-my-md/releases/latest"
 
+/** Owner/repo both user-facing links are built from, so a rename is one edit.
+ *  `crossLayerConstants.test.ts` pins that every fixed URL uses it. */
+export const REPO_SLUG = "Zuixi/oh-my-md"
+
+/** The troubleshooting guide: log locations, the diagnostics bundle, and how to
+ *  report a problem. Settings → Logging links here; without it the feature ends
+ *  at "turn on logging" with no next step. */
+export const TROUBLESHOOTING_URL = `https://github.com/${REPO_SLUG}/blob/main/docs/guides/troubleshooting.md`
+
+/** New-issue form, so the guide's "send us the bundle" step is one click. */
+export const ISSUES_URL = `https://github.com/${REPO_SLUG}/issues/new`
+
 /** Windows CPU architectures the NSIS setup asset is published for. */
 export type WindowsSetupArch = "x64" | "arm64"
 
@@ -121,6 +133,11 @@ export const LOG_KEEP_FILES = 5
 /** Runtime level override; must match Rust `LOG_LEVEL_ENV_VAR`. */
 export const LOG_LEVEL_ENV_VAR = "OMD_LOG"
 
+/** Persisted Settings key that turns logging on at all; must match Rust
+ *  `LOGGING_SETTINGS_KEY`. Default off: the user opts in. */
+export const LOGGING_SETTINGS_KEY = "loggingEnabled"
+export const LOGGING_GENERATION_SETTINGS_KEY = "loggingGeneration"
+
 /** Persisted Settings key that turns on verbose logging; must match Rust
  *  `VERBOSE_LOGGING_SETTINGS_KEY`. Rust has no typed settings struct — it parses
  *  the raw JSON blob this TypeScript shape serializes — so the key itself is the
@@ -135,9 +152,16 @@ export const LOG_FRONTEND_COMMAND = "log_frontend"
  *  the suite. */
 export const DIAGNOSTICS_BUNDLE_FORMAT_VERSION = 1
 
-/** Rust-side per-window budget (§3.9 layer 4). Must stay above
+/** Rust-side process budget (§3.9 layer 4). Must stay above
  *  LOG_RATE_LIMIT_PER_SEC, or the Rust net silently truncates legitimate logs. */
 export const LOG_FRONTEND_BUDGET_PER_SEC = 200
+
+/** IPC safety bounds, mirrored in Rust. A separate error reserve prevents
+ * warnings from starving fatal records while still bounding an error storm. */
+export const LOG_ERROR_BUDGET_PER_SEC = 50
+export const LOG_MAX_BATCH_RECORDS = 200
+export const LOG_MAX_MESSAGE_CHARS = 8192
+export const LOG_MAX_TARGET_CHARS = 128
 
 /** Log tail the session scanner reads; must match Rust `LOG_TAIL_READ_BYTES`. */
 export const LOG_TAIL_READ_BYTES = 64 * 1024
@@ -162,10 +186,11 @@ export const LOG_BREAKER_WINDOW_MS = 5000
 /** How long the breaker stays open. */
 export const LOG_BREAKER_COOLDOWN_MS = 30000
 
-/** Level that always bypasses rate limiting and the breaker. */
+/** Level that bypasses ordinary suppression, while obeying hard queue and native error bounds. */
 export const LOG_ALWAYS_PASS_LEVEL = "error"
 
 /** How long the facade buffers before delivering its own batch (§3.9). Long
- *  enough to coalesce a burst, short enough that the log survives a crash.
+ *  enough to coalesce a burst. Fatal capture requests an immediate flush;
+ *  delivery before a webview/process crash is still best-effort.
  *  Frontend-only: no Rust const reads it, so it has no drift guard. */
 export const LOG_FLUSH_INTERVAL_MS = 250

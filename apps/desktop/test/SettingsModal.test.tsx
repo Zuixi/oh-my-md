@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { SettingsModal } from "../src/SettingsModal"
 import { DEFAULT_SETTINGS, FONT_FAMILY_PRESETS, type UserSettings } from "../src/settings"
 import { initLocale } from "../src/i18n"
+import type { LogStateView } from "../src/logging"
 
 describe("SettingsModal", () => {
   afterEach(() => initLocale("en"))
@@ -43,7 +44,7 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         isOpen={true}
-        settings={DEFAULT_SETTINGS}
+        settings={{ ...DEFAULT_SETTINGS, loggingEnabled: true }}
         onSave={onSave}
         onClose={vi.fn()}
       />,
@@ -68,7 +69,7 @@ describe("SettingsModal", () => {
       />,
     )
     expect(
-      screen.getByText("Takes effect after restarting oh-my-md."),
+      screen.getByText("Only applies when logging is on. Takes effect after restarting oh-my-md."),
     ).toBeTruthy()
   })
 
@@ -218,6 +219,8 @@ describe("SettingsModal", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      loggingEnabled: true,
+      loggingGeneration: 0,
       verboseLogging: false,
     }
 
@@ -246,6 +249,8 @@ describe("SettingsModal", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      loggingEnabled: true,
+      loggingGeneration: 0,
       verboseLogging: false,
     }
 
@@ -380,5 +385,107 @@ describe("SettingsModal", () => {
     expect(screen.queryByPlaceholderText("Search fonts…")).toBeNull()
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeTruthy()
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+// Logging is opt-in, and the default install must say so plainly. The "off"
+// state is the user's own choice, so it must not borrow the degraded wording —
+// nothing failed, and telling a user their logging is "degraded" before they
+// ever enabled it is a false alarm on every fresh install.
+describe("logging opt-in", () => {
+  const renderWithSettings = (settings: UserSettings, logState?: LogStateView) => render(
+    <SettingsModal
+      isOpen={true}
+      settings={settings}
+      onSave={vi.fn()}
+      onClose={vi.fn()}
+      logState={logState}
+    />,
+  )
+
+  it("is off by default and explains how to turn it on", () => {
+    renderWithSettings(DEFAULT_SETTINGS, { degraded: false, dir: "", destination: { kind: "off" } })
+    expect(screen.getByLabelText("Save diagnostic logs")).toHaveProperty("checked", false)
+    expect(screen.getByText("Logging is off")).toBeTruthy()
+    expect(screen.getByText(/Turn on "Save diagnostic logs" and restart/)).toBeTruthy()
+    expect(screen.queryByText("Logging is degraded")).toBeNull()
+  })
+
+  it("saves the logging toggle", () => {
+    const onSave = vi.fn()
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={onSave}
+        onClose={vi.fn()}
+        logState={{ degraded: false, dir: "", destination: { kind: "off" } }}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText("Save diagnostic logs"))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ loggingEnabled: true }))
+  })
+
+  it("disables the verbose opt-in while logging itself is off", () => {
+    renderWithSettings(DEFAULT_SETTINGS, { degraded: false, dir: "", destination: { kind: "off" } })
+    expect(screen.getByLabelText("Enable verbose logging")).toHaveProperty("disabled", true)
+  })
+
+  it("enables the verbose opt-in once logging is on", () => {
+    renderWithSettings(
+      { ...DEFAULT_SETTINGS, loggingEnabled: true },
+      { degraded: false, dir: "/logs", destination: { kind: "directory" } },
+    )
+    expect(screen.getByLabelText("Enable verbose logging")).toHaveProperty("disabled", false)
+  })
+})
+
+// The checkbox and the engine disagree for exactly one session, because
+// `install()` runs at startup. Reporting only the engine's answer told a user
+// who had just enabled logging to "turn on Save diagnostic logs" — an
+// instruction that contradicts the control directly above it.
+describe("logging status follows the pending change", () => {
+  const off: LogStateView = { degraded: false, dir: "", destination: { kind: "off" } }
+  const running: LogStateView = { degraded: false, dir: "/logs", destination: { kind: "directory" } }
+
+  const renderStatus = (loggingEnabled: boolean, logState: LogStateView) => render(
+    <SettingsModal
+      isOpen={true}
+      settings={{ ...DEFAULT_SETTINGS, loggingEnabled }}
+      onSave={vi.fn()}
+      onClose={vi.fn()}
+      logState={logState}
+    />,
+  )
+
+  it("says logging starts after a restart when it was just enabled", () => {
+    renderStatus(true, off)
+    expect(screen.getByText("Logging starts after a restart")).toBeTruthy()
+    expect(screen.getByText("This session is not being logged yet. Restart oh-my-md to start.")).toBeTruthy()
+    expect(screen.queryByText(/Turn on "Save diagnostic logs"/)).toBeNull()
+  })
+
+  it("explains an off level override without offering an endless restart", () => {
+    renderStatus(true, { degraded: false, dir: "", destination: { kind: "levelOff" } })
+    expect(screen.getByText("Logging is disabled by OMD_LOG=off")).toBeTruthy()
+    expect(screen.queryByText("Restart now to apply logging change")).toBeNull()
+  })
+
+  it("says logging stops after a restart when it was just disabled", () => {
+    renderStatus(false, running)
+    expect(screen.getByText("Logging stops after a restart")).toBeTruthy()
+    expect(screen.getByText("This session is still writing logs. Restart oh-my-md to stop.")).toBeTruthy()
+  })
+
+  it("stays quiet when the checkbox and the engine agree that logging runs", () => {
+    renderStatus(true, running)
+    expect(screen.queryByText("Logging is off")).toBeNull()
+    expect(screen.queryByText("Logging is degraded")).toBeNull()
+    expect(screen.queryByText("Logging starts after a restart")).toBeNull()
+  })
+
+  it("keeps the degradation warning even after the user disables logging", () => {
+    renderStatus(false, { degraded: true, dir: "/tmp", destination: { kind: "fallback" } })
+    expect(screen.getByText("Logging is degraded")).toBeTruthy()
   })
 })

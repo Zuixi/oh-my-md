@@ -308,3 +308,20 @@ registering a plugin — catch the error, degrade, and return `Ok(())`. Returnin
 for logging. Corollary from the first half: work moved into `.setup()` runs later
 than the config windows are created (`app.rs:2524-2526`), so the window can exist
 marginally before the logger does.
+
+## An old `session start` can outlive its opt-in epoch; only a generation token keeps it silent
+
+`scan_previous_session` reads whatever tail survives in the log directory. A
+clean exit with logging on, then a crash with logging off, then a re-enable
+leaves the *first* session's markers as the newest evidence — and the
+re-enabled run would report that stale "clean exit" as the previous session's
+outcome, masking the crash in between.
+
+The fix is a monotonic `loggingGeneration` counter in the settings blob
+(`loggingGenerationAfterChange` bumps it only when `loggingEnabled` flips).
+Every `session start` line carries it, and the scanner answers `Unknown` when
+the last start's generation differs from the current one. Two drift guards hold
+the cross-layer key: `crossLayerConstants.test.ts` pins the Rust
+`LOGGING_GENERATION_SETTINGS_KEY` string and asserts the TS `DEFAULT_SETTINGS`
+key set contains it. Sanitization is total (non-integer → 0), so a hand-edited
+settings file degrades to "no generation known", never to a parse failure.

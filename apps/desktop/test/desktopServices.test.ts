@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { toDocumentCommandError } from "../src/desktopServices"
+import { errorMessage, toDocumentCommandError } from "../src/desktopServices"
 import type { LogRecord } from "../src/logger"
 
 const { invoke, revealItemInDir, toast, save } = vi.hoisted(() => ({
@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save }))
 vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
+import { useSpyLogger } from "./setup"
 
 describe("desktop document IPC", () => {
   it("normalizes a typed rust rejection", () => {
@@ -169,6 +170,14 @@ describe("toast notifications", () => {
     )
   })
 
+  it("records handled failures once as warnings and preserves the toast", () => {
+    const logger = useSpyLogger()
+    defaultServices.reportError("Save failed: disk full")
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith("ui", "Save failed: disk full")
+    expect(logger.error).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith("Save failed: disk full", { autoClose: 8000 })
+  })
+
   it("notifies success through toast.success with the 3s autoClose", () => {
     defaultServices.notifySuccess?.("Created notes.md")
     expect(toast.success).toHaveBeenCalledWith(
@@ -212,5 +221,31 @@ describe("prepare update restart (automatic updates)", () => {
     invoke.mockClear()
     invoke.mockResolvedValueOnce({ kind: "timedOut" })
     await expect(defaultServices.prepareUpdateRestart?.()).resolves.toEqual({ kind: "timedOut" })
+  })
+})
+
+// A failed save/open reaches the user and the log through this one function.
+// Rendering a typed Rust rejection as `[object Object]` used to throw away the
+// only reason the record existed for.
+describe("errorMessage", () => {
+  it("keeps the underlying reason of a typed command error", () => {
+    expect(errorMessage("Open failed", { code: "permissionDenied", message: "Access denied (os error 5)" }))
+      .toBe("Open failed: Access denied (os error 5)")
+  })
+
+  it("keeps an Error's message and a plain string", () => {
+    expect(errorMessage("Save failed", new Error("disk full"))).toBe("Save failed: disk full")
+    expect(errorMessage("Save failed", "disk full")).toBe("Save failed: disk full")
+  })
+
+  it("never prints [object Object] or stringifies an unknown value", () => {
+    const message = errorMessage("Save failed", { unexpected: true, secret: "FAKE" })
+    expect(message).not.toContain("[object Object]")
+    expect(message).not.toContain("FAKE")
+    expect(message).toBe("Save failed: unrecognized error")
+  })
+
+  it("omits the separator when there is no detail", () => {
+    expect(errorMessage("Save failed", "")).toBe("Save failed")
   })
 })

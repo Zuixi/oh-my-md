@@ -5,18 +5,15 @@
  *   1. dedupe   — consecutive identical records collapse into a repeat count
  *   2. rate     — a token bucket caps records/second
  *   3. breaker  — enough drops and the facade goes quiet for a cooldown
- *   4. (Rust)   — a per-window budget on the command itself
+ *   4. (Rust)   — separate process budgets for ordinary and fatal records
  *
- * `error` bypasses 2, 3 and 4: a fatal record must survive a warnings storm.
- * Layer 1 still applies to it, so a fatal error in a render loop is not an
- * unbounded flood.
+ * `error` bypasses the ordinary rate limit and breaker. It still obeys the
+ * bounded queue and message limits; Rust provides a separate finite error
+ * reserve. Overflow is summarized rather than allowed to grow without bound.
  *
- * The facade schedules its own delivery: the first queued record arms a
- * `setTimeout` for `LOG_FLUSH_INTERVAL_MS`, and the callback runs the same
- * internal flush path as `flush()`. That is what keeps a crash from losing the
- * session's tail and what drains layers 1–3 during a long session. `flush()`
- * stays the guaranteed exit path that rides the existing session-flush round
- * (Task 8).
+ * The facade schedules delivery during normal operation. Clean exit also
+ * requests a flush through the existing native session-flush deadline.
+ * Abrupt termination or a stalled transport can still lose queued records.
  */
 import {
   LOG_ALWAYS_PASS_LEVEL,
@@ -25,6 +22,9 @@ import {
   LOG_BREAKER_WINDOW_MS,
   LOG_FLUSH_INTERVAL_MS,
   LOG_RATE_LIMIT_PER_SEC,
+  LOG_MAX_BATCH_RECORDS,
+  LOG_MAX_MESSAGE_CHARS,
+  LOG_MAX_TARGET_CHARS,
 } from "./constants"
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace"
@@ -41,7 +41,7 @@ export interface Logger {
   info(target: string, message: string): void
   debug(target: string, message: string): void
   trace(target: string, message: string): void
-  /** Delivers everything queued. Never rejects. */
+  /** Delivers the retained records and omission summary. Never rejects. */
   flush(): Promise<void>
 }
 
@@ -94,6 +94,7 @@ export function createLogger(deps: LoggerDeps): Logger {
       setTimeout(run, LOG_FLUSH_INTERVAL_MS)
     })
   const queue: LogRecord[] = []
+  let omitted = 0
   let pending: PendingRun | null = null
   let inFlight: Promise<void> | null = null
   // At most one delivery timer is armed at a time; the generation invalidates a
@@ -117,7 +118,7 @@ export function createLogger(deps: LoggerDeps): Logger {
    * nothing is queued.
    */
   function armFlushTimer(): void {
-    if (flushTimerArmed) return
+    if (flushTimerArmed || inFlight) return
     flushTimerArmed = true
     const generation = ++flushTimerGeneration
     try {
@@ -143,14 +144,29 @@ export function createLogger(deps: LoggerDeps): Logger {
    * Moves the open repeat run into the queue, turning its count into the
    * `Last message repeated N times` suffix. The only place that does so.
    */
+  function enqueue(record: LogRecord): void {
+    // Reserve one slot for an omission summary. Keep fatal records in preference
+    // to ordinary traffic, and retain the latest failure if the error reserve fills.
+    if (queue.length < LOG_MAX_BATCH_RECORDS - 1) {
+      queue.push(record)
+      return
+    }
+    omitted += 1
+    if (record.level !== "error") return
+    const ordinary = queue.findIndex(item => item.level !== "error")
+    if (ordinary >= 0) queue.splice(ordinary, 1)
+    else queue.pop()
+    queue.push(record)
+  }
+
   function sealPending(): void {
     if (!pending) return
-    queue.push({
+    enqueue({
       level: pending.level,
       target: pending.target,
       message:
         pending.count > 1
-          ? `${pending.message} (last message repeated ${pending.count} times)`
+          ? boundedText(`${pending.message} (last message repeated ${pending.count} times)`, LOG_MAX_MESSAGE_CHARS)
           : pending.message,
     })
     pending = null
@@ -178,7 +194,7 @@ export function createLogger(deps: LoggerDeps): Logger {
     // Queued directly, not through `push`: the summary is a state change, not
     // part of a repeat run, and must survive layer 1 as its own line.
     sealPending()
-    queue.push({
+    enqueue({
       level: "warn",
       target: "logger",
       message: `logging suppressed for ${LOG_BREAKER_COOLDOWN_MS}ms after ${LOG_BREAKER_DROPS} drops`,
@@ -200,7 +216,7 @@ export function createLogger(deps: LoggerDeps): Logger {
       drops = 0
     }
     drops += count
-    if (drops >= LOG_BREAKER_DROPS) announceSuppression(now)
+    if (drops >= LOG_BREAKER_DROPS && !breakerOpen()) announceSuppression(now)
   }
 
   function takeToken(): boolean {
@@ -215,9 +231,8 @@ export function createLogger(deps: LoggerDeps): Logger {
 
   function emit(level: LogLevel, target: string, message: string): void {
     try {
-      // `error` is the green channel: it skips layers 2 and 3 (and is the one
-      // level Rust layer 4 never collapses), so it never counts as a drop and
-      // a steady trickle of fatal records cannot pin the breaker open.
+      // Fatal records bypass ordinary suppression, but retain the hard queue
+      // bound. The native sink has a separate finite error reserve.
       if (level !== LOG_ALWAYS_PASS_LEVEL) {
         if (breakerOpen()) {
           noteDrops(1)
@@ -228,7 +243,7 @@ export function createLogger(deps: LoggerDeps): Logger {
           return
         }
       }
-      push({ level, target, message })
+      push({ level, target: truncateText(target, LOG_MAX_TARGET_CHARS), message: boundedText(message, LOG_MAX_MESSAGE_CHARS) })
       // The first record in an empty queue arms delivery; repeats just extend
       // the run the armed timer will seal.
       armFlushTimer()
@@ -238,8 +253,14 @@ export function createLogger(deps: LoggerDeps): Logger {
   }
 
   async function flush(): Promise<void> {
-    if (inFlight) await inFlight
+    // Another waiting flush may start the next batch before this waiter resumes.
+    // Recheck until that batch also completes before acknowledging an exit/export.
+    while (inFlight) await inFlight
     sealPending()
+    if (omitted > 0) {
+      queue.push({ level: "warn", target: "logger", message: `${omitted} log records omitted (queue full)` })
+      omitted = 0
+    }
     if (queue.length === 0) return
     clearFlushTimer()
     const batch = queue.splice(0, queue.length)
@@ -270,6 +291,7 @@ export function createLogger(deps: LoggerDeps): Logger {
       })
       .finally(() => {
         inFlight = null
+        if (pending || queue.length > 0 || omitted > 0) armFlushTimer()
       })
     await inFlight
   }
@@ -282,6 +304,17 @@ export function createLogger(deps: LoggerDeps): Logger {
     trace: (target, message) => { emit("trace", target, message) },
     flush,
   }
+}
+
+function boundedText(text: string, limit: number): string {
+  const suffix = "… [truncated]"
+  return text.length <= limit ? text : truncateText(text, limit - suffix.length) + suffix
+}
+
+function truncateText(text: string, limit: number): string {
+  const truncated = text.slice(0, limit)
+  // A split surrogate pair would make the JSON string invalid for Rust's UTF-8 sink.
+  return /[\uD800-\uDBFF]$/.test(truncated) ? truncated.slice(0, -1) : truncated
 }
 
 let globalLogger: Logger | null = null

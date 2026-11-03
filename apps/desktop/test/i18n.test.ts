@@ -87,3 +87,14 @@ describe("i18n message parity", () => {
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
   })
 })
+
+// `t()` must be total: the error boundary can render before `initLocale` runs,
+// and a throw there unmounts the recovery surface instead of showing it.
+describe("t before initialization", () => {
+  it("falls back to English instead of throwing", async () => {
+    vi.resetModules()
+    const fresh = await import("../src/i18n")
+    expect(() => fresh.t("error.boundary.title")).not.toThrow()
+    expect(fresh.t("error.boundary.title")).toBe("The editor hit an unexpected error.")
+  })
+})

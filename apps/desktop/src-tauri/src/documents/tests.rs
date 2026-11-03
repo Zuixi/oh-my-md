@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-fn temp_dir(name: &str) -> PathBuf {
+pub(super) fn temp_dir(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!("omd-doc-{}-{name}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     directory
@@ -17,7 +17,7 @@ fn write_temp(name: &str, contents: &str) -> PathBuf {
     file
 }
 
-fn path_string_for(path: &Path) -> String {
+pub(super) fn path_string_for(path: &Path) -> String {
     path.to_str().unwrap().to_owned()
 }
 
@@ -25,7 +25,7 @@ fn canonical_string(path: &Path) -> String {
     path_string_for(&fs::canonicalize(path).unwrap())
 }
 
-fn existing_expected(path: &Path) -> ExpectedDocumentVersion {
+pub(super) fn existing_expected(path: &Path) -> ExpectedDocumentVersion {
     match read_document_blocking(&path_string_for(path)).unwrap() {
         DiskSnapshot::Existing { version, .. } => ExpectedDocumentVersion::Existing { version },
         other => panic!("expected an existing snapshot: {other:?}"),
@@ -1015,108 +1015,6 @@ fn metadata_created_file_permissions_follow_the_process_umask() {
     assert_eq!(
         fs::metadata(&target).unwrap().permissions().mode() & 0o777,
         expected_mode
-    );
-}
-
-/// The log target of `documents/save.rs`'s boundary lines, as `log` records it.
-fn save_log_target() -> &'static str {
-    super::save::log_target()
-}
-
-/// The captured `save` boundary records for one path, in capture order.
-///
-/// The facade buffer is process-global and cargo runs these tests in parallel,
-/// so both the target *and* the path are filtered: another save test's lines
-/// carry a different `path=` field.
-fn save_log_records(path: &Path) -> Vec<crate::log_capture::CapturedRecord> {
-    let field = crate::logging::path_field(path);
-    crate::log_capture::records_for_target(
-        &crate::log_capture::take_captured_records(),
-        save_log_target(),
-    )
-    .into_iter()
-    .filter(|record| record.message.contains(field.as_str()))
-    .collect()
-}
-
-/// A save that fails after `save begin` must not leave the begin dangling: the
-/// error path writes its terminal line before returning.
-///
-/// A document changed externally to non-UTF-8 is the reachable case —
-/// `probe_disk` answers `NotUtf8` before anything is written.
-#[test]
-fn guarded_save_logs_begin_and_failure_when_the_probe_rejects_the_disk() {
-    let _capture = crate::log_capture::capture_log();
-    let coordinator = DocumentCoordinator::default();
-    let file = temp_dir("log-not-utf8").join("document.md");
-    fs::write(&file, [0xff, 0xfe, 0xfd]).unwrap();
-    let field = crate::logging::path_field(&file);
-
-    let result = guarded_save(
-        &coordinator,
-        &path_string_for(&file),
-        "mine",
-        &ExpectedDocumentVersion::Missing,
-    );
-
-    assert!(matches!(result, Err(DocumentError::NotUtf8(_))));
-    let records = save_log_records(&file);
-    let messages: Vec<&str> = records.iter().map(|r| r.message.as_str()).collect();
-    assert_eq!(
-        messages,
-        vec![
-            format!("save begin {field}"),
-            format!("save failed {field} error=document bytes are not valid UTF-8"),
-        ],
-        "a failed save must keep begin and the failure line together"
-    );
-    assert_eq!(records[1].level, log::Level::Error);
-}
-
-/// A save rejected before `save begin` is reached must still leave a structured
-/// failure line: spec §3.6 guarantees the `Err` arm, not the begin pairing. The
-/// previous behaviour left the log silent for exactly these setup failures.
-///
-/// The fixture is a real one — the target's parent directory is gone, so the
-/// save is rejected while resolving the per-path lock, before any probe.
-#[test]
-fn guarded_save_logs_a_failure_when_the_request_is_rejected_before_the_begin() {
-    let _capture = crate::log_capture::capture_log();
-    let coordinator = DocumentCoordinator::default();
-    let directory = temp_dir("log-rejected-request");
-    let file = directory.join("document.md");
-    fs::write(&file, "original").unwrap();
-    fs::remove_dir_all(&directory).unwrap();
-    let field = crate::logging::path_field(&file);
-
-    let result = guarded_save(
-        &coordinator,
-        &path_string_for(&file),
-        "mine",
-        &ExpectedDocumentVersion::Missing,
-    );
-
-    assert!(
-        matches!(result, Err(DocumentError::InvalidPath(_))),
-        "the fixture must produce a rejected save: {result:?}"
-    );
-    let records = save_log_records(&file);
-    assert_eq!(
-        records.len(),
-        1,
-        "a rejected request leaves exactly the failure line: {:?}",
-        records
-            .iter()
-            .map(|r| r.message.clone())
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(records[0].level, log::Level::Error);
-    assert!(
-        records[0]
-            .message
-            .starts_with(&format!("save failed {field} error=")),
-        "got {:?}",
-        records[0].message
     );
 }
 

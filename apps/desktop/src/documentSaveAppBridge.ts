@@ -12,8 +12,10 @@ import {
 } from "./documentSaveRunner"
 import type { SaveStateByTab } from "./documentSaveState"
 import { getGlobalLogger } from "./logger"
+import { pathField } from "./logPath"
+import { toDocumentCommandError } from "./desktopServices"
 import type { NormalizationByTab } from "./normalizationState"
-import type { EditorSession } from "./session"
+import { sessionPath, type EditorSession } from "./session"
 import type { Workspace } from "./workspace"
 
 export interface DocumentSaveAppBridge {
@@ -26,6 +28,7 @@ export function createDocumentSaveAppBridge(deps: {
   readonly services: DesktopServices
   readonly tabSaveQueues: TabSaveQueues
   readonly operationSeq: { current: number }
+  readonly pollReadFailures?: Map<number, string>
   readonly isOpening: () => boolean
   readonly getTab: (tabId: number) => EditorSession | undefined
   readonly getView: (tabId: number) => EditorView | undefined
@@ -82,9 +85,7 @@ export function createDocumentSaveAppBridge(deps: {
     onDurabilityWarning: deps.onDurabilityWarning,
     incrementFocusToken: deps.incrementFocusToken,
     logReadFailed: error => {
-      // Boundary: a pre-save read failed. The failure already decides the save
-      // outcome; this line is the only trace it leaves.
-      getGlobalLogger().error("save", String(error))
+      getGlobalLogger().warn("save", `pre-save read failed code=${toDocumentCommandError(error).code}`)
     },
     reportStatus: deps.reportStatus,
     onSaveFailed: deps.onSaveFailed,
@@ -98,11 +99,12 @@ export function createDocumentSaveAppBridge(deps: {
     setSaveStates: deps.setSaveStates,
     readDocumentVersion: path => deps.services.readDocumentVersion(path),
     readDocument: path => deps.services.readDocument(path),
-    logReadFailed: error => {
-      // Boundary: the watcher poll's version/read probe failed. Polling is
-      // best-effort and retries on the next tick, so this never reaches the UI.
-      getGlobalLogger().error("save", String(error))
+    logReadFailed: (error, tab, stage) => {
+      getGlobalLogger().warn("watcher", `read unavailable stage=${stage} tab=${tab.id} document=${tab.documentId} code=${toDocumentCommandError(error).code} ${pathField(sessionPath(tab) ?? "")}`)
     },
-  })
+    logReadRecovered: tab => {
+      getGlobalLogger().info("watcher", `read recovered tab=${tab.id} document=${tab.documentId} ${pathField(sessionPath(tab) ?? "")}`)
+    },
+  }, deps.pollReadFailures)
   return { saveFile, saveCopy, pollFileTabs }
 }

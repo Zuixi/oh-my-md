@@ -33,15 +33,20 @@ export interface RecoveryWriter {
 
 /**
  * A recovery directory that has gone bad (full disk, revoked permissions, stale `OMD_RECOVERY_DIR`)
- * fails on every document change, and `reportError` is a modal alert in production. So only the
- * first failure per tab reaches the user; later ones keep their detail in the log and leave editing
- * alone. A successful write re-arms the report, so a problem that comes back is announced again.
+ * fails on every document change, and `reportError` is a modal alert in production. So an outage is
+ * reported **once per tab**: the first failure reaches the user and the log with its full detail,
+ * later attempts only increment a counter, and the first success after an outage logs how many
+ * writes it covered. A broken recovery directory therefore leaves one record, not one per keystroke,
+ * and the count still says how long the drafts were unprotected.
  *
- * The quiet path keeps the detail in the structured log: swallowing the rejection
- * would hide a broken recovery directory entirely.
+ * Nothing is swallowed silently: while an outage persists the recovery file is genuinely not being
+ * written, and the single record says so.
  */
 export function createRecoveryWriter(): RecoveryWriter {
+  /** Tabs whose current outage has already been announced. */
   const reported = new Set<number>()
+  /** Writes that failed since the announced one, per tab. */
+  const suppressed = new Map<number, number>()
   const lastWritten = new Map<number, string>()
   const pending = new Map<number, PendingWrite>()
 
@@ -50,9 +55,9 @@ export function createRecoveryWriter(): RecoveryWriter {
     try {
       await entry.host.write?.(entry.draft.key, entry.draft.contents)
       lastWritten.set(entry.draft.tabId, entry.draft.contents)
-      reported.delete(entry.draft.tabId)
+      announceRecovery(entry.draft, reported, suppressed)
     } catch (error) {
-      surfaceFailure(reported, entry.draft, entry.host, error)
+      surfaceFailure(reported, suppressed, entry.draft, entry.host, error)
     }
   }
 
@@ -73,29 +78,51 @@ export function createRecoveryWriter(): RecoveryWriter {
       pending.delete(tabId)
       lastWritten.delete(tabId)
       reported.delete(tabId)
+      suppressed.delete(tabId)
     },
   }
 }
 
+/** `path=` carries the location for a named tab. The key is emitted only for a
+ *  tab with no path: there `untitled_<id>` is the tab's only identity, while
+ *  for a named tab `recoveryKey` would repeat the path in a
+ *  separator-substituted form the export redactor cannot collapse. */
+function recoveryIdentity(draft: RecoveryDraft): string {
+  return draft.path === null
+    ? `${pathField("")} ${keyField(draft.key)}`
+    : pathField(draft.path)
+}
+
 function surfaceFailure(
   reported: Set<number>,
+  suppressed: Map<number, number>,
   draft: RecoveryDraft,
   host: RecoveryHost,
   error: unknown,
 ): void {
-  const message = errorMessage(t("error.recoveryWriteFailed"), error)
   if (reported.has(draft.tabId)) {
-    // `path=` carries the location for a named tab. The key is emitted only for
-    // a tab with no path: there `untitled_<id>` is the tab's only identity,
-    // while for a named tab `recoveryKey` would repeat the path in a
-    // separator-substituted form the export redactor cannot collapse.
-    const identity =
-      draft.path === null
-        ? `${pathField("")} ${keyField(draft.key)}`
-        : pathField(draft.path)
-    getGlobalLogger().error("recovery", `${message} ${identity}`)
+    // One record per outage, not one per document change.
+    suppressed.set(draft.tabId, (suppressed.get(draft.tabId) ?? 0) + 1)
     return
   }
   reported.add(draft.tabId)
+  suppressed.set(draft.tabId, 0)
+  const message = errorMessage(t("error.recoveryWriteFailed"), error)
+  getGlobalLogger().error("recovery", `${message} ${recoveryIdentity(draft)}`)
   host.reportError(message)
+}
+
+/** The first success after an outage closes it and says how long it lasted. */
+function announceRecovery(
+  draft: RecoveryDraft,
+  reported: Set<number>,
+  suppressed: Map<number, number>,
+): void {
+  if (!reported.delete(draft.tabId)) return
+  const failed = suppressed.get(draft.tabId) ?? 0
+  suppressed.delete(draft.tabId)
+  getGlobalLogger().info(
+    "recovery",
+    `recovered after ${failed + 1} failed write(s) ${recoveryIdentity(draft)}`,
+  )
 }

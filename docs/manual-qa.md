@@ -508,9 +508,29 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 按平台路径见 `docs/guides/troubleshooting.md`。以下项需 `pnpm dev` 或真实打包产物交互；Windows/Linux 项需实机。
 
+- [ ] **默认不写日志**：全新安装（无 `settings.json`）启动后，日志目录不存在或没有任何新文件；Settings → 日志 显示「日志记录已关闭」，且「启用详细日志」为禁用状态。「打开日志目录」给出提示而不是打开空目录。
+- [ ] **默认关闭的能力边界**：全新安装下故意强杀进程 → 下次启动**不得**出现「上次异常退出」的任何提示或 `WARN`（没有标记可读）；导出诊断包 → `previous_exit.state=unknown` 且 `reason` 写明 `logging was off`，不得写成「崩溃」或「已轮转丢失」。
+- [ ] **设置里的两个入口**：日志区始终有「如何反馈问题」（打开 troubleshooting）与「报告问题」（打开 issue 新建页）；中英文都能打开正确链接。
+- [ ] **立即重启以生效**：勾选/取消勾选后出现「立即重启以生效」→ 确认后应用重启，未保存内容可从恢复草稿找回；取消则什么都不发生；排空超时**不得**重启（应提示会话状态未保存完）。
+- [ ] **设置确实落盘再重启**：勾选后*立刻*点重启 → 重启后 Settings 必须显示「正在记录/已开启」而不是又回到「日志记录已关闭」；把 settings.json 设为只读后重复该流程 → 必须提示「日志设置无法保存到磁盘」且**不重启**。
+- [ ] **开关生效**：勾选「记录诊断日志」→ 重启 → 启动头部出现 `environment … log_level=`，日志文件开始写入；取消勾选 → 重启 → 不再新增文件（历史文件保留）。
 - [ ] **打开日志目录**：macOS 走**应用菜单（oh-my-md）→ 打开日志目录**（原生菜单栏没有 Help），Windows/Linux 走窗口内菜单栏 **Help → 打开日志目录**；或命令面板 Open Log Folder。macOS 打开 `~/Library/Logs/md.ohmy.desktop/`（**没有** `logs/` 子目录）、Windows 打开 `%LOCALAPPDATA%\md.ohmy.desktop\logs\`、Linux 打开 `$XDG_DATA_HOME/md.ohmy.desktop/logs/`（未设置 `XDG_DATA_HOME` 时是 `~/.local/share/md.ohmy.desktop/logs/`）；三个平台上都是本次运行实际使用的目录。
 - [ ] **详细日志开关**：Settings 勾选「启用详细日志」→ 重启 → 启动头部那行 `environment … log_level=debug` 记录到新的级别（取消勾选再重启回到 `info`，release 构建）；重启前不生效。
+- [ ] **环境变量关闭**：设置开关保持开启，以 `OMD_LOG=off` 启动 → 设置页说明环境变量已关闭日志，且不提供无效的「立即重启以生效」；移除变量重启后恢复写入。
+- [ ] **关闭期间不伪造上次会话**：先开启日志并正常退出，再关闭日志运行并强杀，重新开启 → `previous_exit.state=unknown`，不把更早的正常退出说成上次运行。
 - [ ] **异常终止与正常退出**：编辑中途 `kill -9` 进程 → 下次启动出现 `WARN previous session ended abnormally`；走正常退出（⌘Q / 应用内 Quit / 关最后一个窗口）后再启动**不出现**该 Warn（只写 debug 级 `previous session exited cleanly`）。
-- [ ] **系统打断 ≠ 崩溃**：会话进行中强制 macOS 注销（或关机）→ 下次启动判定为 interrupted（`INFO previous session was interrupted by the system`），**不得**报成 abnormal/crash。
+- [ ] **系统打断 ≠ 崩溃**：会话进行中强制 macOS 注销（或关机）→ 下次启动判定为 interrupted（`INFO previous session quit was interrupted`），**不得**报成 abnormal/crash。
 - [ ] **日志目录不可写仍能启动**：`chmod 500` 日志目录（Windows 用拒绝写入的 ACL，且保持只读属性为清除状态）→ 应用照常启动 → Settings 的 Logging 一节显示「日志记录已降级」并给出 `temp_dir` 下的实际路径（`destination.kind = fallback`）；恢复权限后重启回到正常目录。
+- [ ] **降级日志跨进程**：连续两次以不可写主日志目录启动，首次强杀 → 第二次读取上一 PID 的临时日志并报告异常退出；若两次之间切换过日志开关，则报告 `unknown`。
+- [ ] **macOS webview 终止**：在打包产物上分别触发 webview 进程终止和正常退出；前者只记受影响窗口的 Error，后者不得误报 Error。Windows/Linux 核对运行时的终止信息行。
 - [ ] **导出包**：导出诊断信息 → 生成的 `.zip` 能被系统解压工具正常打开（条目与 `manifest.json` 一致）→ 包内**不含**任何文档内容，也**不含**家目录之外完整绝对路径（结构化路径字段应为 `<path>/…/<文件名>`）。
+- [ ] **导出容错**：把一个归档日志改成不可读（chmod 000，或放进同名目录）→ 导出仍然成功，`manifest.json` 的 `skipped_logs` 列出该文件与原因，其余日志完整。
+- [ ] **导出开关边界**：日志关闭时导出 → 包内无日志文件，`environment.txt` 的 `log_destination=off`，导出本身成功。
+- [ ] **错误原因不丢失**：让一次打开/保存失败（例如只读目录）→ Toast 与日志里出现底层原因（如 `Access denied (os error 5)`），不出现 `[object Object]`。
+- [ ] **异常对象不带正文**：在 devtools 里 `Promise.reject({ documentText: "PRIVATE", access_token: "FAKE" })` → 日志记录只含类型与键名，不含 `PRIVATE` / `FAKE`。
+
+- [ ] **日志信噪比**：普通输入、光标移动、滚动不生成日志；release 正常保存只有一条 `save ok`（含 `bytes`、`duration_ms`）；版本冲突只有一条 `save conflict`。
+- [ ] **后台路径故障**：打开两个可断开的文件路径后断开，连续轮询只各记首次故障；恢复后各记一次恢复。切换标签/修改文档不重置同一次故障的抑制。
+- [ ] **冲突决策**：取消重载不记已生效；重载成功才记 `phase=applied`；覆盖/重建只记 `phase=requested`，最终结果以保存记录为准。
+- [ ] **诊断尾部与退出排空**：操作失败后立即导出，包内包含刚发生的错误；日志 IPC 失联时导出最多等待一秒后继续。并发的定时/手动排空期间退出，ack 必须等待正在投递的下一批完成（仍受原生退出总时限约束）。
+- [ ] **故障压力与可用性**：传输受阻时错误队列有界，并保留省略计数；错误风暴不阻止继续输入或退出。真实慢盘与三平台打包运行仍需实机验证。

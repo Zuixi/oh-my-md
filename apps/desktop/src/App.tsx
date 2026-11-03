@@ -36,6 +36,9 @@ import {
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
+import { restartToApplyLogging } from "./appLoggingActions"
+import { persistSettingsChange } from "./settingsPersistence"
 import { useConflictSaveBinding } from "./conflictSaveBinding"
 import { ConflictSaveRegion } from "./ConflictSaveRegion"
 import { exportCurrent, loadCustomCss } from "./appExportActions"
@@ -59,10 +62,10 @@ import {
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
 import {
+  classifyUpdateError,
   createUpdateCoordinator,
   type UpdateCoordinator,
   type UpdateFailureKind,
-  type UpdateStage,
   type UpdateState,
 } from "./updateCoordinator"
 import { updateRestartReadiness } from "./updateRestartReadiness"
@@ -77,24 +80,11 @@ import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
 import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
-import type { LogStateView } from "./logging"
-import {
-  buildReplaceAll,
-  findNextMatch,
-  findPreviousMatch,
-  replaceCurrentSpec,
-  type SearchMatch,
-  type SearchRequest,
-} from "./currentDocumentSearch"
-import {
-  collectMatches,
-  nextIndex,
-  prevIndex,
-  replaceAll,
-  validateFindPattern,
-  type FindQuery,
-} from "./findReplace"
+import { flushLogs, logUpdateStartupFailure } from "./logging"
+import { useLoggingState } from "./useLoggingState"
+import { collectMatches, validateFindPattern } from "./findReplace"
 import { FindReplaceBar } from "./FindReplaceBar"
+import { useFindReplace } from "./useFindReplace"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
@@ -143,11 +133,10 @@ import { SettingsModal } from "./SettingsModal"
 import {
   DEFAULT_SETTINGS,
   sameAutoPair,
-  sanitizeSettings,
   type UserSettings,
 } from "./settings"
 import { initLocale, setLocale, t as localeT, useT } from "./i18n"
-import { getGlobalLogger } from "./logger"
+import { reportSaveStateTransitions } from "./saveDiagnostics"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
@@ -265,44 +254,6 @@ interface OutlineIdleGlobal {
   cancelIdleCallback?: (handle: number) => void
 }
 
-/**
- * Startup-check failures log with no user UI (spec §10/§14): a failed startup
- * update check is not a user-visible failure, so it is a warning. Log only the
- * classified product failure kind — never raw updater internals or document
- * content.
- */
-function logUpdateStartupFailure(failure: UpdateFailureKind): void {
-  getGlobalLogger().warn("updates", `startup check failed: ${failure}`)
-}
-
-/**
- * Best-effort update failure classification from dependency errors (spec §14).
- * The Tauri plugin rejects with Rust `thiserror` Display text; match stable
- * substrings and default to `unknown` rather than exposing raw internals.
- * The coordinator never guesses: every thrown error flows through here with
- * the exact stage where it was thrown.
- */
-function classifyUpdateError(error: unknown, stage: UpdateStage): UpdateFailureKind {
-  const message = error instanceof Error ? error.message : String(error)
-  const text = message.toLowerCase()
-  if (
-    text.includes("fetch") || text.includes("network") || text.includes("timeout")
-    || text.includes("offline") || text.includes("econn")
-  ) return "network"
-  if (
-    text.includes("signature") || text.includes("minisign") || text.includes("base64")
-    || text.includes("decode")
-  ) return "signature"
-  if (
-    stage === "check"
-    && (text.includes("json") || text.includes("manifest") || text.includes("platform")
-      || text.includes("semver") || text.includes("parse"))
-  ) return "manifest"
-  if (stage === "download" || text.includes("download")) return "download"
-  if (stage === "install") return "install"
-  return "unknown"
-}
-
 function scheduleOutlineIdle(callback: () => void): void {
   const idle = globalThis as OutlineIdleGlobal
   if (typeof idle.requestIdleCallback === "function" && typeof idle.cancelIdleCallback === "function") {
@@ -368,10 +319,6 @@ export default function App({
   const settingsRef = useRef<UserSettings>(settings)
   const localeInitRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // Resolved logging destination for the Settings degradation row. Null until
-  // the first `log_state` answer arrives; absent (no service) stays null, which
-  // renders no warning rather than a wrong one.
-  const [logState, setLogState] = useState<LogStateView | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
   const sessionSaveTimerRef = useRef<number | null>(null)
   // 最近一次防抖 saveSessionState 的在途 Promise。退出 flush 前先等它落定，
@@ -384,6 +331,7 @@ export default function App({
   // frontend pushes stay off until those settings load, so the "light"
   // default can't flip the title bar dark→light→dark.
   const [themeSyncReady, setThemeSyncReady] = useState(false)
+  const logState = useLoggingState(services, themeSyncReady)
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
@@ -457,30 +405,13 @@ export default function App({
   })
   const searchOpenRef = useRef(search.open)
   searchOpenRef.current = search.open
-  const [findOpen, setFindOpen] = useState(false)
-  const [findQuery, setFindQuery] = useState("")
-  const [findReplace, setFindReplace] = useState("")
-  const [findCase, setFindCase] = useState(false)
-  const [findRegexMode, setFindRegexMode] = useState(false)
-  const [findWholeWord, setFindWholeWord] = useState(false)
-  const [replaceOpen, setReplaceOpen] = useState(false)
-  const [findIndex, setFindIndex] = useState(-1)
-  const findOpenRef = useRef(false)
-  findOpenRef.current = findOpen
-  const findQueryRef = useRef(findQuery)
-  findQueryRef.current = findQuery
-  const findReplaceRef = useRef(findReplace)
-  findReplaceRef.current = findReplace
-  const findCaseRef = useRef(findCase)
-  findCaseRef.current = findCase
-  const findRegexModeRef = useRef(findRegexMode)
-  findRegexModeRef.current = findRegexMode
-  const findWholeWordRef = useRef(findWholeWord)
-  findWholeWordRef.current = findWholeWord
-  const findIndexRef = useRef(findIndex)
-  findIndexRef.current = findIndex
-  const activeFindMatchRef = useRef<SearchMatch | null>(null)
-  const findRevisionRef = useRef(0)
+  // 查找替换状态与命令在 useFindReplace 内；编辑器 view、App 物化文档、档位
+  // 判断按 getter 注入，避免 hook 按值捕获（getter 始终读当前 ref）。
+  const findReplace = useFindReplace({
+    getView: () => viewRef.current,
+    getDoc: () => docRef.current,
+    isActiveSafeMode,
+  })
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
   const treePollInFlightRef = useRef(false)
@@ -545,6 +476,7 @@ export default function App({
 
   function commitSaveState(next: SaveStateByTab) {
     if (next === saveStateRef.current) return
+    reportSaveStateTransitions(saveStateRef.current, next, tabById)
     saveStateRef.current = next
     setSaveStateByTab(next)
   }
@@ -565,8 +497,10 @@ export default function App({
     showTransientStatus,
   })
 
+  const pollReadFailures = useRef(new Map<number, string>())
   const { saveFile, saveCopy, pollFileTabs } = createDocumentSaveAppBridge({
     services,
+    pollReadFailures: pollReadFailures.current,
     tabSaveQueues: tabSaveQueuesRef.current,
     operationSeq: operationSeqRef,
     isOpening: () => openingRef.current,
@@ -964,11 +898,6 @@ export default function App({
     void (async () => {
       const initial = await loadInitialSettings()
       if (mountedRef.current) setThemeSyncReady(true)
-      // Where this run's logs actually go (Task 11): fetched once at startup
-      // beside the settings, since it is fixed for the process lifetime.
-      void services.getLogState?.()
-        .then(state => { if (mountedRef.current) setLogState(state) })
-        .catch(() => undefined)
       if (!localeInitRef.current) {
         localeInitRef.current = true
         initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
@@ -1110,18 +1039,7 @@ export default function App({
         // 落盘失败也要走完 ack——事件回调里的逃逸 rejection 只会变成
         // webview 的未处理拒绝，还拖慢退出。
       } finally {
-        // Deliver the queued log records on the same round that persists
-        // session state: the webview is about to be destroyed, and the
-        // facade's own delivery timer is exactly what never fires. Rust
-        // bounds the round at SESSION_FLUSH_TIMEOUT and proceeds on timeout,
-        // so a lost flush can never trap the user in the app. `flush()` is
-        // contractually non-rejecting; this catch only keeps a throwing
-        // logger from becoming an unhandled rejection in the quit path.
-        try {
-          await getGlobalLogger().flush()
-        } catch {
-          // A logging failure must never block the quit.
-        }
+        await flushLogs()
         await services.sessionFlushAck?.()
       }
     })
@@ -1300,8 +1218,15 @@ export default function App({
     }
   }
 
+  const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true))
+
   function handleSaveSettings(next: UserSettings) {
-    const sanitized = sanitizeSettings(next)
+    const sanitized = persistSettingsChange({
+      current: settingsRef.current,
+      next,
+      slot: settingsSaveRef,
+      services,
+    })
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
     }
@@ -1312,7 +1237,6 @@ export default function App({
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
-    void services.saveSettings?.(sanitized)
     if (localeChanged) setLocale(sanitized.locale)
   }
 
@@ -2200,8 +2124,8 @@ export default function App({
     } },
     { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
     { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
-      setFindOpen(true)
-      setReplaceOpen(false)
+      findReplace.setOpen(true)
+      findReplace.setReplaceOpen(false)
     } },
     { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => search.setOpen(true) },
 { id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
@@ -2209,14 +2133,8 @@ export default function App({
     { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => { void updateCoordinatorRef.current?.check("manual") } },
-    { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
-    { id: "open-log-folder", label: t("cmd.label.open-log-folder"), run: () => {
-      // A disabled destination has no folder, so Rust rejects; surface that
-      // instead of leaving an unhandled rejection (same pattern as revealInFinder).
-      void services.openLogDir?.().catch(error => {
-        services.reportError(errorMessage(t("error.openLogFolderFailed"), error))
-      })
-    } },
+    { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void exportDiagnostics(services) },
+    { id: "open-log-folder", label: t("cmd.label.open-log-folder"), run: () => void openLogFolder(services) },
     { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
     { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
     { id: "about", label: t("cmd.label.about"), run: () => setAboutOpen(true) },
@@ -2280,173 +2198,12 @@ export default function App({
     })
   }, [services, sourceMode, sidebarOpen, outlineOpen, typewriter, focusMode])
 
-  function closeFind() {
-    setFindOpen(false)
-    setReplaceOpen(false)
-    try { viewRef.current?.focus() } catch { /* mock views */ }
-  }
-
-  function currentFindQuery(): FindQuery {
-    return {
-      query: findQueryRef.current,
-      caseSensitive: findCaseRef.current,
-      regex: findRegexModeRef.current,
-      wholeWord: findWholeWordRef.current,
-    }
-  }
-
-  function currentSearchRequest(revision = findRevisionRef.current): SearchRequest {
-    return {
-      query: findQueryRef.current,
-      caseSensitive: findCaseRef.current,
-      regexp: findRegexModeRef.current,
-      wholeWord: findWholeWordRef.current,
-      revision,
-    }
-  }
-
-  function realTextDoc(view: EditorView | null): Text | null {
-    if (!view) return null
-    try {
-      const candidate = view.state.doc
-      return typeof candidate.sliceString === "function" ? candidate : null
-    } catch {
-      return null
-    }
-  }
-
   function isActiveSafeMode(): boolean {
     let lines = 0
     try { lines = viewRef.current?.state.doc.lines ?? 0 } catch { lines = 0 }
     return documentScaleRegistry.evaluate(workspaceRef.current.activeId, lines).safeMode
   }
 
-  function goFind(direction: "next" | "prev") {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const request = currentSearchRequest()
-      const current = activeFindMatchRef.current
-      const sel = view.state.selection.main
-      const match = direction === "next"
-        ? findNextMatch(
-            textDoc,
-            request,
-            current && current.revision === request.revision ? current.to : sel.to,
-          )
-        : findPreviousMatch(
-            textDoc,
-            request,
-            current && current.revision === request.revision ? current.from : sel.from,
-          )
-      activeFindMatchRef.current = match
-      if (!match) {
-        setFindIndex(-1)
-        return
-      }
-      try {
-        view.dispatch({
-          selection: { anchor: match.from, head: match.to },
-          scrollIntoView: true,
-        })
-      } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, currentFindQuery())
-    if (matches.length === 0) {
-      activeFindMatchRef.current = null
-      setFindIndex(-1)
-      return
-    }
-    const index = direction === "next"
-      ? nextIndex(matches.length, findIndexRef.current)
-      : prevIndex(matches.length, findIndexRef.current)
-    const match = matches[index]
-    activeFindMatchRef.current = {
-      from: match.from,
-      to: match.to,
-      revision: findRevisionRef.current,
-    }
-    try {
-      view.dispatch({
-        selection: { anchor: match.from, head: match.to },
-        scrollIntoView: true,
-      })
-    } catch { /* mock views */ }
-    setFindIndex(index)
-  }
-
-  function replaceCurrent() {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const request = currentSearchRequest()
-      const spec = replaceCurrentSpec(
-        view.state,
-        request,
-        activeFindMatchRef.current,
-        findReplaceRef.current,
-      )
-      if (!spec) return
-      findRevisionRef.current += 1
-      activeFindMatchRef.current = null
-      try { view.dispatch(spec) } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, currentFindQuery())
-    if (matches.length === 0) return
-    const index = findIndexRef.current >= 0 && findIndexRef.current < matches.length
-      ? findIndexRef.current
-      : 0
-    const match = matches[index]
-    const replacement = findReplaceRef.current
-    findRevisionRef.current += 1
-    activeFindMatchRef.current = null
-    try {
-      view.dispatch({
-        changes: { from: match.from, to: match.to, insert: replacement },
-        selection: { anchor: match.from, head: match.from + replacement.length },
-        scrollIntoView: true,
-      })
-    } catch { /* mock views */ }
-  }
-
-  function replaceEvery() {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const result = buildReplaceAll(textDoc, currentSearchRequest(), findReplaceRef.current)
-      if (!result) return
-      findRevisionRef.current += 1
-      activeFindMatchRef.current = null
-      try { view.dispatch({ changes: result.changes }) } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const next = replaceAll(doc, currentFindQuery(), findReplaceRef.current)
-    if (next === doc) return
-    findRevisionRef.current += 1
-    activeFindMatchRef.current = null
-    try {
-      view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
-    } catch { /* mock views */ }
-  }
-
-  const goFindRef = useRef(goFind)
-  const closeFindRef = useRef(closeFind)
-  goFindRef.current = goFind
-  closeFindRef.current = closeFind
   // Spec 05b：Escape 取消进行中的打开。overlay 非模态，但其上的模态/面板
   // （palette、quick open、search、settings、about）优先消费 Escape，
   // 只有这些 chrome 都关闭时 Escape 才落到「取消打开」。
@@ -2461,9 +2218,9 @@ export default function App({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
-      if (e.key === "Escape" && findOpenRef.current) {
+      if (e.key === "Escape" && findReplace.openRef.current) {
         e.preventDefault()
-        closeFindRef.current()
+        findReplace.closeRef.current()
         return
       }
       if (e.key === "Escape" && openingLabelRef.current && !modalChromeOpenRef.current) {
@@ -2478,15 +2235,15 @@ export default function App({
       }
       if (!e.metaKey && !e.ctrlKey) return
       // Find/replace navigation stays editor-scoped: only active while the bar is open.
-      if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
+      if ((e.key === "g" || e.key === "G") && findReplace.openRef.current) {
         e.preventDefault()
-        goFindRef.current(e.shiftKey ? "prev" : "next")
+        findReplace.goRef.current(e.shiftKey ? "prev" : "next")
         return
       }
       if (e.key === "h" || e.key === "H") {
         e.preventDefault()
-        setFindOpen(true)
-        setReplaceOpen(true)
+        findReplace.setOpen(true)
+        findReplace.setReplaceOpen(true)
         return
       }
       const binding = WINDOW_SHORTCUTS.find(shortcut => matchesWindowShortcut(shortcut, e))
@@ -2541,26 +2298,34 @@ export default function App({
   // 注意（Spec 05a）：doc 是 250ms 物化节奏的 React state —— 编辑器里打字时匹配数
   // 最多滞后 ~250ms 才刷新（与字数统计防抖同语义）；换来的是全文扫描不进每键路径。
   const findPatternError = useMemo(
-    () => findOpen && findRegexMode && findQuery !== ""
-      ? validateFindPattern({ query: findQuery, caseSensitive: findCase, regex: true, wholeWord: false })
+    () => findReplace.open && findReplace.regexMode && findReplace.query !== ""
+      ? validateFindPattern({
+          query: findReplace.query,
+          caseSensitive: findReplace.caseSensitive,
+          regex: true,
+          wholeWord: false,
+        })
       : null,
-    [findOpen, findRegexMode, findQuery, findCase],
+    [findReplace.open, findReplace.regexMode, findReplace.query, findReplace.caseSensitive],
   )
   const matchCount = useMemo<number | null>(
     () => {
-      if (!findOpen) return 0
+      if (!findReplace.open) return 0
       // 安全模式（Spec 05）门控全文正则扫描：over-scale tab（含只读）与字数统计
       // 同口径不跑 collectMatches，计数返回 null 由 FindBar 显示占位；文档缩回
       // 正常规模或切到普通 tab 后恢复即时计数。
       if (safeModeActive) return null
       return collectMatches(doc, {
-        query: findQuery,
-        caseSensitive: findCase,
-        regex: findRegexMode,
-        wholeWord: findWholeWord,
+        query: findReplace.query,
+        caseSensitive: findReplace.caseSensitive,
+        regex: findReplace.regexMode,
+        wholeWord: findReplace.wholeWord,
       }).length
     },
-    [findOpen, doc, findQuery, findCase, findRegexMode, findWholeWord, safeModeActive],
+    [
+      findReplace.open, doc, findReplace.query, findReplace.caseSensitive,
+      findReplace.regexMode, findReplace.wholeWord, safeModeActive,
+    ],
   )
 
   return (
@@ -2773,46 +2538,26 @@ export default function App({
             <p className="save-transient-status" role="status">{transientStatus}</p>
           ) : null}
           <FindReplaceBar
-            open={findOpen}
-            query={findQuery}
-            replacement={findReplace}
-            caseSensitive={findCase}
-            regex={findRegexMode}
-            wholeWord={findWholeWord}
+            open={findReplace.open}
+            query={findReplace.query}
+            replacement={findReplace.replacement}
+            caseSensitive={findReplace.caseSensitive}
+            regex={findReplace.regexMode}
+            wholeWord={findReplace.wholeWord}
             patternError={findPatternError}
-            replaceOpen={replaceOpen}
+            replaceOpen={findReplace.replaceOpen}
             matchCount={matchCount}
-            activeIndex={findIndex}
-            onQuery={query => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindQuery(query)
-              setFindIndex(-1)
-            }}
-            onReplacement={setFindReplace}
-            onCaseSensitive={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindCase(value)
-              setFindIndex(-1)
-            }}
-            onRegex={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindRegexMode(value)
-              setFindIndex(-1)
-            }}
-            onWholeWord={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindWholeWord(value)
-              setFindIndex(-1)
-            }}
-            onNext={() => goFind("next")}
-            onPrev={() => goFind("prev")}
-            onReplace={replaceCurrent}
-            onReplaceAll={replaceEvery}
-            onClose={closeFind}
+            activeIndex={findReplace.index}
+            onQuery={findReplace.onQuery}
+            onReplacement={findReplace.onReplacement}
+            onCaseSensitive={findReplace.onCaseSensitive}
+            onRegex={findReplace.onRegex}
+            onWholeWord={findReplace.onWholeWord}
+            onNext={() => findReplace.go("next")}
+            onPrev={() => findReplace.go("prev")}
+            onReplace={findReplace.replaceCurrent}
+            onReplaceAll={findReplace.replaceEvery}
+            onClose={findReplace.close}
           />
           <div className="editor-stack">
             {workspace.tabs.map(tab => (
@@ -2870,6 +2615,8 @@ export default function App({
         onClose={() => setSettingsOpen(false)}
         listSystemFonts={services.listSystemFonts}
         logState={logState}
+        openUrl={url => { void services.openExternal?.(url) }}
+        onRestartToApplyLogging={() => { void restartToApplyLogging(services, () => settingsSaveRef.current) }}
       />
       <AboutDialog
         isOpen={aboutOpen}

@@ -1,3 +1,4 @@
+mod app_lifecycle;
 mod diagnostics;
 mod documents;
 mod export;
@@ -342,37 +343,6 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
     }
 }
 
-/// Every live window label, used as the flush target set for app-wide
-/// rounds (quit, update restart, exit). Per-window rounds pass the single
-/// closing label instead.
-fn all_window_labels<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<String> {
-    app.webview_windows().keys().cloned().collect()
-}
-
-#[tauri::command]
-fn quit_app(app: tauri::AppHandle) {
-    let gate = app.state::<session_flush::FlushGate>();
-    if gate.in_progress() {
-        // The in-flight round's finish exits the app.
-        return;
-    }
-    let exit_handle = app.clone();
-    let targets = all_window_labels(&app);
-    if gate.begin(
-        session_flush::SESSION_FLUSH_TIMEOUT,
-        &targets,
-        move |_outcome| exit_handle.exit(0),
-    ) {
-        // Targeted per window: only the labels registered as round targets
-        // are asked to flush.
-        for label in &targets {
-            let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
-        }
-    } else {
-        app.exit(0);
-    }
-}
-
 #[tauri::command]
 fn session_flush_ack(app: tauri::AppHandle, window: tauri::WebviewWindow) {
     // The webview is injected from the caller's context, so the ack lands on
@@ -404,7 +374,7 @@ async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpdateRestartRe
         return PrepareUpdateRestartResult::TimedOut;
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let targets = all_window_labels(&app);
+    let targets = app_lifecycle::all_window_labels(&app);
     let started = gate.begin(
         session_flush::SESSION_FLUSH_TIMEOUT,
         &targets,
@@ -829,7 +799,15 @@ pub fn run() {
     // `file:line`. The hook chains to the default one, so a panic raised
     // before the logger exists still reaches stderr.
     logging::install_panic_hook();
-    tauri::Builder::default()
+    #[cfg(target_os = "macos")]
+    let builder = tauri::Builder::default().on_web_content_process_terminate(|webview| {
+        let exiting = webview.app_handle().state::<logging::ExitingState>().is_exiting();
+        let level = logging::webview_termination_level(exiting);
+        log::log!(target: "webview", level, "web content process terminated window={}", webview.label());
+    });
+    #[cfg(not(target_os = "macos"))]
+    let builder = tauri::Builder::default();
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // Markdown file arguments open in this instance (macOS delivers
             // the same via RunEvent::Opened instead of a second process);
@@ -865,16 +843,34 @@ pub fn run() {
             logging::LOG_FRONTEND_BUDGET_PER_SEC,
         ))
         .setup(|app| {
-            // Logging first: the probe needs the AppHandle, and Tauri turns a
-            // setup error into a panic, so install() swallows its own failures.
-            let log_state = logging::install(app.handle());
+            // One read for the whole setup (logging + pre-paint theme).
+            let settings = workspace::get_settings().unwrap_or_default();
+            // Logging first: Tauri turns a setup error into a panic.
+            let preferences = logging::logging_preferences(&settings);
+            let log_state = logging::install(app.handle(), preferences);
             // Scan the previous session *before* writing this run's boundary
             // line (spec §3.4.5 step 5). Order is load-bearing: our own
             // `session start` would be the last start in the tail, so every
             // scan would find a start with nothing after it and report an
             // abnormal exit on every single launch.
-            let previous = logging::scan_previous_session(&log_state.dir, &log_state.file_stem);
-            logging::write_session_start(std::process::id(), env!("CARGO_PKG_VERSION"));
+            let previous = if log_state.destination == logging::LogDestination::Fallback {
+                logging::scan_previous_fallback_session(
+                    &log_state.dir,
+                    &log_state.file_stem,
+                    preferences.generation,
+                )
+            } else {
+                logging::scan_previous_session(
+                    &log_state.dir,
+                    &log_state.file_stem,
+                    preferences.generation,
+                )
+            };
+            logging::write_session_start(
+                std::process::id(),
+                env!("CARGO_PKG_VERSION"),
+                preferences.generation,
+            );
             logging::log_startup_header(&log_state);
             logging::log_previous_exit(previous.outcome);
             // Carried as state for the diagnostics bundle (Task 12), which is
@@ -906,8 +902,7 @@ pub fn run() {
             // set_window_theme push arrives only after React boots, which
             // leaves the title bar flashing the OS appearance at startup.
             if let Some(window) = app.get_webview_window("main") {
-                let raw = workspace::get_settings().unwrap_or_default();
-                if let Err(e) = window.set_theme(startup_window_theme(&raw)) {
+                if let Err(e) = window.set_theme(startup_window_theme(&settings)) {
                     log::warn!("startup window theme failed: {e}");
                 }
             }
@@ -1073,7 +1068,7 @@ pub fn run() {
             set_window_theme,
             update_capability,
             prepare_update_restart,
-            quit_app,
+            app_lifecycle::quit_app,
             session_flush_ack,
             app_version,
             create_editor_window,
@@ -1081,7 +1076,8 @@ pub fn run() {
             diagnostics::export_diagnostics,
             logging::log_state,
             logging::open_log_dir,
-            logging::log_frontend,
+            logging::frontend::log_frontend,
+            app_lifecycle::restart_app,
             menu::set_menu_locale,
             export::export_preview,
             fonts::list_system_fonts
@@ -1148,7 +1144,7 @@ pub fn run() {
                     return;
                 }
                 let exit_handle = app.clone();
-                let targets = all_window_labels(app);
+                let targets = app_lifecycle::all_window_labels(app);
                 if !gate.begin(
                     session_flush::SESSION_FLUSH_TIMEOUT,
                     &targets,

@@ -71,6 +71,8 @@ describe("App Settings & Session Restore integration", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      loggingEnabled: true,
+      loggingGeneration: 0,
       verboseLogging: false,
     }
 
@@ -268,4 +270,30 @@ describe("App Settings & Session Restore integration", () => {
       expect(harness.services.listRecoveries).not.toHaveBeenCalled()
     })
   })
+})
+
+// Restarting to apply logging must not outrun the settings write: the restart
+// replaces the process and the new one reads settings.json. This pins that the
+// panel's restart action waits for the save the toggle itself triggered.
+it("waits for the settings save before restarting to apply logging", async () => {
+  const harness = createAppHarness(editor)
+  let releaseSave!: () => void
+  const saveGate = new Promise<void>(resolve => { releaseSave = resolve })
+  vi.mocked(harness.services.saveSettings!).mockImplementation(async () => {
+    await saveGate
+    return true
+  })
+  harness.renderApp()
+  await act(async () => { await Promise.resolve() })
+
+  fireEvent.keyDown(window, { key: ",", metaKey: true })
+  fireEvent.click(screen.getByLabelText("Save diagnostic logs"))
+  fireEvent.click(screen.getByRole("button", { name: "Restart now to apply" }))
+
+  await Promise.resolve()
+  expect(harness.services.prepareUpdateRestart).not.toHaveBeenCalled()
+
+  releaseSave()
+  await vi.waitFor(() => expect(harness.services.restartApp!).toHaveBeenCalledOnce())
+  expect(harness.services.prepareUpdateRestart).toHaveBeenCalledOnce()
 })

@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest"
 const SOURCE_ROOT = resolve(import.meta.dirname, "..")
 
 /** The only files that may contain the field grammar itself. */
-const HELPERS = new Set(["src/logPath.ts", "src-tauri/src/logging.rs"])
+const HELPERS = new Set(["src/logPath.ts", "src-tauri/src/logging/fields.rs"])
 
 /** The one non-helper declaration that *names* both prefixes. */
 const HELPER_CONSTANT_FILE = "src/constants.ts"
@@ -115,6 +115,9 @@ describe("path fields are never hand-concatenated", () => {
     ]) {
       for (const file of sourceFiles(root)) {
         const rel = relative(SOURCE_ROOT, file).split(sep).join("/")
+        // Rust regression fixtures deliberately contain forged field strings.
+        // These files are mounted only by #[cfg(test)] modules.
+        if (rel.endsWith("_tests.rs") || rel.endsWith("/tests.rs")) continue
         const isHelper = HELPERS.has(rel)
         const isConstant = rel === HELPER_CONSTANT_FILE
         scanned += 1

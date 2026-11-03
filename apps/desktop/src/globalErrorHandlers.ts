@@ -11,9 +11,9 @@
  *      `send` synchronously, before its first `await`, i.e. the IPC call is
  *      initiated in the same task. Tauri v2 has no synchronous IPC
  *      (`@tauri-apps/api` exposes only `async function invoke`), so this
- *      removes the timer delay but cannot guarantee delivery; the guaranteed
- *      path remains the exit flush that rides the session-flush round
- *      (Task 8). Callers deliberately do not await it.
+ *      removes the timer delay but cannot guarantee delivery; clean exits also
+ *      request a bounded flush through the session-flush round (Task 8).
+ *      Callers deliberately do not await it.
  *   2. Nothing here may throw into a listener. A throwing error handler is
  *      worse than no handler: it replaces the original failure with its own.
  */
@@ -23,60 +23,158 @@ import type { Logger } from "./logger"
 const CAPTURE_TARGET = "window"
 
 /**
- * Renders an arbitrary thrown value as text — a `message` line plus the stack
- * for an `Error`. A rejection reason is
- * `unknown` at runtime — string, number, `undefined`, or an object that may be
- * circular (where `JSON.stringify` throws) and whose `toString` may throw too.
- * Nothing in here may throw.
+ * Renders an arbitrary thrown value as text that is safe to write to the log.
  *
- * Every step is guarded, including the `Error` branch. `instanceof` walks the
- * prototype chain and `.message` is a property read, so a `Proxy` can make
- * both throw: a revoked `Proxy` throws from `instanceof` itself, and a
- * `Proxy`-wrapped `Error` passes `instanceof` and then throws on the read.
- * The consequence of an escape is not a lost log line — inside
+ * The record must stay diagnosable **and** must never carry user content or
+ * credentials. An `Error` therefore contributes its message, its stack, and its
+ * `name`; anything else is reduced to coarse structural facts — constructor
+ * name, keys, and the message of a nested `cause`/`error` if it is an `Error`.
+ * Arbitrary own properties are never serialized: a rejected fetch body, an IPC
+ * payload, or a thrown object literal can hold document text or a token, and
+ * the export flow promises the bundle contains no document content.
+ *
+ * Nothing in here may throw. Every step is guarded, including the `Error`
+ * branch: `instanceof` walks the prototype chain and `.message` is a property
+ * read, so a `Proxy` can make both throw (a revoked `Proxy` throws from
+ * `instanceof` itself; a `Proxy`-wrapped `Error` passes and then throws on the
+ * read). The consequence of an escape is not a lost log line — inside
  * `componentDidCatch` it has no boundary above it, so React unmounts the root
- * and the user gets a blank window instead of the recovery surface. A value
- * that fails the `Error` branch therefore falls through to the coarse forms
- * below, each of which is guarded on its own.
+ * and the user gets a blank window instead of the recovery surface.
  */
 export function describeThrown(value: unknown): string {
-  let isError = false
-  try {
-    isError = value instanceof Error
-  } catch {
-    // A revoked `Proxy`, or one whose `getPrototypeOf` trap throws.
-    isError = false
-  }
-  if (isError) {
-    try {
-      const error = value as Error
-      return `${error.message}\n${error.stack ?? ""}`.trim()
-    } catch {
-      // `instanceof` passed, but a `Proxy` `get` trap threw on the read. Fall
-      // through to the coarse forms below rather than escaping.
-    }
+  const error = asError(value)
+  if (error) {
+    return describeError(error)
   }
   if (value === undefined || value === null) return ""
   if (typeof value === "string") return value
+  if (typeof value !== "object") {
+    // A number, boolean, symbol, or function: no user payload can hide here,
+    // and the primitive itself is the useful fact.
+    try {
+      return String(value)
+    } catch {
+      return "(unprintable value)"
+    }
+  }
+  return describeObject(value)
+}
+
+/**
+ * An `Error`'s message and stack, with every read guarded: a `Proxy` can pass
+ * `instanceof` and then throw on `.message`/`.stack`. Falling through to
+ * `describeObject` keeps the record and never escapes into the listener.
+ */
+function describeError(error: Error): string {
+  let message = ""
+  let stack = ""
   try {
-    const json = JSON.stringify(value)
-    // `JSON.stringify` returns `undefined` (not a string) for values with no
-    // JSON form — functions, symbols — despite its TypeScript signature.
-    if (typeof json === "string") return json
+    message = typeof error.message === "string" ? error.message : ""
   } catch {
-    // Circular or otherwise unserializable; fall through to the coarse form.
+    return describeObject(error)
   }
   try {
-    return String(value)
+    stack = typeof error.stack === "string" ? error.stack : ""
   } catch {
-    // Fall through to a form that invokes no user code.
+    stack = ""
   }
+  return `${message}\n${stack}`.trim() || "(error with no message)"
+}
+
+/** The value as an `Error`, or `null` when it is not one (or cannot be read). */
+function asError(value: unknown): Error | null {
   try {
-    return Object.prototype.toString.call(value)
+    return value instanceof Error ? value : null
   } catch {
-    return "(unprintable value)"
+    // A revoked `Proxy`, or one whose `getPrototypeOf` trap throws.
+    return null
   }
 }
+
+/**
+ * Coarse, content-free description of a thrown non-`Error` object.
+ *
+ * Shape only: the constructor name, own enumerable key names (never values),
+ * and — when a `cause`/`error` property is itself an `Error` — that error's
+ * `name` and `message`. That last part is what keeps
+ * `Promise.reject(new SomeError())` wrappers diagnosable without opening the
+ * door to arbitrary payloads.
+ */
+function describeObject(value: object): string {
+  // Containers are reported by size, never enumerated. A rejected array or
+  // `Map` is a realistic shape (a search result, a paste batch), and
+  // `Object.keys` on a million-element array materializes a million strings —
+  // ~25 ms of jank inside an error handler, before the queue's length cap can
+  // do anything. Size is the diagnosable fact; the elements are payload.
+  const container = describeContainer(value)
+  if (container) return container
+  const parts: string[] = []
+  const name = constructorName(value)
+  if (name) parts.push(name)
+  const keys = safeKeys(value)
+  if (keys.length > 0) parts.push(`keys=[${keys.slice(0, MAX_REPORTED_KEYS).join(",")}]`)
+  for (const property of ["cause", "error"]) {
+    const nested = nestedError(value, property)
+    if (nested) parts.push(`${property}=${nested}`)
+  }
+  return parts.length > 0 ? parts.join(" ") : "(unrecognized thrown value)"
+}
+
+/** The size of an array/Map/Set, which is described instead of enumerated. */
+function describeContainer(value: object): string | null {
+  try {
+    if (Array.isArray(value)) return `Array(${value.length})`
+    if (value instanceof Map) return `Map(${value.size})`
+    if (value instanceof Set) return `Set(${value.size})`
+  } catch {
+    // A Proxy wrapping one of these may throw on `size`/`length`.
+    return null
+  }
+  return null
+}
+
+/** How many own key names a coarsely described value reports. Enumeration cost
+ *  still scales with the object's own key count (V8 builds an enum cache even
+ *  for an early-exit loop), so the containers above are skipped outright. */
+const MAX_REPORTED_KEYS = 12
+
+function constructorName(value: object): string {
+  try {
+    const name = (value as { constructor?: { name?: unknown } }).constructor?.name
+    return typeof name === "string" ? name.slice(0, MAX_CONSTRUCTOR_CHARS) : ""
+  } catch {
+    return ""
+  }
+}
+
+/** Longest constructor name reported; a crafted one must not bloat a record. */
+const MAX_CONSTRUCTOR_CHARS = 64
+
+function safeKeys(value: object): string[] {
+  try {
+    return Object.keys(value).map(key => key.slice(0, MAX_KEY_CHARS))
+  } catch {
+    return []
+  }
+}
+
+/** Longest property name reported; names are shape, not payload. */
+const MAX_KEY_CHARS = 64
+
+function nestedError(value: object, property: string): string | null {
+  try {
+    const nested = (value as Record<string, unknown>)[property]
+    const error = asError(nested)
+    if (!error) return null
+    const name = typeof error.name === "string" ? error.name.slice(0, MAX_CONSTRUCTOR_CHARS) : "Error"
+    return `${name}: ${error.message}`
+  } catch {
+    return null
+  }
+}
+
+/** One immediate delivery request per logger while its transport is pending. */
+const pendingFatalFlushes = new WeakSet<Logger>()
 
 /**
  * Logs a fatal record and dispatches it without waiting for the facade's
@@ -90,12 +188,14 @@ export function reportFatal(logger: Logger, target: string, message: string): vo
     // Logging must never break its caller (spec §3.9).
     return
   }
+  if (pendingFatalFlushes.has(logger)) return
+  pendingFatalFlushes.add(logger)
   try {
-    // `flush()` hands the batch to `send` synchronously, so the IPC call is
-    // initiated in this task rather than 250 ms later. See the module doc for
-    // why this is the honest maximum and why awaiting it would change nothing.
-    void logger.flush().catch(() => {})
+    // `flush()` initiates IPC in this task when no batch is already pending.
+    // Later fatal records join the bounded queue, without adding more waiters.
+    void logger.flush().catch(() => {}).finally(() => { pendingFatalFlushes.delete(logger) })
   } catch {
+    pendingFatalFlushes.delete(logger)
     // A logger that cannot flush has still been given the record.
   }
 }

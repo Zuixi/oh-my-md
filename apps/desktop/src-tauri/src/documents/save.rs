@@ -38,6 +38,7 @@ pub(crate) fn guarded_save_with_hook(
     // `resolve_path_key`) or a dangling `save begin` (`probe_disk`: a document
     // changed externally to non-UTF-8 never reaches the write), and the user
     // sees only the save-failed banner.
+    let started = std::time::Instant::now();
     let result = 'save: {
         let path_buf = match validate_requested(path) {
             Ok(path_buf) => path_buf,
@@ -50,18 +51,17 @@ pub(crate) fn guarded_save_with_hook(
         let lock = coordinator.lock_for(&path_key);
         let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        // Written after the per-path lock, so the begin line orders the attempt
-        // rather than the queueing.
-        log::info!("save begin {field}");
+        // Written after the per-path lock at Debug, so normal Info logs emit a
+        // single `save ok` line while verbose logs retain the pre-write marker.
+        log::debug!("save begin {field}");
 
         let probe = match probe_disk(&path_buf) {
             Ok(probe) => probe,
             Err(error) => break 'save Err(error),
         };
         if let VersionCheck::Conflict(result) = compare_expected(expected, &probe, path) {
-            // A conflict is a user-visible state transition, not a failure: the
-            // guarded write declined to overwrite and nothing was written.
-            log::info!("save conflict {field}");
+            // The terminal match below records this conflict once. Nothing
+            // was written, so this is a state transition rather than an error.
             break 'save Ok(result);
         }
 
@@ -77,8 +77,18 @@ pub(crate) fn guarded_save_with_hook(
     };
 
     match result {
-        Ok(SaveDocumentResult::Saved { .. }) => {
-            log::info!("save ok {field} bytes={}", contents.len());
+        // `durability` is `Copy`, so matching by value keeps `result` whole for
+        // the `return` at the end of the arm.
+        Ok(SaveDocumentResult::Saved { durability, .. }) => {
+            // `durability` belongs in the record: a save whose directory sync
+            // failed is reported to the user as a transient warning and, before
+            // this, was indistinguishable from a fully durable write here.
+            log::info!(
+                "save ok {field} bytes={} duration_ms={} durability={}",
+                contents.len(),
+                started.elapsed().as_millis(),
+                durability_kind(durability)
+            );
             result
         }
         // The second compare inside the write can still find a conflict; the
@@ -93,6 +103,15 @@ pub(crate) fn guarded_save_with_hook(
             log::error!("save failed {field} error={error}");
             Err(error)
         }
+    }
+}
+
+/// The stable word for a save's durability, used only in the log record (the
+/// wire shape stays the serde enum on `SaveDocumentResult`).
+fn durability_kind(durability: SaveDurability) -> &'static str {
+    match durability {
+        SaveDurability::Durable => "durable",
+        SaveDurability::DirectorySyncFailed => "directorySyncFailed",
     }
 }
 

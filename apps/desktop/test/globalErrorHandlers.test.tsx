@@ -1,8 +1,9 @@
 import React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
-import { installGlobalErrorHandlers } from "../src/globalErrorHandlers"
+import { describeThrown, installGlobalErrorHandlers } from "../src/globalErrorHandlers"
 import { ErrorBoundary } from "../src/ErrorBoundary"
+import { initLocale } from "../src/i18n"
 import type { Logger } from "../src/logger"
 
 interface FakeLogger {
@@ -285,7 +286,7 @@ describe("error boundary", () => {
     expect(calls.some(message => message.includes("react error boundary"))).toBe(true)
   })
 
-  it("offers Export Diagnostics and Reload actions", () => {
+  it("offers Export Diagnostics and Reload actions, localized", () => {
     const { logger } = fakeLogger()
     const onExportDiagnostics = vi.fn()
     const restore = silenceReactReporter()
@@ -307,6 +308,26 @@ describe("error boundary", () => {
     }
   })
 
+  // The crash surface is the last thing a user sees before deciding to trust the
+  // app again; an English-only copy there is a visible defect for zh locales.
+  it("localizes the recovery surface", () => {
+    const { logger } = fakeLogger()
+    const restore = silenceReactReporter()
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {})
+    try {
+      initLocale("zh")
+      const Boom = () => { throw new Error("render failed") }
+      render(<ErrorBoundary logger={logger}><Boom /></ErrorBoundary>)
+      expect(screen.getByText("编辑器遇到了意外错误。")).toBeTruthy()
+      expect(screen.getByRole("button", { name: "导出诊断信息" })).toBeTruthy()
+      expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy()
+    } finally {
+      initLocale("en")
+      reload.mockRestore()
+      restore()
+    }
+  })
+
   it("renders its children while nothing has failed", () => {
     const { logger, calls } = fakeLogger()
     render(
@@ -316,5 +337,87 @@ describe("error boundary", () => {
     )
     expect(screen.getByText("safe document")).toBeTruthy()
     expect(calls).toHaveLength(0)
+  })
+})
+
+// The export flow promises the bundle contains no document content. A rejected
+// value that is not an Error used to be serialized with `JSON.stringify`, which
+// put whatever the object held — a document body, a token — straight into the
+// log and then past the export redactor, which only knows about paths and
+// secret-shaped assignments.
+describe("thrown values keep detail without carrying payloads", () => {
+  const sensitive = {
+    documentText: "PRIVATE_DOCUMENT_FIXTURE",
+    access_token: "FAKE_SECRET_FIXTURE",
+    nested: { body: "PRIVATE_DOCUMENT_FIXTURE" },
+  }
+
+  it("describes a thrown object by shape, never by value", () => {
+    const detail = describeThrown(sensitive)
+    expect(detail).not.toContain("PRIVATE_DOCUMENT_FIXTURE")
+    expect(detail).not.toContain("FAKE_SECRET_FIXTURE")
+    // The shape is what makes it diagnosable.
+    expect(detail).toContain("Object")
+    expect(detail).toContain("documentText")
+    expect(detail).toContain("access_token")
+  })
+
+  it("keeps the message of a wrapped Error so a rejection stays explainable", () => {
+    const value = { code: "permissionDenied", cause: new Error("Access denied (os error 5)") }
+    const detail = describeThrown(value)
+    expect(detail).toContain("Access denied (os error 5)")
+    expect(detail).toContain("code")
+  })
+
+  it("does not call toJSON on a thrown object", () => {
+    let called = false
+    const value = {
+      documentText: "PRIVATE_DOCUMENT_FIXTURE",
+      toJSON() {
+        called = true
+        return "PRIVATE_DOCUMENT_FIXTURE"
+      },
+    }
+    const detail = describeThrown(value)
+    expect(called).toBe(false)
+    expect(detail).not.toContain("PRIVATE_DOCUMENT_FIXTURE")
+  })
+
+  it("bounds the formatting work instead of serializing a huge payload", () => {
+    const value = { big: "x".repeat(1_000_000) }
+    const started = Date.now()
+    const detail = describeThrown(value)
+    expect(detail.length).toBeLessThan(1_000)
+    expect(Date.now() - started).toBeLessThan(200)
+  })
+})
+
+// Production-shaped containers are described by size, not enumerated: an error
+// handler that spends 20-25 ms building a million key strings is a jank spike
+// exactly when the webview is already unwell. The queue's length cap cannot
+// help, because formatting happens before the cap is consulted.
+describe("describing containers stays cheap", () => {
+  const budgetMs = 5
+
+  const measure = (fn: () => string): { text: string; ms: number } => {
+    fn() // warm up
+    const started = performance.now()
+    const text = fn()
+    return { text, ms: performance.now() - started }
+  }
+
+  it("describes a million-element array by length", () => {
+    const array = Array.from({ length: 1_000_000 }, (_, index) => index)
+    const { text, ms } = measure(() => describeThrown(array))
+    expect(text).toBe("Array(1000000)")
+    expect(ms).toBeLessThan(budgetMs)
+  })
+
+  it("describes a large Map and Set by size", () => {
+    const map = new Map(Array.from({ length: 200_000 }, (_, index) => [`k${index}`, index] as const))
+    const set = new Set(Array.from({ length: 200_000 }, (_, index) => index))
+    expect(describeThrown(map)).toBe("Map(200000)")
+    expect(describeThrown(set)).toBe("Set(200000)")
+    expect(measure(() => describeThrown(map)).ms).toBeLessThan(budgetMs)
   })
 })
