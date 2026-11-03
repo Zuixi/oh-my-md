@@ -10,6 +10,11 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx                  # Shell wiring (growth-frozen: put new logic in focused modules)
+│   ├── useFindReplace.ts        # Find/replace controller hook (state + mirror refs + go/replace)
+│   ├── fileTreeActions.ts       # File-tree operations bridge (host-injected; cross-render refs via host)
+│   ├── documentOpen.ts          # Open coordinator: tiers, streaming read, request token (own state)
+│   ├── appSessionInit.ts        # One-shot startup flows (settings load, shard restore, draft prompt)
+│   ├── appCommands.ts           # buildAppCommands(ctx): the 51-entry command table as data
 │   ├── main.tsx                 # React mount + ErrorBoundary + single react-toastify container
 │   ├── Editor.ts                # CM6 host assembly, engine options, link activation, status reporter
 │   ├── tightSelection.ts        # Vendored tight selection drawing (never re-add stock drawSelection)
