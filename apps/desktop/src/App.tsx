@@ -19,12 +19,12 @@ import { pasteFromSystemClipboard } from "./clipboardPaste"
 import { systemClipboardReader } from "./clipboardPayload"
 import {
   advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
-  retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
+  sessionContentLoaded, sessionDirty, sessionPath,
   type EditorSession,
 } from "./session"
 import {
   activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, parentDir, pathWithinDir, replaceTabSession, resolveMarkdownHref,
+  focusTab, openFolder, pathWithinDir, replaceTabSession, resolveMarkdownHref,
   type Workspace,
 } from "./workspace"
 import {
@@ -36,6 +36,7 @@ import {
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import { createFileTreeActions } from "./fileTreeActions"
 import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
 import { restartToApplyLogging } from "./appLoggingActions"
 import { persistSettingsChange } from "./settingsPersistence"
@@ -94,15 +95,9 @@ import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
   emptyFileTree,
-  pathsToRefresh,
-  removeTreePath,
-  renameTreePath,
-  replaceTreePrefix,
   setChildren,
-  toggleExpand,
   visibleRows,
   type FileTreeModel,
-  type TreeEntry,
 } from "./fileTreeState"
 import { OutlinePanel } from "./OutlinePanel"
 import { SidebarResizer } from "./SidebarResizer"
@@ -141,7 +136,6 @@ import { createDocumentMaterializer, type DocumentMaterializer } from "./documen
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
-  MARKDOWN_FILE_EXTENSION,
   OPEN_READONLY_THRESHOLD_BYTES,
   OPEN_SAVE_QUEUE_TIMEOUT_MS,
   OPEN_STREAM_THRESHOLD_BYTES,
@@ -183,20 +177,6 @@ const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
 const SESSION_SAVE_DEBOUNCE_MS = 1000
-
-/** Shallow directory listing equality; a mismatch means disk changed. */
-function sameEntries(
-  a: readonly TreeEntry[] | undefined,
-  b: readonly TreeEntry[],
-): boolean {
-  if (!a || a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].name !== b[i].name || a[i].path !== b[i].path || a[i].is_dir !== b[i].is_dir) {
-      return false
-    }
-  }
-  return true
-}
 
 /**
  * Bounded wait: a large-document save (double probe + fsync) can run for
@@ -414,6 +394,9 @@ export default function App({
   })
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
+  // 跨渲染可变协调状态：treeActions 工厂每渲染重建，这些去重/在途集合
+  // 必须经 refs 保持（否则重渲染即重置，见 fileTreeActions.ts host 注释）。
+  const treeErrorSignaturesRef = useRef(new Map<string, string>())
   const treePollInFlightRef = useRef(false)
   const pendingListDirsRef = useRef(new Set<string>())
   const recentsRef = useRef<string[]>([])
@@ -547,95 +530,6 @@ export default function App({
 
   function reportUserError(message: string) {
     if (mountedRef.current) services.reportError(message)
-  }
-
-  function invalidName(name: string): boolean {
-    return (
-      !name
-      || name === "."
-      || name === `.${MARKDOWN_FILE_EXTENSION}`
-      || name.includes("/")
-      || name.includes("\\")
-      || name.includes("..")
-    )
-  }
-
-  function normalizeMarkdownName(name: string): string {
-    const trimmed = name.trim()
-    return trimmed.toLowerCase().endsWith(`.${MARKDOWN_FILE_EXTENSION}`)
-      ? trimmed
-      : `${trimmed}.${MARKDOWN_FILE_EXTENSION}`
-  }
-
-  /** 列举错误签名（路径 → 上次已上报的错误文案）。通知语义：状态变化才打扰——
-   *  同一路径的相同错误只报一次，列举成功清除签名，新错误形态仍会上报。 */
-  const treeErrorSignaturesRef = useRef(new Map<string, string>())
-
-  function reportTreeError(path: string, error: unknown) {
-    const message = errorMessage(t("error.folderListingFailed"), error)
-    const signatures = treeErrorSignaturesRef.current
-    if (signatures.get(path) === message) return
-    signatures.set(path, message)
-    services.reportError(message)
-  }
-
-  function clearTreeError(path: string) {
-    treeErrorSignaturesRef.current.delete(path)
-  }
-
-  async function refreshTreePath(path: string): Promise<void> {
-    if (!services.listDir) return
-    const folder = workspaceRef.current.folder
-    try {
-      const entries = await services.listDir(path)
-      if (!mountedRef.current || workspaceRef.current.folder !== folder) return
-      clearTreeError(path)
-      commitTree(setChildren(treeModelRef.current, path, entries))
-    } catch (error) {
-      if (mountedRef.current && workspaceRef.current.folder === folder) reportTreeError(path, error)
-    }
-  }
-
-  async function nextUntitledMarkdownName(dir: string): Promise<string> {
-    if (!services.listDir) return `untitled.${MARKDOWN_FILE_EXTENSION}`
-    const entries = await services.listDir(dir)
-    const names = new Set(entries.map(entry => entry.name))
-    if (!names.has(`untitled.${MARKDOWN_FILE_EXTENSION}`)) return `untitled.${MARKDOWN_FILE_EXTENSION}`
-    let suffix = 2
-    while (names.has(`untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`)) suffix += 1
-    return `untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`
-  }
-
-  function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
-    const previousTabs = workspaceRef.current.tabs
-    const nextTabs = previousTabs.map(tab => {
-      const path = sessionPath(tab)
-      if (!path) return tab
-      const nextPath = replaceTreePrefix(path, from, to)
-      if (nextPath !== path && (isDir || path.replace(/\\/g, "/") === from.replace(/\\/g, "/"))) {
-        return retargetSessionPath(tab, nextPath)
-      }
-      return tab
-    })
-    if (nextTabs.every((tab, index) => tab === previousTabs[index])) return
-    previousTabs.forEach((tab, index) => {
-      const next = nextTabs[index]
-      if (tab === next) return
-      const oldKey = recoveryKey(tab)
-      if (oldKey !== recoveryKey(next)) void services.clearRecovery?.(oldKey)
-      const contents = docsRef.current.get(next.id)
-      if (contents !== undefined && sessionDirty(next, contents)) saveRecovery(next, contents)
-    })
-    commitWorkspace({ ...workspaceRef.current, tabs: nextTabs })
-    const affectedPaths = nextTabs
-      .map(tab => sessionPath(tab))
-      .filter((path): path is string => path !== null)
-      .filter(path => path === to || (isDir && pathWithinDir(path, to)))
-    for (const path of new Set(affectedPaths)) {
-      void services.allowDocumentAssets(path).catch(error => {
-        services.reportError(errorMessage(t("error.renameSyncFailed"), error))
-      })
-    }
   }
 
   function saveRecovery(tab: EditorSession, contents: string) {
@@ -1118,11 +1012,11 @@ export default function App({
     commitTree(emptyFileTree())
     void listDir(folder).then(entries => {
       if (!cancelled) {
-        clearTreeError(folder)
+        treeActions.clearTreeError(folder)
         commitTree(setChildren(emptyFileTree(), folder, entries))
       }
     }).catch(error => {
-      if (!cancelled) reportTreeError(folder, error)
+      if (!cancelled) treeActions.reportTreeError(folder, error)
     })
     return () => { cancelled = true }
   }, [workspace.folder, services])
@@ -1132,7 +1026,7 @@ export default function App({
     // waste and its results are not rendered.
     if (!watchMs || !workspace.folder || !services.listDir || search.open) return
     const listDir = services.listDir
-    const timer = window.setInterval(() => { void refreshTree(listDir) }, watchMs)
+    const timer = window.setInterval(() => { void treeActions.refreshTree(listDir) }, watchMs)
     return () => window.clearInterval(timer)
   }, [watchMs, workspace.folder, services, search.open])
 
@@ -1466,7 +1360,7 @@ export default function App({
       // 登记，此处自检覆盖两条提交路径（新 tab 与替换当前 tab）。
       if (invalidatedOpenPathsRef.current.delete(nextPath)) return
       revealFolder(nextPath)
-      void expandToPath(nextPath)
+      void expandToPathRef.current(nextPath)
       rememberRecent(nextPath)
       if (inNewTab) {
         const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
@@ -1801,86 +1695,32 @@ export default function App({
     commitWorkspace(openFolder(workspaceRef.current, folder))
   }
 
-  async function refreshTree(listDir: (path: string) => Promise<TreeEntry[]>): Promise<void> {
-    const folder = workspaceRef.current.folder
-    if (!folder || treePollInFlightRef.current) return
-    treePollInFlightRef.current = true
-    try {
-      let next = treeModelRef.current
-      let changed = false
-      for (const path of pathsToRefresh(folder, next)) {
-        let entries: TreeEntry[]
-        try {
-          entries = await listDir(path)
-        } catch {
-          continue
-        }
-        // Skip re-rendering the whole tree when a directory is unchanged.
-        if (sameEntries(next.childrenByPath[path], entries)) continue
-        next = setChildren(next, path, entries)
-        changed = true
-      }
-      if (changed) commitTree(next)
-    } finally {
-      treePollInFlightRef.current = false
-    }
-  }
-
-  async function toggleDir(path: string): Promise<void> {
-    const next = toggleExpand(treeModelRef.current, path)
-    commitTree(next)
-    if (!next.expanded.has(path) || next.childrenByPath[path] || !services.listDir) return
-    if (pendingListDirsRef.current.has(path)) return
-    pendingListDirsRef.current.add(path)
-    try {
-      const entries = await services.listDir(path)
-      // The user may have collapsed the directory while the listing was in
-      // flight; caching it would only produce a useless model update.
-      if (!treeModelRef.current.expanded.has(path)) return
-      clearTreeError(path)
-      commitTree(setChildren(treeModelRef.current, path, entries))
-    } catch (error) {
-      reportTreeError(path, error)
-    } finally {
-      pendingListDirsRef.current.delete(path)
-    }
-  }
-
-  /** Expands every ancestor of `path` down from the workspace root so the
-   * opened file is reachable in the tree. Best-effort: a listing failure must
-   * not block an open that already succeeded. */
-  async function expandToPath(path: string): Promise<void> {
-    const folder = workspaceRef.current.folder
-    if (!folder || !services.listDir) return
-    const dirs: string[] = []
-    let current = parentDir(path)
-    const prefix = folder === "/" ? folder : `${folder}/`
-    while (current && current !== folder && current.startsWith(prefix)) {
-      dirs.unshift(current)
-      const above = parentDir(current)
-      if (above === current) break
-      current = above
-    }
-    for (const dir of dirs) {
-      // Ensure the ancestor is expanded without toggling: the user may have
-      // already opened it, and expandToPath must never collapse it.
-      if (!treeModelRef.current.expanded.has(dir)) {
-        commitTree(toggleExpand(treeModelRef.current, dir))
-      }
-      if (treeModelRef.current.childrenByPath[dir] || pendingListDirsRef.current.has(dir)) continue
-      pendingListDirsRef.current.add(dir)
-      try {
-        const entries = await services.listDir(dir)
-        if (treeModelRef.current.expanded.has(dir)) {
-          commitTree(setChildren(treeModelRef.current, dir, entries))
-        }
-      } catch {
-        // reveal is best-effort
-      } finally {
-        pendingListDirsRef.current.delete(dir)
-      }
-    }
-  }
+  const treeActions = createFileTreeActions({
+    services,
+    getTreeModel: () => treeModelRef.current,
+    commitTree,
+    getWorkspace: () => workspaceRef.current,
+    commitWorkspace,
+    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    flushMaterializer: () => materializer.flush(),
+    isOpenInFlight: path => openInFlightRef.current.has(path),
+    invalidateOpen: path => { invalidatedOpenPathsRef.current.add(path) },
+    closeTab: closeTabInternal,
+    saveRecovery,
+    notifySuccess: message => { services.notifySuccess?.(message) },
+    reportError: message => { services.reportError(message) },
+    reportUserError,
+    t,
+    confirmDiscard: () => services.confirmDiscard(),
+    confirmClose: () => services.confirmClose?.(),
+    confirmDelete: path => services.confirmDelete?.(path),
+    isMounted: () => mountedRef.current,
+    setPendingFocus: () => { pendingFocusRef.current = true },
+    openPath,
+    treeErrorSignatures: treeErrorSignaturesRef.current,
+    treePollInFlight: treePollInFlightRef,
+    pendingListDirs: pendingListDirsRef.current,
+  })
 
   const { accept: acceptNormalization, reject: keepOriginalNumbers } = createNormalizationHandlers({
     getActiveTabId: () => workspaceRef.current.activeId,
@@ -1905,11 +1745,13 @@ export default function App({
   }
   const openRecentRef = useRef(openRecent)
   const openExternalRef = useRef(openExternal)
-  const refreshTreeRef = useRef(refreshTree)
+  const refreshTreeRef = useRef(treeActions.refreshTree)
+  const expandToPathRef = useRef(treeActions.expandToPath)
   pollFileTabsRef.current = pollFileTabs
   openRecentRef.current = openRecent
   openExternalRef.current = openExternal
-  refreshTreeRef.current = refreshTree
+  refreshTreeRef.current = treeActions.refreshTree
+  expandToPathRef.current = treeActions.expandToPath
 
   const runEditorCommand = (command: (view: EditorView) => boolean): (() => void) => () => {
     const view = viewRef.current
@@ -1965,112 +1807,6 @@ export default function App({
     // 只读档（HUGE）不可变：不弹文件选择器（imagePaste 侧 state.readOnly 兜底再拦）。
     if (documentScaleRegistry.isReadOnly(active.id)) return
     void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
-  }
-
-  async function createTreeFile(dir: string) {
-    if (!services.createMarkdown) return
-    let defaultName = `untitled.${MARKDOWN_FILE_EXTENSION}`
-    try {
-      defaultName = await nextUntitledMarkdownName(dir)
-    } catch (error) {
-      reportTreeError(dir, error)
-      return
-    }
-    const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)
-    if (rawName === null) return
-    const name = normalizeMarkdownName(rawName)
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
-    try {
-      const createdPath = await services.createMarkdown(dir, name)
-      await refreshTreePath(dir)
-      pendingFocusRef.current = true
-      void openPath(createdPath, true)
-      services.notifySuccess?.(t("notify.fileCreated", { name }))
-    } catch (error) {
-      services.reportError(errorMessage(t("error.createFileFailed"), error))
-    }
-  }
-
-  async function createTreeFolder(dir: string) {
-    if (!services.createDir) return
-    const rawName = window.prompt(t("filetree.prompt.newFolder"), "untitled-folder")
-    if (rawName === null) return
-    const name = rawName.trim()
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
-    try {
-      await services.createDir(dir, name)
-      await refreshTreePath(dir)
-    } catch (error) {
-      services.reportError(errorMessage(t("error.createFolderFailed"), error))
-    }
-  }
-
-  async function renameTreeEntry(entry: TreeEntry, rawName: string): Promise<string> {
-    if (!services.renamePath) throw new Error(t("error.renameFailed"))
-    const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
-    if (name === entry.name) return entry.path
-    if (invalidName(name)) throw new Error(t("error.emptyName"))
-    const dir = parentDir(entry.path)
-    if (!dir) throw new Error(t("error.renameFailed"))
-    const folder = workspaceRef.current.folder
-    let nextPath: string
-    try {
-      nextPath = await services.renamePath(entry.path, name)
-    } catch (error) {
-      throw new Error(errorMessage(t("error.renameFailed"), error))
-    }
-    if (!mountedRef.current) return nextPath
-    // 原生操作已成功：目录刷新失败不能再被当作重命名失败供用户重试。
-    try {
-      if (workspaceRef.current.folder === folder) {
-        commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
-        void refreshTreePath(dir)
-      }
-      materializer.flush()
-      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
-    } catch (error) {
-      services.reportError(errorMessage(t("error.renameSyncFailed"), error))
-    }
-    services.notifySuccess?.(t("notify.entryRenamed", { name }))
-    return nextPath
-  }
-
-  async function deleteTreeEntry(entry: TreeEntry) {
-    if (!services.deletePath) return
-    // 脏检查前物化：250ms 窗口内的编辑必须被看见，否则跳过确认删文件丢内容（Spec 05a）。
-    materializer.flush()
-    const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
-    if (
-      openTab
-      && sessionDirty(openTab, docsRef.current.get(openTab.id) ?? "")
-      && !(services.confirmClose ?? services.confirmDiscard)()
-    ) {
-      return
-    }
-    const confirmDelete = services.confirmDelete
-      ?? (path => defaultServices.confirmDelete?.(path) ?? true)
-    if (!confirmDelete(entry.path)) return
-    try {
-      await services.deletePath(entry.path)
-      // 删除的 await 期间在途 openPath 可能把该文件的 tab 加进来：仅在有在途打开
-      // 时登记作废（无条件登记会吞掉同名重建文件的首个打开），并在删除完成后重新
-      // 查找要关的 tab（confirm 前的快照 openTab 已过期，只保留给脏检查用）。
-      if (openInFlightRef.current.has(entry.path)) invalidatedOpenPathsRef.current.add(entry.path)
-      commitTree(removeTreePath(treeModelRef.current, entry.path))
-      const tabToClose = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
-      if (tabToClose) closeTabInternal(tabToClose.id, { confirm: false, allowReplaceLast: true })
-      const dir = parentDir(entry.path)
-      if (dir) await refreshTreePath(dir)
-      services.notifySuccess?.(t("notify.entryDeleted", { name: entry.name }))
-    } catch (error) {
-      services.reportError(errorMessage(t("error.deleteFailed"), error))
-    }
   }
 
   const allCommands: AppCommand[] = [
@@ -2390,13 +2126,13 @@ export default function App({
               activeTabId={workspace.activeId}
               visible={sidebarOpen}
               onOpenFile={path => void openPath(path, true)}
-              onToggleDir={path => void toggleDir(path)}
+              onToggleDir={path => void treeActions.toggleDir(path)}
               onSearch={() => search.setOpen(true)}
-              onNewFile={dir => void createTreeFile(dir)}
-              onNewFolder={dir => void createTreeFolder(dir)}
-              onRename={services.renamePath ? renameTreeEntry : undefined}
+              onNewFile={dir => void treeActions.createTreeFile(dir)}
+              onNewFolder={dir => void treeActions.createTreeFolder(dir)}
+              onRename={services.renamePath ? treeActions.renameTreeEntry : undefined}
               onRenameError={message => services.reportError(message)}
-              onDelete={entry => void deleteTreeEntry(entry)}
+              onDelete={entry => void treeActions.deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {
                   services.reportError(errorMessage(t("error.revealFailed"), error))
