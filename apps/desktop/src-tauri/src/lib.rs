@@ -800,11 +800,7 @@ pub fn run() {
     // before the logger exists still reaches stderr.
     logging::install_panic_hook();
     #[cfg(target_os = "macos")]
-    let builder = tauri::Builder::default().on_web_content_process_terminate(|webview| {
-        let exiting = webview.app_handle().state::<logging::ExitingState>().is_exiting();
-        let level = logging::webview_termination_level(exiting);
-        log::log!(target: "webview", level, "web content process terminated window={}", webview.label());
-    });
+    let builder = logging::install_webview_termination_hook(tauri::Builder::default());
     #[cfg(not(target_os = "macos"))]
     let builder = tauri::Builder::default();
     builder
@@ -845,38 +841,11 @@ pub fn run() {
         .setup(|app| {
             // One read for the whole setup (logging + pre-paint theme).
             let settings = workspace::get_settings().unwrap_or_default();
-            // Logging first: Tauri turns a setup error into a panic.
-            let preferences = logging::logging_preferences(&settings);
-            let log_state = logging::install(app.handle(), preferences);
-            // Scan the previous session *before* writing this run's boundary
-            // line (spec §3.4.5 step 5). Order is load-bearing: our own
-            // `session start` would be the last start in the tail, so every
-            // scan would find a start with nothing after it and report an
-            // abnormal exit on every single launch.
-            let previous = if log_state.destination == logging::LogDestination::Fallback {
-                logging::scan_previous_fallback_session(
-                    &log_state.dir,
-                    &log_state.file_stem,
-                    preferences.generation,
-                )
-            } else {
-                logging::scan_previous_session(
-                    &log_state.dir,
-                    &log_state.file_stem,
-                    preferences.generation,
-                )
-            };
-            logging::write_session_start(
-                std::process::id(),
-                env!("CARGO_PKG_VERSION"),
-                preferences.generation,
-            );
-            logging::log_startup_header(&log_state);
-            logging::log_previous_exit(previous.outcome);
-            // Carried as state for the diagnostics bundle (Task 12), which is
-            // also where the start line's pid/version are reported.
-            app.manage(logging::PreviousExitState(previous));
-            app.manage(log_state);
+            // Logging first: Tauri turns a setup error into a panic. The
+            // previous-session scan, boundary write, and managed state all
+            // live in one helper so `run()` stays thin (lib.rs is
+            // growth-frozen; the setup order is load-bearing there).
+            logging::setup_logging(app.handle(), &settings);
             // Launch argv: the registry is empty and the config-declared main
             // window does not exist yet, so routing would spawn a duplicate
             // editor window. Queue straight for "main" and emit targeted at

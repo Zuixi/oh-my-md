@@ -382,6 +382,10 @@ fn install_into_fallback(
 ///
 /// Never panics. Never returns an error for a logging reason: Tauri turns a
 /// setup error into `panic!("Failed to setup app: {e}")`.
+/// Registers the log plugin and the session-boundary startup choreography.
+/// The setup-order comment lives on [`install_webview_termination_hook`]'s
+/// sibling `setup_logging` below — kept here so `run()` reads as the happy
+/// path while the load-bearing ordering stays documented at its owner.
 pub fn install(app: &tauri::AppHandle, preferences: LoggingPreferences) -> LogState {
     let stem = log_file_stem(app);
     // Opted out: attach no plugin and resolve nothing on disk. The state still
@@ -425,6 +429,33 @@ pub fn install(app: &tauri::AppHandle, preferences: LoggingPreferences) -> LogSt
     }
 
     prepare_file_logging(&stem, &real_dir, level, register)
+}
+
+/// The logging half of `lib.rs`'s `.setup()`: install the plugin, scan the
+/// previous session, write this run's boundary line, and manage the state
+/// the diagnostics bundle reads back. Split out of `lib.rs` because that
+/// file is growth-frozen; the order is load-bearing (spec §3.4.5 step 5):
+/// the scan must run *before* our own `session start` lands in the tail,
+/// or every launch would classify its own start as an abandoned session.
+pub fn setup_logging(app: &tauri::AppHandle, raw_settings: &str) {
+    use tauri::Manager;
+
+    let preferences = logging_preferences(raw_settings);
+    let log_state = install(app, preferences);
+    let previous = if log_state.destination == LogDestination::Fallback {
+        scan_previous_fallback_session(&log_state.dir, &log_state.file_stem, preferences.generation)
+    } else {
+        scan_previous_session(&log_state.dir, &log_state.file_stem, preferences.generation)
+    };
+    write_session_start(
+        std::process::id(),
+        env!("CARGO_PKG_VERSION"),
+        preferences.generation,
+    );
+    log_startup_header(&log_state);
+    log_previous_exit(previous.outcome);
+    app.manage(PreviousExitState(previous));
+    app.manage(log_state);
 }
 
 /// Reveals the resolved log directory in the OS file manager.
@@ -542,6 +573,33 @@ pub use session::{
     write_session_start, ExitingState, PreviousExitState, PreviousSession,
     PREVIOUS_EXIT_UNKNOWN_LOGGING_OFF,
 };
+
+/// The full logging half of `run()`'s `.setup()`, split out so the growth-
+/// frozen `lib.rs` stays thin. Order inside is load-bearing (spec §3.4.5
+/// step 5): install → scan the previous session → write this run's `session
+/// start`. Scanning after the write would make our own start the last one in
+/// the tail and report an abnormal exit on every launch.
+///
+/// Webview-termination hook for macOS. WebKit tears the content process down
+/// on an ordinary quit, so an ungated hook reports a crash on every clean
+/// exit; `ExitingState` is what keeps normal teardown at Info. Whether the
+/// hook fires on normal teardown is unverified on real hardware (spec §8
+/// Q1) and is a pre-release manual-QA gate, not a unit-testable fact.
+#[cfg(target_os = "macos")]
+pub(crate) fn install_webview_termination_hook<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+) -> tauri::Builder<R> {
+    builder.on_web_content_process_terminate(|webview| {
+        let exiting = webview.app_handle().state::<ExitingState>().is_exiting();
+        let level = webview_termination_level(exiting);
+        log::log!(
+            target: "webview",
+            level,
+            "web content process terminated window={}",
+            webview.label()
+        );
+    })
+}
 
 #[cfg(test)]
 mod bootstrap_tests;
