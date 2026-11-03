@@ -433,7 +433,8 @@ fn bundle_environment_names_the_resolved_directory_and_the_flags() {
         .find(|line| line.starts_with("log_dir="))
         .unwrap();
     assert!(
-        log_dir_line.starts_with("log_dir=<home>/"),
+        log_dir_line.starts_with(&format!("log_dir=<home>{}", std::path::MAIN_SEPARATOR))
+            || log_dir_line.starts_with("log_dir=<home>/"),
         "the log directory is under home and must be shown relative to it: {log_dir_line}"
     );
     assert!(!log_dir_line.contains(&fixture.home), "{log_dir_line}");
