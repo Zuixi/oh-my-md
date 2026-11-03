@@ -12,6 +12,8 @@ import {
   type UserSettings,
 } from "./settings"
 import { localeOptions, useT, type StoredLocale } from "./i18n"
+import type { LogStateView } from "./logging"
+import { ISSUES_URL, TROUBLESHOOTING_URL } from "./constants"
 import { FontFamilyPicker } from "./FontFamilyPicker"
 
 export interface SettingsModalProps {
@@ -20,10 +22,90 @@ export interface SettingsModalProps {
   onSave: (settings: UserSettings) => void
   onClose: () => void
   listSystemFonts?: () => Promise<string[] | null>
+  /** Resolved logging destination; `null` while it has not loaded yet. */
+  logState?: LogStateView | null
+  /** Opens an external URL (the troubleshooting guide / issue form). */
+  openUrl?: (url: string) => void
+  /** Restart to apply a logging preference that only takes effect at startup. */
+  onRestartToApplyLogging?: () => void
+}
+
+/**
+ * What the logging status row must say, given the checkbox and the state the
+ * engine resolved at startup.
+ *
+ * The two can disagree for one session, because `install()` runs once: flipping
+ * the toggle writes the setting but cannot attach or detach the plugin. Reporting
+ * only the engine's answer made the panel tell a user who had just enabled
+ * logging to "turn on Save diagnostic logs" — an instruction that contradicts
+ * the checkbox directly above it.
+ */
+export type LoggingStatusKind = "off" | "levelOff" | "enabling" | "disabling" | "healthy" | "degraded"
+
+/** The two statuses whose change is waiting for a restart. */
+const PENDING_LOGGING_STATUSES: ReadonlySet<LoggingStatusKind> = new Set(["enabling", "disabling"])
+
+export function loggingStatusKind(enabled: boolean, logState: LogStateView): LoggingStatusKind {
+  const kind = logState.destination.kind
+  if (kind === "fallback" || kind === "disabled") return "degraded"
+  if (kind === "levelOff") return "levelOff"
+  if (kind === "off") return enabled ? "enabling" : "off"
+  // Attached this session: `directory` while the checkbox says stop means the
+  // change is pending a restart, not that it already stopped.
+  return enabled ? "healthy" : "disabling"
+}
+
+/**
+ * The status row under the logging controls. Five states, five honest
+ * sentences:
+ *
+ * - `off` is the user's own choice (the default). It says what is not
+ *   happening and how to turn it on — never "degraded", because nothing failed.
+ * - `fallback` really is writing to the named temp directory, so naming it is
+ *   useful and the reason is what makes the fix obvious (usually permissions on
+ *   the real log directory).
+ * - `disabled` attached no logger at all. Naming `dir` there would point at a
+ *   path nothing writes — and because the `Stdout` target lives inside the same
+ *   plugin dispatch, there is no console stream to suggest either.
+ * - `directory` is the healthy case; the caller does not render this row.
+ */
+function LoggingStatus({ logState, enabled }: { logState: LogStateView; enabled: boolean }) {
+  const t = useT()
+  const status = loggingStatusKind(enabled, logState)
+  if (status === "off" || status === "levelOff" || status === "enabling" || status === "disabling") {
+    return (
+      <div className="settings-note-block" role="status">
+        <span className="settings-warning-title">{t(`settings.logging.${status}.title`)}</span>
+        <span className="settings-warning-note">{t(`settings.logging.${status}.note`)}</span>
+      </div>
+    )
+  }
+  // The healthy case needs no row: a status line on every normal launch is
+  // noise, and `degraded` is the only field that would be false here anyway.
+  if (status === "healthy") return null
+  const fallback = logState.destination.kind === "fallback"
+  return (
+    <div className="settings-warning" role="status">
+      <span className="settings-warning-title">
+        {t("settings.logging.degraded.title")}
+      </span>
+      {fallback ? (
+        <span className="settings-warning-note">
+          {t("settings.logging.degraded.fallback")}
+          {" "}
+          <code className="settings-warning-path">{logState.dir}</code>
+        </span>
+      ) : (
+        <span className="settings-warning-note">
+          {t("settings.logging.degraded.disabled")}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function SettingsModal(props: SettingsModalProps) {
-  const { isOpen, settings, onSave, onClose, listSystemFonts } = props
+  const { isOpen, settings, onSave, onClose, listSystemFonts, logState, openUrl, onRestartToApplyLogging } = props
   const modalRef = useRef<HTMLDivElement>(null)
   const t = useT()
   // System font families: fetched once on the first picker open, then cached
@@ -249,6 +331,76 @@ export function SettingsModal(props: SettingsModalProps) {
                   autoPair: { ...settings.autoPair, markdownSyntax: e.target.checked },
                 })}
               />
+            </div>
+          </div>
+
+          {/* Logging Section */}
+          <div className="settings-section">
+            <h3 className="settings-section-title">{t("settings.section.logging")}</h3>
+            <div className="settings-row">
+              <label htmlFor="setting-logging-enabled" className="settings-label">
+                {t("settings.label.loggingEnabled")}
+              </label>
+              <input
+                id="setting-logging-enabled"
+                type="checkbox"
+                className="settings-checkbox"
+                checked={settings.loggingEnabled}
+                onChange={e => update({ loggingEnabled: e.target.checked })}
+              />
+            </div>
+            {/* `install()` runs once at startup, so neither toggle can change
+                this session; the notes are the honest half. */}
+            <p className="settings-note">{t("settings.note.loggingEnabled")}</p>
+            <div className="settings-row">
+              <label htmlFor="setting-verbose-logging" className="settings-label">
+                {t("settings.label.verboseLogging")}
+              </label>
+              <input
+                id="setting-verbose-logging"
+                type="checkbox"
+                className="settings-checkbox"
+                disabled={!settings.loggingEnabled}
+                checked={settings.verboseLogging}
+                onChange={e => update({ verboseLogging: e.target.checked })}
+              />
+            </div>
+            <p className="settings-note">{t("settings.note.verboseLogging")}</p>
+            {logState ? <LoggingStatus logState={logState} enabled={settings.loggingEnabled} /> : null}
+            {/* The links are always here: someone whose logging is healthy still
+                needs to know where the guide and the issue form are. Only the
+                restart is conditional — it exists to apply a pending change. */}
+            <div className="settings-row settings-actions">
+              {logState && PENDING_LOGGING_STATUSES.has(loggingStatusKind(settings.loggingEnabled, logState)) ? (
+                <>
+                  {onRestartToApplyLogging ? (
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn-secondary"
+                      onClick={onRestartToApplyLogging}
+                    >
+                      {t("settings.logging.restart")}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+              {/* Without these two links the feature ends at "logging is on" and
+                  the user has no next step: where the file is, what to send, and
+                  where to send it live in the guide. */}
+              <button
+                type="button"
+                className="settings-link"
+                onClick={() => openUrl?.(TROUBLESHOOTING_URL)}
+              >
+                {t("settings.logging.guide")}
+              </button>
+              <button
+                type="button"
+                className="settings-link"
+                onClick={() => openUrl?.(ISSUES_URL)}
+              >
+                {t("settings.logging.reportIssue")}
+              </button>
             </div>
           </div>
 

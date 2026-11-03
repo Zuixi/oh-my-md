@@ -53,8 +53,8 @@ export function useConflictSaveBinding(host: ConflictSaveBindingHost) {
       saveCopy: tabId => hostRef.current.saveCopy(tabId),
       resetFromSnapshot: (tabId, snapshot) => {
         const tab = hostRef.current.getTab(tabId)
-        if (!tab) return
-        hostRef.current.resetTabDocument(openSession(tab, snapshot), snapshot.contents)
+        if (!tab) return false
+        return hostRef.current.resetTabDocument(openSession(tab, snapshot), snapshot.contents)
       },
       setDivergence: (tabId, divergence) => {
         hostRef.current.commitSaveState(updateTabSaveState(

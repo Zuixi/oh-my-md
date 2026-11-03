@@ -100,7 +100,7 @@ pub enum ExpectedDocumentVersion {
     Existing { version: DocumentVersion },
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveDurability {
     Durable,
@@ -708,3 +708,7 @@ fn map_read_io_error(path: &Path, error: io::Error) -> DocumentError {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "documents/save_logging_tests.rs"]
+mod save_logging_tests;

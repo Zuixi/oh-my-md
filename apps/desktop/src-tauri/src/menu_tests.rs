@@ -13,6 +13,7 @@ fn menu_strings_zh_returns_chinese() {
     assert_eq!(l.clear_recents, "清除菜单");
     assert_eq!(l.check_updates, "检查更新…");
     assert_eq!(l.export_diagnostics, "导出诊断信息…");
+    assert_eq!(l.open_log_folder, "打开日志目录");
 }
 
 #[test]
@@ -23,6 +24,7 @@ fn menu_strings_en_returns_english() {
     assert_eq!(l.save, "Save");
     assert_eq!(l.check_updates, "Check for Updates…");
     assert_eq!(l.export_diagnostics, "Export Diagnostics…");
+    assert_eq!(l.open_log_folder, "Open Log Folder");
 }
 
 #[test]

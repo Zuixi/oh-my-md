@@ -86,6 +86,9 @@ pub async fn export_preview(
     let styled = styled_export_html(&html);
     let (bytes, warning) = render_bytes(app, styled, fmt).await?;
     crate::atomic_write(&target, &bytes)?;
+    // Boundary: the export artifact reached the disk. The path is logged
+    // through the structured field so the diagnostics redactor can find it.
+    log::info!("export ok {}", crate::logging::path_field(&target));
     Ok(warning)
 }
 

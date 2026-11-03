@@ -7,12 +7,15 @@ import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
 import { parseRecents } from "./recents"
 import {
+  LOG_FRONTEND_COMMAND,
   MARKDOWN_EXTENSIONS,
   SESSION_FLUSH_EVENT,
   STORAGE_KEY_RECENTS,
   STORAGE_KEY_SESSION,
   STORAGE_KEY_SETTINGS,
 } from "./constants"
+import { getGlobalLogger, type LogRecord } from "./logger"
+import type { LogStateView } from "./logging"
 import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
@@ -202,9 +205,18 @@ export interface DesktopServices {
   setRecentMenu?: (paths: string[]) => Promise<void>
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
+  /** Reveals the resolved log directory (Rust `open_log_dir`). Rejects when no
+   *  logger attached, so the caller reports it rather than opening a dead path. */
+  openLogDir?: () => Promise<void>
+  /** Where this run's records actually go, for the Settings degradation row. */
+  getLogState?: () => Promise<LogStateView>
+  /** Frontend log transport (Task 6): one batched IPC call per flush. */
+  logRecords?: (records: LogRecord[]) => Promise<void>
   setMenuLocale?: (locale: string) => Promise<void>
   setWindowTheme?: (theme: "light" | "dark" | null) => Promise<void>
   quitApp?: () => Promise<void>
+  /** Restart to apply a startup-only setting (currently: logging opt-in). */
+  restartApp?: () => Promise<void>
   appVersion?: () => Promise<string>
   /** Opens a fresh editor window (label assigned by Rust); optional paths open on mount. */
   createNewWindow?: (initialPaths?: string[]) => Promise<void>
@@ -228,8 +240,14 @@ export interface DesktopServices {
   confirmDelete?: (path: string) => boolean
   confirmRestore?: (label: string) => boolean
   confirmExternalChange?: () => boolean
+  /** Confirm the restart that applies a startup-only logging preference. */
+  confirmRestartForLogging?: () => boolean
   getSettings?: () => Promise<UserSettings>
-  saveSettings?: (settings: UserSettings) => Promise<void>
+  /** Persists settings; resolves `true` when they reached disk (Rust), `false`
+   *  when only the localStorage fallback took them. Callers that act on the
+   *  value later (e.g. restarting to apply logging) must check it: Rust reads
+   *  the file, so a fallback-only save leaves the running preference unchanged. */
+  saveSettings?: (settings: UserSettings) => Promise<boolean>
   /** null when font enumeration fails or the runtime is not Tauri */
   listSystemFonts?: () => Promise<string[] | null>
   getSessionState?: () => Promise<SavedSessionState | null>
@@ -373,9 +391,36 @@ export const defaultServices: DesktopServices = {
     await invoke("set_view_menu_state", { state })
   },
   exportDiagnostics: async () => {
+    // Pre-export notice (spec §3.7). The bundle carries logs, settings, and
+    // session state, so the user gets to see what leaves the machine before a
+    // destination is even chosen.
+    //
+    // There is deliberately no full-paths question here. The spec asks for an
+    // opt-in checkbox (default off), which needs a labelled control this module
+    // has no UI seam for; `window.confirm` cannot label its buttons, so its OK
+    // would silently mean "include full paths" — the privacy-invasive answer.
+    // The export therefore always ships with paths collapsed, and the command's
+    // `include_full_paths` parameter stays in place for that checkbox to drive
+    // when it exists.
+    if (!window.confirm(t("confirm.exportDiagnostics"))) return
     const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
     if (typeof path !== "string") return
-    await invoke("export_diagnostics", { path })
+    // No logging policy here: flushing the frontend queue before the bundle is
+    // written belongs to the *export use case* (`appDiagnosticsActions`), not to
+    // the module whose only job is to turn calls into `invoke`.
+    await invoke("export_diagnostics", { path, includeFullPaths: false })
+  },
+  openLogDir: async () => {
+    // Rejects by design: a disabled destination has no folder to open, and the
+    // caller reports that through reportError (same contract as revealInFinder).
+    await invoke("open_log_dir")
+  },
+  getLogState: async () => {
+    return await invoke<LogStateView>("log_state")
+  },
+  logRecords: async records => {
+    // Rejects by design: the facade swallows and counts the failed batch.
+    await invoke(LOG_FRONTEND_COMMAND, { records })
   },
   setMenuLocale: async locale => {
     await invoke("set_menu_locale", { locale })
@@ -385,6 +430,9 @@ export const defaultServices: DesktopServices = {
   },
   quitApp: async () => {
     await invoke("quit_app")
+  },
+  restartApp: async () => {
+    await invoke("restart_app")
   },
   appVersion: () => invoke<string>("app_version"),
   createNewWindow: async initialPaths => {
@@ -421,6 +469,7 @@ export const defaultServices: DesktopServices = {
   },
   confirmRestore: (label) => window.confirm(t("confirm.restore", { label })),
   confirmExternalChange: () => window.confirm(t("confirm.externalChange")),
+  confirmRestartForLogging: () => window.confirm(t("settings.logging.restartConfirm")),
   getSettings: async () => {
     try {
       const json = await invoke<string>("get_settings")
@@ -438,12 +487,14 @@ export const defaultServices: DesktopServices = {
     const json = JSON.stringify(settings, null, 2)
     try {
       await invoke("save_settings", { contents: json })
+      return true
     } catch {
       try {
         localStorage.setItem(STORAGE_KEY_SETTINGS, json)
       } catch {
-        // ignore
+        // Storage unavailable too: the caller sees `false` and can say so.
       }
+      return false
     }
   },
   listSystemFonts: async () => {
@@ -491,7 +542,12 @@ export const defaultServices: DesktopServices = {
   },
   updateCapability: () => invoke<UpdateCapability>("update_capability"),
   prepareUpdateRestart: () => invoke<PrepareUpdateRestartResult>("prepare_update_restart"),
-  reportError: message => { toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
+  reportError: message => {
+    // This is a handled operation failure. Fatal capture has its own channel;
+    // ordinary UI errors must obey the facade's rate control.
+    getGlobalLogger().warn("ui", message)
+    toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS })
+  },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
   listenMenu: handler => {
     const pending = listen<string>(
@@ -546,7 +602,39 @@ export const defaultServices: DesktopServices = {
   },
 }
 
+/**
+ * The user-facing line for a failure, and the same line the log records.
+ *
+ * A Rust command rejects with a typed `{ code, message }` object
+ * (`toDocumentCommandError`), so a plain `String(error)` renders the useless
+ * `[object Object]` — and the log then explains nothing about a failed save or
+ * open. The typed `message` is the underlying reason (`Access denied (os error
+ * 5)`), so it is preferred; an `Error` and a plain string keep their own text,
+ * and anything else falls back to its tag rather than inventing a message.
+ */
 export function errorMessage(prefix: string, error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error)
-  return `${prefix}: ${detail}`
+  let detail: string
+  if (isCommandError(error)) {
+    detail = error.message
+  } else if (error instanceof Error) {
+    detail = error.message
+  } else if (typeof error === "string") {
+    detail = error
+  } else {
+    // An unrecognized thrown value: name its type instead of stringifying it,
+    // because `String({...})` (and `JSON.stringify`) can carry payload.
+    detail = error === null || error === undefined ? "" : "unrecognized error"
+  }
+  return detail ? `${prefix}: ${detail}` : prefix
+}
+
+/** The typed rejection shape Rust command wrappers throw. */
+function isCommandError(error: unknown): error is DocumentCommandError {
+  return (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && "message" in error
+    && typeof (error as { message: unknown }).message === "string"
+  )
 }

@@ -17,6 +17,7 @@
 | Tauri Rust commands, guarded IO, native menu, asset scope, installer bitmaps | [`apps/desktop/src-tauri/AGENTS.md`](./apps/desktop/src-tauri/AGENTS.md) |
 | Quality gates, scripts, Git hooks, CI | `scripts/check-module-size.mjs`, `.githooks/classify.py`, `.github/workflows/ci.yml` |
 | Product scope or architecture decisions | [`docs/superpowers/specs/2026-08-10-oh-my-md-design.md`](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md) |
+| Logging, opt-in diagnostics bundle, session markers, redaction | [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md) + [`docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md`](./docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md) |
 | Known traps & historical debugging notes | [`docs/memory/known-gotchas.md`](./docs/memory/known-gotchas.md) → `gotchas-engine/desktop/rust.md` |
 | Finding or writing a doc (spec, plan, QA, guide) | [`docs/AGENTS.md`](./docs/AGENTS.md) |
 

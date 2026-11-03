@@ -8,6 +8,7 @@ import {
 } from "../src/conflictActions"
 import { initialSaveState } from "../src/documentSaveState"
 import { versionFor } from "./fakeDisk"
+import { useSpyLogger } from "./setup"
 
 function makeDeps(overrides: Partial<ConflictActionDeps> = {}): ConflictActionDeps {
   const disk = {
@@ -107,6 +108,7 @@ describe("makeConflictActions", () => {
   })
 
   it("reloadDisk asks before discarding dirty edits", async () => {
+    const logger = useSpyLogger()
     const confirmDiscard = vi.fn(() => false)
     const deps = makeDeps({
       services: {
@@ -118,6 +120,40 @@ describe("makeConflictActions", () => {
     await makeConflictActions(deps).reloadDisk(1)
     expect(confirmDiscard).toHaveBeenCalled()
     expect(deps.resetFromSnapshot).not.toHaveBeenCalled()
+    expect(logger.info).not.toHaveBeenCalled()
+  })
+
+  it("records confirmed reload after the disk read, without logging document text", async () => {
+    const logger = useSpyLogger()
+    const deps = makeDeps()
+    await makeConflictActions(deps).reloadDisk(1)
+    expect(logger.info).toHaveBeenCalledWith("conflict", expect.stringContaining("action=reloadDisk phase=applied"))
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain("theirs")
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain("mine")
+  })
+
+  it("does not claim a reload succeeded when the reset is rejected", async () => {
+    const logger = useSpyLogger()
+    const deps = makeDeps({ resetFromSnapshot: vi.fn(() => false) })
+    await makeConflictActions(deps).reloadDisk(1)
+    expect(logger.info).not.toHaveBeenCalled()
+    expect(deps.clearRecoveryForTab).not.toHaveBeenCalled()
+  })
+
+  it("ignores a disk response for a document replaced while the action was pending", async () => {
+    const logger = useSpyLogger()
+    let documentId = 1
+    const base = makeDeps()
+    const deps = makeDeps({
+      getSession: () => ({ ...base.getSession(1)!, documentId }),
+      services: { ...base.services, readDocument: vi.fn(async () => {
+        documentId = 2
+        return { kind: "existing" as const, requestedPath: "/notes/a.md", contents: "older document", version: versionFor("/notes/a.md", "older document") }
+      }) },
+    })
+    await makeConflictActions(deps).reloadDisk(1)
+    expect(deps.resetFromSnapshot).not.toHaveBeenCalled()
+    expect(logger.info).not.toHaveBeenCalled()
   })
 
   it("overwriteDisk uses the conflict disk version", async () => {

@@ -803,6 +803,16 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
+/* Error boundary (Task 7): a render failure replaces the whole shell, so the
+   recovery surface owns the viewport instead of floating over a broken layout. */
+.omd-error-boundary {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 100vh; padding: 24px; text-align: center;
+  background: var(--omd-bg); color: var(--omd-error-fg);
+}
+.omd-error-boundary p { margin: 0; }
+.omd-error-boundary-actions { display: flex; gap: 8px; }
+.omd-error-boundary button { font: inherit; padding: 6px 12px; cursor: pointer; }
 /* Top bar: unified single-row tab bar */
 .topbar {
   display: flex;
@@ -1762,6 +1772,40 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   height: 16px;
   cursor: pointer;
 }
+/* Verbose-logging note: the restart requirement sits under the checkbox row as
+   its own line rather than inside the label, so `getByLabelText` keeps matching
+   the row's own wording. */
+.settings-note {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  color: var(--omd-muted);
+}
+/* Degradation row. Uses the shared error palette (light and dark) rather than a
+   new variable: a degraded log directory is a real failure the user is being
+   asked to fix. */
+.settings-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--omd-error-border);
+  border-radius: 6px;
+  background: var(--omd-error-bg);
+  font-size: 12px;
+}
+.settings-warning-title {
+  font-weight: 600;
+  color: var(--omd-error-fg);
+}
+.settings-warning-note {
+  color: var(--omd-fg);
+}
+.settings-warning-path {
+  font-family: ui-monospace, Menlo, Monaco, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+  color: var(--omd-fg);
+}
 /* Font Family picker (Typora-style trigger + popover) */
 .font-picker {
   position: relative;
@@ -1874,6 +1918,29 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 }
 .settings-btn-primary:hover {
   opacity: 0.9;
+}
+/* Logging panel: one row holding an optional "restart now" button next to the
+   two outbound links (guide + issue form). Wraps rather than overflowing: the
+   zh labels are longer than the en ones. */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  justify-content: flex-start;
+}
+.settings-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--omd-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-link:hover {
+  opacity: 0.8;
 }
 
 .find-replace-bar {

@@ -35,6 +35,21 @@ export interface UserSettings {
   /** Engine-owned auto pairing toggles; persisted as one nested settings field. */
   autoPair: AutoPairOptions
   locale: StoredLocale
+  /**
+   * Persisted opt-in for logging at all. Default `false`: a fresh install
+   * writes no log file until the user turns logging on (Rust reads the key out
+   * of this JSON blob; see `constants.ts` `LOGGING_SETTINGS_KEY`).
+   */
+  loggingEnabled: boolean
+  /** Changes whenever logging consent changes, so old session markers cannot
+   * be mistaken for the immediately preceding run after an unlogged interval. */
+  loggingGeneration: number
+  /**
+   * Persisted flag that raises the log level to `debug` on the next launch
+   * (Rust reads the key out of this JSON blob; see `constants.ts`
+   * `VERBOSE_LOGGING_SETTINGS_KEY`). The `OMD_LOG` env var still wins.
+   */
+  verboseLogging: boolean
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -49,6 +64,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 避免 desktop 侧再维护一份必须与引擎一致的字面量。
   autoPair: { ...DEFAULT_AUTO_PAIR },
   locale: "auto",
+  loggingEnabled: false,
+  loggingGeneration: 0,
+  verboseLogging: false,
 }
 
 export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
@@ -93,6 +111,16 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
   const locale: StoredLocale =
     raw.locale === "auto" || raw.locale === "en" || raw.locale === "zh" ? raw.locale : "auto"
 
+  // Strictly `=== true`: the value can arrive from hand-edited JSON or an older
+  // build, and Rust's `as_bool()` rejects the string "true" the same way. A
+  // truthy coercion here would let TS and Rust disagree about the same file.
+  const loggingEnabled = raw.loggingEnabled === true
+  const loggingGeneration = typeof raw.loggingGeneration === "number"
+    && Number.isSafeInteger(raw.loggingGeneration) && raw.loggingGeneration >= 0
+    ? raw.loggingGeneration
+    : 0
+  const verboseLogging = raw.verboseLogging === true
+
   return {
     theme,
     fontSize,
@@ -103,7 +131,16 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     spellcheck,
     autoPair,
     locale,
+    loggingEnabled,
+    loggingGeneration,
+    verboseLogging,
   }
+}
+
+export function loggingGenerationAfterChange(current: UserSettings, next: UserSettings): number {
+  return current.loggingEnabled === next.loggingEnabled
+    ? current.loggingGeneration
+    : current.loggingGeneration + 1
 }
 
 /** Change detection for the hot-apply path: a settings save only reconfigures

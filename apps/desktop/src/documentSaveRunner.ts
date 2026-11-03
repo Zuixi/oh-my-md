@@ -14,7 +14,6 @@ import {
   completeSave,
   failSave,
   initialSaveState,
-  isFreshObservation,
   tabSaveState,
   updateTabSaveState,
   type DocumentSaveState,
@@ -24,10 +23,8 @@ import {
   allocateOperationId,
   canAutosave,
   divergenceFromSaveResult,
-  divergenceFromSnapshot,
   expectedVersionFor,
   isCurrentSaveTarget,
-  watcherIntent,
   type SaveOperationCapture,
 } from "./documentSaveCoordinator"
 import {
@@ -391,78 +388,7 @@ export function createSaveCopy(host: Pick<
   }
 }
 
-export interface FileTabWatcherHost {
-  readonly getWorkspace: () => Workspace
-  readonly getContents: (tabId: number) => string
-  readonly getSaveStates: () => SaveStateByTab
-  readonly setSaveStates: (next: SaveStateByTab) => void
-  readonly readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
-  readonly readDocument: (path: string) => Promise<DiskSnapshot>
-  readonly logReadFailed: (error: unknown) => void
-}
-
-export function createFileTabWatcher(host: FileTabWatcherHost): () => Promise<void> {
-  return async () => {
-    for (const tab of host.getWorkspace().tabs) {
-      const path = sessionPath(tab)
-      if (!path) continue
-      // 惰性 tab 没有基线指纹，外部变更探测在装载后自然生效。
-      if (!sessionContentLoaded(tab)) continue
-      const prior = tabSaveState(host.getSaveStates(), tab.id)
-      const generation = prior.ioGeneration
-      let probe: ExpectedDocumentVersion
-      try {
-        probe = await host.readDocumentVersion(path)
-      } catch (error) {
-        host.logReadFailed(error)
-        continue
-      }
-      const intent = watcherIntent(tab, probe)
-      if (intent.kind === "ignore") continue
-      const contents = host.getContents(tab.id)
-      const localSnapshot = contents
-      if (intent.kind === "deleted") {
-        const current = tabSaveState(host.getSaveStates(), tab.id)
-        if (!isFreshObservation(current, generation)) continue
-        host.setSaveStates(updateTabSaveState(
-          host.getSaveStates(),
-          tab.id,
-          applyDivergence(current, { kind: "deletedExternally", localSnapshot }),
-        ))
-        continue
-      }
-      if (intent.kind === "pathChanged") {
-        const current = tabSaveState(host.getSaveStates(), tab.id)
-        if (!isFreshObservation(current, generation)) continue
-        host.setSaveStates(updateTabSaveState(
-          host.getSaveStates(),
-          tab.id,
-          applyDivergence(current, { kind: "pathChanged", localSnapshot }),
-        ))
-        continue
-      }
-      let disk: DiskSnapshot
-      try {
-        disk = await host.readDocument(path)
-      } catch (error) {
-        host.logReadFailed(error)
-        continue
-      }
-      if (disk.kind !== "existing") continue
-      const current = tabSaveState(host.getSaveStates(), tab.id)
-      if (!isFreshObservation(current, generation)) continue
-      const dirty = sessionDirty(tab, contents)
-      host.setSaveStates(updateTabSaveState(
-        host.getSaveStates(),
-        tab.id,
-        applyDivergence(
-          current,
-          divergenceFromSnapshot(disk, dirty, localSnapshot),
-        ),
-      ))
-    }
-  }
-}
+export { createFileTabWatcher, type FileTabWatcherHost } from "./fileTabWatcher"
 
 export function initialSaveStatesForTabs(tabs: readonly EditorSession[]): SaveStateByTab {
   const next: Record<number, DocumentSaveState> = {}

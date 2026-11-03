@@ -4,12 +4,19 @@ import {
   DEFAULT_SETTINGS,
   familyFromCssValue,
   parseSettings,
+  loggingGenerationAfterChange,
   sameAutoPair,
   sanitizeSettings,
   type UserSettings,
 } from "../src/settings"
+import { LOGGING_SETTINGS_KEY, VERBOSE_LOGGING_SETTINGS_KEY } from "../src/constants"
 
 describe("settings model", () => {
+  it("advances log continuity when consent changes", () => {
+    expect(loggingGenerationAfterChange(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, loggingEnabled: true })).toBe(1)
+    expect(loggingGenerationAfterChange({ ...DEFAULT_SETTINGS, loggingEnabled: true, loggingGeneration: 3 }, { ...DEFAULT_SETTINGS, loggingEnabled: true, loggingGeneration: 3, verboseLogging: true })).toBe(3)
+    expect(loggingGenerationAfterChange({ ...DEFAULT_SETTINGS, loggingEnabled: true, loggingGeneration: 3 }, { ...DEFAULT_SETTINGS, loggingEnabled: false, loggingGeneration: 3 })).toBe(4)
+  })
   it("provides sensible default settings", () => {
     expect(DEFAULT_SETTINGS).toEqual({
       theme: "system",
@@ -21,7 +28,21 @@ describe("settings model", () => {
       spellcheck: false,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      // Opt-in: a fresh install writes no log file.
+      loggingEnabled: false,
+      loggingGeneration: 0,
+      verboseLogging: false,
     })
+  })
+
+  // Rust reads this key out of the raw settings JSON with no typed struct, so
+  // the literal is the whole contract. Renaming the property without renaming
+  // the key Rust looks for would leave the toggle silently inert: the checkbox
+  // would save, the file would contain the value, and the level would never
+  // change.
+  it("names the verbose-logging key Rust reads from the JSON blob", () => {
+    expect(VERBOSE_LOGGING_SETTINGS_KEY).toBe("verboseLogging")
+    expect(Object.keys(DEFAULT_SETTINGS)).toContain(VERBOSE_LOGGING_SETTINGS_KEY)
   })
 
   it("sanitizes invalid or out-of-bound settings", () => {
@@ -40,6 +61,19 @@ describe("settings model", () => {
     expect(sanitized.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily)
   })
 
+  // The persisted flag is a boolean, but it arrives from JSON a user or an older
+  // build can hand-edit, so only a real `true` may win. `"true"` is a string
+  // that Rust's `as_bool()` also refuses, which keeps both sides agreeing.
+  it("coerces verboseLogging to a boolean, defaulting to false", () => {
+    expect(sanitizeSettings(undefined).verboseLogging).toBe(false)
+    expect(sanitizeSettings(null).verboseLogging).toBe(false)
+    expect(sanitizeSettings({}).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: "true" as never }).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: 1 as never }).verboseLogging).toBe(false)
+    expect(sanitizeSettings({ verboseLogging: true }).verboseLogging).toBe(true)
+    expect(sanitizeSettings({ verboseLogging: false }).verboseLogging).toBe(false)
+  })
+
   it("parses valid JSON into UserSettings", () => {
     const json = JSON.stringify({
       theme: "dark",
@@ -51,6 +85,9 @@ describe("settings model", () => {
       spellcheck: true,
       autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
+      loggingEnabled: true,
+      loggingGeneration: 0,
+      verboseLogging: true,
     } satisfies UserSettings)
 
     const parsed = parseSettings(json)
@@ -64,6 +101,9 @@ describe("settings model", () => {
       spellcheck: true,
       autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
+      loggingEnabled: true,
+      loggingGeneration: 0,
+      verboseLogging: true,
     })
   })
 
@@ -142,5 +182,28 @@ describe("familyFromCssValue", () => {
     expect(familyFromCssValue("'Helvetica'", ["Arial", "Menlo"])).toBeNull()
     expect(familyFromCssValue("Menlo", ["Menlo"])).toBeNull()
     expect(familyFromCssValue("system-ui, sans-serif", ["system-ui"])).toBeNull()
+  })
+})
+
+// Logging is consent-gated, so the default must be "nothing is written" and only
+// the exact boolean `true` — the same rule Rust applies to the same JSON blob —
+// may change it.
+describe("logging opt-in setting", () => {
+  it("defaults to off", () => {
+    expect(DEFAULT_SETTINGS.loggingEnabled).toBe(false)
+    expect(LOGGING_SETTINGS_KEY).toBe("loggingEnabled")
+  })
+
+  it("accepts only the boolean true", () => {
+    expect(sanitizeSettings({ loggingEnabled: true }).loggingEnabled).toBe(true)
+    for (const value of [false, "true", 1, null, undefined]) {
+      expect(sanitizeSettings({ loggingEnabled: value } as never).loggingEnabled).toBe(false)
+    }
+  })
+
+  it("keeps the verbose opt-in independent", () => {
+    const settings = sanitizeSettings({ loggingEnabled: false, verboseLogging: true })
+    expect(settings.loggingEnabled).toBe(false)
+    expect(settings.verboseLogging).toBe(true)
   })
 })

@@ -85,6 +85,7 @@ pub struct MenuLabels {
     pub about: &'static str,
     pub check_updates: &'static str,
     pub export_diagnostics: &'static str,
+    pub open_log_folder: &'static str,
     pub services: &'static str,
     pub hide: &'static str,
     pub hide_others: &'static str,
@@ -158,6 +159,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             about: "关于 oh-my-md",
             check_updates: "检查更新…",
             export_diagnostics: "导出诊断信息…",
+            open_log_folder: "打开日志目录",
             services: "服务",
             hide: "隐藏 oh-my-md",
             hide_others: "隐藏其他",
@@ -228,6 +230,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             about: "About oh-my-md",
             check_updates: "Check for Updates…",
             export_diagnostics: "Export Diagnostics…",
+            open_log_folder: "Open Log Folder",
             services: "Services",
             hide: "Hide oh-my-md",
             hide_others: "Hide Others",
@@ -473,6 +476,7 @@ fn app_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Res
             l.export_diagnostics,
             None,
         )?)
+        .item(&item(app, "open-log-folder", l.open_log_folder, None)?)
         .separator()
         .item(&item(
             app,

@@ -14,6 +14,34 @@ export type UpdateFailureKind =
   | "unknown"
 export type UpdateStage = "check" | "download" | "readiness" | "install"
 
+/**
+ * Best-effort update failure classification from dependency errors (spec §14).
+ * The Tauri plugin rejects with Rust `thiserror` Display text; match stable
+ * substrings and default to `unknown` rather than exposing raw internals.
+ * The coordinator never guesses: every thrown error flows through here with
+ * the exact stage where it was thrown.
+ */
+export function classifyUpdateError(error: unknown, stage: UpdateStage): UpdateFailureKind {
+  const message = error instanceof Error ? error.message : String(error)
+  const text = message.toLowerCase()
+  if (
+    text.includes("fetch") || text.includes("network") || text.includes("timeout")
+    || text.includes("offline") || text.includes("econn")
+  ) return "network"
+  if (
+    text.includes("signature") || text.includes("minisign") || text.includes("base64")
+    || text.includes("decode")
+  ) return "signature"
+  if (
+    stage === "check"
+    && (text.includes("json") || text.includes("manifest") || text.includes("platform")
+      || text.includes("semver") || text.includes("parse"))
+  ) return "manifest"
+  if (stage === "download" || text.includes("download")) return "download"
+  if (stage === "install") return "install"
+  return "unknown"
+}
+
 export interface AvailableUpdate {
   readonly version: string
   readonly notes: string

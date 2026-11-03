@@ -4,6 +4,7 @@ import { initLocale, setLocale, getLocale, subscribe, useT, resolveLocale, t } f
 import { shortcutFor } from "../src/shortcuts"
 import { en } from "../src/i18n/messages/en"
 import { zh } from "../src/i18n/messages/zh"
+import { useSpyLogger } from "./setup"
 
 describe("i18n store", () => {
   beforeEach(() => { initLocale("auto") })
@@ -39,13 +40,12 @@ describe("i18n store", () => {
 
   it("t resolves, interpolates, and never throws on missing key", () => {
     initLocale("en")
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const missingKey = vi.mocked(useSpyLogger().debug)
     const { result } = renderHook(() => useT())
     const t = result.current
     expect(t("image.broken", { src: "x.png" })).toBe("🖼 x.png (failed to load)")
     expect(t("nonexistent.key")).toBe("nonexistent.key")
-    expect(warn).toHaveBeenCalled()
-    warn.mockRestore()
+    expect(missingKey).toHaveBeenCalledWith("i18n", "missing key: nonexistent.key")
   })
 
   it("useT re-renders on locale change", () => {
@@ -85,5 +85,16 @@ describe("i18n store", () => {
 describe("i18n message parity", () => {
   it("en and zh expose the same key set", () => {
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
+  })
+})
+
+// `t()` must be total: the error boundary can render before `initLocale` runs,
+// and a throw there unmounts the recovery surface instead of showing it.
+describe("t before initialization", () => {
+  it("falls back to English instead of throwing", async () => {
+    vi.resetModules()
+    const fresh = await import("../src/i18n")
+    expect(() => fresh.t("error.boundary.title")).not.toThrow()
+    expect(fresh.t("error.boundary.title")).toBe("The editor hit an unexpected error.")
   })
 })

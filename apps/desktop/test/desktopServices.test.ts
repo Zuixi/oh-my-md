@@ -1,16 +1,20 @@
-import { describe, expect, it, vi } from "vitest"
-import { toDocumentCommandError } from "../src/desktopServices"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { errorMessage, toDocumentCommandError } from "../src/desktopServices"
+import type { LogRecord } from "../src/logger"
 
-const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
+const { invoke, revealItemInDir, toast, save } = vi.hoisted(() => ({
   invoke: vi.fn(),
   revealItemInDir: vi.fn(),
   toast: { error: vi.fn(), success: vi.fn() },
+  save: vi.fn(),
 }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save }))
 vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
+import { useSpyLogger } from "./setup"
 
 describe("desktop document IPC", () => {
   it("normalizes a typed rust rejection", () => {
@@ -90,6 +94,73 @@ describe("revealInFinder", () => {
   })
 })
 
+describe("logRecords", () => {
+  it("invokes log_frontend with the record batch", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce(undefined)
+    const records: LogRecord[] = [{ level: "warn", target: "save", message: "retrying" }]
+    await defaultServices.logRecords?.(records)
+    expect(invoke).toHaveBeenCalledWith("log_frontend", { records })
+  })
+})
+
+describe("export diagnostics", () => {
+  /** The one pre-export notice. OK proceeds; paths stay collapsed either way. */
+  function answerNotice(proceed: boolean) {
+    const confirm = vi.spyOn(window, "confirm")
+    confirm.mockReturnValueOnce(proceed)
+    return confirm
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    invoke.mockClear()
+    save.mockReset()
+  })
+
+  it("asks once, names the contents, and always exports collapsed paths", async () => {
+    save.mockResolvedValueOnce("/tmp/omd.zip")
+    invoke.mockResolvedValueOnce(undefined)
+    const confirm = answerNotice(true)
+
+    await defaultServices.exportDiagnostics?.()
+
+    // Exactly one question, and it names the bundle's contents rather than
+    // being a bare "are you sure". There is deliberately no second question:
+    // the full-paths opt-in is a checkbox the spec asks for, and an unlabelled
+    // `window.confirm` whose OK means "include" is a privacy hazard, so the
+    // export ships collapsed until that checkbox exists.
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm.mock.calls[0][0]).toMatch(/diagnostics/i)
+    expect(confirm.mock.calls[0][0]).toMatch(/log/i)
+    expect(confirm.mock.calls[0][0]).toMatch(/path/i)
+    expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
+      path: "/tmp/omd.zip",
+      includeFullPaths: false,
+    })
+  })
+
+  it("exports nothing when the notice is declined", async () => {
+    answerNotice(false)
+
+    await defaultServices.exportDiagnostics?.()
+
+    // No destination is chosen and nothing is invoked: a declined notice must
+    // not leave the user holding a save dialog.
+    expect(save).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("exports nothing when the save dialog is cancelled", async () => {
+    save.mockResolvedValueOnce(null)
+    answerNotice(true)
+
+    await defaultServices.exportDiagnostics?.()
+
+    expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
 describe("toast notifications", () => {
   it("reports errors through toast.error with the 8s autoClose", () => {
     defaultServices.reportError("Save failed: disk full")
@@ -97,6 +168,14 @@ describe("toast notifications", () => {
       "Save failed: disk full",
       { autoClose: 8000 },
     )
+  })
+
+  it("records handled failures once as warnings and preserves the toast", () => {
+    const logger = useSpyLogger()
+    defaultServices.reportError("Save failed: disk full")
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith("ui", "Save failed: disk full")
+    expect(logger.error).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith("Save failed: disk full", { autoClose: 8000 })
   })
 
   it("notifies success through toast.success with the 3s autoClose", () => {
@@ -142,5 +221,31 @@ describe("prepare update restart (automatic updates)", () => {
     invoke.mockClear()
     invoke.mockResolvedValueOnce({ kind: "timedOut" })
     await expect(defaultServices.prepareUpdateRestart?.()).resolves.toEqual({ kind: "timedOut" })
+  })
+})
+
+// A failed save/open reaches the user and the log through this one function.
+// Rendering a typed Rust rejection as `[object Object]` used to throw away the
+// only reason the record existed for.
+describe("errorMessage", () => {
+  it("keeps the underlying reason of a typed command error", () => {
+    expect(errorMessage("Open failed", { code: "permissionDenied", message: "Access denied (os error 5)" }))
+      .toBe("Open failed: Access denied (os error 5)")
+  })
+
+  it("keeps an Error's message and a plain string", () => {
+    expect(errorMessage("Save failed", new Error("disk full"))).toBe("Save failed: disk full")
+    expect(errorMessage("Save failed", "disk full")).toBe("Save failed: disk full")
+  })
+
+  it("never prints [object Object] or stringifies an unknown value", () => {
+    const message = errorMessage("Save failed", { unexpected: true, secret: "FAKE" })
+    expect(message).not.toContain("[object Object]")
+    expect(message).not.toContain("FAKE")
+    expect(message).toBe("Save failed: unrecognized error")
+  })
+
+  it("omits the separator when there is no detail", () => {
+    expect(errorMessage("Save failed", "")).toBe("Save failed")
   })
 })
