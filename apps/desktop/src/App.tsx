@@ -18,7 +18,7 @@ import { pastePlainText } from "./pastePlainText"
 import { pasteFromSystemClipboard } from "./clipboardPaste"
 import { systemClipboardReader } from "./clipboardPayload"
 import {
-  advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
+  advanceDocumentIdentity, createSession, openSession, recoveryKey,
   sessionContentLoaded, sessionDirty, sessionPath,
   type EditorSession,
 } from "./session"
@@ -38,6 +38,7 @@ import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
 import { createDocumentOpen, type DocumentOpen, type QuickOpenState } from "./documentOpen"
 import { createFileTreeActions } from "./fileTreeActions"
+import { loadInitialSettings, restoreDraft, restoreSavedSession, type AppSessionInitHost } from "./appSessionInit"
 import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
 import { restartToApplyLogging } from "./appLoggingActions"
 import { persistSettingsChange } from "./settingsPersistence"
@@ -793,7 +794,22 @@ export default function App({
     mountedRef.current = true
     ensureViews()
     void (async () => {
-      const initial = await loadInitialSettings()
+      // P4：启动流程在 appSessionInit（纯动作模块）；host 全为 getter/ref 转发，
+      // 编排顺序（设置 → pendingOpen → 恢复）留在 App，首渲染闭包构造一次即可。
+      const sessionInit: AppSessionInitHost = {
+        services, documentScaleRegistry,
+        isMounted: () => mountedRef.current, applySpellcheck, applyAutoPair,
+        getSettingsState: () => settingsRef.current,
+        commitSettings: next => { settingsRef.current = next; setSettings(next) },
+        commitTheme: setTheme,
+        getWorkspace: () => workspaceRef.current, commitWorkspace,
+        getContents: tabId => docsRef.current.get(tabId) ?? "",
+        setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
+        resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
+        syncDoc, getActiveSession: () => sessionRef.current,
+        markSessionRestored: () => { sessionRestoredRef.current = true },
+      }
+      const initial = await loadInitialSettings(sessionInit)
       if (mountedRef.current) setThemeSyncReady(true)
       if (!localeInitRef.current) {
         localeInitRef.current = true
@@ -814,9 +830,9 @@ export default function App({
         // shard (empty payload) keeps its fresh untitled tab and never
         // drafts: recovery records are app-global, so a non-main window
         // offering one would hijack the main window's record.
-        const restored = await restoreSavedSession()
+        const restored = await restoreSavedSession(sessionInit)
         if (!restored && isMainWindow()) {
-          await restoreDraft()
+          await restoreDraft(sessionInit)
         }
       }
     })()
@@ -1135,117 +1151,6 @@ export default function App({
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
     if (localeChanged) setLocale(sanitized.locale)
-  }
-
-  async function loadInitialSettings(): Promise<UserSettings> {
-    if (!services.getSettings) return DEFAULT_SETTINGS
-    try {
-      const saved = await services.getSettings()
-      if (saved) {
-        if (mountedRef.current) {
-          if (saved.spellcheck !== settingsRef.current.spellcheck) {
-            applySpellcheck(saved.spellcheck)
-          }
-          if (!sameAutoPair(saved.autoPair, settingsRef.current.autoPair)) {
-            applyAutoPair(saved.autoPair)
-          }
-          setSettings(saved)
-          settingsRef.current = saved
-          setTheme(saved.theme)
-        }
-        return saved
-      }
-    } catch {
-      /* tolerate settings read failure */
-    }
-    return DEFAULT_SETTINGS
-  }
-
-  async function restoreSavedSession(): Promise<boolean> {
-    if (!services.getSessionState) return false
-    try {
-      const state = await services.getSessionState()
-      if (!state || (!state.folder && state.openPaths.length === 0)) return false
-
-      if (state.folder) {
-        // 恢复的路径可能已被移动/删除（或换机恢复）：先用真实列举验证再采纳。
-        // 失效会话整体丢弃并提示一次——绝不带着死路径进入工作区，让后续每次
-        // 交互都重复报同一个错。
-        if (services.listDir) {
-          try {
-            await services.listDir(state.folder)
-          } catch {
-            services.reportError(t("error.workspaceFolderMissing"))
-            return false
-          }
-        }
-        commitWorkspace(openFolder(workspaceRef.current, state.folder))
-        void services.allowWorkspaceDir?.(state.folder)
-      }
-
-      if (state.openPaths.length > 0) {
-        // Spec 05b：只整读 active（或第一个）路径，其余 tab 惰性占位、
-        // 首次激活时再读（loadLazyTab）——避免启动时 N×大文件整读 + IPC 风暴。
-        // 主路径经 resetTabDocument 装载：view 拿到内容并应用档位策略
-        // （直接写 docsRef 的旧路径会把已挂载的空 view 留在屏幕上）。
-        const primary = state.activePath && state.openPaths.includes(state.activePath)
-          ? state.activePath
-          : state.openPaths[0]
-        const ordered = [primary, ...state.openPaths.filter(path => path !== primary)]
-        let activeTabId = workspaceRef.current.activeId
-        let firstTabOpened = false
-
-        for (const path of ordered) {
-          if (firstTabOpened) {
-            commitWorkspace(
-              addTab(workspaceRef.current, lazyFileSession(workspaceRef.current.nextId, path)),
-            )
-            continue
-          }
-          // primary 不可读时按序补位一次，成功后其余全部惰性。
-          try {
-            const snapshot = await services.readDocument(path)
-            if (snapshot.kind === "missing") continue
-            await services.allowDocumentAssets(path)
-            const updated = openSession(workspaceRef.current.tabs[0], snapshot)
-            docsRef.current.set(updated.id, snapshot.contents)
-            if (snapshot.stats) documentScaleRegistry.setBytes(updated.id, snapshot.stats.byteLength)
-            if (!resetTabDocument(updated, snapshot.contents)) {
-              commitWorkspace(replaceTabSession(workspaceRef.current, updated))
-            }
-            firstTabOpened = true
-            activeTabId = updated.id
-          } catch {
-            /* skip unreadable files */
-          }
-        }
-
-        if (firstTabOpened) {
-          const focused = focusTab(workspaceRef.current, activeTabId)
-          commitWorkspace(focused)
-          const active = activeSession(focused)
-          syncDoc(docsRef.current.get(active.id) ?? "", active.id)
-          sessionRestoredRef.current = true
-          return true
-        }
-      }
-    } catch {
-      /* tolerate session restore failure */
-    }
-    return false
-  }
-
-  async function restoreDraft() {
-    const records = await services.listRecoveries?.() ?? []
-    const first = records[0]
-    if (!first || !services.readRecovery) return
-    if (!services.confirmRestore?.(first.label)) {
-      await services.clearRecovery?.(first.key)
-      return
-    }
-    const contents = await services.readRecovery(first.key)
-    if (!mountedRef.current) return
-    resetTabDocument(advanceDocumentIdentity(sessionRef.current), contents)
   }
 
   function openRecent(path: string) {
