@@ -83,7 +83,7 @@ describe("NormalizationBanner", () => {
 
 describe("StatusBar normalization review", () => {
   it("shows the review notice as its own text node", () => {
-    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", head: 0, mode: "live" })}
       stats={{ words: 0, chars: 0 }}
       normalizationReviewRequired saveStatus="idle" />)
     const review = screen.getByText("Normalization review required")
@@ -91,7 +91,7 @@ describe("StatusBar normalization review", () => {
   })
 
   it("omits the review notice when no review is required", () => {
-    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+    render(<StatusBar statusStore={createEditorStatusStore({ cursor: "1:1", head: 0, mode: "live" })}
       stats={{ words: 0, chars: 0 }}
       normalizationReviewRequired={false} saveStatus="idle" />)
     expect(screen.queryByText("Normalization review required")).toBeNull()

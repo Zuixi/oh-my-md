@@ -67,7 +67,7 @@ describe("StatusBar save status", () => {
   it("shows the save status as its own node", () => {
     render(
       <StatusBar
-        statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+        statusStore={createEditorStatusStore({ cursor: "1:1", head: 0, mode: "live" })}
         stats={{ words: 0, chars: 0 }}
         normalizationReviewRequired={false}
         saveStatus="conflict"
@@ -79,7 +79,7 @@ describe("StatusBar save status", () => {
   it("shows CJK-aware word and char counts", () => {
     render(
       <StatusBar
-        statusStore={createEditorStatusStore({ cursor: "1:1", mode: "live" })}
+        statusStore={createEditorStatusStore({ cursor: "1:1", head: 0, mode: "live" })}
         stats={{ words: 4, chars: 4 }}
         normalizationReviewRequired={false}
         saveStatus="idle"

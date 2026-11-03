@@ -47,7 +47,7 @@ describe("editor status render boundary", () => {
       const handle = harness.editorForTab(1)
 
       expect(handle.getOptions().onStatusChange).toBeDefined()
-      act(() => handle.getOptions().onStatusChange?.({ cursor: "4:2", mode: "source" }))
+      act(() => handle.getOptions().onStatusChange?.({ cursor: "4:2", head: 0, mode: "source" }))
       expect(screen.getByText("4:2")).toBeTruthy()
       expect(screen.getByText("source")).toBeTruthy()
       expect(topBarRender).toHaveBeenCalledTimes(before)
@@ -79,7 +79,7 @@ describe("editor status render boundary", () => {
 
     // Guard: `workspaceRef.current.activeId !== tabId` must reject this call
     // — tab 1's view is still hidden in the background.
-    act(() => inactiveHandle.getOptions().onStatusChange?.({ cursor: "9:9", mode: "source" }))
+    act(() => inactiveHandle.getOptions().onStatusChange?.({ cursor: "9:9", head: 0, mode: "source" }))
     expect(screen.queryByText("9:9")).toBeNull()
     expect(screen.queryByText("source")).toBeNull()
     expect(screen.getByText("1:1")).toBeTruthy()
@@ -89,7 +89,7 @@ describe("editor status render boundary", () => {
     // now-active tab's own callback still reaches the StatusBar.
     const activeHandle = harness.editorForTab(2)
     expect(activeHandle.getOptions().onStatusChange).toBeDefined()
-    act(() => activeHandle.getOptions().onStatusChange?.({ cursor: "9:9", mode: "source" }))
+    act(() => activeHandle.getOptions().onStatusChange?.({ cursor: "9:9", head: 0, mode: "source" }))
     expect(screen.getByText("9:9")).toBeTruthy()
     expect(screen.getByText("source")).toBeTruthy()
   })
@@ -153,7 +153,7 @@ describe("editor status render boundary", () => {
 
     // Guard: `tab.documentId !== documentId` must reject this call — the
     // closure still carries the pre-reset documentId for tab 1.
-    act(() => staleOptions.onStatusChange?.({ cursor: "7:7", mode: "source" }))
+    act(() => staleOptions.onStatusChange?.({ cursor: "7:7", head: 0, mode: "source" }))
     expect(screen.queryByText("7:7")).toBeNull()
     expect(screen.queryByText("source")).toBeNull()
     expect(screen.getByText("1:1")).toBeTruthy()
@@ -162,7 +162,7 @@ describe("editor status render boundary", () => {
     // Sanity: the rebound options for the same tab (post-reset identity)
     // still reach the StatusBar.
     const freshOptions = harness.editorForTab(1).getOptions()
-    act(() => freshOptions.onStatusChange?.({ cursor: "7:7", mode: "source" }))
+    act(() => freshOptions.onStatusChange?.({ cursor: "7:7", head: 0, mode: "source" }))
     expect(screen.getByText("7:7")).toBeTruthy()
     expect(screen.getByText("source")).toBeTruthy()
   })

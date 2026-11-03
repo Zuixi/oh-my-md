@@ -96,7 +96,7 @@ import {
   visibleRows,
   type FileTreeModel,
 } from "./fileTreeState"
-import { OutlinePanel } from "./OutlinePanel"
+import { OutlineList, OutlinePanel } from "./OutlinePanel"
 import { SidebarResizer } from "./SidebarResizer"
 import {
   clampSidebarWidth,
@@ -1746,7 +1746,9 @@ export default function App({
           inert={!outlineOpen}
         >
           <OutlinePanel
+            key={workspace.activeId}
             items={outline}
+            statusStore={editorStatusStore}
             onJump={from => {
               const view = viewRef.current
               if (!view) return
@@ -1791,24 +1793,19 @@ export default function App({
                 {outline.length === 0 ? (
                   <div className="sidebar-empty">{t("outline.empty")}</div>
                 ) : (
-                  outline.map(item => (
-                    <button
-                      key={`${item.from}-${item.text}`}
-                      type="button"
-                      className={`outline-item level-${item.level}`}
-                      onClick={() => {
-                        const view = viewRef.current
-                        if (!view) return
-                        try {
-                          view.dispatch({ selection: { anchor: item.from } })
-                          view.focus()
-                        } catch { /* mock views */ }
-                        setOutlineHover(false)
-                      }}
-                    >
-                      {item.text}
-                    </button>
-                  ))
+                  <OutlineList
+                    items={outline}
+                    statusStore={editorStatusStore}
+                    onJump={from => {
+                      const view = viewRef.current
+                      if (!view) return
+                      try {
+                        view.dispatch({ selection: { anchor: from } })
+                        view.focus()
+                      } catch { /* mock views */ }
+                      setOutlineHover(false)
+                    }}
+                  />
                 )}
               </div>
             </div>

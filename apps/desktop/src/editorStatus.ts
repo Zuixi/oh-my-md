@@ -12,12 +12,14 @@
  */
 export interface EditorStatus {
   readonly cursor: string
+  /** Selection head offset — cursor's numeric twin, consumed without parsing (outline current-section). */
+  readonly head: number
   readonly mode: "live" | "source"
 }
 
 /** Every field that participates in `sameEditorStatus`. */
-export const EDITOR_STATUS_FIELDS: readonly (keyof EditorStatus)[] = ["cursor", "mode"]
+export const EDITOR_STATUS_FIELDS: readonly (keyof EditorStatus)[] = ["cursor", "head", "mode"]
 
 export function sameEditorStatus(a: EditorStatus, b: EditorStatus): boolean {
-  return a.cursor === b.cursor && a.mode === b.mode
+  return a.cursor === b.cursor && a.head === b.head && a.mode === b.mode
 }

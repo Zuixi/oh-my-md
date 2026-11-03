@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest"
 import { createEditor, editorStatus } from "../src/Editor"
 import { EDITOR_STATUS_FIELDS, sameEditorStatus, type EditorStatus } from "../src/editorStatus"
 
-const BASE: EditorStatus = { cursor: "1:1", mode: "live" }
-const CHANGED: EditorStatus = { cursor: "9:4", mode: "source" }
+const BASE: EditorStatus = { cursor: "1:1", head: 0, mode: "live" }
+const CHANGED: EditorStatus = { cursor: "9:4", head: 12, mode: "source" }
 
 /** Exhaustive by construction: a new EditorStatus field breaks compilation here,
  * which is the point — equality and this drift guard must be updated together. */
@@ -11,6 +11,8 @@ function baseDifferingIn(field: keyof EditorStatus): EditorStatus {
   switch (field) {
     case "cursor":
       return { ...BASE, cursor: CHANGED.cursor }
+    case "head":
+      return { ...BASE, head: CHANGED.head }
     case "mode":
       return { ...BASE, mode: CHANGED.mode }
   }

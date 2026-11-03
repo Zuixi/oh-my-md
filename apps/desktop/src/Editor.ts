@@ -296,7 +296,7 @@ export function createEditor(
  * here because the editor is where hosts pick it up (`CreateEditorOptions.onStatusChange`). */
 export type { EditorStatus }
 
-const NO_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
+const NO_STATUS: EditorStatus = { cursor: "1:1", head: 0, mode: "live" }
 
 /** Chrome values read back from a view; test doubles are tolerated as "no status yet". */
 export function editorStatus(view: EditorView | null): EditorStatus {
@@ -306,6 +306,7 @@ export function editorStatus(view: EditorView | null): EditorStatus {
     const line = view.state.doc.lineAt(head)
     return {
       cursor: `${line.number}:${head - line.from + 1}`,
+      head,
       mode: view.state.field(isLivePreview) ? "live" : "source",
     }
   } catch {

@@ -461,3 +461,21 @@ specificity — `.editor-host .cm-content .cm-line.omd-blockquote.cm-activeLine 
 var(--omd-bq-image) }` — and `e2e/quote-code.spec.ts` asserts the bar on every quoted line,
 including the active one. Every quote line carries both `omd-blockquote` and `omd-blockquote-N`,
 so the base class alone is enough to match; do not enumerate depths in new rules.
+
+## happy-dom test traps: `scrollIntoView` identity and section-index guards (2026-11)
+
+Two traps hit while building the outline current-item reveal (`OutlinePanel.tsx::useCurrentReveal`):
+
+1. **happy-dom's `Element.prototype.scrollIntoView` does not pass the element as an argument.**
+   A plain `vi.fn()` assigned onto the prototype captures only the options object; the scrolled
+   element's identity lives on `this`. Tests must install a wrapper that captures `this` and
+   forwards, otherwise "which element was scrolled" assertions compare against `undefined`.
+2. **"Before the first heading" test data must actually precede the first heading.**
+   With generated items `{ from: i * 10 }`, `head = 5` is *inside* section 0, not before it —
+   the `current = -1` branch never runs. Guard-test data needs an explicit preamble (first
+   `from` > head).
+
+Related design note: index-based reveal guards (`lastRevealedRef`) must be **reset on document
+identity change** — switching tabs can land both documents on the same section index while the
+panel's scrollTop still shows the old document. `App.tsx` remounts `OutlinePanel` with
+`key={workspace.activeId}` so the guard re-arms; a same-index new list must scroll again.
