@@ -35,6 +35,7 @@ fn fallback_scan_reads_the_previous_pid_file() {
     );
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn webview_termination_is_an_error_only_before_exit_begins() {
     assert_eq!(webview_termination_level(false), log::Level::Error);
@@ -569,6 +570,7 @@ fn session_start_line_round_trips_through_the_scanner() {
 
 // The flag is the only in-memory evidence that a teardown was intended,
 // and spec §3.4.4's termination hook exists to read it.
+#[cfg(target_os = "macos")]
 #[test]
 fn exiting_state_starts_clear_and_stays_marked() {
     let state = ExitingState::default();

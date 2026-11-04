@@ -364,11 +364,17 @@ impl ExitingState {
         self.0.store(true, Ordering::Release);
     }
 
+    /// macOS-only consumer: the webview-termination hook reads this to keep
+    /// a normal teardown at Info. Other callers (quit/exit paths) only `mark()`.
+    #[cfg(target_os = "macos")]
     pub fn is_exiting(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 }
 
+/// macOS-only: the termination hook's level mapping (unused elsewhere, so
+/// gated rather than #[allow(dead_code)] — see logging.rs's re-export note).
+#[cfg(target_os = "macos")]
 pub fn webview_termination_level(exiting: bool) -> log::Level {
     if exiting {
         log::Level::Info

@@ -569,10 +569,15 @@ pub use frontend::FrontendBudget;
 pub use session::PreviousExit;
 pub use session::{
     log_previous_exit, note_clean_exit, note_exit_intent, previous_exit_reason,
-    scan_previous_fallback_session, scan_previous_session, webview_termination_level,
-    write_session_start, ExitingState, PreviousExitState, PreviousSession,
-    PREVIOUS_EXIT_UNKNOWN_LOGGING_OFF,
+    scan_previous_fallback_session, scan_previous_session, write_session_start, ExitingState,
+    PreviousExitState, PreviousSession, PREVIOUS_EXIT_UNKNOWN_LOGGING_OFF,
 };
+// The webview-termination hook (lib.rs) only mounts on macOS, so its two
+// helpers are dead code under `-D warnings` on Linux/Windows release builds
+// — the v0.1.0 Linux/Windows packaging jobs failed exactly here. Gate the
+// re-export to the hook's own cfg instead of sprinkling #[allow(dead_code)].
+#[cfg(target_os = "macos")]
+pub use session::webview_termination_level;
 
 /// The full logging half of `run()`'s `.setup()`, split out so the growth-
 /// frozen `lib.rs` stays thin. Order inside is load-bearing (spec §3.4.5
