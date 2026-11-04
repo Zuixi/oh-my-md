@@ -87,11 +87,20 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$RUNNER_TEMP/minisign.tar.gz" \
             "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
           tar -xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP/minisign"
-          find "$RUNNER_TEMP/minisign" -type f -name minisign -exec chmod +x {} \;
-          test -n "$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)" || {
-            echo "minisign binary missing after extraction" >&2
+          # The 0.12 linux tarball ships both x86_64/ and aarch64/ trees; a bare
+          # `find -quit` picks whichever directory iterates first (aarch64),
+          # which Exec-format-errors on x86_64 runners. Resolve by machine arch.
+          case "$(uname -m)" in
+            x86_64) minisign_arch="x86_64" ;;
+            aarch64) minisign_arch="aarch64" ;;
+            *) echo "unsupported runner arch for minisign: $(uname -m)" >&2; exit 1 ;;
+          esac
+          minisign_bin="$RUNNER_TEMP/minisign/minisign-linux/$minisign_arch/minisign"
+          test -x "$minisign_bin" || {
+            echo "minisign $minisign_arch binary missing after extraction" >&2
             exit 1
           }
+          printf '%s\n' "$minisign_bin" > "$RUNNER_TEMP/minisign.path"
       - name: Decode committed minisign public key
         shell: bash
         run: |
@@ -117,7 +126,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          minisign="$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)"
+          minisign="$(cat "$RUNNER_TEMP/minisign.path")"
           pubkey="$RUNNER_TEMP/minisign.pub"
           test -s "$pubkey" || { echo "decoded public key missing" >&2; exit 1; }
           count=0
