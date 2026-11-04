@@ -129,6 +129,15 @@ jobs:
           minisign="$(cat "$RUNNER_TEMP/minisign.path")"
           pubkey="$RUNNER_TEMP/minisign.pub"
           test -s "$pubkey" || { echo "decoded public key missing" >&2; exit 1; }
+          # Tauri ships base64-encoded minisign signatures as .sig; minisign
+          # 0.12 -V ignores -s and hard-resolves the conventional decoded
+          # <artifact>.minisig sibling (both verified against the real 0.12
+          # binary and the actual v0.1.1 release assets locally). Decode each
+          # signature to its conventional sibling before verifying.
+          for sig in release-assets/*.sig; do
+            test -f "$sig" || continue
+            base64 -d < "$sig" > "${sig%.sig}.minisig"
+          done
           count=0
           for sig in release-assets/*.sig; do
             test -f "$sig" || continue
@@ -137,9 +146,7 @@ jobs:
               echo "signature without matching updater artifact: $sig" >&2
               exit 1
             }
-            # minisign defaults to the conventional <artifact>.sig sibling, so
-            # the signature file is passed explicitly rather than implied.
-            "$minisign" -Vm "$artifact" -p "$pubkey" -s "$sig" || {
+            "$minisign" -Vm "$artifact" -p "$pubkey" || {
               echo "minisign verification failed for $artifact" >&2
               exit 1
             }
