@@ -51,13 +51,15 @@ jobs:
           set -euo pipefail
           version="$VERSION"
           tag="v$version"
-          release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,draft,prerelease,url)"
+          # gh 的 JSON 字段是 isDraft/isPrerelease（不是 draft/prerelease）：
+          # 首次真实 promote（v0.1.1，run 41767126241）用旧字段名被 gh 拒绝。
+          release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url)"
           release_tag="$(node -e "const r = JSON.parse(process.argv[1]); process.stdout.write(r.tagName)" "$release")"
           test "$release_tag" = "$tag" || {
             echo "release for $tag resolved to a different tag: $release_tag" >&2
             exit 1
           }
-          node -e "const r = JSON.parse(process.argv[1]); if (r.draft || r.prerelease) { process.stderr.write(r.draft ? 'release is a Draft; refusing to promote\n' : 'release is prerelease; refusing to promote\n'); process.exit(1) }" "$release"
+          node -e "const r = JSON.parse(process.argv[1]); if (r.isDraft || r.isPrerelease) { process.stderr.write(r.isDraft ? 'release is a Draft; refusing to promote\n' : 'release is prerelease; refusing to promote\n'); process.exit(1) }" "$release"
       - name: Download candidate manifest and signed updater artifacts
         env:
           GH_TOKEN: ${{ github.token }}
