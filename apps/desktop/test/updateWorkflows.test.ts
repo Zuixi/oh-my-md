@@ -212,9 +212,11 @@ describe("promote-update workflow", () => {
     expect(PROMOTE).toContain('--repo "$GITHUB_REPOSITORY"')
     expect(PROMOTE).toContain("--json")
     expect(PROMOTE).toContain("tagName")
-    expect(PROMOTE).toContain("draft")
-    expect(PROMOTE).toContain("prerelease")
-    expect(PROMOTE).toContain("r.draft || r.prerelease")
+    // gh names the JSON fields isDraft/isPrerelease; the unprefixed names are
+    // rejected by `gh release view --json`.
+    expect(PROMOTE).toContain("isDraft")
+    expect(PROMOTE).toContain("isPrerelease")
+    expect(PROMOTE).toContain("r.isDraft || r.isPrerelease")
     expect(PROMOTE).toContain('"$release_tag" = "$tag"')
     expect(PROMOTE).toContain("process.exit(1)")
   })
@@ -240,14 +242,14 @@ describe("promote-update workflow", () => {
     expect(PROMOTE).toMatch(/minisign\.pub/)
   })
 
-  it("passes each signature file explicitly to minisign instead of relying on default naming", () => {
-    // minisign defaults to the conventional `<artifact>.sig` sibling, so a
-    // sig-less `-Vm` could silently verify the wrong file after a rename.
-    // Pin the exact artifact<-signature argument relationship.
+  it("decodes tauri's base64 signatures to the conventional minisign sibling", () => {
+    // Tauri ships base64-encoded signature payloads as `.sig`; minisign 0.12
+    // ignores `-s` and resolves the conventional `<artifact>.minisig` sibling.
+    // Pin both halves: decode next to the artifact, then verify that artifact.
+    expect(PROMOTE).toContain('base64 -d < "$sig" > "${sig%.sig}.minisig"')
     expect(PROMOTE).toContain('artifact="${sig%.sig}"')
-    expect(PROMOTE).toContain('-s "$sig"')
-    expect(PROMOTE).toMatch(/"\$minisign" -Vm "\$artifact" -p "\$pubkey" -s "\$sig"/)
-    expect(PROMOTE).not.toMatch(/"\$minisign" -Vm "\$artifact" -p "\$pubkey"[^\s-]/)
+    expect(PROMOTE).toContain('"$minisign" -Vm "$artifact" -p "$pubkey"')
+    expect(PROMOTE).not.toMatch(/-s "\$sig"/)
   })
 
   it("runs the tested CLI to validate then promote into the site tree", () => {

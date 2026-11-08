@@ -30,7 +30,9 @@ function cargoVersion(path: string): string {
 }
 
 function localCargoLockVersion(path: string): string {
-  const source = readFileSync(path, "utf8")
+  // Cargo writes LF, but a Windows checkout with core.autocrlf=true reads the
+  // lockfile back as CRLF; normalize before the structural match.
+  const source = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
   const match = /\[\[package\]\]\nname = "omd"\nversion = "([^"]+)"/.exec(source)
   if (!match) throw new Error(`missing local omd package version in ${path}`)
   return match[1]
