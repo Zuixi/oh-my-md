@@ -45,6 +45,7 @@ export const en: Record<string, string> = {
   "cmd.label.source": "Show Source Code",
   "cmd.label.bold": "Bold",
   "cmd.label.italic": "Italic",
+  "cmd.label.underline": "Underline",
   "cmd.label.strikethrough": "Strikethrough",
   "cmd.label.inline-code": "Inline code",
   "cmd.label.code-block": "Code block",

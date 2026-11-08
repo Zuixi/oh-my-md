@@ -48,6 +48,7 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   about: "about",
   bold: "bold",
   italic: "italic",
+  underline: "underline",
   strikethrough: "strikethrough",
   "inline-code": "inline-code",
   "code-block": "code-block",

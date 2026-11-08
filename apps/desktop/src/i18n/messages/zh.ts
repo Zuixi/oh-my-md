@@ -45,6 +45,7 @@ export const zh: Record<string, string> = {
   "cmd.label.source": "显示源码",
   "cmd.label.bold": "加粗",
   "cmd.label.italic": "斜体",
+  "cmd.label.underline": "下划线",
   "cmd.label.strikethrough": "删除线",
   "cmd.label.inline-code": "行内代码",
   "cmd.label.code-block": "代码块",

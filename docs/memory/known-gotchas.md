@@ -51,6 +51,10 @@
 - **Desktop `defaultKeymap` is registered before engine keymaps** — `Prec.high` beats it, but every structural Enter and list Tab/Shift-Tab needs `Prec.highest` to beat `markdown()`'s bundled `Prec.high` Enter; list Tab must return true even when no rewrite applies, or the browser moves focus; arrow/caret-clamp bindings stay at `Prec.high`.
 - **Parser character codes are named, not magic** — use `parse/chars.ts` constants.
 - **Doc-start `---` is front matter, not a thematic rule** — unclosed front matter swallows to EOF.
+- **`syntaxTree().length` is not contiguous parse coverage** — lazy nested languages can leave fragment holes; commands without local semantic proof must gate on `syntaxTreeAvailable`. Inline toggles use a resolved local container/node plus a revocable repeat plan, so an unrelated earlier hole cannot break consecutive shortcuts. Toggles remain semantic, all-or-nothing, one transaction, and one isolated undo step; never append raw marker pairs.
+- **Bold/italic stacking is semantic, not raw delimiter append** — a delimiter-merge guard must still allow the missing opposite emphasis around a proved whole node (`**text**` + italic → `***text***`); same-kind presses toggle off and never create `****text****`.
+- **Inline formatting composition must respect node ownership** — underline markers are asymmetric (`<u>` / `</u>`), and formatting added around `InlineCode` must wrap the whole resolved node rather than enter its literal content.
+- **Wrap commands must keep the caret inside** — a collapsed caret at a word or paragraph end needs an explicit post-wrap selection before the closing marker/fence. Right-biased mapping puts it after the closing insertion, so the next shortcut stacks another wrapper instead of toggling it off.
 - **The complete-tree trap** — production code must never `forceParsing`/`ensureSyntaxTree` to `doc.length` (`crossLayerNoFullTree.test.ts` guards it).
 - **Decorations are seeded and windowed** — never assume a decoration exists outside the viewport window; `drainPendingLiveBuild` is test-only.
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.

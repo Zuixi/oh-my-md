@@ -70,6 +70,7 @@ import { createTauriUpdateAdapter, type UpdateAdapter } from "./updateAdapter"
 import { redo, selectAll, undo } from "@codemirror/commands"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
+import { formatCommandEntries } from "./formatCommandEntries"
 import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { isMainWindow } from "./windowScope"
@@ -126,18 +127,6 @@ import { VersionHistoryModal } from "./VersionHistoryModal"
 import { SearchPanel } from "./SearchPanel"
 import { useWorkspaceSearch } from "./useWorkspaceSearch"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
-import {
-  toggleBold,
-  toggleBlockquote,
-  toggleCodeBlock,
-  toggleHeading,
-  toggleInlineCode,
-  toggleItalic,
-  toggleOrderedList,
-  toggleStrikethrough,
-  toggleUnorderedList,
-  insertLink,
-} from "@omd/engine"
 import { SettingsModal } from "./SettingsModal"
 import {
   DEFAULT_SETTINGS,
@@ -2149,21 +2138,7 @@ export default function App({
         view.dispatch(applyToggle(view.state))
       } catch { /* mock views */ }
     } },
-    { id: "bold", label: t("cmd.label.bold"), shortcut: shortcutFor("bold"), run: runEditorCommand(toggleBold) },
-    { id: "italic", label: t("cmd.label.italic"), shortcut: shortcutFor("italic"), run: runEditorCommand(toggleItalic) },
-    { id: "strikethrough", label: t("cmd.label.strikethrough"), shortcut: shortcutFor("strikethrough"), run: runEditorCommand(toggleStrikethrough) },
-    { id: "inline-code", label: t("cmd.label.inline-code"), shortcut: shortcutFor("inline-code"), run: runEditorCommand(toggleInlineCode) },
-    { id: "code-block", label: t("cmd.label.code-block"), shortcut: shortcutFor("code-block"), run: runEditorCommand(toggleCodeBlock) },
-    { id: "heading-1", label: t("cmd.label.heading-1"), shortcut: shortcutFor("heading-1"), run: runEditorCommand(toggleHeading(1)) },
-    { id: "heading-2", label: t("cmd.label.heading-2"), shortcut: shortcutFor("heading-2"), run: runEditorCommand(toggleHeading(2)) },
-    { id: "heading-3", label: t("cmd.label.heading-3"), shortcut: shortcutFor("heading-3"), run: runEditorCommand(toggleHeading(3)) },
-    { id: "heading-4", label: t("cmd.label.heading-4"), shortcut: shortcutFor("heading-4"), run: runEditorCommand(toggleHeading(4)) },
-    { id: "heading-5", label: t("cmd.label.heading-5"), shortcut: shortcutFor("heading-5"), run: runEditorCommand(toggleHeading(5)) },
-    { id: "heading-6", label: t("cmd.label.heading-6"), shortcut: shortcutFor("heading-6"), run: runEditorCommand(toggleHeading(6)) },
-    { id: "ordered-list", label: t("cmd.label.ordered-list"), shortcut: shortcutFor("ordered-list"), run: runEditorCommand(toggleOrderedList) },
-    { id: "unordered-list", label: t("cmd.label.unordered-list"), shortcut: shortcutFor("unordered-list"), run: runEditorCommand(toggleUnorderedList) },
-    { id: "blockquote", label: t("cmd.label.blockquote"), shortcut: shortcutFor("blockquote"), run: runEditorCommand(toggleBlockquote) },
-    { id: "link", label: t("cmd.label.link"), shortcut: shortcutFor("link"), run: runEditorCommand(insertLink) },
+    ...formatCommandEntries(t, runEditorCommand),
     { id: "insert-image", label: t("cmd.label.insert-image"), run: insertImage },
     { id: "undo", label: t("cmd.label.undo"), shortcut: shortcutFor("undo"), run: runEditorCommand(undo) },
     { id: "redo", label: t("cmd.label.redo"), shortcut: shortcutFor("redo"), run: runEditorCommand(redo) },

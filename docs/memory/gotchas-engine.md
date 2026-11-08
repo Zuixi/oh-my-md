@@ -26,7 +26,7 @@ Rebuild ranges use `endLine.to + 1` as an **exclusive** end (the next line's `fr
 Boundary positions are intentionally different:
 
 - Blank lines emit zero line decorations and keep full natural height at all times, avoiding any layout jitter or viewport jump when entering or leaving an empty line. Never `display:none` a blank line: CM's heightmap and click mapping need a real box. Safe-mode pruning returns blank-line pending ranges like any other span.
-- Decorative marks fold unconditionally (Route A, see `types.ts`): paired emphasis/strike/highlight/underline/sub/sup/inline-code marks, heading marks, and list marks never flip on caret movement. Link/image/inline-math/footnote reveals use node-level `cursorInside` (same rule in and out of quotes). Editing affordance for folded marks: format toggle commands (`format/commands.ts`) and Backspace at a folded boundary (mid-line atoms delete whole via `skipAtomic`; line-start marks like `### ` delete one char per press = progressive demotion).
+- Decorative marks fold unconditionally (Route A, see `types.ts`): paired emphasis/strike/highlight/underline/sub/sup/inline-code marks, heading marks, and list marks never flip on caret movement. Link/image/inline-math/footnote reveals use node-level `cursorInside` (same rule in and out of quotes). Editing affordance for folded marks: format toggle commands exported by `format/commands.ts` and Backspace at a folded boundary (mid-line atoms delete whole via `skipAtomic`; line-start marks like `### ` delete one char per press = progressive demotion).
 - QuoteMark is the exception among block marks: it folds unless the **caret** is inside `>` / `> ` itself, so typing `> ` hides the marker while the cursor stays on the same line. Non-empty selections never count as `cursorInside` — selection is visual.
 - Nested quotes take their depth from the innermost `Blockquote` that owns the line (`omd-blockquote-N`). Do not paint every ancestor onto the same line.
 - List indent inside a quote must start after the folded `> `; using `line.from` overlaps `replace:QuoteMark` and can make `Decoration.set` throw. List marks fold unconditionally (Route A) in and out of quotes.
@@ -676,7 +676,8 @@ their prefix on Enter, and the toggle un-quoted lines it never recognized.
 `format/blockPrefix.ts::blockPrefixOf` reads the prefix from the Lezer tree
 instead: leading indent + each `QuoteMark`/`ListMark`/`TaskMarker` plus the
 whitespace that follows it, stopping at the first non-prefix content. Both
-`continueQuote` (Enter) and `toggleQuoteSpec` (Mod-Alt-9) consume that one model —
+`continueQuote` (Enter) and `blockCommands.ts::toggleQuoteSpec` (Mod-Alt-9)
+consume that one model —
 do not reintroduce regexes. Two consequences: removing a mark deletes the mark
 plus exactly **one** following space (`markRemovalRange`; the remaining
 whitespace is content indentation, and eating it turned `  >   x` into `x`), and
@@ -705,6 +706,59 @@ onto the new code line, style-faithful `>x\n>x`) — never just the visible resu
 both produce. `test/enter-ownership.test.ts` drives the real keymap chain
 (`keymap.of([...defaultKeymap, ...historyKeymap])` before `editorExtensions()`)
 for exactly this reason.
+
+## Formatting coverage is not syntax-tree length
+
+`syntaxTree(state).length` is the furthest position the tree has reached, not
+proof that the tree covers every position up to it. CodeMirror's parse is
+fragment-based, and a lazily loaded nested language can leave a deliberate hole
+while the aggregate length already reaches the document end. The old coverage
+check therefore let a format command read stale/incomplete nodes and rewrite a
+range it did not structurally understand. `format/semantics.ts::treeCovers`
+must use `syntaxTreeAvailable(state, end)`, which requires a contiguous fragment
+starting at 0 and reaching `end`, whenever the command has no stronger local
+proof. Never call `forceParsing`/`ensureSyntaxTree` from a command to make the
+check pass: while a nested language is loading, a temporary no-op is the correct
+fail-closed behavior. Do not over-generalize that guard: after a local inline
+edit, an unrelated earlier fragment hole can make global contiguity false even
+though the touched Paragraph/semantic node is resolved. Fresh inline wrapping
+uses that local container plus verbatim/partial-node rejection; unwrapping also
+requires the requested semantic node and exactly two valid delimiters.
+
+The second half of the same bug was treating formatting as raw marker insertion.
+Appending another `**` on every press is not an idempotent toggle, can create a
+delimiter run that no longer parses as the requested node, and makes undo depend
+on history grouping. The format contract is now:
+
+- every planner is a pure `EditorState → TransactionSpec | null` and is
+  all-or-nothing;
+- inline commands unwrap the semantic node or wrap only a range that reparses as
+  that node; block commands normalize all selected lines to the target state;
+- bold and italic are independent dimensions: the generic “same delimiter
+  character must not merge” guard must not block stacking the missing opposite
+  emphasis. The safe path wraps a locally proved whole `Emphasis` or
+  `StrongEmphasis` node, while same-kind presses still toggle that dimension
+  off instead of creating `****text****`;
+- underline is not a symmetric delimiter (`<u>` / `</u>`), so repeat plans must
+  store both marker strings. Adding a non-code format around `InlineCode` must
+  likewise wrap the whole resolved code node; inserting emphasis markers at the
+  content boundaries changes literal code text instead of composing formats;
+- `inlinePlanState` records only the range a formatting transaction itself
+  created/removed, maps it through the next formatting transaction, and is
+  cleared by every other document-changing transaction; this keeps consecutive
+  shortcuts reversible while parser fragments catch up without trusting stale
+  syntax or parsing raw markers;
+- `commands.ts` dispatches exactly one transaction with `userEvent:
+  "input.format"` and `isolateHistory.of("full")`;
+- unsafe hosts, partial syntax nodes, and incomplete coverage return `null`
+  without touching the document.
+
+`test/formatInline.test.ts` keeps one state detached (no mounted view) to prove
+incomplete coverage stays no-op; `test/formatView.test.ts` mounts a real editor
+through the same keymap order as desktop to prove `Prec.high`, repeat-toggle, and
+one-command/one-undo behavior. `test/formatPlanView.test.ts` drives three
+consecutive presses in a large soft-wrapped paragraph, the case where global
+contiguity is false between presses.
 
 ## A continuation command must set an explicit selection
 

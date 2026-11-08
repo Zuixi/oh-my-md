@@ -48,6 +48,7 @@ pub struct MenuLabels {
     pub format: &'static str,
     pub bold: &'static str,
     pub italic: &'static str,
+    pub underline: &'static str,
     pub strikethrough: &'static str,
     pub inline_code: &'static str,
     pub code_block: &'static str,
@@ -121,6 +122,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             format: "格式",
             bold: "加粗",
             italic: "斜体",
+            underline: "下划线",
             strikethrough: "删除线",
             inline_code: "行内代码",
             code_block: "代码块",
@@ -191,6 +193,7 @@ pub fn menu_strings(locale: &str) -> MenuLabels {
             format: "Format",
             bold: "Bold",
             italic: "Italic",
+            underline: "Underline",
             strikethrough: "Strikethrough",
             inline_code: "Inline Code",
             code_block: "Code Block",
@@ -589,6 +592,7 @@ fn format_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::
     SubmenuBuilder::new(app, l.format)
         .item(&item(app, "bold", l.bold, Some("CmdOrCtrl+B"))?)
         .item(&item(app, "italic", l.italic, Some("CmdOrCtrl+I"))?)
+        .item(&item(app, "underline", l.underline, Some("CmdOrCtrl+U"))?)
         .item(&item(
             app,
             "strikethrough",
@@ -599,7 +603,7 @@ fn format_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::
             app,
             "inline-code",
             l.inline_code,
-            Some("CmdOrCtrl+Shift+`"),
+            Some("CmdOrCtrl+`"),
         )?)
         .item(&item(
             app,

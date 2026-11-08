@@ -33,6 +33,7 @@ fn menu_strings_zh_returns_format_view_window_chinese() {
     assert_eq!(l.format, "格式");
     assert_eq!(l.bold, "加粗");
     assert_eq!(l.italic, "斜体");
+    assert_eq!(l.underline, "下划线");
     assert_eq!(l.code_block, "代码块");
     assert_eq!(l.view, "视图");
     assert_eq!(l.show_source_code, "显示源码");
@@ -45,6 +46,7 @@ fn menu_strings_en_returns_format_view_window_english() {
     let l = menu_strings("en");
     assert_eq!(l.format, "Format");
     assert_eq!(l.bold, "Bold");
+    assert_eq!(l.underline, "Underline");
     assert_eq!(l.view, "View");
     assert_eq!(l.window, "Window");
 }
