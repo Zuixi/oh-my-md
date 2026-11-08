@@ -26,6 +26,7 @@ import { tightSelection } from "./tightSelection"
 import { isMacOS } from "./platform"
 import { CONTENT_MAX_WIDTH } from "./constants"
 import { sameEditorStatus, type EditorStatus } from "./editorStatus"
+import { isWindowsPath } from "./workspace"
 import { t } from "./i18n"
 import { convertFileSrc } from "@tauri-apps/api/core"
 
@@ -86,7 +87,9 @@ export function makeImageResolver(
     if (/^(https?:|data:|asset:)/i.test(src)) return src
     const docPath = getDocPath()
     if (!docPath) return src
-    const normalizedPath = docPath.replace(/\\/g, "/")
+    // Backslash is a separator only in Windows document paths; on POSIX it is
+    // a literal file-name character and rewriting it would pick the wrong dir.
+    const normalizedPath = isWindowsPath(docPath) ? docPath.replace(/\\/g, "/") : docPath
     const dir = normalizedPath.slice(0, normalizedPath.lastIndexOf("/") + 1)
     return convert(dir + src)
   }

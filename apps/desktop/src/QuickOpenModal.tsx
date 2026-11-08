@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useT } from "./i18n"
+import { relativeToDir } from "./workspace"
 
 /** Files shown per query; keeps the rendered list bounded on huge folders. */
 const MAX_RENDERED = 200
@@ -28,9 +29,7 @@ export function QuickOpenModal(props: {
     const folder = props.folder
     return filtered.slice(0, MAX_RENDERED).map(path => ({
       path,
-      display: folder && path.startsWith(`${folder}/`)
-        ? path.slice(folder.length + 1)
-        : path,
+      display: folder ? relativeToDir(path, folder) : path,
     }))
   }, [props.files, props.folder, q])
 

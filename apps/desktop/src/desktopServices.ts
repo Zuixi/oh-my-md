@@ -19,6 +19,7 @@ import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
 import { t } from "./i18n"
 import { isWindows } from "./platform"
+import { baseName, parentDir, plainPath, rebaseToDir } from "./workspace"
 import type { PasteAssetBatch, PasteAssetWrite } from "./pasteAssets"
 
 export async function writePasteAssets(
@@ -347,9 +348,20 @@ export const defaultServices: DesktopServices = {
     // 还原反斜杠后再交给插件的 dunce::simplified 处理。
     await revealItemInDir(isWindows() ? path.replace(/\//g, "\\") : path)
   },
-  createMarkdown: (dir, name) => invoke<string>("create_markdown", { dir, name }),
-  createDir: (dir, name) => invoke<string>("create_dir", { dir, name }),
-  renamePath: (from, toName) => invoke<string>("rename_path", { from, toName }),
+  // Rust canonicalizes the parent, so create/rename results can come back as
+  // verbatim (`\\?\C:\…`) paths on Windows or symlink-resolved (`/private/tmp`
+  // for `/tmp`, `/var` for `/private/var`) paths on macOS, while tree rows keep
+  // the caller's form. Normalize and rebase at the wire boundary so every
+  // consumer sees one path identity.
+  createMarkdown: async (dir, name) =>
+    rebaseToDir(plainPath(await invoke<string>("create_markdown", { dir, name })), dir, name),
+  createDir: async (dir, name) =>
+    rebaseToDir(plainPath(await invoke<string>("create_dir", { dir, name })), dir, name),
+  renamePath: async (from, toName) => {
+    const result = plainPath(await invoke<string>("rename_path", { from, toName }))
+    const dir = parentDir(from)
+    return dir === null ? result : rebaseToDir(result, dir, toName)
+  },
   deletePath: async path => {
     await invoke("delete_path", { path })
   },
@@ -414,11 +426,7 @@ export const defaultServices: DesktopServices = {
   confirmClose: () => window.confirm(t("confirm.close")),
   confirmLargeOpen: (label, mb) => window.confirm(t("confirm.largeOpen", { label, mb })),
   confirmReadonlyOpen: (label, mb) => window.confirm(t("confirm.readonlyOpen", { label, mb })),
-  confirmDelete: (path) => {
-    const normalized = path.replace(/\\/g, "/")
-    const name = normalized.slice(normalized.lastIndexOf("/") + 1) || normalized
-    return window.confirm(t("confirm.delete", { name }))
-  },
+  confirmDelete: path => window.confirm(t("confirm.delete", { name: baseName(path) })),
   confirmRestore: (label) => window.confirm(t("confirm.restore", { label })),
   confirmExternalChange: () => window.confirm(t("confirm.externalChange")),
   getSettings: async () => {

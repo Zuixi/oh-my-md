@@ -39,7 +39,7 @@ import {
 import type { NormalizationByTab } from "./normalizationState"
 import { SAVE_COPY_SAME_PATH_MESSAGE } from "./conflictActions"
 import { markSaved, recoveryKey, sessionContentLoaded, sessionDirty, sessionPath, sessionVersion, type EditorSession } from "./session"
-import { replaceTabSession, type Workspace } from "./workspace"
+import { replaceTabSession, samePath, type Workspace } from "./workspace"
 import { t } from "./i18n"
 
 export type SaveMode =
@@ -356,8 +356,11 @@ export function createSaveCopy(host: Pick<
     const pickedPath = await host.pickSavePath()
     if (!pickedPath) return
 
+    // Rust reports the canonical path (verbatim on Windows, symlink-resolved on
+    // macOS/Linux); the picker returns the user-facing form. Compare identity,
+    // not spelling, or saving a "copy" over the original goes undetected.
     const resolvedPath = sessionVersion(tab)?.resolvedPath ?? null
-    if (resolvedPath !== null && resolvedPath === pickedPath) {
+    if (resolvedPath !== null && samePath(resolvedPath, pickedPath)) {
       host.reportStatus(SAVE_COPY_SAME_PATH_MESSAGE)
       return
     }

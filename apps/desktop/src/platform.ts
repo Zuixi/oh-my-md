@@ -29,6 +29,15 @@ export function isLinux(): boolean {
   return currentPlatform() === "linux"
 }
 
+/**
+ * Heuristic for the client-side duplicate-name precheck: Windows and default
+ * macOS volumes compare names case-insensitively, Linux does not. Only a UX
+ * hint — the native create/rename commands stay authoritative.
+ */
+export function fileNamesAreCaseInsensitive(): boolean {
+  return currentPlatform() !== "linux"
+}
+
 const MAC_GLYPHS: Readonly<Record<string, string>> = { Mod: "⌘", Shift: "⇧", Alt: "⌥" }
 const MAC_ORDER = ["Shift", "Alt", "Mod"]
 const WORD_ORDER = ["Mod", "Alt", "Shift"]

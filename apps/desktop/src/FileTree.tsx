@@ -1,23 +1,45 @@
-import { memo, useEffect, useId, useRef, useState, type MouseEvent } from "react"
-import { ChevronRight, FileText, Folder, FolderOpen, PanelLeftClose, Search } from "lucide-react"
-import { ROW_HEIGHT, visibleRowRange, type VisibleRow } from "./fileTreeState"
-import { parentDir, pathWithinDir } from "./workspace"
+import {
+  memo, useEffect, useId, useMemo, useRef, useState,
+  type CSSProperties, type MouseEvent,
+} from "react"
+import { PanelLeftClose, Search } from "lucide-react"
+import {
+  DEPTH_INDENT, ROW_HEIGHT, ROW_INSET, draftRowIndex, visibleRowRange,
+  type CreateKind, type VisibleRow,
+} from "./fileTreeState"
+import { baseName, parentDir, pathWithinDir, samePath } from "./workspace"
 import { shortcutFor } from "./shortcuts"
-import { useT } from "./i18n"
-import { MARKDOWN_FILE_EXTENSION } from "./constants"
+import { useT, type Translator } from "./i18n"
+import { TreeEditRow, TreeIcons } from "./TreeEditRow"
+import { useTreeEditSession, type TreeEdit } from "./useTreeEditSession"
 
 export type { TreeEntry } from "./fileTreeState"
 
-const ROW_INSET = 8
-const DEPTH_INDENT = 14
-const ICON_SIZE = 14
+interface TreeMenuState {
+  readonly entry: VisibleRow["entry"] | null
+  readonly dir: string
+  readonly depth: number
+  /** The context menu opened on a collapsed directory; creating expands it. */
+  readonly expandDir: boolean
+  readonly x: number
+  readonly y: number
+}
 
-interface RenameEdit {
-  id: number
-  entry: VisibleRow["entry"]
-  draft: string
-  submitting: boolean
-  error: string | null
+interface RevealRequest {
+  readonly path: string
+  /** Folder creation moves row focus; file creation focuses the editor. */
+  readonly focus: boolean
+}
+
+interface RowActions {
+  openFile(path: string): void
+  toggleDir(path: string): void
+  contextMenu(
+    entry: VisibleRow["entry"],
+    depth: number,
+    expanded: boolean,
+    event: MouseEvent<HTMLButtonElement>,
+  ): void
 }
 
 export function FileTree(props: {
@@ -29,16 +51,17 @@ export function FileTree(props: {
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onSearch: () => void
-  onNewFile?: (dir: string) => void
-  onNewFolder?: (dir: string) => void
+  onCreateFile?: (dir: string, name: string) => Promise<string>
+  onCreateFolder?: (dir: string, name: string) => Promise<string>
+  onSuggestName?: (kind: CreateKind, dir: string) => Promise<string>
   onRename?: (entry: VisibleRow["entry"], name: string) => Promise<string>
-  onRenameError?: (message: string) => void
+  onEditError?: (message: string) => void
   onDelete?: (entry: VisibleRow["entry"]) => void
   onReveal?: (path: string) => void
   onCollapse?: () => void
 }) {
   const t = useT()
-  const title = (props.folder ?? "").replace(/\\/g, "/").split("/").pop() || t("filetree.title.fallback")
+  const title = props.folder ? baseName(props.folder) : t("filetree.title.fallback")
   return (
     <aside className="filetree">
       <div className="sidebar-title">
@@ -82,10 +105,11 @@ export function FileTree(props: {
           visible={props.visible}
           onOpenFile={props.onOpenFile}
           onToggleDir={props.onToggleDir}
-          onNewFile={props.onNewFile}
-          onNewFolder={props.onNewFolder}
+          onCreateFile={props.onCreateFile}
+          onCreateFolder={props.onCreateFolder}
+          onSuggestName={props.onSuggestName}
           onRename={props.onRename}
-          onRenameError={props.onRenameError}
+          onEditError={props.onEditError}
           onDelete={props.onDelete}
           onReveal={props.onReveal}
         />
@@ -99,6 +123,9 @@ export function FileTree(props: {
  * an overscan margin) are in the DOM, positioned absolutely inside a spacer
  * sized to the full row count. Row height is fixed (`ROW_HEIGHT`) so the
  * viewport window can be derived from scrollTop without measuring each row.
+ *
+ * A create draft is an extra display slot derived from `draftRowIndex`; entry
+ * indexes shift by one after it, so the virtual window stays O(viewport).
  */
 function TreeScroller(props: {
   folder: string
@@ -109,115 +136,100 @@ function TreeScroller(props: {
   visible?: boolean
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
-  onNewFile?: (dir: string) => void
-  onNewFolder?: (dir: string) => void
+  onCreateFile?: (dir: string, name: string) => Promise<string>
+  onCreateFolder?: (dir: string, name: string) => Promise<string>
+  onSuggestName?: (kind: CreateKind, dir: string) => Promise<string>
   onRename?: (entry: VisibleRow["entry"], name: string) => Promise<string>
-  onRenameError?: (message: string) => void
+  onEditError?: (message: string) => void
   onDelete?: (entry: VisibleRow["entry"]) => void
   onReveal?: (path: string) => void
 }) {
   const t = useT()
-  const [menu, setMenu] = useState<{
-    readonly entry: VisibleRow["entry"] | null
-    readonly dir: string
-    readonly x: number
-    readonly y: number
-  } | null>(null)
+  const [menu, setMenu] = useState<TreeMenuState | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(0)
-  const [rename, setRename] = useState<RenameEdit | null>(null)
-  const renameRef = useRef<RenameEdit | null>(null)
-  const nextRenameId = useRef(0)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const feedbackId = useId()
-  const [notice, setNotice] = useState<string | null>(null)
   const focusPathRef = useRef<string | null>(null)
+  const revealRef = useRef<RevealRequest | null>(null)
 
-  // 同步 ref 是提交锁，同时隔离旧编辑会话的异步完成回调。
-  function updateRename(next: RenameEdit | null) {
-    renameRef.current = next
-    setRename(next)
-  }
+  const session = useTreeEditSession({
+    folder: props.folder,
+    rows: props.rows,
+    visible: props.visible,
+    activePath: props.activePath,
+    activeTabId: props.activeTabId,
+    onRename: props.onRename,
+    onCreateFile: props.onCreateFile,
+    onCreateFolder: props.onCreateFolder,
+    onSuggestName: props.onSuggestName,
+    onEditError: props.onEditError,
+    onCommitted: (path, kind) => {
+      setSelectedPath(path)
+      revealRef.current = { path, focus: kind === "create-folder" }
+    },
+    onFocusRow: path => { focusPathRef.current = path },
+  })
+  const edit = session.edit
 
-  function dismissRename() {
-    if (!renameRef.current) return
-    focusPathRef.current = null
-    updateRename(null)
-  }
-
-  useEffect(() => () => { renameRef.current = null }, [])
-
+  // Row handlers are stable so memoized rows are not invalidated by App
+  // re-renders, but they must invoke the latest callbacks. The actions object
+  // is refreshed after every commit; events always run against committed state.
+  const actionsRef = useRef<RowActions | null>(null)
   useEffect(() => {
-    if (props.visible === false) dismissRename()
-  }, [props.visible])
-
-  const activePathRef = useRef(props.activePath)
-  useEffect(() => {
-    if (activePathRef.current === props.activePath) return
-    activePathRef.current = props.activePath
-    if (!renameRef.current?.submitting) dismissRename()
-  }, [props.activePath])
-
-  const activeTabIdRef = useRef(props.activeTabId)
-  useEffect(() => {
-    if (activeTabIdRef.current === props.activeTabId) return
-    activeTabIdRef.current = props.activeTabId
-    dismissRename()
-  }, [props.activeTabId])
-
-  useEffect(() => {
-    if (!rename || rename.submitting) return
-    const present = props.rows.some(row => row.entry.path === rename.entry.path)
-    const collapsed = props.rows.some(row =>
-      row.entry.is_dir && !row.expanded && pathWithinDir(rename.entry.path, row.entry.path),
-    )
-    if (!present && !collapsed) {
-      updateRename(null)
-      setNotice(t("filetree.rename.missing"))
+    actionsRef.current = {
+      openFile: path => {
+        session.dismiss()
+        revealRef.current = null
+        setSelectedPath(path)
+        props.onOpenFile(path)
+      },
+      toggleDir: path => {
+        session.dismiss()
+        revealRef.current = null
+        setSelectedPath(path)
+        props.onToggleDir(path)
+      },
+      contextMenu: (entry, depth, expanded, event) => {
+        const dir = entry.is_dir ? entry.path : parentDir(entry.path)
+        if (!dir) return
+        event.preventDefault()
+        session.dismiss()
+        // A reveal still waiting for refreshed rows must not steal focus
+        // after the user moved on to another row.
+        revealRef.current = null
+        setMenu({
+          entry,
+          dir,
+          depth: entry.is_dir ? depth + 1 : depth,
+          expandDir: entry.is_dir && !expanded,
+          x: event.clientX,
+          y: event.clientY,
+        })
+      },
     }
-  }, [props.rows, rename, t])
+  })
+  const rowActions = useMemo<RowActions>(() => ({
+    openFile: path => actionsRef.current?.openFile(path),
+    toggleDir: path => actionsRef.current?.toggleDir(path),
+    contextMenu: (entry, depth, expanded, event) =>
+      actionsRef.current?.contextMenu(entry, depth, expanded, event),
+  }), [])
 
+  useEffect(() => () => { focusPathRef.current = null }, [])
+
+  // Escape restores focus to the originating row after the edit closes. The
+  // effect also runs when rows arrive, so a row revealed by an expansion is
+  // focusable without racing the render.
   useEffect(() => {
-    if (rename || !focusPathRef.current) return
+    if (edit || !focusPathRef.current) return
     const path = focusPathRef.current
     focusPathRef.current = null
-    const row = [...(scrollRef.current?.querySelectorAll<HTMLButtonElement>("[data-tree-path]") ?? [])]
-      .find(element => element.dataset.treePath === path)
-    row?.focus({ preventScroll: true })
-  }, [rename, props.rows])
-
-  function finishRename(id: number, path: string, focusedAtSubmit?: Element | null) {
-    if (renameRef.current?.id !== id) return
-    // 不抢回用户在请求期间主动移到编辑器或其他控件的焦点。
-    const inputUnmounted = focusedAtSubmit?.classList.contains("filetree-rename-input")
-      && !focusedAtSubmit.isConnected && document.activeElement === document.body
-    if (document.activeElement?.classList.contains("filetree-rename-input") || inputUnmounted) {
-      focusPathRef.current = path
-    }
-    updateRename(null)
-  }
-
-  async function submitRename() {
-    const edit = renameRef.current
-    if (!edit || edit.submitting || !props.onRename) return
-    const focusedAtSubmit = document.activeElement
-    updateRename({ ...edit, submitting: true, error: null })
-    try {
-      const path = await props.onRename(edit.entry, edit.draft)
-      finishRename(edit.id, path, focusedAtSubmit)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (renameRef.current?.id !== edit.id) {
-        props.onRenameError?.(message)
-        return
-      }
-      updateRename({
-        ...edit,
-        submitting: false,
-        error: message,
-      })
-    }
-  }
+    const row = findRow(scrollRef.current, path)
+    if (row) row.focus({ preventScroll: true })
+    else if (samePath(path, props.folder)) scrollRef.current?.focus({ preventScroll: true })
+  }, [edit, props.rows, props.folder])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -247,93 +259,183 @@ function TreeScroller(props: {
   useEffect(() => {
     const el = scrollRef.current
     if (!el || !props.activePath || scrolledToRef.current === props.activePath) return
-    const index = props.rows.findIndex(row => row.entry.path === props.activePath)
+    const index = props.rows.findIndex(row => samePath(row.entry.path, props.activePath!))
     if (index < 0) return
     const rowTop = index * ROW_HEIGHT
-    const rowBottom = rowTop + ROW_HEIGHT
-    if (rowTop < el.scrollTop || rowBottom > el.scrollTop + el.clientHeight) {
+    if (rowTop < el.scrollTop || rowTop + ROW_HEIGHT > el.scrollTop + el.clientHeight) {
       el.scrollTop = rowTop
     }
     scrolledToRef.current = props.activePath
   }, [props.activePath, props.rows])
 
-  const { start, end } = visibleRowRange(props.rows.length, viewportH, scrollTop)
+  // Reveal a just-created node: scroll it into the window, then focus it on the
+  // next pass (the row did not exist in the committed DOM when scrolling was
+  // requested). File creation leaves focus to the editor.
+  useEffect(() => {
+    const reveal = revealRef.current
+    if (!reveal) return
+    const index = props.rows.findIndex(row => samePath(row.entry.path, reveal.path))
+    if (index < 0) return
+    const el = scrollRef.current
+    if (!el) { revealRef.current = null; return }
+    const rowTop = index * ROW_HEIGHT
+    const rowBottom = rowTop + ROW_HEIGHT
+    const row = findRow(el, reveal.path)
+    if (row) {
+      if (rowTop < el.scrollTop) {
+        el.scrollTop = rowTop
+        setScrollTop(rowTop)
+      } else if (rowBottom > el.scrollTop + el.clientHeight) {
+        el.scrollTop = rowTop
+        setScrollTop(rowTop)
+      }
+      if (reveal.focus) row.focus({ preventScroll: true })
+      revealRef.current = null
+      return
+    }
+    // Not in the rendered window yet: scroll and let the state update render it.
+    if (scrollTop !== rowTop) {
+      el.scrollTop = rowTop
+      setScrollTop(rowTop)
+    } else {
+      // Already at the target offset but not rendered: never leave a stale
+      // request that would steal focus after an unrelated scroll.
+      revealRef.current = null
+    }
+    // `edit` is a trigger, not a read: the committed rows and the create
+    // callback can land in either order, and closing the session must give
+    // the reveal effect one more pass even when rows already matched.
+  }, [props.rows, scrollTop, edit])
+
+  // Drop the tree cursor once the selected node is gone for real (collapsing
+  // an ancestor only hides it, mirroring the rename-draft rule). A node that
+  // was just created is selected before the refreshed rows arrive, so the
+  // pending reveal keeps its selection alive across those stale rows.
+  useEffect(() => {
+    if (!selectedPath) return
+    if (props.rows.some(row => samePath(row.entry.path, selectedPath))) return
+    const reveal = revealRef.current
+    if (reveal && samePath(reveal.path, selectedPath)) return
+    const hidden = props.rows.some(row =>
+      row.entry.is_dir && !row.expanded && pathWithinDir(selectedPath, row.entry.path))
+    if (!hidden) setSelectedPath(null)
+  }, [props.rows, selectedPath])
+
+  // Depends only on the target directory, not the draft text: keying this on
+  // `edit` would rescan the visible rows on every keystroke.
+  const draftDir = edit && edit.kind !== "rename" ? edit.dir : null
+  const draftIndex = useMemo(
+    () => (draftDir === null ? -1 : draftRowIndex(props.rows, draftDir, props.folder)),
+    [props.rows, draftDir, props.folder],
+  )
+  const rowCount = props.rows.length + (draftIndex >= 0 ? 1 : 0)
+  const { start, end } = visibleRowRange(rowCount, viewportH, scrollTop)
+
+  // A draft appended after a long folder's children can start outside the
+  // virtual window. The row below stays mounted anyway (so the input keeps
+  // focus), and this effect scrolls it into view whenever its slot moves.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || draftIndex < 0) return
+    const rowTop = draftIndex * ROW_HEIGHT
+    const rowBottom = rowTop + ROW_HEIGHT
+    if (rowTop < el.scrollTop) {
+      el.scrollTop = rowTop
+      setScrollTop(rowTop)
+    } else if (el.clientHeight > 0 && rowBottom > el.scrollTop + el.clientHeight) {
+      const next = rowBottom - el.clientHeight
+      el.scrollTop = next
+      setScrollTop(next)
+    }
+  }, [edit?.id, draftIndex])
+
+  // Window rows plus the draft slot; the draft is rendered even when the
+  // window does not cover it, so the edit input is never unmounted mid-create.
+  const displayIndexes: number[] = []
+  for (let index = start; index < end; index += 1) displayIndexes.push(index)
+  if (draftIndex >= 0 && (draftIndex < start || draftIndex >= end)) {
+    displayIndexes.push(draftIndex)
+    displayIndexes.sort((a, b) => a - b)
+  }
+
+  const openMenu = (state: Omit<TreeMenuState, "x" | "y">, event: MouseEvent) => {
+    event.preventDefault()
+    session.dismiss()
+    setMenu({ ...state, x: event.clientX, y: event.clientY })
+  }
+
+  const startCreate = (kind: CreateKind, target: TreeMenuState) => {
+    setMenu(null)
+    revealRef.current = null
+    if (target.expandDir) props.onToggleDir(target.dir)
+    session.beginCreate(kind, target.dir, target.depth)
+  }
 
   return (
     <div
       ref={scrollRef}
       className="filetree-tree"
       role="tree"
+      tabIndex={-1}
       aria-label={props.title}
       onContextMenu={event => {
         if (event.defaultPrevented) return
-        event.preventDefault()
-        setMenu({
-          entry: null,
-          dir: props.folder,
-          x: event.clientX,
-          y: event.clientY,
-        })
+        openMenu({ entry: null, dir: props.folder, depth: 0, expandDir: false }, event)
       }}
       onScroll={event => {
         setScrollTop(event.currentTarget.scrollTop)
         if (menu) setMenu(null)
       }}
     >
-      <div style={{ height: props.rows.length * ROW_HEIGHT, position: "relative" }}>
-        {props.rows.slice(start, end).map((row, i) => (
-          <div
-            key={row.entry.path}
-            style={{
-              position: "absolute",
-              top: (start + i) * ROW_HEIGHT,
-              left: 0,
-              right: 0,
-              height: ROW_HEIGHT,
-            }}
-          >
-            {rename?.entry.path === row.entry.path ? (
-              <RenameRow
-                row={row}
-                edit={rename}
-                feedbackId={feedbackId}
-                onChange={draft => {
-                  const edit = renameRef.current
-                  if (edit && !edit.submitting) updateRename({ ...edit, draft, error: null })
-                }}
-                onSubmit={() => void submitRename()}
-                onCancel={() => {
-                  const edit = renameRef.current
-                  if (edit && !edit.submitting) finishRename(edit.id, edit.entry.path)
-                }}
-              />
-            ) : <TreeRow
-              row={row}
-              active={row.entry.path === props.activePath}
-              onOpenFile={path => {
-                dismissRename()
-                props.onOpenFile(path)
-              }}
-              onToggleDir={path => {
-                dismissRename()
-                props.onToggleDir(path)
-              }}
-              onContextMenu={event => {
-                event.preventDefault()
-                event.stopPropagation()
-                const dir = row.entry.is_dir ? row.entry.path : parentDir(row.entry.path)
-                if (!dir) return
-                dismissRename()
-                setMenu({
-                  entry: row.entry,
-                  dir,
-                  x: event.clientX,
-                  y: event.clientY,
-                })
-              }}
-            />}
-          </div>
-        ))}
+      <div style={{ height: rowCount * ROW_HEIGHT, position: "relative" }}>
+        {displayIndexes.map(index => {
+          if (index === draftIndex && edit) {
+            return (
+              <div key="__draft__" style={absoluteRowStyle(index)}>
+                <TreeEditRow
+                  edit={edit}
+                  depth={edit.depth}
+                  isDirectory={edit.kind === "create-folder"}
+                  expanded={false}
+                  feedbackId={feedbackId}
+                  onChange={session.changeDraft}
+                  onSubmit={() => void session.submit()}
+                  onCancel={() => session.cancel(true)}
+                  onBlur={() => session.cancel(false)}
+                />
+              </div>
+            )
+          }
+          const rowIndex = draftIndex >= 0 && index >= draftIndex ? index - 1 : index
+          const row = props.rows[rowIndex]
+          if (!row) return null
+          const editing = edit?.kind === "rename" && edit.entry !== null
+            && samePath(edit.entry.path, row.entry.path)
+          return (
+            <div key={row.entry.path} style={absoluteRowStyle(index)}>
+              {editing && edit ? (
+                <TreeEditRow
+                  edit={edit}
+                  depth={row.depth}
+                  isDirectory={row.entry.is_dir}
+                  expanded={row.expanded}
+                  feedbackId={feedbackId}
+                  onChange={session.changeDraft}
+                  onSubmit={() => void session.submit()}
+                  onCancel={() => session.cancel(true)}
+                  onBlur={() => session.cancel(false)}
+                />
+              ) : (
+                <TreeRow
+                  row={row}
+                  active={props.activePath !== null && samePath(row.entry.path, props.activePath)}
+                  selected={selectedPath !== null && samePath(row.entry.path, selectedPath)}
+                  actions={rowActions}
+                />
+              )}
+            </div>
+          )
+        })}
       </div>
       {menu ? (
         <div
@@ -357,35 +459,23 @@ function TreeScroller(props: {
         >
           <MenuItem
             label={t("filetree.menu.newFile")}
-            onSelect={() => {
-              setMenu(null)
-              props.onNewFile?.(menu.dir)
-            }}
+            disabled={!props.onCreateFile || edit?.submitting}
+            onSelect={() => startCreate("create-file", menu)}
           />
           <MenuItem
             label={t("filetree.menu.newFolder")}
-            onSelect={() => {
-              setMenu(null)
-              props.onNewFolder?.(menu.dir)
-            }}
+            disabled={!props.onCreateFolder || edit?.submitting}
+            onSelect={() => startCreate("create-folder", menu)}
           />
           {menu.entry ? (
             <>
               <MenuItem
                 label={t("filetree.menu.rename")}
-                disabled={!props.onRename || rename?.submitting}
+                disabled={!props.onRename || edit?.submitting}
                 onSelect={() => {
                   const entry = menu.entry
                   setMenu(null)
-                  if (!entry || renameRef.current?.submitting) return
-                  setNotice(null)
-                  updateRename({
-                    id: ++nextRenameId.current,
-                    entry,
-                    draft: entry.name,
-                    submitting: false,
-                    error: null,
-                  })
+                  if (entry) session.beginRename(entry)
                 }}
               />
               <MenuItem
@@ -409,16 +499,47 @@ function TreeScroller(props: {
       ) : null}
       <div
         id={feedbackId}
-        role={rename || notice ? "status" : undefined}
+        role={edit || session.notice ? "status" : undefined}
         aria-live="polite"
-        className={`filetree-rename-feedback${rename?.error || notice ? " is-error" : ""}`}
+        className={`filetree-edit-feedback${edit?.error || session.notice ? " is-error" : ""}`}
       >
-        {rename?.error ?? notice ?? (rename ? t(
-          rename.submitting ? "filetree.rename.submitting" : "filetree.rename.hint",
-        ) : "")}
+        {feedbackText(edit, session.notice, t)}
       </div>
     </div>
   )
+}
+
+function absoluteRowStyle(index: number): CSSProperties {
+  return {
+    position: "absolute",
+    top: index * ROW_HEIGHT,
+    left: 0,
+    right: 0,
+    height: ROW_HEIGHT,
+  }
+}
+
+function findRow(container: HTMLElement | null, path: string): HTMLButtonElement | null {
+  if (!container) return null
+  const rows = container.querySelectorAll<HTMLButtonElement>("[data-tree-path]")
+  for (const row of rows) {
+    if (row.dataset.treePath && samePath(row.dataset.treePath, path)) return row
+  }
+  return null
+}
+
+function feedbackText(
+  edit: TreeEdit | null,
+  notice: string | null,
+  t: Translator,
+): string {
+  if (edit?.error) return edit.error
+  if (notice) return notice
+  if (!edit) return ""
+  if (edit.kind === "rename") {
+    return edit.submitting ? t("filetree.rename.submitting") : t("filetree.rename.hint")
+  }
+  return edit.submitting ? t("filetree.create.submitting") : t("filetree.create.hint")
 }
 
 function MenuItem(props: { label: string; onSelect: () => void; disabled?: boolean }) {
@@ -444,91 +565,24 @@ function MenuItem(props: { label: string; onSelect: () => void; disabled?: boole
   )
 }
 
-function RenameRow(props: {
-  row: VisibleRow
-  edit: RenameEdit
-  feedbackId: string
-  onChange: (draft: string) => void
-  onSubmit: () => void
-  onCancel: () => void
-}) {
-  const t = useT()
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const composingRef = useRef(false)
-  useEffect(() => {
-    const input = inputRef.current
-    if (!input) return
-    input.focus({ preventScroll: true })
-    const name = props.edit.entry.name
-    const end = !props.edit.entry.is_dir && name.toLowerCase().endsWith(`.${MARKDOWN_FILE_EXTENSION}`)
-      ? name.lastIndexOf(".") : name.length
-    input.setSelectionRange(0, end)
-  }, [props.edit.id])
-
-  return (
-    <div
-      className="filetree-item is-renaming"
-      style={{ paddingLeft: ROW_INSET + props.row.depth * DEPTH_INDENT }}
-      onContextMenu={event => event.stopPropagation()}
-    >
-      <TreeIcons row={props.row} />
-      <input
-        ref={inputRef}
-        className="filetree-rename-input"
-        aria-label={t("filetree.prompt.rename")}
-        aria-describedby={props.feedbackId}
-        aria-invalid={Boolean(props.edit.error)}
-        aria-busy={props.edit.submitting}
-        value={props.edit.draft}
-        readOnly={props.edit.submitting}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={event => props.onChange(event.currentTarget.value)}
-        onCompositionStart={() => { composingRef.current = true }}
-        onCompositionEnd={() => { composingRef.current = false }}
-        onKeyDown={event => {
-          event.stopPropagation()
-          if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return
-          if (event.key === "Enter") {
-            event.preventDefault()
-            props.onSubmit()
-          } else if (event.key === "Escape") {
-            event.preventDefault()
-            props.onCancel()
-          }
-        }}
-      />
-    </div>
-  )
-}
-
-function TreeIcons({ row: { entry, expanded } }: { row: VisibleRow }) {
-  return <>
-    <span className="filetree-chevron" aria-hidden="true">
-      {entry.is_dir ? <ChevronRight size={ICON_SIZE} className={expanded ? "is-open" : undefined} /> : null}
-    </span>
-    {entry.is_dir
-      ? (expanded ? <FolderOpen size={ICON_SIZE} /> : <Folder size={ICON_SIZE} />)
-      : <FileText size={ICON_SIZE} />}
-  </>
-}
-
 /**
- * Rows are memoized on entry/depth/expanded/active so an unrelated App
- * re-render (e.g. every keystroke) skips rows whose data did not change. The
- * handler props are intentionally excluded from the comparison: both closures
- * read refs only and are behaviourally stable across renders. If a handler ever
- * captures React state, it must participate in the comparison instead.
+ * Rows are memoized on entry/depth/expanded/active/selected so an unrelated
+ * App re-render (e.g. every keystroke) skips rows whose data did not change.
+ * `actions` is a stable object that reads the latest committed callbacks, so
+ * excluding it from re-render decisions does not freeze stale behavior.
  */
 const TreeRow = memo(function TreeRow(props: {
   row: VisibleRow
   active: boolean
-  onOpenFile: (path: string) => void
-  onToggleDir: (path: string) => void
-  onContextMenu: (event: MouseEvent<HTMLButtonElement>) => void
+  selected: boolean
+  actions: RowActions
 }) {
   const { entry, depth, expanded } = props.row
-  const className = props.active ? "filetree-item is-active" : "filetree-item"
+  const className = [
+    "filetree-item",
+    props.selected ? "is-selected" : "",
+    props.active ? "is-active" : "",
+  ].filter(Boolean).join(" ")
   return (
     <button
       type="button"
@@ -536,10 +590,13 @@ const TreeRow = memo(function TreeRow(props: {
       data-tree-path={entry.path}
       style={{ paddingLeft: ROW_INSET + depth * DEPTH_INDENT }}
       aria-expanded={entry.is_dir ? expanded : undefined}
-      onClick={() => entry.is_dir ? props.onToggleDir(entry.path) : props.onOpenFile(entry.path)}
-      onContextMenu={props.onContextMenu}
+      aria-current={props.active ? "page" : undefined}
+      onClick={() => entry.is_dir
+        ? props.actions.toggleDir(entry.path)
+        : props.actions.openFile(entry.path)}
+      onContextMenu={event => props.actions.contextMenu(entry, depth, expanded, event)}
     >
-      <TreeIcons row={props.row} />
+      <TreeIcons isDirectory={entry.is_dir} expanded={expanded} />
       <span className="filetree-name" title={entry.name}>{entry.name}</span>
     </button>
   )
@@ -547,5 +604,6 @@ const TreeRow = memo(function TreeRow(props: {
   prev.row.entry === next.row.entry &&
   prev.row.depth === next.row.depth &&
   prev.row.expanded === next.row.expanded &&
-  prev.active === next.active,
+  prev.active === next.active &&
+  prev.selected === next.selected,
 )

@@ -69,7 +69,6 @@ describe("FileTree sidebar menu", () => {
       { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
     ]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
       harness.seedFile(`${dir}/${name}`, "")
@@ -83,17 +82,65 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    // The placeholder appears immediately; the listing-based suggestion
+    // replaces it asynchronously and must win while the draft is untouched.
+    await waitFor(() => expect(input.value).toBe("untitled-2.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
 
-    await waitFor(() => {
-      expect(window.prompt).toHaveBeenCalledWith("New file name", "untitled-2.md")
-    })
     await waitFor(() => {
       expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled-2.md")
       expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy()
     })
+    const createdRow = screen.getByText("untitled-2.md", { selector: ".filetree-name" }).closest("button")
+    expect(createdRow?.className).toContain("is-selected")
     expect(harness.services.notifySuccess).toHaveBeenCalledWith("Created untitled-2.md")
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
     await waitFor(() => expectPathShown("/notes/untitled-2.md"))
+    const added = harness.allEditors().filter(handle => !editorsBefore.has(handle))
+    expect(added).toHaveLength(1)
+    expect(added[0].view.focus).toHaveBeenCalled()
+  })
+
+  it("Windows 原生根目录新建文件：刷新原生目录、选中新行并在新标签打开", async () => {
+    const harness = makeAppHarness()
+    const rootPath = "C:\\notes"
+    let entries = [
+      { name: "doc.md", path: "C:\\notes\\doc.md", is_dir: false },
+      { name: "untitled.md", path: "C:\\notes\\untitled.md", is_dir: false },
+    ]
+    harness.services.pickFolder = vi.fn(async () => rootPath)
+    harness.services.listDir = vi.fn(async path => (path === rootPath ? entries : []))
+    vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
+      const path = `${dir}\\${name}`
+      entries = [...entries, { name, path, is_dir: false }]
+      harness.seedFile(path, "")
+      return path
+    })
+
+    harness.renderApp()
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
+    fireEvent.change(screen.getByPlaceholderText("Run a command…"), { target: { value: "Open folder" } })
+    fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
+    await waitFor(() => expect(screen.getByText("doc.md", { selector: ".filetree-name" })).toBeTruthy())
+    await harness.openIntoActive("C:\\notes\\doc.md", "saved")
+    const editorsBefore = new Set(harness.allEditors())
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    await waitFor(() => expect(input.value).toBe("untitled-2.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    await waitFor(() => {
+      expect(harness.services.createMarkdown).toHaveBeenCalledWith(rootPath, "untitled-2.md")
+      expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy()
+    })
+    const createdRow = screen.getByText("untitled-2.md", { selector: ".filetree-name" }).closest("button")
+    expect(createdRow?.className).toContain("is-selected")
+    expect(harness.services.notifySuccess).toHaveBeenCalledWith("Created untitled-2.md")
+    expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe(rootPath)
+    await waitFor(() => expectPathShown("C:\\notes\\untitled-2.md"))
     const added = harness.allEditors().filter(handle => !editorsBefore.has(handle))
     expect(added).toHaveLength(1)
     expect(added[0].view.focus).toHaveBeenCalled()
@@ -106,7 +153,6 @@ describe("FileTree sidebar menu", () => {
       "/notes/drafts": [],
     }
     harness.services.listDir = vi.fn(async path => childEntries[path] ?? [])
-    vi.spyOn(window, "prompt").mockReturnValue("ideas")
     vi.mocked(harness.services.createDir).mockImplementation(async (dir: string, name: string) => {
       childEntries[dir] = [...(childEntries[dir] ?? []), { name, path: `${dir}/${name}`, is_dir: true }]
       childEntries[`${dir}/${name}`] = []
@@ -119,11 +165,15 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("drafts")
     fireEvent.click(screen.getByRole("menuitem", { name: "New Folder" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New folder name" })
+    expect(input.value).toBe("untitled-folder")
+    fireEvent.change(input, { target: { value: "ideas" } })
+    fireEvent.keyDown(input, { key: "Enter" })
 
-    expect(window.prompt).toHaveBeenCalledWith("New folder name", "untitled-folder")
     await waitFor(() => {
       expect(harness.services.createDir).toHaveBeenCalledWith("/notes/drafts", "ideas")
     })
+    expect(harness.services.notifySuccess).toHaveBeenCalledWith("Created ideas")
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes/drafts")
   })
 
@@ -131,7 +181,6 @@ describe("FileTree sidebar menu", () => {
     const harness = makeAppHarness()
     let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
     harness.services.listDir = vi.fn(async () => entries)
-    const prompt = vi.spyOn(window, "prompt")
     vi.mocked(harness.services.renamePath).mockImplementation(async (_from: string, toName: string) => {
       entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
       return `/notes/${toName}`
@@ -152,7 +201,6 @@ describe("FileTree sidebar menu", () => {
       expectPathShown("/notes/renamed.md")
     })
     expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
-    expect(prompt).not.toHaveBeenCalled()
     expect(vi.mocked(harness.services.listDir).mock.calls.slice(-1)[0]?.[0]).toBe("/notes")
   })
 
@@ -398,7 +446,6 @@ describe("FileTree sidebar menu", () => {
       { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
     ]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
       harness.seedFile(`${dir}/${name}`, "")
@@ -418,6 +465,9 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    await waitFor(() => expect(input.value).toBe("untitled-2.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
     await waitFor(() => expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy())
 
     await openTreeMenu("untitled-2.md")
@@ -445,7 +495,6 @@ describe("FileTree sidebar menu", () => {
       { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
     ]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [...entries, { name, path: `${dir}/${name}`, is_dir: false }]
       harness.seedFile(`${dir}/${name}`, "")
@@ -468,6 +517,9 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    await waitFor(() => expect(input.value).toBe("untitled-2.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
     await waitFor(() => expect(screen.getByText("untitled-2.md", { selector: ".filetree-name" })).toBeTruthy())
 
     // 删除先行（deletePath 停住），随后在途打开落地 —— tab 出现在竞态窗口内。
@@ -492,7 +544,6 @@ describe("FileTree sidebar menu", () => {
       { name: "untitled.md", path: "/notes/untitled.md", is_dir: false },
     ]
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.deletePath).mockImplementation(async path => {
       entries = entries.filter(entry => entry.path !== path)
     })
@@ -512,6 +563,9 @@ describe("FileTree sidebar menu", () => {
 
     await openTreeMenu("doc.md")
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    await waitFor(() => expect(input.value).toBe("untitled.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
     await waitFor(() => expectPathShown("/notes/untitled.md"))
     expect(vi.mocked(harness.services.reportError)).not.toHaveBeenCalled()
   })
@@ -535,7 +589,6 @@ describe("FileTree sidebar menu", () => {
     const harness = makeAppHarness()
     let entries: Array<{ name: string; path: string; is_dir: boolean }> = []
     harness.services.listDir = vi.fn(async () => entries)
-    vi.spyOn(window, "prompt").mockImplementation((_message, defaultValue) => String(defaultValue))
     vi.mocked(harness.services.createMarkdown).mockImplementation(async (dir, name) => {
       entries = [{ name, path: `${dir}/${name}`, is_dir: false }]
       harness.seedFile(`${dir}/${name}`, "")
@@ -548,6 +601,9 @@ describe("FileTree sidebar menu", () => {
     await waitFor(() => expect(screen.getByRole("menu", { name: "Folder actions" })).toBeTruthy())
     expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull()
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "New file name" })
+    await waitFor(() => expect(input.value).toBe("untitled.md"))
+    fireEvent.keyDown(input, { key: "Enter" })
 
     await waitFor(() => {
       expect(harness.services.createMarkdown).toHaveBeenCalledWith("/notes", "untitled.md")

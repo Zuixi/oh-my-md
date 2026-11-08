@@ -5,6 +5,7 @@ import { useT } from "./i18n"
 import { APP_MENU_TREE, type MenuEntry, type MenuSection } from "./menuTree"
 import { isMacOS } from "./platform"
 import { shortcutFor } from "./shortcuts"
+import { baseName } from "./workspace"
 
 export interface AppMenuViewState {
   readonly source: boolean
@@ -74,7 +75,7 @@ export function AppMenu(props: {
   const labelFor = (id: string): string => {
     if (id === "recents") return t("menu.recents")
     if (id.startsWith("recent:")) {
-      return id.slice("recent:".length).replace(/\\/g, "/").split("/").pop() ?? id
+      return baseName(id.slice("recent:".length))
     }
     return t(`cmd.label.${MENU_TO_COMMAND[id] ?? id}`)
   }

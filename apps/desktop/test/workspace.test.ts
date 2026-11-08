@@ -4,6 +4,7 @@ import {
   activeSession,
   addTab,
   baseName,
+  childPath,
   closeTab,
   createWorkspace,
   findTabByPath,
@@ -12,7 +13,11 @@ import {
   openFolder,
   parentDir,
   pathWithinDir,
+  plainPath,
+  rebaseToDir,
+  relativeToDir,
   resolveMarkdownHref,
+  samePath,
   replaceActive,
   replaceTabSession,
 } from "../src/workspace"
@@ -120,7 +125,8 @@ describe("workspace tabs", () => {
 
   it("derives a folder root from a document path only when none is set", () => {
     expect(parentDir("/Users/wqz/Documents/test.md")).toBe("/Users/wqz/Documents")
-    expect(parentDir("/test.md")).toBeNull()
+    expect(parentDir("/test.md")).toBe("/")
+    expect(parentDir("/")).toBeNull()
     const inferred = ensureFolder(createWorkspace(), "/notes/doc.md")
     expect(inferred.folder).toBe("/notes")
     expect(ensureFolder(inferred, "/other/file.md").folder).toBe("/notes")
@@ -162,5 +168,113 @@ describe("path helpers (Spec 05b)", () => {
     // constants.ts promises SAFE_MODE_BYTES === OPEN_STREAM_THRESHOLD_BYTES;
     // a LARGE-tier confirm must always imply the byte axis of safe mode.
     expect(SAFE_MODE_BYTES).toBe(OPEN_STREAM_THRESHOLD_BYTES)
+  })
+})
+
+describe("native Windows path forms", () => {
+  it("parentDir preserves the caller's separator so tree keys keep matching", () => {
+    expect(parentDir("C:\\notes\\a.md")).toBe("C:\\notes")
+    expect(parentDir("C:\\notes")).toBe("C:\\")
+    expect(parentDir("C:\\")).toBeNull()
+    expect(parentDir("C:/notes")).toBe("C:/")
+    expect(parentDir("\\\\server\\share\\notes\\a.md")).toBe("\\\\server\\share\\notes")
+  })
+
+  it("plainPath strips the extended-length prefix and leaves ordinary paths intact", () => {
+    expect(plainPath("\\\\?\\C:\\notes\\a.md")).toBe("C:\\notes\\a.md")
+    expect(plainPath("//?/C:/notes/a.md")).toBe("C:/notes/a.md")
+    expect(plainPath("\\\\?\\UNC\\server\\share\\a.md")).toBe("\\\\server\\share\\a.md")
+    expect(plainPath("C:\\notes\\a.md")).toBe("C:\\notes\\a.md")
+    expect(plainPath("/notes/a.md")).toBe("/notes/a.md")
+    // "?" is only a prefix marker on the extended-length form.
+    expect(plainPath("C:\\?\\notes")).toBe("C:\\?\\notes")
+  })
+
+  it("samePath and pathWithinDir treat extended-length and plain forms as one path", () => {
+    expect(samePath("\\\\?\\C:\\notes\\a.md", "C:\\notes\\a.md")).toBe(true)
+    expect(samePath("//?/C:/notes/a.md", "C:\\notes\\a.md")).toBe(true)
+    expect(samePath("C:\\notes\\A.md", "C:\\notes\\a.md")).toBe(false)
+    expect(pathWithinDir("\\\\?\\C:\\notes\\sub\\a.md", "C:\\notes")).toBe(true)
+    expect(pathWithinDir("\\\\?\\C:\\notes\\a.md", "C:\\notes")).toBe(true)
+    expect(pathWithinDir("\\\\?\\C:\\other\\a.md", "C:\\notes")).toBe(false)
+  })
+
+  it("findTabByPath finds an open tab in either path form", () => {
+    const verbatim = addTab(
+      createWorkspace(),
+      createFileSession(2, "\\\\?\\C:\\notes\\a.md", "a", version),
+    )
+    expect(findTabByPath(verbatim, "C:\\notes\\a.md")?.id).toBe(2)
+    const plain = addTab(createWorkspace(), createFileSession(2, "C:\\notes\\a.md", "a", version))
+    expect(findTabByPath(plain, "\\\\?\\C:\\notes\\a.md")?.id).toBe(2)
+  })
+})
+
+describe("POSIX path semantics", () => {
+  it("treats backslash as a file-name character, never a separator", () => {
+    expect(samePath("/notes/a\\b.md", "/notes/a/b.md")).toBe(false)
+    expect(pathWithinDir("/notes/a\\b.md", "/notes")).toBe(true)
+    expect(pathWithinDir("/notes\\x/a.md", "/notes")).toBe(false)
+    expect(parentDir("/notes/a\\b.md")).toBe("/notes")
+    expect(baseName("/notes/a\\b.md")).toBe("a\\b.md")
+    expect(childPath("/notes/a\\b", "c.md")).toBe("/notes/a\\b/c.md")
+  })
+
+  it("keeps literal backslashes in markdown href resolution", () => {
+    expect(resolveMarkdownHref("/notes/doc.md", "a\\b.md")).toBe("/notes/a\\b.md")
+    expect(resolveMarkdownHref("/notes\\x/doc.md", "a.md")).toBe("/notes\\x/a.md")
+  })
+
+  it("normalizes href backslashes only for Windows documents", () => {
+    expect(resolveMarkdownHref("C:\\notes\\doc.md", "sub\\a.md")).toBe("C:/notes/sub/a.md")
+    expect(resolveMarkdownHref("C:\\notes\\doc.md", "..\\a.md")).toBe("C:/a.md")
+  })
+
+  it("reports the POSIX root as the parent of first-level entries", () => {
+    expect(parentDir("/")).toBeNull()
+    expect(parentDir("/notes")).toBe("/")
+    expect(parentDir("/notes/a.md")).toBe("/notes")
+    expect(baseName("/")).toBe("/")
+  })
+})
+
+describe("path joins and create/rename rebasing", () => {
+  it("joins into roots without doubling or dropping the separator", () => {
+    expect(childPath("/", "a.md")).toBe("/a.md")
+    expect(childPath("/notes", "a.md")).toBe("/notes/a.md")
+    expect(childPath("C:\\", "a.md")).toBe("C:\\a.md")
+    expect(childPath("C:\\notes", "a.md")).toBe("C:\\notes\\a.md")
+    expect(childPath("C:/notes", "a.md")).toBe("C:/notes/a.md")
+  })
+
+  it("keeps a canonical result whose parent is spelled exactly like the directory", () => {
+    expect(rebaseToDir("/notes/a.md", "/notes", "a.md")).toBe("/notes/a.md")
+    expect(rebaseToDir("C:\\notes\\a.md", "C:\\notes", "a.md")).toBe("C:\\notes\\a.md")
+  })
+
+  it("rebases results whose parent only names the same directory", () => {
+    // Tree keys keep the caller's spelling. A forward-slash root must not
+    // receive a backslash result (and vice versa), or list_dir refreshes no
+    // longer match the path the create/rename flow holds.
+    expect(rebaseToDir("C:\\notes\\a.md", "C:/notes", "a.md")).toBe("C:/notes/a.md")
+    expect(rebaseToDir("C:/notes/a.md", "C:\\notes", "a.md")).toBe("C:\\notes\\a.md")
+    expect(rebaseToDir("C:\\notes\\a.md", "\\\\?\\C:\\notes", "a.md"))
+      .toBe("\\\\?\\C:\\notes\\a.md")
+  })
+
+  it("rebases symlink-resolved results onto the caller's directory form", () => {
+    // macOS /tmp -> /private/tmp and /var -> /private/var; Linux workspaces may
+    // be opened through any symlink, so fs::canonicalize must not leak out.
+    expect(rebaseToDir("/private/tmp/notes/a.md", "/tmp/notes", "a.md"))
+      .toBe("/tmp/notes/a.md")
+    expect(rebaseToDir("/private/var/folders/x/notes/sub/idea.md", "/var/folders/x/notes/sub", "idea.md"))
+      .toBe("/var/folders/x/notes/sub/idea.md")
+  })
+
+  it("relativeToDir strips a comparable workspace prefix", () => {
+    expect(relativeToDir("/notes/sub/a.md", "/notes")).toBe("sub/a.md")
+    expect(relativeToDir("/notes/a.md", "/notes/")).toBe("a.md")
+    expect(relativeToDir("C:\\notes\\sub\\a.md", "C:\\notes")).toBe("sub/a.md")
+    expect(relativeToDir("/other/a.md", "/notes")).toBe("/other/a.md")
   })
 })

@@ -25,7 +25,7 @@ import {
 import {
   activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder, findTabByPath,
   focusTab, openFolder, parentDir, pathWithinDir, replaceTabSession, resolveMarkdownHref,
-  type Workspace,
+  samePath, type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -71,7 +71,7 @@ import { redo, selectAll, undo } from "@codemirror/commands"
 import { applyTheme, toggleTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
 import { formatCommandEntries } from "./formatCommandEntries"
-import { isMacOS, isWindows } from "./platform"
+import { fileNamesAreCaseInsensitive, isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { isMainWindow } from "./windowScope"
 import { rememberPath } from "./recents"
@@ -103,6 +103,7 @@ import { OpeningOverlay } from "./OpeningOverlay"
 import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
+  TreeEditError,
   emptyFileTree,
   pathsToRefresh,
   removeTreePath,
@@ -111,9 +112,11 @@ import {
   setChildren,
   toggleExpand,
   visibleRows,
+  type CreateKind,
   type FileTreeModel,
   type TreeEntry,
 } from "./fileTreeState"
+import { isDuplicateNameError, suggestEntryName, type EntryKind } from "./entryName"
 import { OutlinePanel } from "./OutlinePanel"
 import { SidebarResizer } from "./SidebarResizer"
 import {
@@ -139,7 +142,6 @@ import { createDocumentMaterializer, type DocumentMaterializer } from "./documen
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
-  MARKDOWN_FILE_EXTENSION,
   OPEN_READONLY_THRESHOLD_BYTES,
   OPEN_SAVE_QUEUE_TIMEOUT_MS,
   OPEN_STREAM_THRESHOLD_BYTES,
@@ -598,24 +600,6 @@ export default function App({
     if (mountedRef.current) services.reportError(message)
   }
 
-  function invalidName(name: string): boolean {
-    return (
-      !name
-      || name === "."
-      || name === `.${MARKDOWN_FILE_EXTENSION}`
-      || name.includes("/")
-      || name.includes("\\")
-      || name.includes("..")
-    )
-  }
-
-  function normalizeMarkdownName(name: string): string {
-    const trimmed = name.trim()
-    return trimmed.toLowerCase().endsWith(`.${MARKDOWN_FILE_EXTENSION}`)
-      ? trimmed
-      : `${trimmed}.${MARKDOWN_FILE_EXTENSION}`
-  }
-
   /** 列举错误签名（路径 → 上次已上报的错误文案）。通知语义：状态变化才打扰——
    *  同一路径的相同错误只报一次，列举成功清除签名，新错误形态仍会上报。 */
   const treeErrorSignaturesRef = useRef(new Map<string, string>())
@@ -645,14 +629,19 @@ export default function App({
     }
   }
 
-  async function nextUntitledMarkdownName(dir: string): Promise<string> {
-    if (!services.listDir) return `untitled.${MARKDOWN_FILE_EXTENSION}`
-    const entries = await services.listDir(dir)
-    const names = new Set(entries.map(entry => entry.name))
-    if (!names.has(`untitled.${MARKDOWN_FILE_EXTENSION}`)) return `untitled.${MARKDOWN_FILE_EXTENSION}`
-    let suffix = 2
-    while (names.has(`untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`)) suffix += 1
-    return `untitled-${suffix}.${MARKDOWN_FILE_EXTENSION}`
+  /** 为内联新建草稿提供不冲突的建议名；列举失败时回退到基础名。 */
+  async function suggestTreeName(kind: CreateKind, dir: string): Promise<string> {
+    const entryKind: EntryKind = kind === "create-file" ? "file" : "folder"
+    if (!services.listDir) return suggestEntryName(entryKind, [])
+    try {
+      const entries = await services.listDir(dir)
+      const names = entries.map(entry => (
+        fileNamesAreCaseInsensitive() ? entry.name.toLowerCase() : entry.name
+      ))
+      return suggestEntryName(entryKind, names)
+    } catch {
+      return suggestEntryName(entryKind, [])
+    }
   }
 
   function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
@@ -661,7 +650,7 @@ export default function App({
       const path = sessionPath(tab)
       if (!path) return tab
       const nextPath = replaceTreePrefix(path, from, to)
-      if (nextPath !== path && (isDir || path.replace(/\\/g, "/") === from.replace(/\\/g, "/"))) {
+      if (nextPath !== path && (isDir || samePath(path, from))) {
         return retargetSessionPath(tab, nextPath)
       }
       return tab
@@ -679,7 +668,7 @@ export default function App({
     const affectedPaths = nextTabs
       .map(tab => sessionPath(tab))
       .filter((path): path is string => path !== null)
-      .filter(path => path === to || (isDir && pathWithinDir(path, to)))
+      .filter(path => samePath(path, to) || (isDir && pathWithinDir(path, to)))
     for (const path of new Set(affectedPaths)) {
       void services.allowDocumentAssets(path).catch(error => {
         services.reportError(errorMessage(t("error.renameSyncFailed"), error))
@@ -1896,11 +1885,12 @@ export default function App({
     if (!folder || !services.listDir) return
     const dirs: string[] = []
     let current = parentDir(path)
-    const prefix = folder === "/" ? folder : `${folder}/`
-    while (current && current !== folder && current.startsWith(prefix)) {
+    // Separator/prefix-agnostic: the folder can be a native `C:\…` root while
+    // an opened link arrives forward-slashed, or vice versa.
+    while (current && !samePath(current, folder) && pathWithinDir(current, folder)) {
       dirs.unshift(current)
       const above = parentDir(current)
-      if (above === current) break
+      if (!above) break
       current = above
     }
     for (const dir of dirs) {
@@ -2009,55 +1999,45 @@ export default function App({
     void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
   }
 
-  async function createTreeFile(dir: string) {
-    if (!services.createMarkdown) return
-    let defaultName = `untitled.${MARKDOWN_FILE_EXTENSION}`
-    try {
-      defaultName = await nextUntitledMarkdownName(dir)
-    } catch (error) {
-      reportTreeError(dir, error)
-      return
-    }
-    const rawName = window.prompt(t("filetree.prompt.newFile"), defaultName)
-    if (rawName === null) return
-    const name = normalizeMarkdownName(rawName)
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
-    try {
-      const createdPath = await services.createMarkdown(dir, name)
-      await refreshTreePath(dir)
-      pendingFocusRef.current = true
-      void openPath(createdPath, true)
-      services.notifySuccess?.(t("notify.fileCreated", { name }))
-    } catch (error) {
-      services.reportError(errorMessage(t("error.createFileFailed"), error))
-    }
+  /** Duplicate targets keep the draft with an inline error; IO failures toast. */
+  function treeCreateError(error: unknown, name: string, fallback: string): TreeEditError {
+    return isDuplicateNameError(error)
+      ? new TreeEditError("duplicate", t("filetree.create.exists", { name }))
+      : new TreeEditError("io", errorMessage(fallback, error))
   }
 
-  async function createTreeFolder(dir: string) {
-    if (!services.createDir) return
-    const rawName = window.prompt(t("filetree.prompt.newFolder"), "untitled-folder")
-    if (rawName === null) return
-    const name = rawName.trim()
-    if (invalidName(name)) {
-      reportUserError(t("error.emptyName"))
-      return
-    }
+  async function createTreeFile(dir: string, name: string): Promise<string> {
+    if (!services.createMarkdown) throw new TreeEditError("io", t("error.createFileFailed"))
+    let createdPath: string
     try {
-      await services.createDir(dir, name)
-      await refreshTreePath(dir)
+      createdPath = await services.createMarkdown(dir, name)
     } catch (error) {
-      services.reportError(errorMessage(t("error.createFolderFailed"), error))
+      throw treeCreateError(error, name, t("error.createFileFailed"))
     }
+    await refreshTreePath(dir)
+    pendingFocusRef.current = true
+    void openPath(createdPath, true)
+    services.notifySuccess?.(t("notify.fileCreated", { name }))
+    return createdPath
   }
 
-  async function renameTreeEntry(entry: TreeEntry, rawName: string): Promise<string> {
+  async function createTreeFolder(dir: string, name: string): Promise<string> {
+    if (!services.createDir) throw new TreeEditError("io", t("error.createFolderFailed"))
+    let createdPath: string
+    try {
+      createdPath = await services.createDir(dir, name)
+    } catch (error) {
+      throw treeCreateError(error, name, t("error.createFolderFailed"))
+    }
+    await refreshTreePath(dir)
+    services.notifySuccess?.(t("notify.folderCreated", { name }))
+    return createdPath
+  }
+
+  async function renameTreeEntry(entry: TreeEntry, name: string): Promise<string> {
     if (!services.renamePath) throw new Error(t("error.renameFailed"))
-    const name = entry.is_dir ? rawName.trim() : normalizeMarkdownName(rawName)
+    // Same-name submissions are a no-op on disk but still complete the edit.
     if (name === entry.name) return entry.path
-    if (invalidName(name)) throw new Error(t("error.emptyName"))
     const dir = parentDir(entry.path)
     if (!dir) throw new Error(t("error.renameFailed"))
     const folder = workspaceRef.current.folder
@@ -2572,10 +2552,11 @@ export default function App({
               onOpenFile={path => void openPath(path, true)}
               onToggleDir={path => void toggleDir(path)}
               onSearch={() => search.setOpen(true)}
-              onNewFile={dir => void createTreeFile(dir)}
-              onNewFolder={dir => void createTreeFolder(dir)}
+              onCreateFile={services.createMarkdown ? createTreeFile : undefined}
+              onCreateFolder={services.createDir ? createTreeFolder : undefined}
+              onSuggestName={services.listDir ? suggestTreeName : undefined}
               onRename={services.renamePath ? renameTreeEntry : undefined}
-              onRenameError={message => services.reportError(message)}
+              onEditError={message => services.reportError(message)}
               onDelete={entry => void deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {

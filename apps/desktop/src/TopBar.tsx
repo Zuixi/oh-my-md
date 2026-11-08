@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
+import { baseName, pathWithinDir, relativeToDir } from "./workspace"
 import { shortcutFor } from "./shortcuts"
 import { useT } from "./i18n"
 
@@ -142,13 +143,10 @@ export function TopBar(props: {
 
 function buildBreadcrumb(workspace: string | null, filePath: string | null): string[] {
   if (!filePath) return []
-  const normalized = filePath.replace(/\\/g, "/")
-  if (workspace) {
-    const root = workspace.replace(/\\/g, "/")
-    if (normalized.startsWith(root + "/")) {
-      return normalized.slice(root.length + 1).split("/")
-    }
+  // relativeToDir yields forward-slash segments only on Windows; a POSIX file
+  // name may contain a literal backslash, which must not become a segment.
+  if (workspace && pathWithinDir(filePath, workspace)) {
+    return relativeToDir(filePath, workspace).split("/")
   }
-  const name = normalized.split("/").pop()
-  return name ? [name] : []
+  return [baseName(filePath)]
 }

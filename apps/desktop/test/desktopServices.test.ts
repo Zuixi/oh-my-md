@@ -90,6 +90,50 @@ describe("revealInFinder", () => {
   })
 })
 
+describe("tree edit IPC", () => {
+  it("normalizes extended-length paths returned by create/rename commands", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce("\\\\?\\C:\\notes\\untitled-2.md")
+    await expect(defaultServices.createMarkdown?.("C:\\notes", "untitled-2.md"))
+      .resolves.toBe("C:\\notes\\untitled-2.md")
+    expect(invoke).toHaveBeenCalledWith(
+      "create_markdown", { dir: "C:\\notes", name: "untitled-2.md" })
+
+    invoke.mockResolvedValueOnce("\\\\?\\C:\\notes\\untitled-folder")
+    await expect(defaultServices.createDir?.("C:\\notes", "untitled-folder"))
+      .resolves.toBe("C:\\notes\\untitled-folder")
+    expect(invoke).toHaveBeenCalledWith(
+      "create_dir", { dir: "C:\\notes", name: "untitled-folder" })
+
+    invoke.mockResolvedValueOnce("\\\\?\\C:\\notes\\ideas")
+    await expect(defaultServices.renamePath?.("C:\\notes\\untitled-folder", "ideas"))
+      .resolves.toBe("C:\\notes\\ideas")
+    expect(invoke).toHaveBeenCalledWith(
+      "rename_path", { from: "C:\\notes\\untitled-folder", toName: "ideas" })
+  })
+
+  it("leaves POSIX results untouched", async () => {
+    invoke.mockResolvedValueOnce("/notes/a.md")
+    await expect(defaultServices.createMarkdown?.("/notes", "a.md")).resolves.toBe("/notes/a.md")
+  })
+
+  it("rebases symlink-resolved results onto the caller's directory form", async () => {
+    // macOS canonicalizes /tmp to /private/tmp and /var to /private/var; a
+    // Linux workspace opened through a symlink behaves the same way.
+    invoke.mockResolvedValueOnce("/private/tmp/notes/a.md")
+    await expect(defaultServices.createMarkdown?.("/tmp/notes", "a.md"))
+      .resolves.toBe("/tmp/notes/a.md")
+
+    invoke.mockResolvedValueOnce("/private/var/folders/x/notes/untitled-folder")
+    await expect(defaultServices.createDir?.("/var/folders/x/notes", "untitled-folder"))
+      .resolves.toBe("/var/folders/x/notes/untitled-folder")
+
+    invoke.mockResolvedValueOnce("/private/tmp/notes/ideas")
+    await expect(defaultServices.renamePath?.("/tmp/notes/drafts", "ideas"))
+      .resolves.toBe("/tmp/notes/ideas")
+  })
+})
+
 describe("toast notifications", () => {
   it("reports errors through toast.error with the 8s autoClose", () => {
     defaultServices.reportError("Save failed: disk full")

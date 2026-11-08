@@ -1,6 +1,7 @@
 import { Search, X } from "lucide-react"
 import { MAX_SEARCH_HITS } from "./constants"
 import { useT } from "./i18n"
+import { baseName } from "./workspace"
 
 export interface SearchHit {
   path: string
@@ -64,7 +65,7 @@ export function SearchPanel(props: {
           onClick={() => props.onOpen(hit)}
         >
           <span className="search-hit-location">
-            {hit.path.split("/").pop()}:{hit.line}
+            {baseName(hit.path)}:{hit.line}
           </span>{" "}
           {hit.text.slice(0, hit.start)}
           <mark className="search-hit-mark">{hit.text.slice(hit.start, hit.end)}</mark>

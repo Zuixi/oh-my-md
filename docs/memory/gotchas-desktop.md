@@ -189,26 +189,87 @@ tab (unbounded decoration memory, full-tree renumber scans, budget Infinity).
 Regression: `App.largeDocOpen.test.tsx` "keeps the active over-scale tab's
 safe mode when restore creates lazy placeholder views".
 
-## Path containment checks must normalize separators
+## Path containment checks must normalize separators (and extended-length prefixes)
 
 `sessionPath` inputs carry native separators on Windows (`C:\a\b.md`) while
 folder strings often use `/`. A plain `path.startsWith(folder + "/")` guard is
 always false there, so every open file was watched twice (recursive folder
 watch + the file itself), doubling watcher events into `pollFileTabs` — which
 has no cross-round coalescing of its own and re-probes every tab per round.
-Use `pathWithinDir` (workspace.ts); `runFileTabsPoll` adds the in-flight
-dedupe. The version probe itself is stat-first (see the watcher entry: unchanged
-files cost a stat, not a 50MB read), but poll still re-reads **changed** files
-in full (correctness first): a banner-without-contents divergence for huge docs
-is a recorded follow-up.
+Use `pathWithinDir`/`samePath` (workspace.ts); `runFileTabsPoll` adds the
+in-flight dedupe. Both compare through `comparablePath` (strip a `\\?\` /
+`\\?\UNC\` prefix with `plainPath`, then unify separators **only for Windows
+forms**). On POSIX, backslash is an ordinary file-name character: blanket
+`replace(/\\/g, "/")` merges distinct names (`/notes/a\b.md` ≠ `/notes/a/b.md`)
+and sends `parentDir`/`baseName` to the wrong segment. Use `isWindowsPath` /
+`pathSeparator` before any rewrite, `relativeToDir` for display prefixes
+(QuickOpen), and `baseName` for labels (search hits, tabs).
+
+Canonicalized parents leak because Rust `create_markdown`/`create_dir`/
+`rename_path` return `fs::canonicalize(parent).join(name)`. Windows gets a
+verbatim `\\?\C:\…` result; macOS/Linux resolve symlinks (`/tmp` →
+`/private/tmp`, `/var` → `/private/var`, any symlinked workspace). Both forms
+fail plain identity comparison, so `findTabByPath`, reveal, selection, and
+rename retargeting all miss. Rules:
+
+- Rebase at the IPC wire boundary: `desktopServices` runs those three results
+  through `plainPath` **and** `rebaseToDir(result, dir, name)`. Reuse the
+  returned result only when its parent is **spelled exactly** like the caller's
+  `dir`; `samePath` identity is not enough. `C:/notes`, `C:\notes`, and
+  `\\?\C:\notes` name the same directory, but tree keys keep whichever form
+  `list_dir` returned for the caller's root, so an equivalent-but-different
+  spelling still orphans the row. Otherwise rebuild `childPath(dir, name)`.
+  `replaceTreePrefix` likewise appends to the target verbatim; it must not
+  re-strip a verbatim prefix that the wire boundary preserved. Do not strip
+  `\\?\` globally — it carries long-path semantics and native consumers may
+  need it (see the reveal entry).
+- Keep raw forms out of UI state. `parentDir` deliberately preserves the
+  caller's separators (a native `C:\notes` parent stays `C:\notes`, a drive
+  root keeps `C:\` instead of drive-relative `C:`), because tree model keys
+  (`childrenByPath`, `expanded`) are exact strings that must match `list_dir`
+  rows. Normalizing there orphaned the refreshed listing under `C:/notes`
+  while the tree read `C:\notes`, so a newly created file never appeared, was
+  never selected, and never opened.
+- Subtree removal must use `pathWithinDir`, not a raw `` `${path}/` `` prefix:
+  native Windows descendants (`C:\notes\drafts\a.md`) never match a
+  forward-slash prefix, leaving stale listings/expansion after delete.
+- Save Copy compares the picker path with Rust's canonical `resolvedPath`;
+  use `samePath`, or the same-file guard never fires on Windows/macOS.
+
+Regression: `workspace.test.ts` "native Windows path forms" + "POSIX path
+semantics", `fileTreeState.test.ts` "tree path rewrites",
+`desktopServices.test.ts` "tree edit IPC",
+`documentSaveRunner.saveCopy.test.ts`, and `FileTree.menu.test.tsx`
+"Windows 原生根目录新建文件".
+
+## Markdown extensions differ between listing, create, and rename
+
+`list_dir` shows `md`, `markdown`, and `mdx` (case-insensitive), but Rust's
+`create_markdown` requires the extension to be exactly `md`, and `rename_path`
+requires a literal `md` target only when the source extension is `md` in any
+casing. Normalize typed names in `entryName.ts`: create collapses every
+recognized extension to `.md` (`notes.markdown` → `notes.md`, `NOTES.MD` →
+`NOTES.md`, otherwise Rust rejects the request after the row closes); rename
+keeps `.markdown`/`.mdx` as typed but lowercases `.md` variants, or a base-name
+edit of `NOTES.MD` fails the Rust target check. `TreeEditRow` selection uses
+`markdownBaseNameEnd` so all three extensions stay unselected.
+
+Rename collisions are not routable through `isDuplicateNameError`: create
+returns the stable `"path already exists"`, but rename returns localized OS
+errors (`File exists (os error 17)`, `The file exists. (os error 80)`). The
+edit session therefore pre-checks visible siblings for rename as well,
+excluding the entry itself so case-only renames still reach Rust.
 
 ## `revealItemInDir` fails on forward-slash Windows paths (Shell ITEMIDLIST)
 
 "在文件管理器显示" reported `Failed to convert path //?/E:/… to ITEMIDLIST` on Windows
 even though the file was there. Paths reaching the service mix two conventions:
-Rust `canonicalize()` yields the verbatim form `\\?\E:\…`, and `parentDir()`
-(workspace.ts) rewrites every `\` to `/` for UI display, producing `//?/E:/…` when
-that display string is later used as a native source (tree roots, tab paths).
+Rust `canonicalize()` yields the verbatim form `\\?\E:\…`, and a forward-slash
+spelling `//?/E:/…` appears whenever a normalized display string is later used
+as a native source (older helpers rewrote `\` to `/`; `parentDir()` no longer
+re-separators, and create/rename results are plain-normalized at the wire
+boundary — the fix below is still required for verbatim inputs arriving by
+other routes, e.g. persisted sessions or OS events).
 
 The opener plugin normalizes in this order: `dunce::simplified()` **then** its own
 `absolute()` (GetFullPathNameW, with a verbatim passthrough). Rust parses the

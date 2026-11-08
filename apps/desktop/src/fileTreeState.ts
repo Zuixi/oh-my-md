@@ -1,4 +1,10 @@
-import { baseName, pathWithinDir } from "./workspace"
+import {
+  baseName,
+  comparablePath,
+  pathSeparator,
+  pathWithinDir,
+  samePath,
+} from "./workspace"
 
 export interface TreeEntry {
   name: string
@@ -21,10 +27,48 @@ export interface VisibleRow {
 export const ROW_HEIGHT = 26
 /** Extra rows kept rendered above and below the viewport window. */
 export const OVERSCAN = 10
+/** Row inset and per-level indent; must match the `.filetree-item` padding. */
+export const ROW_INSET = 8
+export const DEPTH_INDENT = 14
+/** Tree icon size; keep the reserved chevron slot stable across depths. */
+export const ICON_SIZE = 14
 
 export interface RowWindow {
   readonly start: number
   readonly end: number
+}
+
+export type CreateKind = "create-file" | "create-folder"
+
+/**
+ * Failure routing for tree edits: duplicate and invalid names stay inline in
+ * the edit row; io failures leave the row and surface through the app's toast.
+ */
+export class TreeEditError extends Error {
+  constructor(readonly kind: "duplicate" | "invalid" | "io", message: string) {
+    super(message)
+    this.name = "TreeEditError"
+  }
+}
+
+/**
+ * Index in the virtual display list where a create draft for `dir` belongs:
+ * after the directory's last visible descendant, or at the end for the root.
+ * Returns -1 while the directory is hidden (collapsed ancestor or missing), so
+ * the draft row is not rendered at a misleading position.
+ */
+export function draftRowIndex(
+  rows: readonly VisibleRow[],
+  dir: string,
+  folder: string,
+): number {
+  if (samePath(dir, folder)) return rows.length
+  const index = rows.findIndex(row => row.entry.is_dir && samePath(row.entry.path, dir))
+  if (index < 0) return -1
+  const depth = rows[index]!.depth
+  let end = index + 1
+  while (end < rows.length && rows[end]!.depth > depth) end += 1
+  return end
 }
 
 /** Viewport window for virtualization: rows [start, end) intersect the scroll
@@ -82,24 +126,30 @@ export function pathsToRefresh(root: string, model: FileTreeModel): string[] {
   return [...new Set([root, ...Object.keys(model.childrenByPath)])]
 }
 
+/**
+ * Rewrite a cached path from the edited entry's old location to the new one.
+ * `to` is already spelled in the tree's own form (IPC results are rebased onto
+ * the caller's directory at the wire boundary), so it is used verbatim.
+ */
 export function replaceTreePrefix(path: string, from: string, to: string): string {
   if (!pathWithinDir(path, from)) return path
-  const suffix = path.replace(/\\/g, "/").slice(from.replace(/\\/g, "/").length)
-  return to + (to.includes("\\") ? suffix.replace(/\//g, "\\") : suffix)
+  const base = comparablePath(from).replace(/\/+$/, "")
+  const suffix = comparablePath(path).slice(base.length)
+  return to + (pathSeparator(to) === "\\" ? suffix.replace(/\//g, "\\") : suffix)
 }
 
+/** Drop a deleted subtree from cached listings and expansion in any path form. */
 export function removeTreePath(model: FileTreeModel, path: string): FileTreeModel {
-  const prefix = `${path}/`
   const childrenByPath = Object.fromEntries(
     Object.entries(model.childrenByPath)
-      .filter(([key]) => key !== path && !key.startsWith(prefix))
+      .filter(([key]) => !pathWithinDir(key, path))
       .map(([key, entries]) => [
         key,
-        entries.filter(entry => entry.path !== path && !entry.path.startsWith(prefix)),
+        entries.filter(entry => !pathWithinDir(entry.path, path)),
       ]),
   )
   const expanded = new Set(
-    [...model.expanded].filter(entryPath => entryPath !== path && !entryPath.startsWith(prefix)),
+    [...model.expanded].filter(entryPath => !pathWithinDir(entryPath, path)),
   )
   return { childrenByPath, expanded }
 }
@@ -110,7 +160,7 @@ export function renameTreePath(model: FileTreeModel, from: string, to: string): 
       replaceTreePrefix(key, from, to),
       entries.map(entry => ({
         ...entry,
-        name: entry.path === from ? baseName(to) : entry.name,
+        name: samePath(entry.path, from) ? baseName(to) : entry.name,
         path: replaceTreePrefix(entry.path, from, to),
       })),
     ]),
