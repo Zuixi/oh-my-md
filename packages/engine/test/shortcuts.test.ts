@@ -10,11 +10,9 @@ import { toggleKeyBindings, toggleShortcutLabels } from "../src/modes/livePrevie
  * Guard against shortcut drift between the functional CodeMirror key (`key`)
  * and the macOS display label (`display`) the desktop palette renders. Both live
  * in the same binding entry, but the converter here still catches a key change
- * that left the display behind (and vice versa). The US-keyboard backtick is
- * Shift+` so `Mod-`` is displayed with the shift symbol.
+ * that left the display behind (and vice versa).
  */
 function cmKeyToDisplay(key: string): string {
-  if (key === "Mod-`") return "⇧⌘`"
   const parts = key.split("-")
   const symbols: Record<string, string> = { Mod: "⌘", Shift: "⇧", Alt: "⌥", Ctrl: "⌃" }
   const order: Record<string, number> = { "⌃": 0, "⌥": 1, "⇧": 2, "⌘": 3 }
@@ -59,6 +57,7 @@ describe("keymap display labels", () => {
     expect(displayLabels()).toMatchObject({
       bold: "⌘B",
       italic: "⌘I",
+      underline: "⌘U",
       "heading-1": "⌘1",
       "ordered-list": "⌥⌘7",
       link: "⌘K",

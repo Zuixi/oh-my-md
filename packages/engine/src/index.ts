@@ -8,6 +8,7 @@ import { tableCaretFollower } from "./decorations/widgets/tableCellEdit"
 import { renderBudgetFlush } from "./decorations/renderBudget"
 import { performancePolicyExtension, type EditorPerformancePolicy } from "./performancePolicy"
 import { orderedNormalizationState } from "./lists/ordered"
+import { inlinePlanState } from "./format/inlineCommands"
 import { markdownKeymap } from "./format/commands"
 import { quoteKeymap } from "./format/quotes"
 import { listKeymap } from "./format/lists"
@@ -93,6 +94,7 @@ export {
   toggleItalic,
   toggleOrderedList,
   toggleStrikethrough,
+  toggleUnderline,
   toggleUnorderedList,
 } from "./format/commands"
 export {
@@ -227,6 +229,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     autoPairCompartment.of(autoPairExtension(options.autoPair ?? DEFAULT_AUTO_PAIR)),
     performancePolicyExtension(policy),
     renderBudgetFlush(),
+    inlinePlanState,
     markdownKeymap,
     // Outside the compartment: a pending normalization must outlive Source/Live toggles.
     orderedNormalizationState,

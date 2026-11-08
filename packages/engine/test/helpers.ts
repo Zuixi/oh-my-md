@@ -1,6 +1,6 @@
 import { EditorState, type Extension } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
-import { forceParsing, syntaxTree } from "@codemirror/language"
+import { forceParsing, syntaxTreeAvailable } from "@codemirror/language"
 import { markdownLanguageSupport } from "../src/parse/markdown"
 import { drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
 
@@ -22,7 +22,7 @@ export function makeState(
   selection?: { anchor: number; head?: number },
 ) {
   const state = EditorState.create({ doc, selection, extensions: [markdownLanguageSupport(), ...extra] })
-  const treeComplete = syntaxTree(state).length >= state.doc.length
+  const treeComplete = syntaxTreeAvailable(state, state.doc.length)
   const live = state.field(livePreviewField, false)
   if (treeComplete && (!live || live.pending.length === 0)) return state
   const parent = document.createElement("div")

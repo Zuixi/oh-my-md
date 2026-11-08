@@ -5,7 +5,7 @@ export interface DecoSpec { from: number; to: number; tag: string; deco: Decorat
 
 // 分工模型（路线 A，对齐 Typora）：装饰性标记（成对强调 `**`、标题 `#`、列表符）
 // 永不因光标进入而展开 —— 点击/移动光标只是定位，行宽不抖动。标记的增删改走
-// format/commands.ts 的切换命令，或在折叠边界 Backspace 整体删除原子区。
+// format/commands.ts 导出的切换命令，或在折叠边界 Backspace 整体删除原子区。
 // “唯一编辑入口就是源码本身”的语法（链接、图片、行内公式、脚注引用/定义）用
 // cursorInside 做**节点级**展开：光标进入该语法自身的 span 才展开，落在同一行
 // 的其它文本上不展开 —— 行级展开曾是点击闪烁的根源（软换行下一段=一行，点段

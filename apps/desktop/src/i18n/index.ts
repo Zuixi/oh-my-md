@@ -5,6 +5,7 @@ import { zh } from "./messages/zh"
 
 export type Locale = "en" | "zh"
 export type StoredLocale = "auto" | Locale
+export type Translator = (key: string, params?: Record<string, string | number>) => string
 
 const messages: Record<Locale, Record<string, string>> = { en, zh }
 
@@ -83,7 +84,7 @@ export function t(key: string, params?: Record<string, string | number>): string
   return interpolate(template, params)
 }
 
-function useT(): (key: string, params?: Record<string, string | number>) => string {
+function useT(): Translator {
   const locale = useSyncExternalStore(subscribe, getLocale, getLocale)
   return useMemo(() => {
     const table = messages[locale]

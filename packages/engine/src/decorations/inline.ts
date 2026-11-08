@@ -25,7 +25,7 @@ function childMarks(node: SyntaxNodeRef, name: string): { from: number; to: numb
 }
 
 // 路线 A：成对强调标记无条件折叠 —— 光标进入不显源码（不闪行），
-// 增删改走 format/commands.ts 的 toggle 命令或折叠边界 Backspace。
+// 增删改走 format/commands.ts 导出的 toggle 命令或折叠边界 Backspace。
 function foldPair(node: SyntaxNodeRef, out: DecoSpec[], markName: string, markClass: string) {
   const marks = childMarks(node, markName)
   if (marks.length >= 2) {

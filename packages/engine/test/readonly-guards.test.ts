@@ -23,7 +23,7 @@ function readonlyState(doc: string, head: number) {
     .state
 }
 
-/** headless Command 执行器（同 format.test.ts 的 run）：dispatch 捕获为文本改写。 */
+/** headless Command 执行器（同 formatHarness.ts 的 attempt）：dispatch 捕获为文本改写。 */
 function run(command: Command, state: EditorState): { handled: boolean; doc: string } {
   let doc = state.doc.toString()
   const target = {

@@ -4,7 +4,7 @@
 // 列表”的顺序，于是 `> text` 完全没有续写（Enter 掉出引用）、`- > text` 丢掉 `> `，
 // 而引用 toggle 用 `startsWith("> ")` 判断，认不出 `>x` / `  > x` / `- > x`。
 // 这里统一从 Lezer 树取段，语法知识留在解析层，`format/quotes.ts`（Enter 续写）与
-// `format/commands.ts`（引用 toggle）共用同一份判定。
+// `format/blockCommands.ts`（引用 toggle）共用同一份判定。
 import type { EditorState, Line } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
 import { syntaxTree } from "@codemirror/language"

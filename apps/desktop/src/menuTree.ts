@@ -66,6 +66,7 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
     entries: [
       { id: "bold" },
       { id: "italic" },
+      { id: "underline" },
       { id: "strikethrough" },
       { id: "inline-code" },
       { id: "code-block", separatorAfter: true },
