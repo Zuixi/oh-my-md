@@ -58,6 +58,7 @@ src-tauri/gen/
 *.sln
 *.swp
 .cursor/*
+.vscode/
 !.cursor/hooks/
 !.cursor/hooks/**
 !.cursor/hooks.json
