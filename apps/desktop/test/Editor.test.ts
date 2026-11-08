@@ -175,7 +175,7 @@ describe("desktop editor lifecycle", () => {
     )
     view.dispatch({ selection: { anchor: 10 } })
 
-    expect(editorStatus(view)).toEqual({ cursor: "2:3", mode: "live" })
+    expect(editorStatus(view)).toEqual({ cursor: "2:3", head: 10, mode: "live" })
     expect(documentOutline(view).map(item => item.text)).toEqual(["Title"])
     view.destroy()
   })
@@ -345,7 +345,7 @@ describe("desktop editor lifecycle", () => {
   })
 
   it("falls back to a neutral status and empty outline without a view", () => {
-    expect(editorStatus(null)).toEqual({ cursor: "1:1", mode: "live" })
+    expect(editorStatus(null)).toEqual({ cursor: "1:1", head: 0, mode: "live" })
     expect(documentOutline(null)).toEqual([])
   })
 
@@ -605,7 +605,7 @@ describe("desktop editor lifecycle", () => {
     view.dispatch({ selection: { anchor: 9 } })
 
     expect(onDocumentUpdate).not.toHaveBeenCalled()
-    expect(onStatusChange).toHaveBeenLastCalledWith({ cursor: "2:2", mode: "live" })
+    expect(onStatusChange).toHaveBeenLastCalledWith({ cursor: "2:2", head: 9, mode: "live" })
     view.destroy()
   })
 

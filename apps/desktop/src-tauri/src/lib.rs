@@ -1,7 +1,11 @@
+mod app_lifecycle;
 mod diagnostics;
 mod documents;
 mod export;
 mod fonts;
+#[cfg(test)]
+mod log_capture;
+mod logging;
 mod menu;
 mod paste_assets;
 mod session_flush;
@@ -339,37 +343,6 @@ fn update_capability_policy(runtime: &UpdateCapabilityRuntime) -> UpdateCapabili
     }
 }
 
-/// Every live window label, used as the flush target set for app-wide
-/// rounds (quit, update restart, exit). Per-window rounds pass the single
-/// closing label instead.
-fn all_window_labels<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<String> {
-    app.webview_windows().keys().cloned().collect()
-}
-
-#[tauri::command]
-fn quit_app(app: tauri::AppHandle) {
-    let gate = app.state::<session_flush::FlushGate>();
-    if gate.in_progress() {
-        // The in-flight round's finish exits the app.
-        return;
-    }
-    let exit_handle = app.clone();
-    let targets = all_window_labels(&app);
-    if gate.begin(
-        session_flush::SESSION_FLUSH_TIMEOUT,
-        &targets,
-        move |_outcome| exit_handle.exit(0),
-    ) {
-        // Targeted per window: only the labels registered as round targets
-        // are asked to flush.
-        for label in &targets {
-            let _ = app.emit_to(label, session_flush::SESSION_FLUSH_EVENT, ());
-        }
-    } else {
-        app.exit(0);
-    }
-}
-
 #[tauri::command]
 fn session_flush_ack(app: tauri::AppHandle, window: tauri::WebviewWindow) {
     // The webview is injected from the caller's context, so the ack lands on
@@ -401,7 +374,7 @@ async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpdateRestartRe
         return PrepareUpdateRestartResult::TimedOut;
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let targets = all_window_labels(&app);
+    let targets = app_lifecycle::all_window_labels(&app);
     let started = gate.begin(
         session_flush::SESSION_FLUSH_TIMEOUT,
         &targets,
@@ -822,7 +795,15 @@ fn take_pending_open_files(window: tauri::WebviewWindow) -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // Before `build()`: a panic during startup must still identify its
+    // `file:line`. The hook chains to the default one, so a panic raised
+    // before the logger exists still reaches stderr.
+    logging::install_panic_hook();
+    #[cfg(target_os = "macos")]
+    let builder = logging::install_webview_termination_hook(tauri::Builder::default());
+    #[cfg(not(target_os = "macos"))]
+    let builder = tauri::Builder::default();
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // Markdown file arguments open in this instance (macOS delivers
             // the same via RunEvent::Opened instead of a second process);
@@ -845,22 +826,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: None,
-                    }),
-                ])
-                .build(),
-        )
         .manage(documents::DocumentCoordinator::default())
         .manage(documents::DocumentVersionCache::default())
         .manage(session_flush::FlushGate::default())
         .manage(workspace::SessionFileLock::default())
         .manage(Mutex::<windows::WindowRegistry>::default())
+        .manage(logging::ExitingState::default())
+        // The frontend log sink's per-second budget (spec §3.9 layer 4). It
+        // must outlive every IPC call, so it is process state, not a command
+        // local.
+        .manage(logging::FrontendBudget::new(
+            logging::LOG_FRONTEND_BUDGET_PER_SEC,
+        ))
         .setup(|app| {
+            // One read for the whole setup (logging + pre-paint theme).
+            let settings = workspace::get_settings().unwrap_or_default();
+            // Logging first: Tauri turns a setup error into a panic. The
+            // previous-session scan, boundary write, and managed state all
+            // live in one helper so `run()` stays thin (lib.rs is
+            // growth-frozen; the setup order is load-bearing there).
+            logging::setup_logging(app.handle(), &settings);
             // Launch argv: the registry is empty and the config-declared main
             // window does not exist yet, so routing would spawn a duplicate
             // editor window. Queue straight for "main" and emit targeted at
@@ -886,8 +871,7 @@ pub fn run() {
             // set_window_theme push arrives only after React boots, which
             // leaves the title bar flashing the OS appearance at startup.
             if let Some(window) = app.get_webview_window("main") {
-                let raw = workspace::get_settings().unwrap_or_default();
-                if let Err(e) = window.set_theme(startup_window_theme(&raw)) {
+                if let Err(e) = window.set_theme(startup_window_theme(&settings)) {
                     log::warn!("startup window theme failed: {e}");
                 }
             }
@@ -945,7 +929,6 @@ pub fn run() {
             if let Err(e) = workspace::migrate_legacy_config() {
                 log::warn!("legacy config migration failed: {e}");
             }
-            log::info!("app started {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -1054,12 +1037,16 @@ pub fn run() {
             set_window_theme,
             update_capability,
             prepare_update_restart,
-            quit_app,
+            app_lifecycle::quit_app,
             session_flush_ack,
             app_version,
             create_editor_window,
             take_pending_open_files,
             diagnostics::export_diagnostics,
+            logging::log_state,
+            logging::open_log_dir,
+            logging::frontend::log_frontend,
+            app_lifecycle::restart_app,
             menu::set_menu_locale,
             export::export_preview,
             fonts::list_system_fonts
@@ -1087,6 +1074,12 @@ pub fn run() {
             if let tauri::RunEvent::Reopen { .. } = event {
                 windows::ensure_window(app);
             }
+            // Terminal event: the event loop is exiting, so nothing can
+            // outlive this line but the logger's own flush. Matched before
+            // `ExitRequested` because that arm moves `api` out of `event`.
+            if let tauri::RunEvent::Exit = event {
+                logging::note_clean_exit();
+            }
             // Cmd+Q / native quit arrives as ExitRequested without per-window
             // CloseRequested. code: None marks user-initiated exits; our own
             // post-flush `app.exit(0)` carries Some and passes through.
@@ -1094,6 +1087,10 @@ pub fn run() {
                 code: None, api, ..
             } = event
             {
+                // First, before any flushing: a force-kill during the flush
+                // round must still leave an intent behind to distinguish it
+                // from a crash.
+                logging::note_exit_intent(app, "user");
                 let gate = app.state::<session_flush::FlushGate>();
                 // `flushed` is one-shot from a completed flush round and can
                 // be stale: with ≥2 live windows, closing ONE of them
@@ -1116,7 +1113,7 @@ pub fn run() {
                     return;
                 }
                 let exit_handle = app.clone();
-                let targets = all_window_labels(app);
+                let targets = app_lifecycle::all_window_labels(app);
                 if !gate.begin(
                     session_flush::SESSION_FLUSH_TIMEOUT,
                     &targets,

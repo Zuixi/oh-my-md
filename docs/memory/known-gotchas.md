@@ -51,6 +51,10 @@
 - **Desktop `defaultKeymap` is registered before engine keymaps** — `Prec.high` beats it, but every structural Enter and list Tab/Shift-Tab needs `Prec.highest` to beat `markdown()`'s bundled `Prec.high` Enter; list Tab must return true even when no rewrite applies, or the browser moves focus; arrow/caret-clamp bindings stay at `Prec.high`.
 - **Parser character codes are named, not magic** — use `parse/chars.ts` constants.
 - **Doc-start `---` is front matter, not a thematic rule** — unclosed front matter swallows to EOF.
+- **`syntaxTree().length` is not contiguous parse coverage** — lazy nested languages can leave fragment holes; commands without local semantic proof must gate on `syntaxTreeAvailable`. Inline toggles use a resolved local container/node plus a revocable repeat plan, so an unrelated earlier hole cannot break consecutive shortcuts. Toggles remain semantic, all-or-nothing, one transaction, and one isolated undo step; never append raw marker pairs.
+- **Bold/italic stacking is semantic, not raw delimiter append** — a delimiter-merge guard must still allow the missing opposite emphasis around a proved whole node (`**text**` + italic → `***text***`); same-kind presses toggle off and never create `****text****`.
+- **Inline formatting composition must respect node ownership** — underline markers are asymmetric (`<u>` / `</u>`), and formatting added around `InlineCode` must wrap the whole resolved node rather than enter its literal content.
+- **Wrap commands must keep the caret inside** — a collapsed caret at a word or paragraph end needs an explicit post-wrap selection before the closing marker/fence. Right-biased mapping puts it after the closing insertion, so the next shortcut stacks another wrapper instead of toggling it off.
 - **The complete-tree trap** — production code must never `forceParsing`/`ensureSyntaxTree` to `doc.length` (`crossLayerNoFullTree.test.ts` guards it).
 - **`syntaxTree().length` is not contiguous parse coverage** — lazy nested languages can leave fragment holes; commands without local semantic proof must gate on `syntaxTreeAvailable`. Inline toggles use a resolved local container/node plus a revocable repeat plan, so an unrelated earlier hole cannot break consecutive shortcuts. Toggles remain semantic, all-or-nothing, one transaction, and one isolated undo step; never append raw marker pairs.
 - **Bold/italic stacking is semantic, not raw delimiter append** — a delimiter-merge guard must still allow the missing opposite emphasis around a proved whole node (`**text**` + italic → `***text***`); same-kind presses toggle off and never create `****text****`.
@@ -129,6 +133,17 @@
 - **Menu events carry no window identity** — route through the registry MRU (`menu.rs` `focused_label`); zero windows means the command is dropped.
 - **FlushGate rounds are counting** — one global deadline over the target set; `ack` carries the calling window label and non-target acks are ignored; empty targets complete immediately.
 - **Session shards drop on window close, survive app exit** — removal runs in the CloseRequested finisher under `SessionFileLock`; a crash may restore a window closed after its last flush (accepted).
+- **A restart can outrun an async settings write** — settings persist fire-and-forget; a "restart to apply" path must await the latest save (`trackSettingsSave`) and treat a fallback-only write as failure, or the new process reads the old file and the toggle silently does nothing.
+- **`AppHandle::restart()` skips exit events** — use `request_restart()`; the bare form skips `ExitRequested`/`Exit`, so `session end clean=true` is never written and the next launch reports an abnormal exit.
+- **`t()` threw before `initLocale`** — `messages[undefined]` is `undefined`; the error boundary can render first, so `t` falls back to the English table instead of indexing it.
+- **Never `JSON.stringify` a thrown value into a log** — it carries whatever the object holds (document text, tokens) and defeats the export promise; describe structure (type, key names, message/stack) instead.
+- **`String(structuredError)` is `[object Object]`** — render a typed command error from its `message`, or the log loses the only explanation of a failed operation.
+- **A support bundle must survive a corrupt log** — decode lossily and list unreadable files in the manifest; aborting the export fails exactly when it is needed.
+- **`{stem}_` prefix matching is not ownership** — in the shared temp dir it picks up another tool's file; match the plugin's `{stem}_YYYY-MM-DD_HH-MM-SS.log` shape.
+- **A stale `session start` can outlive its opt-in epoch** — the scan must compare the marker's `generation=` token with the current settings generation and answer `unknown` on mismatch, or a pre-off-period clean exit masks a later crash.
+- **`tauri-plugin-log` defaults destroy evidence** — `Builder::default()` is `LevelFilter::Trace` in release too, and `KeepOne` calls `fs::remove_file` at 40 KB; set level, `max_file_size`, and `KeepSome`.
+- **A plugin `setup` failure panics before any window appears** — a file-open error propagates out of `build()`'s `initialize_plugins(handle)?`; never let a filesystem-touching plugin `setup` be load-bearing for startup.
+- **The app `.setup()` hook runs on the event loop's `Ready` event, and a non-`Ok` return becomes `panic!("Failed to setup app: {e}")`** — that is what makes late plugin registration possible *and* what makes an error from setup fatal.
 
 ## Tooling and process
 

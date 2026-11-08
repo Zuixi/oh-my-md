@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test"
 
 // Real-browser proof of the heading level badge (engine: inline.ts tags the
-// cursor's heading line `omd-h-active` + data-omd-h; styles.css overlays
-// "H<n>" at the line's left edge). happy-dom cannot run ::before/attr() or
+// cursor's heading line `omd-h-active` + data-omd-h; styles.css overlays an
+// "H<n>" chip inside the content column's left gutter). happy-dom cannot run ::before/attr() or
 // layout, so the three things only a layout engine can settle are checked here:
 //  - the badge is painted with the right level text while editing,
 //  - it overlays without consuming line width (text x-position is unchanged),

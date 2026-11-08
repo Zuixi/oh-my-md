@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { sameEditorStatus, type EditorStatus } from "./editorStatus"
 
-const DEFAULT_STATUS: EditorStatus = { cursor: "1:1", mode: "live" }
+const DEFAULT_STATUS: EditorStatus = { cursor: "1:1", head: 0, mode: "live" }
 
 export interface EditorStatusStore {
   getSnapshot(): EditorStatus

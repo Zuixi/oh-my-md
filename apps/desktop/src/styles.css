@@ -155,16 +155,22 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
 .editor-host .omd-h4 { font-size: 1.125em; font-weight: 700; }
 .editor-host .omd-h5 { font-size: 1em;     font-weight: 700; }
 .editor-host .omd-h6 { font-size: 0.875em; font-weight: 700; color: var(--omd-quote); }
-/* 光标所在标题行左缘的级别徽标（折叠的 `#` 唯一替代线索）：overlay 定位零宽，
-不推动正文 —— 行宽不抖动是路线 A 的核心不变量。仅编辑态可见，阅读态零噪音。 */
+/* 光标所在标题行的级别徽标（折叠的 `#` 唯一替代线索）：overlay 定位零宽，
+不推动正文 —— 行宽不抖动是路线 A 的核心不变量。仅编辑态可见，阅读态零噪音。
+锚定：伪元素挂在行首 left:0，向左平移进 .cm-content 的 24px 左内边距（gap 8px
++ "H2" ≈ 14px，任何列宽不越 scroller 裁剪）；top:50% 垂直居中，H1~H6 行框
+高低差异下都不贴顶。 */
 .editor-host .omd-h-active { position: relative; }
 .editor-host .omd-h-active::before {
   content: "H" attr(data-omd-h);
   position: absolute;
-  left: -3em;
-  font-size: 11px;
+  left: 0;
+  top: 50%;
+  transform: translate(calc(-100% - 8px), -50%);
+  font-size: 10px;
   font-weight: 600;
-  line-height: inherit;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
   color: var(--omd-quote);
   opacity: 0.75;
   pointer-events: none;
@@ -803,6 +809,16 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   max-height: 240px;
 }
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--omd-bg); color: var(--omd-fg); }
+/* Error boundary (Task 7): a render failure replaces the whole shell, so the
+   recovery surface owns the viewport instead of floating over a broken layout. */
+.omd-error-boundary {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 100vh; padding: 24px; text-align: center;
+  background: var(--omd-bg); color: var(--omd-error-fg);
+}
+.omd-error-boundary p { margin: 0; }
+.omd-error-boundary-actions { display: flex; gap: 8px; }
+.omd-error-boundary button { font: inherit; padding: 6px 12px; cursor: pointer; }
 /* Top bar: unified single-row tab bar */
 .topbar {
   display: flex;
@@ -1553,16 +1569,27 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   /* Fixed height so virtualization can derive row positions from ROW_HEIGHT. */
   height: 26px; box-sizing: border-box;
 }
-/* Three visual states stay distinct: hover is transient, selected is the tree
-   cursor, and active is the file open in the editor. Active wins the fill;
-   selected keeps an inset accent ring when both apply. */
-.filetree-item:hover { background: var(--omd-bar); }
-.filetree-item.is-selected {
+/* 侧栏行状态语言（filetree / outline / search 共用）：hover = --omd-bar 中性
+灰底；当前项 = 同灰底 + 2px 左缘 --omd-link 竖条（见 .outline-item.is-current
+注释）。现状曾用 --omd-border 作 active 底，比 hover 更淡，状态强度倒置。 */
+.search-hit:hover,
+.filetree-item:hover {
   background: var(--omd-bar);
-  box-shadow: inset 0 0 0 1px var(--omd-link);
+  color: var(--omd-fg);
 }
-.filetree-item.is-active { background: var(--omd-border); }
-.filetree-item:focus-visible { outline: 2px solid var(--omd-link); outline-offset: -2px; }
+.search-hit:focus-visible,
+.filetree-item:focus-visible {
+  outline: 2px solid var(--omd-link);
+  outline-offset: -2px;
+}
+/* The tree cursor (reveal after create/rename) and the file open in the
+   editor share the current-row language; a row can be both at once. */
+.filetree-item.is-selected,
+.filetree-item.is-active {
+  background: var(--omd-bar);
+  color: var(--omd-fg);
+  box-shadow: inset 2px 0 0 var(--omd-link);
+}
 .filetree-item svg { flex: none; color: var(--omd-muted); }
 /* Single-line names: min-width 0 lets the flex child shrink so the ellipsis
    tracks the sidebar's live width (resize / window changes) with no JS. */
@@ -1596,9 +1623,18 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
    the list. --omd-bar is a full step darker than the panel background
    (--omd-chrome) — --omd-border was tried first and was visually
    indistinguishable from the panel. */
+/* 侧栏行状态语言（filetree / outline / search 共用，见 .filetree-item 规则）：
+hover 与当前项同用 --omd-bar 灰底，当前项再加 2px 左缘 --omd-link 竖条区分
+层级（与 blockquote 左缘条的视觉母题一致），不为一级灰底再发明 token。
+--omd-bar 比 --omd-chrome 面板底深一档（--omd-border 曾试过，与面板不可分）。 */
 .outline-item:hover {
   background: var(--omd-bar);
   color: var(--omd-fg);
+}
+.outline-item.is-current {
+  background: var(--omd-bar);
+  color: var(--omd-fg);
+  box-shadow: inset 2px 0 0 var(--omd-link);
 }
 .outline-item:focus-visible {
   outline: 2px solid var(--omd-link);
@@ -1772,6 +1808,40 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   height: 16px;
   cursor: pointer;
 }
+/* Verbose-logging note: the restart requirement sits under the checkbox row as
+   its own line rather than inside the label, so `getByLabelText` keeps matching
+   the row's own wording. */
+.settings-note {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  color: var(--omd-muted);
+}
+/* Degradation row. Uses the shared error palette (light and dark) rather than a
+   new variable: a degraded log directory is a real failure the user is being
+   asked to fix. */
+.settings-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--omd-error-border);
+  border-radius: 6px;
+  background: var(--omd-error-bg);
+  font-size: 12px;
+}
+.settings-warning-title {
+  font-weight: 600;
+  color: var(--omd-error-fg);
+}
+.settings-warning-note {
+  color: var(--omd-fg);
+}
+.settings-warning-path {
+  font-family: ui-monospace, Menlo, Monaco, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+  color: var(--omd-fg);
+}
 /* Font Family picker (Typora-style trigger + popover) */
 .font-picker {
   position: relative;
@@ -1884,6 +1954,29 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 }
 .settings-btn-primary:hover {
   opacity: 0.9;
+}
+/* Logging panel: one row holding an optional "restart now" button next to the
+   two outbound links (guide + issue form). Wraps rather than overflowing: the
+   zh labels are longer than the en ones. */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  justify-content: flex-start;
+}
+.settings-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--omd-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-link:hover {
+  opacity: 0.8;
 }
 
 .find-replace-bar {

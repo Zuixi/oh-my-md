@@ -1,9 +1,12 @@
 import {
   errorMessage,
+  toDocumentCommandError,
   type DocumentErrorCode,
   type ExistingDiskSnapshot,
 } from "./desktopServices"
 import { t } from "./i18n"
+import { getGlobalLogger } from "./logger"
+import { pathField } from "./logPath"
 import type { ConflictActionId } from "./documentSaveCoordinator"
 import type { DiskDivergence, DocumentSaveState } from "./documentSaveState"
 import type { DesktopServices } from "./desktopServices"
@@ -42,7 +45,7 @@ export interface ConflictActionDeps {
     mode?: SaveMode | boolean,
   ) => Promise<void>
   readonly saveCopy: (tabId: number) => Promise<void>
-  readonly resetFromSnapshot: (tabId: number, snapshot: ExistingDiskSnapshot) => void
+  readonly resetFromSnapshot: (tabId: number, snapshot: ExistingDiskSnapshot) => boolean | void
   readonly setDivergence: (
     tabId: number,
     divergence: Exclude<DiskDivergence, { kind: "none" }>,
@@ -62,7 +65,8 @@ async function readExistingSnapshot(
   try {
     const snapshot = await services.readDocument(path)
     return snapshot.kind === "existing" ? snapshot : "missing"
-  } catch {
+  } catch (error) {
+    getGlobalLogger().warn("conflict", `read failed code=${toDocumentCommandError(error).code} ${pathField(path)}`)
     return "failed"
   }
 }
@@ -89,6 +93,7 @@ export function makeConflictActions(
       if (deps.isDirty(tabId) && !deps.services.confirmDiscard()) return
 
       const snapshot = await readExistingSnapshot(deps.services, path)
+      if (!sameDocument(deps, tabId, session)) return
       if (snapshot === "failed") return
       if (snapshot === "missing") {
         deps.setDivergence(tabId, {
@@ -97,7 +102,8 @@ export function makeConflictActions(
         })
         return
       }
-      deps.resetFromSnapshot(tabId, snapshot)
+      if (deps.resetFromSnapshot(tabId, snapshot) === false) return
+      logConflictAction(deps, tabId, "reloadDisk", "applied")
       deps.clearDivergence(tabId)
       deps.clearRecoveryForTab(tabId)
     },
@@ -110,6 +116,7 @@ export function makeConflictActions(
 
       const baseline = sessionVersion(session)
       const live = await readExistingSnapshot(deps.services, diskSnap.requestedPath)
+      if (!sameDocument(deps, tabId, session)) return
       if (live === "failed" || live === "missing") return
 
       let expectedVersion = diskSnap.version
@@ -134,6 +141,7 @@ export function makeConflictActions(
         }
       }
 
+      logConflictAction(deps, tabId, "overwriteDisk", "requested")
       return deps.saveFile(tabId, "explicit", {
         kind: "overwrite",
         expected: { kind: "existing", version: expectedVersion },
@@ -143,6 +151,7 @@ export function makeConflictActions(
     keepCurrent(tabId) {
       const divergence = deps.getSaveState(tabId).divergence
       if (divergence.kind !== "externalChanged") return
+      logConflictAction(deps, tabId, "keepCurrent", "applied")
       deps.setDivergence(tabId, {
         kind: "contentConflict",
         localSnapshot: deps.getContents(tabId),
@@ -151,12 +160,14 @@ export function makeConflictActions(
     },
 
     recreateFile(tabId) {
+      logConflictAction(deps, tabId, "recreateFile", "requested")
       return deps.saveFile(tabId, "explicit", { kind: "recreate" })
     },
 
     closeDiscard(tabId) {
       const confirm = deps.services.confirmClose ?? deps.services.confirmDiscard
       if (!confirm()) return
+      logConflictAction(deps, tabId, "closeDiscard", "confirmed")
       deps.clearRecoveryForTab(tabId)
       deps.closeTab(tabId)
     },
@@ -169,8 +180,10 @@ export function makeConflictActions(
       if (deps.isDirty(tabId) && !deps.services.confirmDiscard()) return
 
       const snapshot = await readExistingSnapshot(deps.services, version.resolvedPath)
+      if (!sameDocument(deps, tabId, session)) return
       if (snapshot === "failed" || snapshot === "missing") return
-      deps.resetFromSnapshot(tabId, snapshot)
+      if (deps.resetFromSnapshot(tabId, snapshot) === false) return
+      logConflictAction(deps, tabId, "reopenPrevious", "applied")
       deps.clearDivergence(tabId)
       deps.clearRecoveryForTab(tabId)
     },
@@ -197,6 +210,22 @@ export function makeConflictActions(
       deps.clearDivergence(tabId)
     },
   }
+}
+
+function sameDocument(deps: ConflictActionDeps, tabId: number, captured: EditorSession): boolean {
+  const current = deps.getSession(tabId)
+  return current?.documentId === captured.documentId && sessionPath(current) === sessionPath(captured)
+}
+
+function logConflictAction(
+  deps: ConflictActionDeps,
+  tabId: number,
+  action: ConflictActionId,
+  phase: "requested" | "confirmed" | "applied",
+): void {
+  const tab = deps.getSession(tabId)
+  if (!tab) return
+  getGlobalLogger().info("conflict", `action=${action} phase=${phase} tab=${tabId} document=${tab.documentId} kind=${deps.getSaveState(tabId).divergence.kind} ${pathField(sessionPath(tab) ?? "")}`)
 }
 
 export type SaveFailedCallback = (

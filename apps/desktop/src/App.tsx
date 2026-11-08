@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
-  createEditor, documentOutline, editorStatus, makeImageResolver, resetEditorDocument,
+  createEditor, documentOutline, editorStatus, resetEditorDocument,
   setEditorAutoPair, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
@@ -9,23 +9,20 @@ import type { Text } from "@codemirror/state"
 import { createEditorStatusStore } from "./editorStatusStore"
 import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
-  applyToggle, createTextAssembler, documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
+  documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
   setBlockRenderBudget, setSafeModeRendering,
   type AutoPairOptions, type OutlineItem,
 } from "@omd/engine"
-import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
-import { pastePlainText } from "./pastePlainText"
-import { pasteFromSystemClipboard } from "./clipboardPaste"
-import { systemClipboardReader } from "./clipboardPayload"
+import { type ImagePasteOptions } from "./imagePaste"
 import {
-  advanceDocumentIdentity, createSession, lazyFileSession, openSession, recoveryKey,
-  retargetSessionPath, sessionContentLoaded, sessionDirty, sessionPath,
+  advanceDocumentIdentity, createSession, openSession, recoveryKey,
+  sessionContentLoaded, sessionDirty, sessionPath,
   type EditorSession,
 } from "./session"
 import {
-  activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder, findTabByPath,
-  focusTab, openFolder, parentDir, pathWithinDir, replaceTabSession, resolveMarkdownHref,
-  samePath, type Workspace,
+  activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder,
+  focusTab, openFolder, pathWithinDir, replaceTabSession, resolveMarkdownHref,
+  type Workspace,
 } from "./workspace"
 import {
   clearTabNormalization, projectNormalizationNotice,
@@ -36,9 +33,13 @@ import {
 } from "./normalizationCoordinator"
 import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
+import { createDocumentOpen, type DocumentOpen, type QuickOpenState } from "./documentOpen"
+import { createFileTreeActions } from "./fileTreeActions"
+import { loadInitialSettings, restoreDraft, restoreSavedSession, type AppSessionInitHost } from "./appSessionInit"
+import { restartToApplyLogging } from "./appLoggingActions"
+import { persistSettingsChange } from "./settingsPersistence"
 import { useConflictSaveBinding } from "./conflictSaveBinding"
 import { ConflictSaveRegion } from "./ConflictSaveRegion"
-import { exportCurrent, loadCustomCss } from "./appExportActions"
 import {
   canAutosave,
   topBanner,
@@ -59,42 +60,29 @@ import {
 import { NormalizationBanner } from "./NormalizationBanner"
 import { UpdateBanner } from "./UpdateBanner"
 import {
+  classifyUpdateError,
   createUpdateCoordinator,
   type UpdateCoordinator,
   type UpdateFailureKind,
-  type UpdateStage,
   type UpdateState,
 } from "./updateCoordinator"
 import { updateRestartReadiness } from "./updateRestartReadiness"
 import { createTauriUpdateAdapter, type UpdateAdapter } from "./updateAdapter"
-import { redo, selectAll, undo } from "@codemirror/commands"
-import { applyTheme, toggleTheme, type AppTheme } from "./theme"
+import { applyTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
-import { formatCommandEntries } from "./formatCommandEntries"
-import { fileNamesAreCaseInsensitive, isMacOS, isWindows } from "./platform"
+import { buildAppCommands } from "./appCommands"
+import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
 import { isMainWindow } from "./windowScope"
 import { rememberPath } from "./recents"
 import { AppMenu } from "./AppMenu"
 import { AboutDialog } from "./AboutDialog"
-import { defaultServices, errorMessage, toDocumentCommandError, type DesktopServices, type DiskSnapshot, type SnapshotEntry } from "./desktopServices"
-import {
-  buildReplaceAll,
-  findNextMatch,
-  findPreviousMatch,
-  replaceCurrentSpec,
-  type SearchMatch,
-  type SearchRequest,
-} from "./currentDocumentSearch"
-import {
-  collectMatches,
-  nextIndex,
-  prevIndex,
-  replaceAll,
-  validateFindPattern,
-  type FindQuery,
-} from "./findReplace"
+import { defaultServices, errorMessage, type DesktopServices, type SnapshotEntry } from "./desktopServices"
+import { flushLogs, logUpdateStartupFailure } from "./logging"
+import { useLoggingState } from "./useLoggingState"
+import { collectMatches, validateFindPattern } from "./findReplace"
 import { FindReplaceBar } from "./FindReplaceBar"
+import { useFindReplace } from "./useFindReplace"
 import type { SaveTrigger } from "./normalizationCoordinator"
 import type { SaveMode } from "./documentSaveRunner"
 import { StatusBar } from "./StatusBar"
@@ -103,21 +91,12 @@ import { OpeningOverlay } from "./OpeningOverlay"
 import { TopBar } from "./TopBar"
 import { FileTree } from "./FileTree"
 import {
-  TreeEditError,
   emptyFileTree,
-  pathsToRefresh,
-  removeTreePath,
-  renameTreePath,
-  replaceTreePrefix,
   setChildren,
-  toggleExpand,
   visibleRows,
-  type CreateKind,
   type FileTreeModel,
-  type TreeEntry,
 } from "./fileTreeState"
-import { isDuplicateNameError, suggestEntryName, type EntryKind } from "./entryName"
-import { OutlinePanel } from "./OutlinePanel"
+import { OutlineList, OutlinePanel } from "./OutlinePanel"
 import { SidebarResizer } from "./SidebarResizer"
 import {
   clampSidebarWidth,
@@ -134,17 +113,14 @@ import { SettingsModal } from "./SettingsModal"
 import {
   DEFAULT_SETTINGS,
   sameAutoPair,
-  sanitizeSettings,
   type UserSettings,
 } from "./settings"
 import { initLocale, setLocale, t as localeT, useT } from "./i18n"
+import { reportSaveStateTransitions } from "./saveDiagnostics"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
   LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
-  OPEN_READONLY_THRESHOLD_BYTES,
-  OPEN_SAVE_QUEUE_TIMEOUT_MS,
-  OPEN_STREAM_THRESHOLD_BYTES,
   RELEASES_URL,
   SAFE_MODE_BYTES,
   STARTUP_UPDATE_CHECK_MS,
@@ -168,7 +144,7 @@ interface AppProps {
   docMaterializeMs?: number
   /** Automatic-update adapter; tests inject a fake, production uses the Tauri plugin adapter. */
   updateAdapter?: UpdateAdapter
-  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs to console. */
+  /** Startup-check failure log sink (spec §10/§14); tests inject a spy, production logs through the facade. */
   logUpdateFailure?: (failure: UpdateFailureKind) => void
 }
 
@@ -183,41 +159,6 @@ const OUTLINE_HOVER_OPEN_MS = 180
 const OUTLINE_HOVER_CLOSE_MS = 120
 const SEARCH_DEBOUNCE_MS = 200
 const SESSION_SAVE_DEBOUNCE_MS = 1000
-
-/** Shallow directory listing equality; a mismatch means disk changed. */
-function sameEntries(
-  a: readonly TreeEntry[] | undefined,
-  b: readonly TreeEntry[],
-): boolean {
-  if (!a || a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].name !== b[i].name || a[i].path !== b[i].path || a[i].is_dir !== b[i].is_dir) {
-      return false
-    }
-  }
-  return true
-}
-
-/**
- * Bounded wait: a large-document save (double probe + fsync) can run for
- * minutes under Windows antivirus scanning, and its queue promise is the only
- * unbounded await on the open path. Resolving on timeout lets the open proceed
- * while the save chain keeps running on its own.
- */
-function awaitWithTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
-  return new Promise(resolve => {
-    const timer = window.setTimeout(() => resolve(), ms)
-    promise
-      .catch(() => undefined)
-      .finally(() => {
-        window.clearTimeout(timer)
-        resolve()
-      })
-  })
-}
-
-/** Spec 05b 打开档位：normal 一次读；large 流式 + 默认源码；readonly 只读纯文本。 */
-type OpenTier = "normal" | "large" | "readonly" | "cancel"
 
 function readSidebarOpen(): boolean {
   try {
@@ -254,44 +195,6 @@ interface OutlineIdleGlobal {
   cancelIdleCallback?: (handle: number) => void
 }
 
-/**
- * Startup-check failures log with no user UI (spec §10/§14). The app has no
- * structured logger yet; recoveryWriter already uses `console.error` on
- * purpose. Log only the classified product failure kind — never raw updater
- * internals or document content.
- */
-function logUpdateStartupFailure(failure: UpdateFailureKind): void {
-  console.error(`[updates] startup check failed: ${failure}`)
-}
-
-/**
- * Best-effort update failure classification from dependency errors (spec §14).
- * The Tauri plugin rejects with Rust `thiserror` Display text; match stable
- * substrings and default to `unknown` rather than exposing raw internals.
- * The coordinator never guesses: every thrown error flows through here with
- * the exact stage where it was thrown.
- */
-function classifyUpdateError(error: unknown, stage: UpdateStage): UpdateFailureKind {
-  const message = error instanceof Error ? error.message : String(error)
-  const text = message.toLowerCase()
-  if (
-    text.includes("fetch") || text.includes("network") || text.includes("timeout")
-    || text.includes("offline") || text.includes("econn")
-  ) return "network"
-  if (
-    text.includes("signature") || text.includes("minisign") || text.includes("base64")
-    || text.includes("decode")
-  ) return "signature"
-  if (
-    stage === "check"
-    && (text.includes("json") || text.includes("manifest") || text.includes("platform")
-      || text.includes("semver") || text.includes("parse"))
-  ) return "manifest"
-  if (stage === "download" || text.includes("download")) return "download"
-  if (stage === "install") return "install"
-  return "unknown"
-}
-
 function scheduleOutlineIdle(callback: () => void): void {
   const idle = globalThis as OutlineIdleGlobal
   if (typeof idle.requestIdleCallback === "function" && typeof idle.cancelIdleCallback === "function") {
@@ -324,14 +227,6 @@ export default function App({
   const [doc, setDoc] = useState("")
   const docRef = useRef("")
   const docsRef = useRef(new Map<number, string>([[session.id, ""]]))
-  const openRequestRef = useRef(0)
-  // 已删除路径的作废登记：仅在「删除时该路径存在在途打开」才登记，openPath 在
-  // 让出事件循环的 await 之后自检并放弃（新建→立刻删除的竞态）。命中即移除，
-  // 无条件登记会让同名重建文件的首个打开被静默吞掉。
-  const invalidatedOpenPathsRef = useRef(new Set<string>())
-  // 在途打开的路径集合（openPath 进入 try 时登记、finally 移除），供删除侧判断
-  // 是否需要作废登记。
-  const openInFlightRef = useRef(new Set<string>())
   const tabSaveQueuesRef = useRef<TabSaveQueues>(new Map())
   const operationSeqRef = useRef(0)
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
@@ -342,6 +237,8 @@ export default function App({
   >(async () => {})
   const saveCopyRef = useRef<(tabId: number) => Promise<void>>(async () => {})
   const requestCloseTabRef = useRef<(id: number) => void>(() => {})
+  // activateTab 是随渲染重建的函数声明：打开协调器一次构造，只能经 ref 拿最新实现。
+  const activateTabRef = useRef<(id: number) => void>(() => {})
   const resetTabDocumentRef = useRef<(session: EditorSession, contents: string, docText?: Text) => boolean>(() => false)
   const [transientStatus, setTransientStatus] = useState<string | null>(null)
   const transientStatusTimerRef = useRef<number | null>(null)
@@ -369,6 +266,7 @@ export default function App({
   // frontend pushes stay off until those settings load, so the "light"
   // default can't flip the title bar dark→light→dark.
   const [themeSyncReady, setThemeSyncReady] = useState(false)
+  const logState = useLoggingState(services, themeSyncReady)
   const [customCss, setCustomCss] = useState("")
   const [focusMode, setFocusMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen)
@@ -414,20 +312,15 @@ export default function App({
   const documentScaleRegistry = documentScaleRegistryRef.current
   // LARGE 档流式打开的进度（overlay 百分比）。
   const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
-  // LARGE 档确认本会话只需一次；HUGE（只读）每次都问。
-  const largeOpenAcceptedRef = useRef(false)
   const [largeDocNotice, setLargeDocNotice] = useState<
     { sessionId: number; lines: number; safeMode: boolean; readonly?: boolean } | null
   >(null)
   const [statsRequested, setStatsRequested] = useState(0)
   const [openingLabel, setOpeningLabel] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [quickOpenState, setQuickOpenState] = useState<{
-    open: boolean
-    files: string[]
-    truncated: boolean
-    loading: boolean
-  }>({ open: false, files: [], truncated: false, loading: false })
+  const [quickOpenState, setQuickOpenState] = useState<QuickOpenState>(
+    { open: false, files: [], truncated: false, loading: false },
+  )
   const [historyState, setHistoryState] = useState<{
     open: boolean
     path: string | null
@@ -442,32 +335,18 @@ export default function App({
   })
   const searchOpenRef = useRef(search.open)
   searchOpenRef.current = search.open
-  const [findOpen, setFindOpen] = useState(false)
-  const [findQuery, setFindQuery] = useState("")
-  const [findReplace, setFindReplace] = useState("")
-  const [findCase, setFindCase] = useState(false)
-  const [findRegexMode, setFindRegexMode] = useState(false)
-  const [findWholeWord, setFindWholeWord] = useState(false)
-  const [replaceOpen, setReplaceOpen] = useState(false)
-  const [findIndex, setFindIndex] = useState(-1)
-  const findOpenRef = useRef(false)
-  findOpenRef.current = findOpen
-  const findQueryRef = useRef(findQuery)
-  findQueryRef.current = findQuery
-  const findReplaceRef = useRef(findReplace)
-  findReplaceRef.current = findReplace
-  const findCaseRef = useRef(findCase)
-  findCaseRef.current = findCase
-  const findRegexModeRef = useRef(findRegexMode)
-  findRegexModeRef.current = findRegexMode
-  const findWholeWordRef = useRef(findWholeWord)
-  findWholeWordRef.current = findWholeWord
-  const findIndexRef = useRef(findIndex)
-  findIndexRef.current = findIndex
-  const activeFindMatchRef = useRef<SearchMatch | null>(null)
-  const findRevisionRef = useRef(0)
+  // 查找替换状态与命令在 useFindReplace 内；编辑器 view、App 物化文档、档位
+  // 判断按 getter 注入，避免 hook 按值捕获（getter 始终读当前 ref）。
+  const findReplace = useFindReplace({
+    getView: () => viewRef.current,
+    getDoc: () => docRef.current,
+    isActiveSafeMode,
+  })
   const [treeModel, setTreeModel] = useState(emptyFileTree())
   const treeModelRef = useRef(treeModel)
+  // 跨渲染可变协调状态：treeActions 工厂每渲染重建，这些去重/在途集合
+  // 必须经 refs 保持（否则重渲染即重置，见 fileTreeActions.ts host 注释）。
+  const treeErrorSignaturesRef = useRef(new Map<string, string>())
   const treePollInFlightRef = useRef(false)
   const pendingListDirsRef = useRef(new Set<string>())
   const recentsRef = useRef<string[]>([])
@@ -530,6 +409,7 @@ export default function App({
 
   function commitSaveState(next: SaveStateByTab) {
     if (next === saveStateRef.current) return
+    reportSaveStateTransitions(saveStateRef.current, next, tabById)
     saveStateRef.current = next
     setSaveStateByTab(next)
   }
@@ -550,8 +430,10 @@ export default function App({
     showTransientStatus,
   })
 
+  const pollReadFailures = useRef(new Map<number, string>())
   const { saveFile, saveCopy, pollFileTabs } = createDocumentSaveAppBridge({
     services,
+    pollReadFailures: pollReadFailures.current,
     tabSaveQueues: tabSaveQueuesRef.current,
     operationSeq: operationSeqRef,
     isOpening: () => openingRef.current,
@@ -585,6 +467,43 @@ export default function App({
   saveFileRef.current = saveFile
   saveCopyRef.current = saveCopy
 
+  // 文档打开协调器：打开链路（分档预检、流式读取、令牌作废）一次构造、跨渲染
+  // 保活（P2 教训：工厂每渲染重建会重置令牌，并发作废全部失效）。自有可变状态
+  // （请求令牌、在途/作废路径集、LARGE 确认）私有化为实例字段；App 侧只保留
+  // UI 投影（overlay 文案/进度）与 openingRef 布尔（保存/更新侧仍读）。
+  const openRef = useRef<DocumentOpen | null>(null)
+  if (!openRef.current) {
+    openRef.current = createDocumentOpen({
+      services,
+      documentScaleRegistry,
+      tabSaveQueues: tabSaveQueuesRef.current,
+      getWorkspace: () => workspaceRef.current,
+      commitWorkspace,
+      getActiveSession: () => sessionRef.current,
+      getDoc: () => docRef.current,
+      getContents: tabId => docsRef.current.get(tabId) ?? "",
+      setContents: (tabId, contents) => { docsRef.current.set(tabId, contents) },
+      getSaveStates: () => saveStateRef.current,
+      commitSaveState,
+      activateTab: id => { activateTabRef.current(id) },
+      resetTabDocument: (session, contents, docText) =>
+        resetTabDocumentRef.current(session, contents, docText),
+      flushMaterializer: () => { materializer.flush() },
+      syncDoc,
+      revealFolder,
+      rememberRecent,
+      expandToPath: path => expandToPathRef.current(path),
+      reportStatus: showTransientStatus,
+      reportUserError,
+      setOpening: open => { openingRef.current = open },
+      setOpeningLabel,
+      setOpeningProgress,
+      setQuickOpenState,
+      isMounted: () => mountedRef.current,
+    })
+  }
+  const openCoordinator = openRef.current
+
   const showSkippedMarkersStatus = createSkippedStatusNotifier(
     setSkippedMarkersMessage, skippedStatusTimerRef,
     id => { skippedStatusTimerRef.current = id },
@@ -598,82 +517,6 @@ export default function App({
 
   function reportUserError(message: string) {
     if (mountedRef.current) services.reportError(message)
-  }
-
-  /** 列举错误签名（路径 → 上次已上报的错误文案）。通知语义：状态变化才打扰——
-   *  同一路径的相同错误只报一次，列举成功清除签名，新错误形态仍会上报。 */
-  const treeErrorSignaturesRef = useRef(new Map<string, string>())
-
-  function reportTreeError(path: string, error: unknown) {
-    const message = errorMessage(t("error.folderListingFailed"), error)
-    const signatures = treeErrorSignaturesRef.current
-    if (signatures.get(path) === message) return
-    signatures.set(path, message)
-    services.reportError(message)
-  }
-
-  function clearTreeError(path: string) {
-    treeErrorSignaturesRef.current.delete(path)
-  }
-
-  async function refreshTreePath(path: string): Promise<void> {
-    if (!services.listDir) return
-    const folder = workspaceRef.current.folder
-    try {
-      const entries = await services.listDir(path)
-      if (!mountedRef.current || workspaceRef.current.folder !== folder) return
-      clearTreeError(path)
-      commitTree(setChildren(treeModelRef.current, path, entries))
-    } catch (error) {
-      if (mountedRef.current && workspaceRef.current.folder === folder) reportTreeError(path, error)
-    }
-  }
-
-  /** 为内联新建草稿提供不冲突的建议名；列举失败时回退到基础名。 */
-  async function suggestTreeName(kind: CreateKind, dir: string): Promise<string> {
-    const entryKind: EntryKind = kind === "create-file" ? "file" : "folder"
-    if (!services.listDir) return suggestEntryName(entryKind, [])
-    try {
-      const entries = await services.listDir(dir)
-      const names = entries.map(entry => (
-        fileNamesAreCaseInsensitive() ? entry.name.toLowerCase() : entry.name
-      ))
-      return suggestEntryName(entryKind, names)
-    } catch {
-      return suggestEntryName(entryKind, [])
-    }
-  }
-
-  function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
-    const previousTabs = workspaceRef.current.tabs
-    const nextTabs = previousTabs.map(tab => {
-      const path = sessionPath(tab)
-      if (!path) return tab
-      const nextPath = replaceTreePrefix(path, from, to)
-      if (nextPath !== path && (isDir || samePath(path, from))) {
-        return retargetSessionPath(tab, nextPath)
-      }
-      return tab
-    })
-    if (nextTabs.every((tab, index) => tab === previousTabs[index])) return
-    previousTabs.forEach((tab, index) => {
-      const next = nextTabs[index]
-      if (tab === next) return
-      const oldKey = recoveryKey(tab)
-      if (oldKey !== recoveryKey(next)) void services.clearRecovery?.(oldKey)
-      const contents = docsRef.current.get(next.id)
-      if (contents !== undefined && sessionDirty(next, contents)) saveRecovery(next, contents)
-    })
-    commitWorkspace({ ...workspaceRef.current, tabs: nextTabs })
-    const affectedPaths = nextTabs
-      .map(tab => sessionPath(tab))
-      .filter((path): path is string => path !== null)
-      .filter(path => samePath(path, to) || (isDir && pathWithinDir(path, to)))
-    for (const path of new Set(affectedPaths)) {
-      void services.allowDocumentAssets(path).catch(error => {
-        services.reportError(errorMessage(t("error.renameSyncFailed"), error))
-      })
-    }
   }
 
   function saveRecovery(tab: EditorSession, contents: string) {
@@ -765,7 +608,7 @@ export default function App({
           services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
           return
         }
-        void openPath(resolveMarkdownHref(current, href), true)
+        void openCoordinator.openPath(resolveMarkdownHref(current, href), true)
       },
       tabSize: settingsRef.current.tabSize,
       spellcheck: settingsRef.current.spellcheck,
@@ -934,7 +777,22 @@ export default function App({
     mountedRef.current = true
     ensureViews()
     void (async () => {
-      const initial = await loadInitialSettings()
+      // P4：启动流程在 appSessionInit（纯动作模块）；host 全为 getter/ref 转发，
+      // 编排顺序（设置 → pendingOpen → 恢复）留在 App，首渲染闭包构造一次即可。
+      const sessionInit: AppSessionInitHost = {
+        services, documentScaleRegistry,
+        isMounted: () => mountedRef.current, applySpellcheck, applyAutoPair,
+        getSettingsState: () => settingsRef.current,
+        commitSettings: next => { settingsRef.current = next; setSettings(next) },
+        commitTheme: setTheme,
+        getWorkspace: () => workspaceRef.current, commitWorkspace,
+        getContents: tabId => docsRef.current.get(tabId) ?? "",
+        setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
+        resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
+        syncDoc, getActiveSession: () => sessionRef.current,
+        markSessionRestored: () => { sessionRestoredRef.current = true },
+      }
+      const initial = await loadInitialSettings(sessionInit)
       if (mountedRef.current) setThemeSyncReady(true)
       if (!localeInitRef.current) {
         localeInitRef.current = true
@@ -955,9 +813,9 @@ export default function App({
         // shard (empty payload) keeps its fresh untitled tab and never
         // drafts: recovery records are app-global, so a non-main window
         // offering one would hijack the main window's record.
-        const restored = await restoreSavedSession()
+        const restored = await restoreSavedSession(sessionInit)
         if (!restored && isMainWindow()) {
-          await restoreDraft()
+          await restoreDraft(sessionInit)
         }
       }
     })()
@@ -967,7 +825,7 @@ export default function App({
       viewRef.current = null
       viewsRef.current.forEach(item => item.destroy())
       viewsRef.current.clear()
-      openRequestRef.current += 1
+      openCoordinator.dispose()
     }
   }, [])
 
@@ -1077,6 +935,7 @@ export default function App({
         // 落盘失败也要走完 ack——事件回调里的逃逸 rejection 只会变成
         // webview 的未处理拒绝，还拖慢退出。
       } finally {
+        await flushLogs()
         await services.sessionFlushAck?.()
       }
     })
@@ -1155,11 +1014,11 @@ export default function App({
     commitTree(emptyFileTree())
     void listDir(folder).then(entries => {
       if (!cancelled) {
-        clearTreeError(folder)
+        treeActions.clearTreeError(folder)
         commitTree(setChildren(emptyFileTree(), folder, entries))
       }
     }).catch(error => {
-      if (!cancelled) reportTreeError(folder, error)
+      if (!cancelled) treeActions.reportTreeError(folder, error)
     })
     return () => { cancelled = true }
   }, [workspace.folder, services])
@@ -1169,7 +1028,7 @@ export default function App({
     // waste and its results are not rendered.
     if (!watchMs || !workspace.folder || !services.listDir || search.open) return
     const listDir = services.listDir
-    const timer = window.setInterval(() => { void refreshTree(listDir) }, watchMs)
+    const timer = window.setInterval(() => { void treeActions.refreshTree(listDir) }, watchMs)
     return () => window.clearInterval(timer)
   }, [watchMs, workspace.folder, services, search.open])
 
@@ -1255,8 +1114,15 @@ export default function App({
     }
   }
 
+  const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true))
+
   function handleSaveSettings(next: UserSettings) {
-    const sanitized = sanitizeSettings(next)
+    const sanitized = persistSettingsChange({
+      current: settingsRef.current,
+      next,
+      slot: settingsSaveRef,
+      services,
+    })
     if (sanitized.spellcheck !== settingsRef.current.spellcheck) {
       applySpellcheck(sanitized.spellcheck)
     }
@@ -1267,313 +1133,11 @@ export default function App({
     setSettings(sanitized)
     settingsRef.current = sanitized
     setTheme(sanitized.theme)
-    void services.saveSettings?.(sanitized)
     if (localeChanged) setLocale(sanitized.locale)
   }
 
-  async function loadInitialSettings(): Promise<UserSettings> {
-    if (!services.getSettings) return DEFAULT_SETTINGS
-    try {
-      const saved = await services.getSettings()
-      if (saved) {
-        if (mountedRef.current) {
-          if (saved.spellcheck !== settingsRef.current.spellcheck) {
-            applySpellcheck(saved.spellcheck)
-          }
-          if (!sameAutoPair(saved.autoPair, settingsRef.current.autoPair)) {
-            applyAutoPair(saved.autoPair)
-          }
-          setSettings(saved)
-          settingsRef.current = saved
-          setTheme(saved.theme)
-        }
-        return saved
-      }
-    } catch {
-      /* tolerate settings read failure */
-    }
-    return DEFAULT_SETTINGS
-  }
-
-  async function restoreSavedSession(): Promise<boolean> {
-    if (!services.getSessionState) return false
-    try {
-      const state = await services.getSessionState()
-      if (!state || (!state.folder && state.openPaths.length === 0)) return false
-
-      if (state.folder) {
-        // 恢复的路径可能已被移动/删除（或换机恢复）：先用真实列举验证再采纳。
-        // 失效会话整体丢弃并提示一次——绝不带着死路径进入工作区，让后续每次
-        // 交互都重复报同一个错。
-        if (services.listDir) {
-          try {
-            await services.listDir(state.folder)
-          } catch {
-            services.reportError(t("error.workspaceFolderMissing"))
-            return false
-          }
-        }
-        commitWorkspace(openFolder(workspaceRef.current, state.folder))
-        void services.allowWorkspaceDir?.(state.folder)
-      }
-
-      if (state.openPaths.length > 0) {
-        // Spec 05b：只整读 active（或第一个）路径，其余 tab 惰性占位、
-        // 首次激活时再读（loadLazyTab）——避免启动时 N×大文件整读 + IPC 风暴。
-        // 主路径经 resetTabDocument 装载：view 拿到内容并应用档位策略
-        // （直接写 docsRef 的旧路径会把已挂载的空 view 留在屏幕上）。
-        const primary = state.activePath && state.openPaths.includes(state.activePath)
-          ? state.activePath
-          : state.openPaths[0]
-        const ordered = [primary, ...state.openPaths.filter(path => path !== primary)]
-        let activeTabId = workspaceRef.current.activeId
-        let firstTabOpened = false
-
-        for (const path of ordered) {
-          if (firstTabOpened) {
-            commitWorkspace(
-              addTab(workspaceRef.current, lazyFileSession(workspaceRef.current.nextId, path)),
-            )
-            continue
-          }
-          // primary 不可读时按序补位一次，成功后其余全部惰性。
-          try {
-            const snapshot = await services.readDocument(path)
-            if (snapshot.kind === "missing") continue
-            await services.allowDocumentAssets(path)
-            const updated = openSession(workspaceRef.current.tabs[0], snapshot)
-            docsRef.current.set(updated.id, snapshot.contents)
-            if (snapshot.stats) documentScaleRegistry.setBytes(updated.id, snapshot.stats.byteLength)
-            if (!resetTabDocument(updated, snapshot.contents)) {
-              commitWorkspace(replaceTabSession(workspaceRef.current, updated))
-            }
-            firstTabOpened = true
-            activeTabId = updated.id
-          } catch {
-            /* skip unreadable files */
-          }
-        }
-
-        if (firstTabOpened) {
-          const focused = focusTab(workspaceRef.current, activeTabId)
-          commitWorkspace(focused)
-          const active = activeSession(focused)
-          syncDoc(docsRef.current.get(active.id) ?? "", active.id)
-          sessionRestoredRef.current = true
-          return true
-        }
-      }
-    } catch {
-      /* tolerate session restore failure */
-    }
-    return false
-  }
-
-  async function restoreDraft() {
-    const records = await services.listRecoveries?.() ?? []
-    const first = records[0]
-    if (!first || !services.readRecovery) return
-    if (!services.confirmRestore?.(first.label)) {
-      await services.clearRecovery?.(first.key)
-      return
-    }
-    const contents = await services.readRecovery(first.key)
-    if (!mountedRef.current) return
-    resetTabDocument(advanceDocumentIdentity(sessionRef.current), contents)
-  }
-
-  /**
-   * Spec 05b 分档预检：先 stat（metadata，不读内容）再决定档位与确认，
-   * 避免为一个大文件白付整读 + IPC。stat 失败按 normal 处理，
-   * 真实错误由后续读取报告。LARGE 档确认一次后本会话不再问。
-   */
-  async function resolveOpenTier(path: string): Promise<OpenTier> {
-    const stat = await services.statDocument?.(path).catch(() => undefined)
-    if (!stat || stat.kind !== "existing") return "normal"
-    const mb = Math.max(1, Math.round(stat.sizeBytes / (1024 * 1024)))
-    const label = baseName(path)
-    if (stat.sizeBytes >= OPEN_READONLY_THRESHOLD_BYTES) {
-      return services.confirmReadonlyOpen?.(label, mb) ? "readonly" : "cancel"
-    }
-    if (stat.sizeBytes >= OPEN_STREAM_THRESHOLD_BYTES) {
-      if (!largeOpenAcceptedRef.current) {
-        if (!services.confirmLargeOpen?.(label, mb)) return "cancel"
-        largeOpenAcceptedRef.current = true
-      }
-      return "large"
-    }
-    return "normal"
-  }
-
-  /**
-   * Spec 05b：LARGE 档走流式（Channel 分块 + 进度，分块间 UI 线程自然让出），
-   * 拼装后复用既有 ExistingDiskSnapshot 下游；其余档一次读。
-   */
-  async function readSnapshotForOpen(path: string, tier: OpenTier): Promise<DiskSnapshot> {
-    if (tier !== "large" || !services.readDocumentStreaming) {
-      return services.readDocument(path)
-    }
-    try {
-      const parts: string[] = []
-      // Task 10：与 parts 同步维护分块 Text 组装 —— chunk 到达途中即做 chunk
-      // 局部切行（跨 chunk 的 \r\n 由 assembler 携带裁决），EditorState.create
-      // 收到 Text 后跳过对整串的 regex 切行。镜像字符串 join 仍只做一次
-      // （05b 偏差 #1 决策：脏检查/保存/恢复继续用字符串口径）。
-      const assembler = createTextAssembler()
-      const stream = await services.readDocumentStreaming(path, event => {
-        if (event.kind === "chunk") {
-          parts.push(event.text)
-          assembler.push(event.text)
-        } else {
-          setOpeningProgress({ bytesRead: event.bytesRead, byteLength: event.byteLength })
-        }
-      })
-      if (stream.kind === "missing") {
-        return { kind: "missing", requestedPath: stream.requestedPath }
-      }
-      const contents = parts.join("")
-      setOpeningProgress(null)
-      return {
-        kind: "existing",
-        requestedPath: stream.requestedPath,
-        contents,
-        docText: assembler.finish(),
-        version: stream.version,
-        stats: stream.stats,
-      }
-    } catch {
-      setOpeningProgress(null)
-      return services.readDocument(path)
-    }
-  }
-
-  async function openPath(nextPath: string, inNewTab = false, request?: number) {
-    const existing = findTabByPath(workspaceRef.current, nextPath)
-    if (existing) {
-      activateTab(existing.id)
-      rememberRecent(nextPath)
-      return
-    }
-    // 树/搜索等直开入口没有 runOpen 令牌：自铸一个，使「取消打开」与并发
-    // 打开作废逻辑对所有入口统一（in-flight 的旧打开被更新者取代）。
-    const token = request ?? ++openRequestRef.current
-    const tier = await resolveOpenTier(nextPath)
-    if (tier === "cancel" || token !== openRequestRef.current) return
-    const showOverlay = tier !== "normal"
-    if (showOverlay) setOpeningLabel(baseName(nextPath))
-    try {
-      openInFlightRef.current.add(nextPath)
-      let snapshot
-      try {
-        snapshot = await readSnapshotForOpen(nextPath, tier)
-      } catch (error) {
-        const cmd = toDocumentCommandError(error)
-        if (cmd.code === "invalidPath" && mountedRef.current) {
-          reportUserError(t("error.invalidPath"))
-          return
-        }
-        if (cmd.code === "notUtf8" && mountedRef.current) {
-          reportUserError(t("error.notUtf8"))
-          return
-        }
-        if (token === openRequestRef.current && mountedRef.current) {
-          services.reportError(errorMessage(t("error.openFailed"), error))
-        }
-        return
-      }
-      if (token !== openRequestRef.current) return
-      if (snapshot.kind === "missing") {
-        // 竞态里文件是被用户刚删掉的：静默放弃，不弹「文件不存在」。
-        if (invalidatedOpenPathsRef.current.delete(nextPath)) return
-        if (mountedRef.current) {
-          services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
-        }
-        return
-      }
-      const { contents, docText } = snapshot
-      const byteLength = snapshot.stats?.byteLength
-      await services.allowDocumentAssets(nextPath)
-      // allowDocumentAssets 是提交前最后一个真实 await：删除可能恰在其间完成并
-      // 登记，此处自检覆盖两条提交路径（新 tab 与替换当前 tab）。
-      if (invalidatedOpenPathsRef.current.delete(nextPath)) return
-      revealFolder(nextPath)
-      void expandToPath(nextPath)
-      rememberRecent(nextPath)
-      if (inNewTab) {
-        const tab = openSession(createSession(workspaceRef.current.nextId), snapshot)
-        docsRef.current.set(tab.id, contents)
-        if (docText) documentScaleRegistry.stashText(tab.id, docText)
-        documentScaleRegistry.setBytes(tab.id, byteLength)
-        documentScaleRegistry.setReadOnly(tab.id, tier === "readonly")
-        commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
-        commitWorkspace(addTab(workspaceRef.current, tab))
-        syncDoc(contents, tab.id)
-        void services.clearRecovery?.(recoveryKey(tab))
-        return
-      }
-      // 替换当前 tab：档位与字节数随新文档重置，避免沿用旧档残留。
-      documentScaleRegistry.setBytes(sessionRef.current.id, byteLength)
-      documentScaleRegistry.setReadOnly(sessionRef.current.id, tier === "readonly")
-      if (!resetTabDocument(openSession(sessionRef.current, snapshot), contents, docText)) return
-      void services.clearRecovery?.(recoveryKey(sessionRef.current))
-    } finally {
-      openInFlightRef.current.delete(nextPath)
-      if (token === openRequestRef.current && showOverlay) {
-        setOpeningLabel(null)
-        setOpeningProgress(null)
-      }
-    }
-  }
-
-  /** 作废进行中的打开：读取照旧完成，但结果不再落地。 */
-  function cancelOpening() {
-    openRequestRef.current += 1
-    openingRef.current = false
-    setOpeningLabel(null)
-    setOpeningProgress(null)
-  }
-
-  async function runOpen(pickPath: () => Promise<string | null>) {
-    materializer.flush()
-    const request = ++openRequestRef.current
-    const activeId = workspaceRef.current.activeId
-    await awaitWithTimeout(
-      tabSaveQueuesRef.current.get(activeId) ?? Promise.resolve(),
-      OPEN_SAVE_QUEUE_TIMEOUT_MS,
-    )
-    if (request !== openRequestRef.current || !mountedRef.current) return
-    openingRef.current = true
-    try {
-      if (sessionDirty(sessionRef.current, docRef.current) && !services.confirmDiscard()) return
-      const nextPath = await pickPath()
-      if (!nextPath || request !== openRequestRef.current) return
-      await openPath(nextPath, false, request)
-    } catch (error) {
-      if (request === openRequestRef.current && mountedRef.current) {
-        services.reportError(errorMessage(t("error.openFailed"), error))
-      }
-    } finally {
-      if (request === openRequestRef.current) openingRef.current = false
-    }
-  }
-
   function openRecent(path: string) {
-    return runOpen(async () => path)
-  }
-
-  function openExternal(nextPath: string): Promise<void> {
-    const existing = findTabByPath(workspaceRef.current, nextPath)
-    if (existing) {
-      activateTab(existing.id)
-      rememberRecent(nextPath)
-      return Promise.resolve()
-    }
-    const active = sessionRef.current
-    const activeHasContent =
-      sessionPath(active) !== null
-      || (docsRef.current.get(active.id) ?? "").length > 0
-      || sessionDirty(active, docRef.current)
-    return openPath(nextPath, activeHasContent)
+    return openCoordinator.runOpen(async () => path)
   }
 
   function runUpdateDownload() {
@@ -1587,31 +1151,6 @@ export default function App({
         services.reportError(errorMessage(t("update.releaseOpenFailed"), error))
       }
     })
-  }
-
-  async function openQuickOpen() {
-    const folder = workspaceRef.current.folder
-    if (!folder) {
-      showTransientStatus(t("quickOpen.noFolder"))
-      return
-    }
-    if (!services.listMarkdownFiles) return
-    setQuickOpenState({ open: true, files: [], truncated: false, loading: true })
-    try {
-      const response = await services.listMarkdownFiles(folder)
-      if (!mountedRef.current) return
-      setQuickOpenState({
-        open: true,
-        files: response.paths,
-        truncated: response.truncated,
-        loading: false,
-      })
-    } catch (error) {
-      if (mountedRef.current) {
-        setQuickOpenState(current => ({ ...current, loading: false }))
-        services.reportError(errorMessage(t("error.openFailed"), error))
-      }
-    }
   }
 
   async function openVersionHistory() {
@@ -1662,7 +1201,7 @@ export default function App({
   }
 
   function openFile() {
-    return runOpen(() => services.pickOpenPath())
+    return openCoordinator.runOpen(() => services.pickOpenPath())
   }
 
   function activateTab(id: number) {
@@ -1697,14 +1236,15 @@ export default function App({
   async function loadLazyTab(lazy: EditorSession) {
     const path = sessionPath(lazy)
     if (!path) return
-    const token = ++openRequestRef.current
-    const tier = await resolveOpenTier(path)
-    if (tier === "cancel" || token !== openRequestRef.current) return
+    const open = openCoordinator
+    const token = open.nextRequest()
+    const tier = await open.resolveOpenTier(path)
+    if (tier === "cancel" || token !== open.currentRequest) return
     const showOverlay = tier !== "normal"
     if (showOverlay) setOpeningLabel(baseName(path))
     try {
-      const snapshot = await readSnapshotForOpen(path, tier)
-      if (token !== openRequestRef.current) return
+      const snapshot = await open.readSnapshotForOpen(path, tier)
+      if (token !== open.currentRequest) return
       if (snapshot.kind !== "existing") {
         if (mountedRef.current) {
           services.reportError(errorMessage(t("error.openFailed"), new Error("File not found")))
@@ -1712,7 +1252,7 @@ export default function App({
         return
       }
       await services.allowDocumentAssets(path)
-      if (token !== openRequestRef.current) return
+      if (token !== open.currentRequest) return
       // await 期间 tab 可能已被关闭（关闭不打断 openRequest 令牌）：装载作废，
       // 不给已死 id 落 docBytes/readonly 档位或在 refs 里暂存整份内容 ——
       // 大档 docText 会常驻到进程结束（M-1 泄漏）。
@@ -1732,11 +1272,11 @@ export default function App({
         syncDoc(snapshot.contents, updated.id)
       }
     } catch (error) {
-      if (token === openRequestRef.current && mountedRef.current) {
+      if (token === open.currentRequest && mountedRef.current) {
         services.reportError(errorMessage(t("error.openFailed"), error))
       }
     } finally {
-      if (token === openRequestRef.current && showOverlay) {
+      if (token === open.currentRequest && showOverlay) {
         setOpeningLabel(null)
         setOpeningProgress(null)
       }
@@ -1817,6 +1357,7 @@ export default function App({
     closeTabInternal(id, { confirm: true, allowReplaceLast: true })
   }
   requestCloseTabRef.current = requestCloseTab
+  activateTabRef.current = activateTab
 
   function revealFolder(path: string) {
     const next = ensureFolder(workspaceRef.current, path)
@@ -1832,87 +1373,32 @@ export default function App({
     commitWorkspace(openFolder(workspaceRef.current, folder))
   }
 
-  async function refreshTree(listDir: (path: string) => Promise<TreeEntry[]>): Promise<void> {
-    const folder = workspaceRef.current.folder
-    if (!folder || treePollInFlightRef.current) return
-    treePollInFlightRef.current = true
-    try {
-      let next = treeModelRef.current
-      let changed = false
-      for (const path of pathsToRefresh(folder, next)) {
-        let entries: TreeEntry[]
-        try {
-          entries = await listDir(path)
-        } catch {
-          continue
-        }
-        // Skip re-rendering the whole tree when a directory is unchanged.
-        if (sameEntries(next.childrenByPath[path], entries)) continue
-        next = setChildren(next, path, entries)
-        changed = true
-      }
-      if (changed) commitTree(next)
-    } finally {
-      treePollInFlightRef.current = false
-    }
-  }
-
-  async function toggleDir(path: string): Promise<void> {
-    const next = toggleExpand(treeModelRef.current, path)
-    commitTree(next)
-    if (!next.expanded.has(path) || next.childrenByPath[path] || !services.listDir) return
-    if (pendingListDirsRef.current.has(path)) return
-    pendingListDirsRef.current.add(path)
-    try {
-      const entries = await services.listDir(path)
-      // The user may have collapsed the directory while the listing was in
-      // flight; caching it would only produce a useless model update.
-      if (!treeModelRef.current.expanded.has(path)) return
-      clearTreeError(path)
-      commitTree(setChildren(treeModelRef.current, path, entries))
-    } catch (error) {
-      reportTreeError(path, error)
-    } finally {
-      pendingListDirsRef.current.delete(path)
-    }
-  }
-
-  /** Expands every ancestor of `path` down from the workspace root so the
-   * opened file is reachable in the tree. Best-effort: a listing failure must
-   * not block an open that already succeeded. */
-  async function expandToPath(path: string): Promise<void> {
-    const folder = workspaceRef.current.folder
-    if (!folder || !services.listDir) return
-    const dirs: string[] = []
-    let current = parentDir(path)
-    // Separator/prefix-agnostic: the folder can be a native `C:\…` root while
-    // an opened link arrives forward-slashed, or vice versa.
-    while (current && !samePath(current, folder) && pathWithinDir(current, folder)) {
-      dirs.unshift(current)
-      const above = parentDir(current)
-      if (!above) break
-      current = above
-    }
-    for (const dir of dirs) {
-      // Ensure the ancestor is expanded without toggling: the user may have
-      // already opened it, and expandToPath must never collapse it.
-      if (!treeModelRef.current.expanded.has(dir)) {
-        commitTree(toggleExpand(treeModelRef.current, dir))
-      }
-      if (treeModelRef.current.childrenByPath[dir] || pendingListDirsRef.current.has(dir)) continue
-      pendingListDirsRef.current.add(dir)
-      try {
-        const entries = await services.listDir(dir)
-        if (treeModelRef.current.expanded.has(dir)) {
-          commitTree(setChildren(treeModelRef.current, dir, entries))
-        }
-      } catch {
-        // reveal is best-effort
-      } finally {
-        pendingListDirsRef.current.delete(dir)
-      }
-    }
-  }
+  const treeActions = createFileTreeActions({
+    services,
+    getTreeModel: () => treeModelRef.current,
+    commitTree,
+    getWorkspace: () => workspaceRef.current,
+    commitWorkspace,
+    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    flushMaterializer: () => materializer.flush(),
+    isOpenInFlight: path => openCoordinator.isOpenInFlight(path),
+    invalidateOpen: path => { openCoordinator.invalidateOpen(path) },
+    closeTab: closeTabInternal,
+    saveRecovery,
+    notifySuccess: message => { services.notifySuccess?.(message) },
+    reportError: message => { services.reportError(message) },
+    reportUserError,
+    t,
+    confirmDiscard: () => services.confirmDiscard(),
+    confirmClose: () => services.confirmClose?.(),
+    confirmDelete: path => services.confirmDelete?.(path),
+    isMounted: () => mountedRef.current,
+    setPendingFocus: () => { pendingFocusRef.current = true },
+    openPath: (path, inNewTab) => openCoordinator.openPath(path, inNewTab),
+    treeErrorSignatures: treeErrorSignaturesRef.current,
+    treePollInFlight: treePollInFlightRef,
+    pendingListDirs: pendingListDirsRef.current,
+  })
 
   const { accept: acceptNormalization, reject: keepOriginalNumbers } = createNormalizationHandlers({
     getActiveTabId: () => workspaceRef.current.activeId,
@@ -1936,216 +1422,48 @@ export default function App({
     return pollFileTabsRef.current().finally(() => { pollInFlightRef.current = false })
   }
   const openRecentRef = useRef(openRecent)
-  const openExternalRef = useRef(openExternal)
-  const refreshTreeRef = useRef(refreshTree)
+  // 挂载 effect / 监听器经此 ref 调最新打开协调器（协调器一次构造，不变）。
+  const openExternalRef = useRef((path: string) => openCoordinator.openExternal(path))
+  const refreshTreeRef = useRef(treeActions.refreshTree)
+  const expandToPathRef = useRef(treeActions.expandToPath)
   pollFileTabsRef.current = pollFileTabs
   openRecentRef.current = openRecent
-  openExternalRef.current = openExternal
-  refreshTreeRef.current = refreshTree
+  refreshTreeRef.current = treeActions.refreshTree
+  expandToPathRef.current = treeActions.expandToPath
 
-  const runEditorCommand = (command: (view: EditorView) => boolean): (() => void) => () => {
-    const view = viewRef.current
-    if (view) try { command(view) } catch { /* mock views */ }
-  }
+  const allCommands: AppCommand[] = buildAppCommands({
+    services,
+    t,
+    viewRef,
+    sessionRef,
+    workspaceRef,
+    tabById,
+    openFile,
+    saveFile,
+    newTab,
+    chooseFolder,
+    openCoordinator,
+    findReplace,
+    search,
+    requestCloseTab,
+    clearRecents,
+    openVersionHistory,
+    setTheme,
+    setCustomCss,
+    setFocusMode,
+    setSettingsOpen,
+    setSidebarOpen,
+    setOutlineOpen,
+    setTypewriter,
+    setAboutOpen,
+    customCss,
+    showTransientStatus,
+    updateCoordinatorRef,
+    pasteOptions,
+    imageInsertOptions,
+    documentScaleRegistry,
+  })
 
-  /** Menu copy/cut read the editor selection into the system clipboard; cut
-   * deletes only after the write succeeds. Best-effort — clipboard access can
-   * fail in restricted webviews, and the native Ctrl+C/X path stays primary. */
-  const runClipboardCopy = (cut: boolean): (() => void) => () => {
-    const view = viewRef.current
-    if (!view) return
-    let text = ""
-    let from = 0
-    let to = 0
-    try {
-      const selection = view.state.selection.main
-      from = selection.from
-      to = selection.to
-      text = view.state.sliceDoc(from, to)
-    } catch {
-      return // mock views
-    }
-    const write = navigator.clipboard?.writeText(text)
-    if (!write) return
-    void write.then(
-      () => {
-        if (!cut || text === "") return
-        try { view.dispatch({ changes: { from, to, insert: "" } }) } catch { /* mock views */ }
-      },
-      () => undefined,
-    )
-  }
-
-  /** Menu paste delegates to pastePlainText so the caret lands after the
-   * pasted text and an empty clipboard no-ops instead of deleting the
-   * selection. Best-effort — the native Ctrl/Cmd-V path stays primary. */
-  const runClipboardPaste = (): (() => void) => () => {
-    const view = viewRef.current
-    if (!view) return
-    const active = sessionRef.current
-    void pasteFromSystemClipboard(
-      view,
-      systemClipboardReader,
-      pasteOptions(active.id, active.documentId),
-    )
-  }
-
-  const insertImage = () => {
-    const view = viewRef.current
-    const active = sessionRef.current
-    if (!view) return
-    // 只读档（HUGE）不可变：不弹文件选择器（imagePaste 侧 state.readOnly 兜底再拦）。
-    if (documentScaleRegistry.isReadOnly(active.id)) return
-    void pickAndInsertImage(view, imageInsertOptions(active.id, active.documentId))
-  }
-
-  /** Duplicate targets keep the draft with an inline error; IO failures toast. */
-  function treeCreateError(error: unknown, name: string, fallback: string): TreeEditError {
-    return isDuplicateNameError(error)
-      ? new TreeEditError("duplicate", t("filetree.create.exists", { name }))
-      : new TreeEditError("io", errorMessage(fallback, error))
-  }
-
-  async function createTreeFile(dir: string, name: string): Promise<string> {
-    if (!services.createMarkdown) throw new TreeEditError("io", t("error.createFileFailed"))
-    let createdPath: string
-    try {
-      createdPath = await services.createMarkdown(dir, name)
-    } catch (error) {
-      throw treeCreateError(error, name, t("error.createFileFailed"))
-    }
-    await refreshTreePath(dir)
-    pendingFocusRef.current = true
-    void openPath(createdPath, true)
-    services.notifySuccess?.(t("notify.fileCreated", { name }))
-    return createdPath
-  }
-
-  async function createTreeFolder(dir: string, name: string): Promise<string> {
-    if (!services.createDir) throw new TreeEditError("io", t("error.createFolderFailed"))
-    let createdPath: string
-    try {
-      createdPath = await services.createDir(dir, name)
-    } catch (error) {
-      throw treeCreateError(error, name, t("error.createFolderFailed"))
-    }
-    await refreshTreePath(dir)
-    services.notifySuccess?.(t("notify.folderCreated", { name }))
-    return createdPath
-  }
-
-  async function renameTreeEntry(entry: TreeEntry, name: string): Promise<string> {
-    if (!services.renamePath) throw new Error(t("error.renameFailed"))
-    // Same-name submissions are a no-op on disk but still complete the edit.
-    if (name === entry.name) return entry.path
-    const dir = parentDir(entry.path)
-    if (!dir) throw new Error(t("error.renameFailed"))
-    const folder = workspaceRef.current.folder
-    let nextPath: string
-    try {
-      nextPath = await services.renamePath(entry.path, name)
-    } catch (error) {
-      throw new Error(errorMessage(t("error.renameFailed"), error))
-    }
-    if (!mountedRef.current) return nextPath
-    // 原生操作已成功：目录刷新失败不能再被当作重命名失败供用户重试。
-    try {
-      if (workspaceRef.current.folder === folder) {
-        commitTree(renameTreePath(treeModelRef.current, entry.path, nextPath))
-        void refreshTreePath(dir)
-      }
-      materializer.flush()
-      retargetOpenTabs(entry.path, nextPath, entry.is_dir)
-    } catch (error) {
-      services.reportError(errorMessage(t("error.renameSyncFailed"), error))
-    }
-    services.notifySuccess?.(t("notify.entryRenamed", { name }))
-    return nextPath
-  }
-
-  async function deleteTreeEntry(entry: TreeEntry) {
-    if (!services.deletePath) return
-    // 脏检查前物化：250ms 窗口内的编辑必须被看见，否则跳过确认删文件丢内容（Spec 05a）。
-    materializer.flush()
-    const openTab = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
-    if (
-      openTab
-      && sessionDirty(openTab, docsRef.current.get(openTab.id) ?? "")
-      && !(services.confirmClose ?? services.confirmDiscard)()
-    ) {
-      return
-    }
-    const confirmDelete = services.confirmDelete
-      ?? (path => defaultServices.confirmDelete?.(path) ?? true)
-    if (!confirmDelete(entry.path)) return
-    try {
-      await services.deletePath(entry.path)
-      // 删除的 await 期间在途 openPath 可能把该文件的 tab 加进来：仅在有在途打开
-      // 时登记作废（无条件登记会吞掉同名重建文件的首个打开），并在删除完成后重新
-      // 查找要关的 tab（confirm 前的快照 openTab 已过期，只保留给脏检查用）。
-      if (openInFlightRef.current.has(entry.path)) invalidatedOpenPathsRef.current.add(entry.path)
-      commitTree(removeTreePath(treeModelRef.current, entry.path))
-      const tabToClose = !entry.is_dir ? findTabByPath(workspaceRef.current, entry.path) : undefined
-      if (tabToClose) closeTabInternal(tabToClose.id, { confirm: false, allowReplaceLast: true })
-      const dir = parentDir(entry.path)
-      if (dir) await refreshTreePath(dir)
-      services.notifySuccess?.(t("notify.entryDeleted", { name: entry.name }))
-    } catch (error) {
-      services.reportError(errorMessage(t("error.deleteFailed"), error))
-    }
-  }
-
-  const allCommands: AppCommand[] = [
-    { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
-    { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openQuickOpen() },
-    { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
-    { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
-    { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
-    { id: "tab", label: t("cmd.label.tab"), shortcut: shortcutFor("tab"), run: newTab },
-    { id: "new-window", label: t("cmd.label.newWindow"), shortcut: shortcutFor("new-window"), run: () => { void services.createNewWindow?.() } },
-    { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
-    { id: "theme", label: t("cmd.label.theme"), run: () => setTheme(current => toggleTheme(current)) },
-    { id: "css", label: t("cmd.label.css"), run: () => void loadCustomCss(services, setCustomCss) },
-    { id: "focus", label: t("cmd.label.focus"), run: () => setFocusMode(on => !on) },
-    { id: "preferences", label: t("cmd.label.preferences"), shortcut: shortcutFor("preferences"), run: () => setSettingsOpen(true) },
-    { id: "sidebar", label: t("cmd.label.sidebar"), shortcut: shortcutFor("sidebar"), run: () => setSidebarOpen(open => !open) },
-    { id: "outline", label: t("cmd.label.outline"), shortcut: shortcutFor("outline"), run: () => setOutlineOpen(open => !open) },
-    { id: "typewriter", label: t("cmd.label.typewriter"), run: () => setTypewriter(on => !on) },
-    { id: "source", label: t("cmd.label.source"), shortcut: shortcutFor("source"), run: () => {
-      const view = viewRef.current
-      if (!view) return
-      try {
-        view.dispatch(applyToggle(view.state))
-      } catch { /* mock views */ }
-    } },
-    ...formatCommandEntries(t, runEditorCommand),
-    { id: "insert-image", label: t("cmd.label.insert-image"), run: insertImage },
-    { id: "undo", label: t("cmd.label.undo"), shortcut: shortcutFor("undo"), run: runEditorCommand(undo) },
-    { id: "redo", label: t("cmd.label.redo"), shortcut: shortcutFor("redo"), run: runEditorCommand(redo) },
-    { id: "cut", label: t("cmd.label.cut"), shortcut: shortcutFor("cut"), run: runClipboardCopy(true) },
-    { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
-    { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
-    { id: "pastePlainText", label: t("cmd.label.pastePlainText"), shortcut: shortcutFor("pastePlainText"), run: () => {
-      const view = viewRef.current
-      const active = sessionRef.current
-      if (view) void pastePlainText(view, pasteOptions(active.id, active.documentId))
-    } },
-    { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
-    { id: "find", label: t("cmd.label.find"), shortcut: shortcutFor("find"), run: () => {
-      setFindOpen(true)
-      setReplaceOpen(false)
-    } },
-    { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => search.setOpen(true) },
-{ id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
-    { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
-    { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
-    { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
-    { id: "check-updates", label: t("cmd.label.check-updates"), run: () => { void updateCoordinatorRef.current?.check("manual") } },
-    { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void services.exportDiagnostics?.() },
-    { id: "history", label: t("cmd.label.history"), run: () => void openVersionHistory() },
-    { id: "quit", label: t("cmd.label.quit"), run: () => void services.quitApp?.() },
-    { id: "about", label: t("cmd.label.about"), run: () => setAboutOpen(true) },
-  ]
   // Native PDF/image export is macOS-only (spec D3); on macOS the set filters
   // nothing. Filtering the single definition point covers the palette,
   // commandsRef, runMenuCommand, and the future native AppMenu alike.
@@ -2205,180 +1523,19 @@ export default function App({
     })
   }, [services, sourceMode, sidebarOpen, outlineOpen, typewriter, focusMode])
 
-  function closeFind() {
-    setFindOpen(false)
-    setReplaceOpen(false)
-    try { viewRef.current?.focus() } catch { /* mock views */ }
-  }
-
-  function currentFindQuery(): FindQuery {
-    return {
-      query: findQueryRef.current,
-      caseSensitive: findCaseRef.current,
-      regex: findRegexModeRef.current,
-      wholeWord: findWholeWordRef.current,
-    }
-  }
-
-  function currentSearchRequest(revision = findRevisionRef.current): SearchRequest {
-    return {
-      query: findQueryRef.current,
-      caseSensitive: findCaseRef.current,
-      regexp: findRegexModeRef.current,
-      wholeWord: findWholeWordRef.current,
-      revision,
-    }
-  }
-
-  function realTextDoc(view: EditorView | null): Text | null {
-    if (!view) return null
-    try {
-      const candidate = view.state.doc
-      return typeof candidate.sliceString === "function" ? candidate : null
-    } catch {
-      return null
-    }
-  }
-
   function isActiveSafeMode(): boolean {
     let lines = 0
     try { lines = viewRef.current?.state.doc.lines ?? 0 } catch { lines = 0 }
     return documentScaleRegistry.evaluate(workspaceRef.current.activeId, lines).safeMode
   }
 
-  function goFind(direction: "next" | "prev") {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const request = currentSearchRequest()
-      const current = activeFindMatchRef.current
-      const sel = view.state.selection.main
-      const match = direction === "next"
-        ? findNextMatch(
-            textDoc,
-            request,
-            current && current.revision === request.revision ? current.to : sel.to,
-          )
-        : findPreviousMatch(
-            textDoc,
-            request,
-            current && current.revision === request.revision ? current.from : sel.from,
-          )
-      activeFindMatchRef.current = match
-      if (!match) {
-        setFindIndex(-1)
-        return
-      }
-      try {
-        view.dispatch({
-          selection: { anchor: match.from, head: match.to },
-          scrollIntoView: true,
-        })
-      } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, currentFindQuery())
-    if (matches.length === 0) {
-      activeFindMatchRef.current = null
-      setFindIndex(-1)
-      return
-    }
-    const index = direction === "next"
-      ? nextIndex(matches.length, findIndexRef.current)
-      : prevIndex(matches.length, findIndexRef.current)
-    const match = matches[index]
-    activeFindMatchRef.current = {
-      from: match.from,
-      to: match.to,
-      revision: findRevisionRef.current,
-    }
-    try {
-      view.dispatch({
-        selection: { anchor: match.from, head: match.to },
-        scrollIntoView: true,
-      })
-    } catch { /* mock views */ }
-    setFindIndex(index)
-  }
-
-  function replaceCurrent() {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const request = currentSearchRequest()
-      const spec = replaceCurrentSpec(
-        view.state,
-        request,
-        activeFindMatchRef.current,
-        findReplaceRef.current,
-      )
-      if (!spec) return
-      findRevisionRef.current += 1
-      activeFindMatchRef.current = null
-      try { view.dispatch(spec) } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const matches = collectMatches(doc, currentFindQuery())
-    if (matches.length === 0) return
-    const index = findIndexRef.current >= 0 && findIndexRef.current < matches.length
-      ? findIndexRef.current
-      : 0
-    const match = matches[index]
-    const replacement = findReplaceRef.current
-    findRevisionRef.current += 1
-    activeFindMatchRef.current = null
-    try {
-      view.dispatch({
-        changes: { from: match.from, to: match.to, insert: replacement },
-        selection: { anchor: match.from, head: match.from + replacement.length },
-        scrollIntoView: true,
-      })
-    } catch { /* mock views */ }
-  }
-
-  function replaceEvery() {
-    const view = viewRef.current
-    const query = findQueryRef.current
-    if (!view || query === "") return
-    const textDoc = realTextDoc(view)
-    if (textDoc && isActiveSafeMode()) {
-      const result = buildReplaceAll(textDoc, currentSearchRequest(), findReplaceRef.current)
-      if (!result) return
-      findRevisionRef.current += 1
-      activeFindMatchRef.current = null
-      try { view.dispatch({ changes: result.changes }) } catch { /* mock views */ }
-      return
-    }
-    let doc: string
-    try { doc = view.state.doc.toString() } catch { doc = docRef.current }
-    const next = replaceAll(doc, currentFindQuery(), findReplaceRef.current)
-    if (next === doc) return
-    findRevisionRef.current += 1
-    activeFindMatchRef.current = null
-    try {
-      view.dispatch({ changes: { from: 0, to: doc.length, insert: next } })
-    } catch { /* mock views */ }
-  }
-
-  const goFindRef = useRef(goFind)
-  const closeFindRef = useRef(closeFind)
-  goFindRef.current = goFind
-  closeFindRef.current = closeFind
   // Spec 05b：Escape 取消进行中的打开。overlay 非模态，但其上的模态/面板
   // （palette、quick open、search、settings、about）优先消费 Escape，
   // 只有这些 chrome 都关闭时 Escape 才落到「取消打开」。
   const openingLabelRef = useRef<string | null>(null)
   openingLabelRef.current = openingLabel
-  const cancelOpeningRef = useRef(cancelOpening)
-  cancelOpeningRef.current = cancelOpening
+  const cancelOpeningRef = useRef(openCoordinator.cancelOpening)
+  cancelOpeningRef.current = openCoordinator.cancelOpening
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
     paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
@@ -2386,9 +1543,9 @@ export default function App({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
-      if (e.key === "Escape" && findOpenRef.current) {
+      if (e.key === "Escape" && findReplace.openRef.current) {
         e.preventDefault()
-        closeFindRef.current()
+        findReplace.closeRef.current()
         return
       }
       if (e.key === "Escape" && openingLabelRef.current && !modalChromeOpenRef.current) {
@@ -2403,15 +1560,15 @@ export default function App({
       }
       if (!e.metaKey && !e.ctrlKey) return
       // Find/replace navigation stays editor-scoped: only active while the bar is open.
-      if ((e.key === "g" || e.key === "G") && findOpenRef.current) {
+      if ((e.key === "g" || e.key === "G") && findReplace.openRef.current) {
         e.preventDefault()
-        goFindRef.current(e.shiftKey ? "prev" : "next")
+        findReplace.goRef.current(e.shiftKey ? "prev" : "next")
         return
       }
       if (e.key === "h" || e.key === "H") {
         e.preventDefault()
-        setFindOpen(true)
-        setReplaceOpen(true)
+        findReplace.setOpen(true)
+        findReplace.setReplaceOpen(true)
         return
       }
       const binding = WINDOW_SHORTCUTS.find(shortcut => matchesWindowShortcut(shortcut, e))
@@ -2466,26 +1623,34 @@ export default function App({
   // 注意（Spec 05a）：doc 是 250ms 物化节奏的 React state —— 编辑器里打字时匹配数
   // 最多滞后 ~250ms 才刷新（与字数统计防抖同语义）；换来的是全文扫描不进每键路径。
   const findPatternError = useMemo(
-    () => findOpen && findRegexMode && findQuery !== ""
-      ? validateFindPattern({ query: findQuery, caseSensitive: findCase, regex: true, wholeWord: false })
+    () => findReplace.open && findReplace.regexMode && findReplace.query !== ""
+      ? validateFindPattern({
+          query: findReplace.query,
+          caseSensitive: findReplace.caseSensitive,
+          regex: true,
+          wholeWord: false,
+        })
       : null,
-    [findOpen, findRegexMode, findQuery, findCase],
+    [findReplace.open, findReplace.regexMode, findReplace.query, findReplace.caseSensitive],
   )
   const matchCount = useMemo<number | null>(
     () => {
-      if (!findOpen) return 0
+      if (!findReplace.open) return 0
       // 安全模式（Spec 05）门控全文正则扫描：over-scale tab（含只读）与字数统计
       // 同口径不跑 collectMatches，计数返回 null 由 FindBar 显示占位；文档缩回
       // 正常规模或切到普通 tab 后恢复即时计数。
       if (safeModeActive) return null
       return collectMatches(doc, {
-        query: findQuery,
-        caseSensitive: findCase,
-        regex: findRegexMode,
-        wholeWord: findWholeWord,
+        query: findReplace.query,
+        caseSensitive: findReplace.caseSensitive,
+        regex: findReplace.regexMode,
+        wholeWord: findReplace.wholeWord,
       }).length
     },
-    [findOpen, doc, findQuery, findCase, findRegexMode, findWholeWord, safeModeActive],
+    [
+      findReplace.open, doc, findReplace.query, findReplace.caseSensitive,
+      findReplace.regexMode, findReplace.wholeWord, safeModeActive,
+    ],
   )
 
   return (
@@ -2539,7 +1704,7 @@ export default function App({
               onClose={() => search.setOpen(false)}
               onOpen={hit => {
                 pendingJumpRef.current = hit.line
-                void openPath(hit.path, true)
+                void openCoordinator.openPath(hit.path, true)
               }}
             />
           ) : (
@@ -2549,15 +1714,15 @@ export default function App({
               activePath={activeFilePath}
               activeTabId={workspace.activeId}
               visible={sidebarOpen}
-              onOpenFile={path => void openPath(path, true)}
-              onToggleDir={path => void toggleDir(path)}
+              onOpenFile={path => void openCoordinator.openPath(path, true)}
+              onToggleDir={path => void treeActions.toggleDir(path)}
               onSearch={() => search.setOpen(true)}
-              onCreateFile={services.createMarkdown ? createTreeFile : undefined}
-              onCreateFolder={services.createDir ? createTreeFolder : undefined}
-              onSuggestName={services.listDir ? suggestTreeName : undefined}
-              onRename={services.renamePath ? renameTreeEntry : undefined}
+              onCreateFile={services.createMarkdown ? treeActions.createTreeFile : undefined}
+              onCreateFolder={services.createDir ? treeActions.createTreeFolder : undefined}
+              onSuggestName={services.listDir ? treeActions.suggestName : undefined}
+              onRename={services.renamePath ? treeActions.renameTreeEntry : undefined}
               onEditError={message => services.reportError(message)}
-              onDelete={entry => void deleteTreeEntry(entry)}
+              onDelete={entry => void treeActions.deleteTreeEntry(entry)}
               onReveal={path => {
                 void services.revealInFinder?.(path)?.catch(error => {
                   services.reportError(errorMessage(t("error.revealFailed"), error))
@@ -2582,7 +1747,9 @@ export default function App({
           inert={!outlineOpen}
         >
           <OutlinePanel
+            key={workspace.activeId}
             items={outline}
+            statusStore={editorStatusStore}
             onJump={from => {
               const view = viewRef.current
               if (!view) return
@@ -2627,24 +1794,19 @@ export default function App({
                 {outline.length === 0 ? (
                   <div className="sidebar-empty">{t("outline.empty")}</div>
                 ) : (
-                  outline.map(item => (
-                    <button
-                      key={`${item.from}-${item.text}`}
-                      type="button"
-                      className={`outline-item level-${item.level}`}
-                      onClick={() => {
-                        const view = viewRef.current
-                        if (!view) return
-                        try {
-                          view.dispatch({ selection: { anchor: item.from } })
-                          view.focus()
-                        } catch { /* mock views */ }
-                        setOutlineHover(false)
-                      }}
-                    >
-                      {item.text}
-                    </button>
-                  ))
+                  <OutlineList
+                    items={outline}
+                    statusStore={editorStatusStore}
+                    onJump={from => {
+                      const view = viewRef.current
+                      if (!view) return
+                      try {
+                        view.dispatch({ selection: { anchor: from } })
+                        view.focus()
+                      } catch { /* mock views */ }
+                      setOutlineHover(false)
+                    }}
+                  />
                 )}
               </div>
             </div>
@@ -2699,46 +1861,26 @@ export default function App({
             <p className="save-transient-status" role="status">{transientStatus}</p>
           ) : null}
           <FindReplaceBar
-            open={findOpen}
-            query={findQuery}
-            replacement={findReplace}
-            caseSensitive={findCase}
-            regex={findRegexMode}
-            wholeWord={findWholeWord}
+            open={findReplace.open}
+            query={findReplace.query}
+            replacement={findReplace.replacement}
+            caseSensitive={findReplace.caseSensitive}
+            regex={findReplace.regexMode}
+            wholeWord={findReplace.wholeWord}
             patternError={findPatternError}
-            replaceOpen={replaceOpen}
+            replaceOpen={findReplace.replaceOpen}
             matchCount={matchCount}
-            activeIndex={findIndex}
-            onQuery={query => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindQuery(query)
-              setFindIndex(-1)
-            }}
-            onReplacement={setFindReplace}
-            onCaseSensitive={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindCase(value)
-              setFindIndex(-1)
-            }}
-            onRegex={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindRegexMode(value)
-              setFindIndex(-1)
-            }}
-            onWholeWord={value => {
-              findRevisionRef.current += 1
-              activeFindMatchRef.current = null
-              setFindWholeWord(value)
-              setFindIndex(-1)
-            }}
-            onNext={() => goFind("next")}
-            onPrev={() => goFind("prev")}
-            onReplace={replaceCurrent}
-            onReplaceAll={replaceEvery}
-            onClose={closeFind}
+            activeIndex={findReplace.index}
+            onQuery={findReplace.onQuery}
+            onReplacement={findReplace.onReplacement}
+            onCaseSensitive={findReplace.onCaseSensitive}
+            onRegex={findReplace.onRegex}
+            onWholeWord={findReplace.onWholeWord}
+            onNext={() => findReplace.go("next")}
+            onPrev={() => findReplace.go("prev")}
+            onReplace={findReplace.replaceCurrent}
+            onReplaceAll={findReplace.replaceEvery}
+            onClose={findReplace.close}
           />
           <div className="editor-stack">
             {workspace.tabs.map(tab => (
@@ -2763,7 +1905,7 @@ export default function App({
         <OpeningOverlay
           label={openingLabel}
           progress={openingProgress}
-          onCancel={cancelOpening}
+          onCancel={openCoordinator.cancelOpening}
         />
       ) : null}
       {paletteOpen ? (
@@ -2795,6 +1937,9 @@ export default function App({
         onSave={handleSaveSettings}
         onClose={() => setSettingsOpen(false)}
         listSystemFonts={services.listSystemFonts}
+        logState={logState}
+        openUrl={url => { void services.openExternal?.(url) }}
+        onRestartToApplyLogging={() => { void restartToApplyLogging(services, () => settingsSaveRef.current) }}
       />
       <AboutDialog
         isOpen={aboutOpen}

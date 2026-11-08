@@ -76,7 +76,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
 
   const headingClass = HEADING_CLASS[node.name]
   if (headingClass) {
-    // 光标在标题内时行左缘叠 H1..H6 级别徽标（styles.css 的 .omd-h-active::before）；
+    // 光标在标题内时行首 gutter 叠 H1..H6 级别徽标（styles.css 的 .omd-h-active::before）；
     // 折叠的 `#` 是唯一等级线索，徽标只在编辑态回答“这是几级”，阅读态零噪音。
     // 末尾 inclusive：点击标题常落在末字符之后（head === node.to），仍在编辑该标题
     //（标题标记本就无条件折叠，这里不像 cursorInside 的折叠语义那样需要排斥边界）。

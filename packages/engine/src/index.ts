@@ -32,7 +32,7 @@ import {
 export const LARGE_DOC_LINES = 30000
 export const SAFE_MODE_LINES = 50000
 
-export { collectOutline, type OutlineItem } from "./outline"
+export { collectOutline, outlineCurrentIndex, type OutlineItem } from "./outline"
 export { codeHighlightStyle } from "./highlight/codeHighlight"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
 export { EXPORT_BODY_CSS } from "./export/styles"

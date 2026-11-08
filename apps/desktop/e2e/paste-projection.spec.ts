@@ -227,20 +227,32 @@ test("a definition edit refreshes both mounted tables without touching table sou
 })
 
 test("table and image source entry expose source without rewriting bytes", async ({ page }) => {
+  // 格内会话是生产默认：cell 点击与选区进入都不再翻源码（follower 鉗到表首并
+  // 重开会话）。字节保真仍由整表选区验证：块不是原子的，全选被原样接受且
+  // 一个字节都不改写。源码网格的真正入口只剩 `</>` 工具栏按钮（editButtonEffects）。
   await openHarness(page)
 
-  // A cell click is an intent to edit that cell: the whole table flips to the
-  // source grid (this one only — the identical second table keeps its preview).
-  await tables(page).first().locator("tbody tr").nth(0).locator("td").nth(1).click()
-  await expect(page.locator(".omd-table-src")).toHaveCount(4)
-  await expect(tables(page)).toHaveCount(1)
-
-  // The caret lands at the clicked cell's source, not at the block start, so
-  // the cell boundaries stay addressable.
+  // An outer caret placed inside the table no longer flips it to source — the
+  // follower clamps to the table start and reopens the cell session at the
+  // original landing offset instead.
   const expectedHead = TABLE_START + TABLE.indexOf("| a \\| b |") + "| ".length
-  expect(await selection(page)).toEqual({ from: expectedHead, to: expectedHead, head: expectedHead })
+  await select(page, expectedHead)
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(1)
+  await expect(tables(page)).toHaveCount(2)
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
   expect(expectedHead).toBeGreaterThan(TABLE_START)
   expect(expectedHead).toBeLessThan(TABLE_END)
+
+  // A cell click opens the in-cell session too: the projection grid stays
+  // mounted and no document byte moves.
+  await page.keyboard.press("Escape")
+  await expect(page.locator(".omd-table")).toHaveCount(2)
+  await tables(page).first().locator("tbody tr").nth(0).locator("td").nth(1).click()
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(1)
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  expect(await docText(page)).toBe(DOC)
+  await page.keyboard.press("Escape")
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
 
   // Both block boundaries are reachable: a full-table selection is accepted
   // verbatim (the block is not atomic) and still rewrites nothing.

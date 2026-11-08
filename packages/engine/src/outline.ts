@@ -38,3 +38,20 @@ export function collectOutline(state: EditorState): OutlineItem[] {
   })
   return items
 }
+
+/**
+ * Index of the outline item whose section contains `pos`, or -1 when `pos`
+ * precedes every heading (or the outline is empty). A section spans from its
+ * heading's `from` to the next heading's `from`; the last one reaches the
+ * document end, so callers may pass any clamped-or-stale position. Returns
+ * the last array item starting at or before `pos` — with `collectOutline`'s
+ * ordered output that is the deepest enclosing heading (VS Code / Typora
+ * outline semantics); array order is not assumed, only scanned.
+ */
+export function outlineCurrentIndex(items: OutlineItem[], pos: number): number {
+  let current = -1
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].from <= pos) current = i
+  }
+  return current
+}

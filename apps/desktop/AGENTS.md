@@ -10,13 +10,20 @@
 apps/desktop/
 ├── src/
 │   ├── App.tsx                  # Shell wiring (growth-frozen: put new logic in focused modules)
-│   ├── main.tsx                 # React mount + single react-toastify container
+│   ├── useFindReplace.ts        # Find/replace controller hook (state + mirror refs + go/replace)
+│   ├── fileTreeActions.ts       # File-tree operations bridge (host-injected; cross-render refs via host)
+│   ├── documentOpen.ts          # Open coordinator: tiers, streaming read, request token (own state)
+│   ├── appSessionInit.ts        # One-shot startup flows (settings load, shard restore, draft prompt)
+│   ├── appCommands.ts           # buildAppCommands(ctx): the 51-entry command table as data
+│   ├── main.tsx                 # React mount + ErrorBoundary + single react-toastify container
 │   ├── Editor.ts                # CM6 host assembly, engine options, link activation, status reporter
 │   ├── tightSelection.ts        # Vendored tight selection drawing (never re-add stock drawSelection)
 │   ├── styles.css               # Theme tokens (--omd-*), color-scheme, and omd-* presentation
 │   ├── constants.ts             # TS↔Rust shared limits and localStorage keys (drift-tested)
 │   ├── desktopServices.ts       # All Tauri invoke/listen callers (wire boundary)
 │   ├── platform.ts              # The ONLY platform branch in TS (unknown → macOS)
+│   ├── logger.ts · logPath.ts · logging.ts · useLoggingState.ts · globalErrorHandlers.ts  # Frontend logging (policy, no React)
+│   ├── ErrorBoundary.tsx        # Last-resort recovery surface (localized via `t`)
 │   ├── shortcuts.ts · commands.ts · menuTree.ts  # Single-sourced shortcuts and menu command mapping
 │   ├── i18n/                    # useT() for components, module-level t() elsewhere
 │   ├── clipboardPaste.ts · clipboardPayload.ts · pasteAssets.ts · pasteBookmark.ts · pasteJob.ts
@@ -36,6 +43,7 @@ apps/desktop/
 2. **Hot-path performance (`documentMaterializer.ts`, `editorStatusStore.ts`):** `EditorDocumentUpdate` never carries a full document string. Pull `view.state.doc.toString()` on the 250ms trailing materializer cadence and flush before save/close/delete. Route cursor/mode updates through `editorStatusStore` (`sameEditorStatus` deduplicated).
 3. **Feedback & i18n:** Route user notifications through `services.reportError` / `services.notifySuccess` (never call `window.alert` directly; rate-limit per-change recovery errors in `recoveryWriter.ts`). Keep i18n in desktop (`useT` / `t`) and pass localized labels to the engine via `EngineOptions`.
 4. **Multi-window safety:** Scope window-targeted Tauri listeners (`menu-command`, `open-file`, `session-flush`) with `listenTarget()` (`AnyLabel`) in `desktopServices.ts`. Gate `restoreDraft()` on `windowScope.isMainWindow()`, while `restoreSavedSession()` runs per window shard.
+5. **Logging ownership (`logger.ts`, `logPath.ts`, `globalErrorHandlers.ts`, `ErrorBoundary.tsx`):** Logging is **opt-in** (`settings.loggingEnabled`, default off; Rust `LOGGING_SETTINGS_KEY`) — a default install must create no log file, so no module may write a record before the user turns it on, and `OMD_LOG` is not consent. The desktop host owns logging; `@omd/engine` stays silent. Keep handled errors at `warn` via `services.reportError` (render them with `errorMessage`, which reads a typed command error's `message` rather than stringifying the object); log polling outages/recoveries and divergence changes once per transition (`fileTabWatcher.ts`, `saveDiagnostics.ts`). Route frontend records through `getGlobalLogger()` (batched `log_frontend` IPC, flushed before `sessionFlushAck` on quit) and wrap paths with `pathField` / `pathsField` (`test/logPathSourceGuard.test.ts` forbids raw `path=`/`paths=` literals). `logging.ts` is policy only (no React import); the `useLoggingState` hook lives in its own module so non-React consumers do not pull React into their graph. Logging policy stays out of `desktopServices.ts` (the wire layer only resolves destinations and invokes; the pre-export flush belongs to `appDiagnosticsActions.ts`). Never log document content or hot-path editor events. Untrusted thrown values go through `describeThrown`, which reports structure (type, key names, message/stack) and never serializes a payload; the export promise "no document content" depends on that.
 
 ## CodeMirror Host & CSS Rules (`Editor.ts`, `tightSelection.ts`, `styles.css`)
 

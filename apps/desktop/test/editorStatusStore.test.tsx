@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest"
 import { createEditorStatusStore, useEditorStatus } from "../src/editorStatusStore"
 import { EDITOR_STATUS_FIELDS, type EditorStatus } from "../src/editorStatus"
 
-const BASE: EditorStatus = { cursor: "1:1", mode: "live" }
-const CHANGED: EditorStatus = { cursor: "9:4", mode: "source" }
+const BASE: EditorStatus = { cursor: "1:1", head: 0, mode: "live" }
+const CHANGED: EditorStatus = { cursor: "9:4", head: 12, mode: "source" }
 
 /** Exhaustive by construction: adding an EditorStatus field breaks compilation
  * here, so the store's equality can never silently ignore a new field. */
@@ -12,6 +12,8 @@ function baseDifferingIn(field: keyof EditorStatus): EditorStatus {
   switch (field) {
     case "cursor":
       return { ...BASE, cursor: CHANGED.cursor }
+    case "head":
+      return { ...BASE, head: CHANGED.head }
     case "mode":
       return { ...BASE, mode: CHANGED.mode }
   }
@@ -30,27 +32,27 @@ describe("editor status store", () => {
     }
   })
 
-  it("notifies only when cursor or mode changes", () => {
+  it("notifies only when cursor, head, or mode changes", () => {
     const store = createEditorStatusStore()
     const listener = vi.fn()
     const unsubscribe = store.subscribe(listener)
 
-    store.publish({ cursor: "1:1", mode: "live" })
+    store.publish({ cursor: "1:1", head: 0, mode: "live" })
     expect(listener).not.toHaveBeenCalled()
 
-    store.publish({ cursor: "2:3", mode: "live" })
+    store.publish({ cursor: "2:3", head: 7, mode: "live" })
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(store.getSnapshot()).toEqual({ cursor: "2:3", mode: "live" })
+    expect(store.getSnapshot()).toEqual({ cursor: "2:3", head: 7, mode: "live" })
 
     unsubscribe()
-    store.publish({ cursor: "2:3", mode: "source" })
+    store.publish({ cursor: "2:3", head: 7, mode: "source" })
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
   it("updates only consumers subscribed through the hook", () => {
     const store = createEditorStatusStore()
     const { result } = renderHook(() => useEditorStatus(store))
-    act(() => store.publish({ cursor: "9:4", mode: "source" }))
-    expect(result.current).toEqual({ cursor: "9:4", mode: "source" })
+    act(() => store.publish({ cursor: "9:4", head: 12, mode: "source" }))
+    expect(result.current).toEqual({ cursor: "9:4", head: 12, mode: "source" })
   })
 })

@@ -12,8 +12,12 @@ use crate::windows::WindowBounds;
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 // Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
 // runs cannot observe each other's env vars (config_dir() reads them live).
+
 #[cfg(test)]
-static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+#[path = "test_config.rs"]
+mod test_config;
+#[cfg(test)]
+pub(crate) use test_config::config_env_guard;
 
 const MARKDOWN_EXT: &[&str] = &["md", "markdown", "mdx"];
 const MARKDOWN_FILE_EXTENSION: &str = "md";
@@ -322,7 +326,9 @@ pub fn save_settings(contents: String) -> Result<(), String> {
 /// v1 flat SavedSessionState and reads as `main`'s payload; the next save
 /// persists it as a schema-2 shard (migration on first read).
 const SESSION_SCHEMA_VERSION: u64 = 2;
-const SESSION_FILE_NAME: &str = "session.json";
+/// Public because the diagnostics bundle copies the same file (Task 12): a
+/// second literal there would silently stop finding it after a rename.
+pub const SESSION_FILE_NAME: &str = "session.json";
 
 /// Serializes read-modify-write cycles over `session.json`: all windows
 /// share one file, so concurrent shard saves from different webviews must
@@ -1040,12 +1046,6 @@ mod tests {
         fs::remove_dir_all(path).ok();
         fs::create_dir_all(path).unwrap();
         authorize_workspace_root(path).unwrap();
-    }
-
-    /// Holds the CONFIG_ENV_LOCK so tests that set/remove OMD_CONFIG_DIR /
-    /// OMD_RECOVERY_DIR cannot race with each other in parallel runs.
-    fn config_env_guard() -> std::sync::MutexGuard<'static, ()> {
-        CONFIG_ENV_LOCK.lock().unwrap()
     }
 
     fn path_string(path: &Path) -> String {

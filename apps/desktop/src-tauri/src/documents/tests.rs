@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-fn temp_dir(name: &str) -> PathBuf {
+pub(super) fn temp_dir(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!("omd-doc-{}-{name}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     directory
@@ -17,7 +17,7 @@ fn write_temp(name: &str, contents: &str) -> PathBuf {
     file
 }
 
-fn path_string_for(path: &Path) -> String {
+pub(super) fn path_string_for(path: &Path) -> String {
     path.to_str().unwrap().to_owned()
 }
 
@@ -25,7 +25,7 @@ fn canonical_string(path: &Path) -> String {
     path_string_for(&fs::canonicalize(path).unwrap())
 }
 
-fn existing_expected(path: &Path) -> ExpectedDocumentVersion {
+pub(super) fn existing_expected(path: &Path) -> ExpectedDocumentVersion {
     match read_document_blocking(&path_string_for(path)).unwrap() {
         DiskSnapshot::Existing { version, .. } => ExpectedDocumentVersion::Existing { version },
         other => panic!("expected an existing snapshot: {other:?}"),

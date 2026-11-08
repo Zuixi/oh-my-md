@@ -7,6 +7,7 @@ use super::{
     DocumentCoordinator, DocumentError, DocumentVersion, ExistingDiskSnapshot,
     ExpectedDocumentVersion, SaveDocumentResult, SaveDurability, VersionCheck,
 };
+use crate::logging::path_field;
 
 pub(crate) fn guarded_save(
     coordinator: &DocumentCoordinator,
@@ -24,25 +25,102 @@ pub(crate) fn guarded_save_with_hook(
     expected: &ExpectedDocumentVersion,
     hook: &(dyn Fn() + Sync),
 ) -> Result<SaveDocumentResult, DocumentError> {
-    let path_buf = validate_requested(path)?;
-    let path_key = resolve_path_key(&path_buf)?;
-    let lock = coordinator.lock_for(&path_key);
-    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Rendered once from the requested string, so one helper escapes every
+    // boundary line — the begin, both terminal successes, and the failure.
+    // `validate_requested` does not normalize, so this is byte-identical to the
+    // parsed buffer's field and is available even when parsing fails.
+    let field = path_field(Path::new(path));
 
-    let first_probe = probe_disk(&path_buf)?;
-    if let VersionCheck::Conflict(result) = compare_expected(expected, &first_probe, path) {
-        return Ok(result);
-    }
+    // Every document write, from every route, passes through here. The whole
+    // fallible body — validation, path resolution, the probes, metadata copy,
+    // and the writes — sits in one block so *every* `Err` leaves a terminal
+    // line. A pre-write failure used to leave nothing at all (validation and
+    // `resolve_path_key`) or a dangling `save begin` (`probe_disk`: a document
+    // changed externally to non-UTF-8 never reaches the write), and the user
+    // sees only the save-failed banner.
+    let started = std::time::Instant::now();
+    let result = 'save: {
+        let path_buf = match validate_requested(path) {
+            Ok(path_buf) => path_buf,
+            Err(error) => break 'save Err(error),
+        };
+        let path_key = match resolve_path_key(&path_buf) {
+            Ok(path_key) => path_key,
+            Err(error) => break 'save Err(error),
+        };
+        let lock = coordinator.lock_for(&path_key);
+        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    match first_probe {
-        DiskProbe::Missing => create_missing(&path_buf, path, contents, expected, hook),
-        DiskProbe::Existing { snapshot, .. } => {
-            replace_existing(&path_buf, path, &snapshot, contents, expected, hook)
+        // Written after the per-path lock at Debug, so normal Info logs emit a
+        // single `save ok` line while verbose logs retain the pre-write marker.
+        log::debug!("save begin {field}");
+
+        let probe = match probe_disk(&path_buf) {
+            Ok(probe) => probe,
+            Err(error) => break 'save Err(error),
+        };
+        if let VersionCheck::Conflict(result) = compare_expected(expected, &probe, path) {
+            // The terminal match below records this conflict once. Nothing
+            // was written, so this is a state transition rather than an error.
+            break 'save Ok(result);
         }
-        DiskProbe::DanglingSymlink => Err(DocumentError::Internal(
-            "unexpected dangling symlink after a matching compare".into(),
-        )),
+
+        match probe {
+            DiskProbe::Missing => create_missing(&path_buf, path, contents, expected, hook),
+            DiskProbe::Existing { snapshot, .. } => {
+                replace_existing(&path_buf, path, &snapshot, contents, expected, hook)
+            }
+            DiskProbe::DanglingSymlink => Err(DocumentError::Internal(
+                "unexpected dangling symlink after a matching compare".into(),
+            )),
+        }
+    };
+
+    match result {
+        // `durability` is `Copy`, so matching by value keeps `result` whole for
+        // the `return` at the end of the arm.
+        Ok(SaveDocumentResult::Saved { durability, .. }) => {
+            // `durability` belongs in the record: a save whose directory sync
+            // failed is reported to the user as a transient warning and, before
+            // this, was indistinguishable from a fully durable write here.
+            log::info!(
+                "save ok {field} bytes={} duration_ms={} durability={}",
+                contents.len(),
+                started.elapsed().as_millis(),
+                durability_kind(durability)
+            );
+            result
+        }
+        // The second compare inside the write can still find a conflict; the
+        // write is abandoned with nothing published, so this is not a failure.
+        Ok(result) => {
+            log::info!("save conflict {field}");
+            Ok(result)
+        }
+        // One arm for every failure, and the only `error` line this module
+        // writes: an `Err` must never leave the log silent or a bare begin.
+        Err(error) => {
+            log::error!("save failed {field} error={error}");
+            Err(error)
+        }
     }
+}
+
+/// The stable word for a save's durability, used only in the log record (the
+/// wire shape stays the serde enum on `SaveDocumentResult`).
+fn durability_kind(durability: SaveDurability) -> &'static str {
+    match durability {
+        SaveDurability::Durable => "durable",
+        SaveDurability::DirectorySyncFailed => "directorySyncFailed",
+    }
+}
+
+/// The log target this module's boundary lines carry, exposed so a test can
+/// filter the facade capture by it. `env!("CARGO_PKG_NAME")` is the bin name
+/// (`omd`), not the lib name (`omd_lib`) `module_path!()` reports.
+#[cfg(test)]
+pub(crate) fn log_target() -> &'static str {
+    module_path!()
 }
 
 #[cfg(target_os = "macos")]

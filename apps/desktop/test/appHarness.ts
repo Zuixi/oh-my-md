@@ -417,7 +417,7 @@ function harnessServices(context: HarnessContext): HarnessServices {
     confirmDelete: vi.fn(() => true),
     confirmExternalChange: vi.fn(() => true),
     getSettings: vi.fn(async () => DEFAULT_SETTINGS),
-    saveSettings: vi.fn(async () => undefined),
+    saveSettings: vi.fn(async () => true),
     listSystemFonts: vi.fn(async () => ["Arial", "Menlo"]),
     getSessionState: vi.fn(async () => null),
     saveSessionState: vi.fn(async () => undefined),
@@ -435,6 +435,11 @@ function harnessServices(context: HarnessContext): HarnessServices {
     // unrelated App tests never start updater work; update tests override.
     updateCapability: vi.fn(async () => ({ check: false, install: false })),
     prepareUpdateRestart: vi.fn<() => Promise<PrepareUpdateRestartResult>>(async () => ({ kind: "ready" })),
+    // Logging is off by default, so the Settings panel must be drivable: the
+    // restart-to-apply path only renders while a change is pending.
+    getLogState: vi.fn(async () => ({ degraded: false, dir: "", destination: { kind: "off" as const } })),
+    restartApp: vi.fn(async () => undefined),
+    confirmRestartForLogging: vi.fn(() => true),
   }
 }
 

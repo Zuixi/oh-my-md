@@ -4,6 +4,7 @@ import {
   createRecoveryWriter, RECOVERY_DEBOUNCE_MS,
   type RecoveryDraft, type RecoveryHost,
 } from "../src/recoveryWriter"
+import { useSpyLogger } from "./setup"
 
 function draftFor(tabId: number, contents = "body"): RecoveryDraft {
   return { tabId, key: `notes_${tabId}_md`, path: `/notes/${tabId}.md`, contents }
@@ -20,38 +21,85 @@ async function settle() {
   await vi.advanceTimersByTimeAsync(RECOVERY_DEBOUNCE_MS)
 }
 
+/**
+ * 一次中断只留一条 `error` 记录：返回它的消息，供测试断言 tab 身份字段。
+ * 连续失败只累计计数，不再逐次打印。
+ */
+async function loggedFailure(draft: RecoveryDraft): Promise<string> {
+  const logged = vi.mocked(useSpyLogger().error)
+  const { host } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
+  const writer = createRecoveryWriter()
+
+  await writer.save(draft, host)
+  await settle()
+  await writer.save(draft, host)
+  await settle()
+
+  expect(logged).toHaveBeenCalledOnce()
+  const [target, message] = logged.mock.calls[0]
+  expect(target).toBe("recovery")
+  return message
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 describe("recovery writer", () => {
-  it("reports the first failure for a tab and only logs the later ones", async () => {
+  it("records one failure per outage instead of one per document change", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     const { host, reportError } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
     const writer = createRecoveryWriter()
+    // `/notes/1.md` — a tab with a path, so `path=` already identifies it.
+    const named = draftFor(1)
 
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
-    await writer.save(draftFor(1), host)
+    await writer.save(named, host)
     await settle()
 
     expect(reportError).toHaveBeenCalledOnce()
     expect(reportError).toHaveBeenCalledWith(`${t("error.recoveryWriteFailed")}: disk full`)
-    expect(logged).toHaveBeenCalledTimes(2)
-    expect(logged.mock.calls[0]).toEqual([
-      `${t("error.recoveryWriteFailed")}: disk full`,
-      { key: "notes_1_md", path: "/notes/1.md" },
-      new Error("disk full"),
-    ])
+    // One record for the outage. Repeated failures of the same broken
+    // directory used to write a line per keystroke.
+    expect(logged).toHaveBeenCalledOnce()
+    const [target, message] = logged.mock.calls[0]
+    expect(target).toBe("recovery")
+    expect(message).toBe(`${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md`)
+    // `path=` identifies a named tab, and `recoveryKey` is derived from that path
+    // (`notes_1_md`) — a separator-substituted copy the export redactor's
+    // separator rule cannot collapse. So the record must carry no key, in any
+    // form; a regression that re-adds it fails here.
+    expect(message).not.toContain("key=")
+    expect(message).not.toContain(named.key)
   })
 
-  it("re-arms the report after a successful write", async () => {
+  it("keeps the key for an untitled tab, whose only identity is the key", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    // `draft.path` is null for an untitled tab (`recoveryKey` gives it
+    // `untitled_<id>`); a path-only record would leave that tab anonymous.
+    const message = await loggedFailure({
+      tabId: 7,
+      key: "untitled_7",
+      path: null,
+      contents: "body",
+    })
+
+    expect(message).toBe(
+      `${t("error.recoveryWriteFailed")}: disk full path= key=untitled_7`,
+    )
+    expect(message).toContain("key=untitled_7")
+  })
+
+  it("re-arms reporting after a successful write and records the recovery", async () => {
+    vi.useFakeTimers()
+    const spy = useSpyLogger()
+    const logged = vi.mocked(spy.error)
+    const recovered = vi.mocked(spy.info)
     const write = vi.fn()
       .mockRejectedValueOnce(new Error("first outage"))
       .mockResolvedValueOnce(undefined)
@@ -71,12 +119,20 @@ describe("recovery writer", () => {
       [`${t("error.recoveryWriteFailed")}: first outage`],
       [`${t("error.recoveryWriteFailed")}: second outage`],
     ])
-    expect(logged).not.toHaveBeenCalled()
+    // One record per outage, and the success that ended the first one says how
+    // many failed writes it covered.
+    expect(logged).toHaveBeenCalledTimes(2)
+    expect(logged.mock.calls[0][1]).toContain("first outage")
+    expect(logged.mock.calls[1][1]).toContain("second outage")
+    expect(recovered).toHaveBeenCalledOnce()
+    expect(recovered.mock.calls[0][0]).toBe("recovery")
+    expect(recovered.mock.calls[0][1]).toContain("recovered after 1 failed write(s)")
+    expect(recovered.mock.calls[0][1]).toContain("path=/notes/1.md")
   })
 
   it("tracks tabs separately and re-arms a forgotten tab", async () => {
     vi.useFakeTimers()
-    vi.spyOn(console, "error").mockImplementation(() => undefined)
+    useSpyLogger()
     const { host, reportError } = makeHost(vi.fn().mockRejectedValue(new Error("disk full")))
     const writer = createRecoveryWriter()
 
@@ -95,7 +151,7 @@ describe("recovery writer", () => {
 
   it("stays silent when the host cannot write recoveries", async () => {
     vi.useFakeTimers()
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const logged = vi.mocked(useSpyLogger().error)
     const { host, reportError } = makeHost(undefined)
     const writer = createRecoveryWriter()
 
@@ -145,5 +201,34 @@ describe("recovery writer", () => {
     writer.forget(2)
     await settle()
     expect(write).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 持续失败只能留一条记录，但恢复那一行必须说清中断持续了多久：用户交上来的
+// 诊断包要能回答"草稿这段时间到底有没有被保护"。
+describe("recovery outage accounting", () => {
+  it("reports the suppressed count when the outage ends", async () => {
+    vi.useFakeTimers()
+    const spy = useSpyLogger()
+    const write = vi.fn()
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValueOnce(undefined)
+    const { host, reportError } = makeHost(write)
+    const writer = createRecoveryWriter()
+
+    for (const contents of ["a", "b", "c", "d"]) {
+      await writer.save(draftFor(1, contents), host)
+      await settle()
+    }
+
+    expect(reportError).toHaveBeenCalledOnce()
+    expect(vi.mocked(spy.error)).toHaveBeenCalledOnce()
+    const recovery = vi.mocked(spy.info).mock.calls[0]
+    expect(recovery[0]).toBe("recovery")
+    // Three writes failed (a, b, c) and the fourth succeeded: the count is the
+    // number of writes that went unprotected, not the number of attempts.
+    expect(recovery[1]).toContain("recovered after 3 failed write(s)")
   })
 })

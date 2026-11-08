@@ -51,13 +51,15 @@ jobs:
           set -euo pipefail
           version="$VERSION"
           tag="v$version"
-          release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,draft,prerelease,url)"
+          # gh 的 JSON 字段是 isDraft/isPrerelease（不是 draft/prerelease）：
+          # 首次真实 promote（v0.1.1，run 41767126241）用旧字段名被 gh 拒绝。
+          release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url)"
           release_tag="$(node -e "const r = JSON.parse(process.argv[1]); process.stdout.write(r.tagName)" "$release")"
           test "$release_tag" = "$tag" || {
             echo "release for $tag resolved to a different tag: $release_tag" >&2
             exit 1
           }
-          node -e "const r = JSON.parse(process.argv[1]); if (r.draft || r.prerelease) { process.stderr.write(r.draft ? 'release is a Draft; refusing to promote\n' : 'release is prerelease; refusing to promote\n'); process.exit(1) }" "$release"
+          node -e "const r = JSON.parse(process.argv[1]); if (r.isDraft || r.isPrerelease) { process.stderr.write(r.isDraft ? 'release is a Draft; refusing to promote\n' : 'release is prerelease; refusing to promote\n'); process.exit(1) }" "$release"
       - name: Download candidate manifest and signed updater artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,11 +87,20 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$RUNNER_TEMP/minisign.tar.gz" \
             "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
           tar -xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP/minisign"
-          find "$RUNNER_TEMP/minisign" -type f -name minisign -exec chmod +x {} \;
-          test -n "$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)" || {
-            echo "minisign binary missing after extraction" >&2
+          # The 0.12 linux tarball ships both x86_64/ and aarch64/ trees; a bare
+          # `find -quit` picks whichever directory iterates first (aarch64),
+          # which Exec-format-errors on x86_64 runners. Resolve by machine arch.
+          case "$(uname -m)" in
+            x86_64) minisign_arch="x86_64" ;;
+            aarch64) minisign_arch="aarch64" ;;
+            *) echo "unsupported runner arch for minisign: $(uname -m)" >&2; exit 1 ;;
+          esac
+          minisign_bin="$RUNNER_TEMP/minisign/minisign-linux/$minisign_arch/minisign"
+          test -x "$minisign_bin" || {
+            echo "minisign $minisign_arch binary missing after extraction" >&2
             exit 1
           }
+          printf '%s\n' "$minisign_bin" > "$RUNNER_TEMP/minisign.path"
       - name: Decode committed minisign public key
         shell: bash
         run: |
@@ -115,9 +126,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          minisign="$(find "$RUNNER_TEMP/minisign" -type f -name minisign -print -quit)"
+          minisign="$(cat "$RUNNER_TEMP/minisign.path")"
           pubkey="$RUNNER_TEMP/minisign.pub"
           test -s "$pubkey" || { echo "decoded public key missing" >&2; exit 1; }
+          # Tauri ships base64-encoded minisign signatures as .sig; minisign
+          # 0.12 -V ignores -s and hard-resolves the conventional decoded
+          # <artifact>.minisig sibling (both verified against the real 0.12
+          # binary and the actual v0.1.1 release assets locally). Decode each
+          # signature to its conventional sibling before verifying.
+          for sig in release-assets/*.sig; do
+            test -f "$sig" || continue
+            base64 -d < "$sig" > "${sig%.sig}.minisig"
+          done
           count=0
           for sig in release-assets/*.sig; do
             test -f "$sig" || continue
@@ -126,9 +146,7 @@ jobs:
               echo "signature without matching updater artifact: $sig" >&2
               exit 1
             }
-            # minisign defaults to the conventional <artifact>.sig sibling, so
-            # the signature file is passed explicitly rather than implied.
-            "$minisign" -Vm "$artifact" -p "$pubkey" -s "$sig" || {
+            "$minisign" -Vm "$artifact" -p "$pubkey" || {
               echo "minisign verification failed for $artifact" >&2
               exit 1
             }
