@@ -114,6 +114,7 @@
 - **Opaque `background` shorthands erase the quote bar** — the bar is a gradient painted by `--omd-bq-image`; `.omd-code` / `.omd-code-header` use the `background` shorthand and must repaint it.
 - **JS `listen()` defaults to Any — `emit_to` alone does not scope delivery** — targeted listeners pin `{ kind: "AnyLabel", label }` via `listenTarget()` (session-flush, menu, open-file); broadcast `emit` still reaches AnyLabel.
 - **Non-`main` windows must never call `restoreDraft()`** — the mount-flow `windowScope.isMainWindow()` branch keeps a fresh editor window from hijacking the main window's recovery record.
+- **File-tree rename moves a draft's recovery key** — content-only dedup can skip the new write; keep the old record until the new-key draft is durable, including when a directory rename retargets open tabs.
 - **`localStorage` is shared across same-origin webviews** — `STORAGE_KEY_SESSION` is a last-writer-wins fallback only; the Rust per-window shard is the truth.
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))

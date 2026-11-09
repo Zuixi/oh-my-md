@@ -1382,7 +1382,7 @@ export default function App({
     isOpenInFlight: path => openCoordinator.isOpenInFlight(path),
     invalidateOpen: path => { openCoordinator.invalidateOpen(path) },
     closeTab: closeTabInternal,
-    saveRecovery,
+    recoveryWriter: recoveryWriterRef.current,
     notifySuccess: message => { services.notifySuccess?.(message) },
     reportError: message => { services.reportError(message) },
     reportUserError,

@@ -561,6 +561,15 @@ resolves only after the in-flight writes settle; a late success/failure must not
 `lastWritten` or report. Writes are also serialized per tab: a slow IPC carrying old contents
 must never land after the newer draft queued behind it.
 
+File-tree rename has the same identity change as save-as. Deleting the old record
+before the new one is durable loses a dirty draft if the editor crashes; even an
+unchanged document needs a new write because writer dedup previously compared only
+contents. `fileTreeActions.ts::migrateRecovery` waits for old writes, uses the writer's immediate
+queued write for the new key, and retains the old record if that write fails.
+Writer dedup must also leave an existing pending/in-flight write visible: if the
+user undoes back to the last written text, that older pending content still has
+to be replaced or it will overwrite the correct draft at the debounce edge.
+
 Known limitation (deliberate, do not "fix" casually): adoption matches a draft's recorded
 path to tabs by **exact string**. Spelling variants of the same file — case differences on
 NTFS/APFS, macOS NFD, a symlinked or drive-letter-alias path — produce a separate key/record

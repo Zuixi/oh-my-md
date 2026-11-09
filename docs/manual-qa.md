@@ -272,6 +272,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 字体 popover 绝对定位于可滚动的 settings body 内：把窗口压矮、字体行落在主体下部时打开 popover，搜索框仍可聚焦、列表仍可滚动选中（必要时设置主体随之后滚），不被视口裁剪到不可用
 - [ ] 系统字体枚举失败/缺失降级：`list_system_fonts` 报错（服务返回 null）时 popover 显示「Failed to load system fonts」提示且无系统字体区；Linux 无 fc-list 时返回空列表，同样只剩预设（无失败提示）。两种形态下三项预设均仍可选、选中仍生效，设置面板其余项不受影响
 - [ ] 已保存文档停手约 1.5s 自动落盘；未保存 untitled 只进恢复；启动有恢复提示且不静默覆盖
+- [ ] 制造外部修改冲突后继续编辑并等待恢复草稿写盘；在文件树中重命名文件及父目录，立即强制退出再启动，恢复提示仍能找回本地修改；模拟新草稿写盘失败时旧草稿仍保留
 - [ ] 导出 HTML 是源码投影（含公式/代码/表）；PDF / Image 弹出保存对话框（默认 `export.pdf` / `export.png`），确认后目标路径必须出现真实文件；由离屏 WKWebView 的 `createPDF` 生成（Image 再栅格化为 PNG），不是系统打印对话框，也不是把编辑器 DOM 截屏
 - [ ] 含数学公式（KaTeX）、代码块、表格的文档导出 PDF/PNG：`window.__omdExportReady` 就绪前 WKWebView 最多等待 5 秒再截图；若超时界面出现警告提示（"Export warning:"）；正常导出文件完整呈现公式/代码/表格内容
 - [ ] 亮/暗主题与自定义 CSS；Typewriter 当前行居中；Focus 非当前行降透明度

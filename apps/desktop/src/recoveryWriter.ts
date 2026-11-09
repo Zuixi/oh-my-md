@@ -27,6 +27,8 @@ interface PendingWrite {
 export interface RecoveryWriter {
   /** Schedules one trailing write per tab; settled when the outcome has been surfaced. */
   readonly save: (draft: RecoveryDraft, host: RecoveryHost) => Promise<void>
+  /** Writes a moved draft immediately through the same per-tab queue. */
+  readonly persistNow: (draft: RecoveryDraft, host: RecoveryHost) => Promise<boolean>
   /**
    * Drops a closed tab: cancels its pending write, invalidates its in-flight
    * one, and clears reporting state (recycled ids stay clean). Resolves once
@@ -52,39 +54,41 @@ export function createRecoveryWriter(): RecoveryWriter {
   const reported = new Set<number>()
   /** Writes that failed since the announced one, per tab. */
   const suppressed = new Map<number, number>()
-  const lastWritten = new Map<number, string>()
+  const lastWritten = new Map<number, { key: string; contents: string }>()
   const pending = new Map<number, PendingWrite>()
   /** Per-tab epoch; `forget` bumps it so a write that settles afterwards is inert. */
   const epochs = new Map<number, number>()
   /** Writes already past the timer, so `forget` can wait for their IPC to land. */
-  const inFlight = new Map<number, Set<Promise<void>>>()
+  const inFlight = new Map<number, Set<Promise<boolean>>>()
   /** Settling write each tab's next write queues behind, so two overlapping
    *  IPCs can never invert: a slow write of old contents must not land after
    *  the newer draft and push the record backwards. */
-  const chains = new Map<number, Promise<void>>()
+  const chains = new Map<number, Promise<boolean>>()
 
-  const writeNow = (entry: PendingWrite): Promise<void> => {
+  const writeNow = (entry: PendingWrite): Promise<boolean> => {
     const { tabId } = entry.draft
-    pending.delete(tabId)
     const epoch = epochs.get(tabId) ?? 0
     const previous = chains.get(tabId) ?? Promise.resolve()
     const task = (async () => {
       await previous.catch(() => undefined)
-      if ((epochs.get(tabId) ?? 0) !== epoch) return
+      if ((epochs.get(tabId) ?? 0) !== epoch) return false
+      if (!entry.host.write) return false
       try {
-        await entry.host.write?.(entry.draft.key, entry.draft.path, entry.draft.contents)
+        await entry.host.write(entry.draft.key, entry.draft.path, entry.draft.contents)
         // The tab was closed meanwhile: its record is being deleted, so this
         // completion must neither revive `lastWritten` nor report success.
-        if ((epochs.get(tabId) ?? 0) !== epoch) return
-        lastWritten.set(tabId, entry.draft.contents)
+        if ((epochs.get(tabId) ?? 0) !== epoch) return false
+        lastWritten.set(tabId, { key: entry.draft.key, contents: entry.draft.contents })
         announceRecovery(entry.draft, reported, suppressed)
+        return true
       } catch (error) {
-        if ((epochs.get(tabId) ?? 0) !== epoch) return
+        if ((epochs.get(tabId) ?? 0) !== epoch) return false
         surfaceFailure(reported, suppressed, entry.draft, entry.host, error)
+        return false
       }
     })()
     chains.set(tabId, task)
-    const writes = inFlight.get(tabId) ?? new Set<Promise<void>>()
+    const writes = inFlight.get(tabId) ?? new Set<Promise<boolean>>()
     writes.add(task)
     inFlight.set(tabId, writes)
     const settle = () => {
@@ -101,19 +105,25 @@ export function createRecoveryWriter(): RecoveryWriter {
   return {
     save: (draft, host) => {
       // 同内容去重：物化节奏重发的未变草稿不再触发 IPC/写盘。
-      if (lastWritten.get(draft.tabId) === draft.contents) return Promise.resolve()
+      const written = lastWritten.get(draft.tabId)
+      if (!pending.has(draft.tabId) && !chains.has(draft.tabId)
+        && written?.key === draft.key && written.contents === draft.contents) return Promise.resolve()
       const existing = pending.get(draft.tabId)
       if (existing) window.clearTimeout(existing.timer)
       const entry: PendingWrite = { draft, host, timer: 0 }
       // Reporting must never break recovery: a logger failure here is not the
       // writer's outcome and has nowhere useful to go.
       entry.timer = window.setTimeout(
-        () => { void writeNow(entry).catch(() => undefined) },
+        () => {
+          if (pending.get(draft.tabId) === entry) pending.delete(draft.tabId)
+          void writeNow(entry).catch(() => undefined)
+        },
         RECOVERY_DEBOUNCE_MS,
       )
       pending.set(draft.tabId, entry)
       return Promise.resolve()
     },
+    persistNow: (draft, host) => writeNow({ draft, host, timer: 0 }),
     forget: async tabId => {
       const entry = pending.get(tabId)
       if (entry) window.clearTimeout(entry.timer)

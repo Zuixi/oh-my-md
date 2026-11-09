@@ -214,6 +214,36 @@ describe("recovery writer", () => {
     expect(write).toHaveBeenCalledTimes(1)
   })
 
+  it("writes unchanged contents again when a tab's recovery key changes", async () => {
+    vi.useFakeTimers()
+    const write = vi.fn(async () => undefined)
+    const writer = createRecoveryWriter()
+    const { host } = makeHost(write)
+    await writer.save(draftFor(1, "dirty"), host)
+    await settle()
+
+    await writer.save({ tabId: 1, key: "renamed", path: "/notes/renamed.md", contents: "dirty" }, host)
+    await settle()
+
+    expect(write).toHaveBeenLastCalledWith("renamed", "/notes/renamed.md", "dirty")
+    expect(write).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not leave a stale pending draft after content returns to its last written value", async () => {
+    vi.useFakeTimers()
+    const records = new Map<string, string>()
+    const { host } = makeHost(async (key, _path, contents) => { records.set(key, contents) })
+    const writer = createRecoveryWriter()
+    await writer.save(draftFor(1, "original"), host)
+    await settle()
+
+    await writer.save(draftFor(1, "temporary"), host)
+    await writer.save(draftFor(1, "original"), host)
+    await settle()
+
+    expect(records.get("notes_1_md")).toBe("original")
+  })
+
   it("settles a pending write on the debounce and forget cancels it", async () => {
     vi.useFakeTimers()
     const write = vi.fn(async () => undefined)

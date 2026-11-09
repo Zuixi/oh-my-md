@@ -12,6 +12,8 @@ import {
   type TreeEntry,
 } from "./fileTreeState"
 import { fileNamesAreCaseInsensitive } from "./platform"
+import { clearRecoveryRecord } from "./recoveryCleanup"
+import type { RecoveryWriter } from "./recoveryWriter"
 import {
   isDuplicateNameError, suggestEntryName, type EntryKind,
 } from "./entryName"
@@ -22,7 +24,7 @@ import {
   samePath,
   type Workspace,
 } from "./workspace"
-import { recoveryKey, retargetSessionPath, sessionDirty, sessionPath, type EditorSession } from "./session"
+import { recoveryKey, retargetSessionPath, sessionDirty, sessionPath } from "./session"
 
 export interface FileTreeHost {
   readonly services: DesktopServices
@@ -35,7 +37,7 @@ export interface FileTreeHost {
   isOpenInFlight(path: string): boolean
   invalidateOpen(path: string): void
   closeTab(id: number, options: { confirm: boolean; allowReplaceLast: boolean }): boolean
-  saveRecovery(tab: EditorSession, contents: string): void
+  recoveryWriter: RecoveryWriter
   notifySuccess(message: string): void
   reportError(message: string): void
   reportUserError(message: string): void
@@ -250,6 +252,23 @@ export function createFileTreeActions(host: FileTreeHost): FileTreeActions {
     return createdPath
   }
 
+  async function migrateRecovery(tabId: number, oldKey: string): Promise<void> {
+    await host.recoveryWriter.forget(tabId)
+    const tab = host.getWorkspace().tabs.find(item => item.id === tabId)
+    if (!tab) return
+    const key = recoveryKey(tab)
+    if (key === oldKey) return
+    const contents = host.getContents(tabId)
+    if (sessionDirty(tab, contents)) {
+      const written = await host.recoveryWriter.persistNow(
+        { tabId, key, path: sessionPath(tab), contents },
+        { write: services.writeRecovery, reportError: host.reportUserError },
+      )
+      if (!written) return
+    }
+    await clearRecoveryRecord(services, oldKey)
+  }
+
   function retargetOpenTabs(from: string, to: string, isDir: boolean): void {
     const previousTabs = host.getWorkspace().tabs
     const nextTabs = previousTabs.map(tab => {
@@ -262,15 +281,17 @@ export function createFileTreeActions(host: FileTreeHost): FileTreeActions {
       return tab
     })
     if (nextTabs.every((tab, index) => tab === previousTabs[index])) return
+    host.commitWorkspace({ ...host.getWorkspace(), tabs: nextTabs })
     previousTabs.forEach((tab, index) => {
       const next = nextTabs[index]
       if (tab === next) return
       const oldKey = recoveryKey(tab)
-      if (oldKey !== recoveryKey(next)) void services.clearRecovery?.(oldKey)
-      const contents = host.getContents(next.id)
-      if (contents !== undefined && sessionDirty(next, contents)) host.saveRecovery(next, contents)
+      if (oldKey !== recoveryKey(next)) {
+        void migrateRecovery(next.id, oldKey).catch(error => {
+          host.reportError(errorMessage(host.t("error.renameSyncFailed"), error))
+        })
+      }
     })
-    host.commitWorkspace({ ...host.getWorkspace(), tabs: nextTabs })
     const affectedPaths = nextTabs
       .map(tab => sessionPath(tab))
       .filter((path): path is string => path !== null)

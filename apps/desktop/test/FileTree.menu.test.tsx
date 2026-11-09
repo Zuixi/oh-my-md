@@ -644,6 +644,75 @@ describe("FileTree sidebar menu", () => {
       expectPathShown("/notes/renamed.md", { dirty: true })
     })
   })
+
+  it("keeps a durable draft when a dirty file is renamed without another edit", async () => {
+    const harness = makeAppHarness()
+    const records = new Map<string, string>()
+    harness.services.writeRecovery = vi.fn(async (key, _path, contents) => {
+      records.set(key, contents)
+    })
+    harness.services.clearRecovery = vi.fn(async key => { records.delete(key) })
+    let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.mocked(harness.services.renamePath).mockImplementation(async (_from, toName) => {
+      entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
+      return `/notes/${toName}`
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    harness.editorForTab(1).emit({ doc: "dirty", docChanged: true, pendingNormalization: null })
+    const oldKey = recoveryKey(createFileSession(1, "/notes/doc.md", "saved", {
+      resolvedPath: "/notes/doc.md", fingerprint: "0",
+    }))
+    const newKey = recoveryKey(createFileSession(1, "/notes/renamed.md", "saved", {
+      resolvedPath: "/notes/renamed.md", fingerprint: "0",
+    }))
+    await waitFor(() => expect(records.get(oldKey)).toBe("dirty"), { timeout: 2_000 })
+
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    await waitFor(() => expectPathShown("/notes/renamed.md", { dirty: true }))
+    await waitFor(() => expect(records.has(oldKey)).toBe(false), { timeout: 2_000 })
+    expect(records.get(newKey)).toBe("dirty")
+  })
+
+  it("keeps the old draft if writing the renamed file's draft fails", async () => {
+    const harness = makeAppHarness()
+    const records = new Map<string, string>()
+    const oldKey = recoveryKey(createFileSession(1, "/notes/doc.md", "saved", {
+      resolvedPath: "/notes/doc.md", fingerprint: "0",
+    }))
+    harness.services.writeRecovery = vi.fn(async (key, _path, contents) => {
+      if (key !== oldKey) throw new Error("disk full")
+      records.set(key, contents)
+    })
+    harness.services.clearRecovery = vi.fn(async key => { records.delete(key) })
+    let entries = [{ name: "doc.md", path: "/notes/doc.md", is_dir: false }]
+    harness.services.listDir = vi.fn(async () => entries)
+    vi.mocked(harness.services.renamePath).mockImplementation(async (_from, toName) => {
+      entries = [{ name: toName, path: `/notes/${toName}`, is_dir: false }]
+      return `/notes/${toName}`
+    })
+
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+    harness.editorForTab(1).emit({ doc: "dirty", docChanged: true, pendingNormalization: null })
+    await waitFor(() => expect(records.get(oldKey)).toBe("dirty"), { timeout: 2_000 })
+    await openTreeMenu("doc.md")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
+    const input = screen.getByRole("textbox", { name: "Rename" })
+    fireEvent.change(input, { target: { value: "renamed" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    await waitFor(() => expect(harness.services.reportError)
+      .toHaveBeenCalledWith(expect.stringContaining("disk full")))
+    expect(records.get(oldKey)).toBe("dirty")
+  })
 })
 
 describe("FileTree shortcut hints", () => {
