@@ -218,6 +218,26 @@ function intersects(from: number, to: number, range: RebuildRange) {
   return from < range.to && to >= range.from
 }
 
+// CodeMirror's `RangeSet.map` drops a non-point range when it collapses and
+// `startSide > 0 && endSide <= 0` (marks and non-block replaces; line
+// decorations use side -200000000 and survive as points). Read the sides from
+// the decoration itself rather than inferring them from the tag string.
+function dropsWhenCollapsed(spec: DecoSpec) {
+  return spec.deco.startSide > 0 && spec.deco.endSide <= 0
+}
+
+// Mirrors each decoration's own `range(from, to)` check for an empty range:
+// `MarkDecoration` always rejects one, `PointDecoration` rejects a replace with
+// non-inclusive sides but accepts a widget, and `LineDecoration` accepts it.
+// `point`/`isReplace` are CodeMirror internals; treat an unknown shape as the
+// conservative (reject) case. A representable empty spec must not block a repair.
+function unrepresentableAtPoint(spec: DecoSpec) {
+  if (spec.from !== spec.to) return false
+  const deco = spec.deco as { point?: boolean; isReplace?: boolean }
+  if (deco.point !== true) return true
+  return deco.isReplace === true && dropsWhenCollapsed(spec)
+}
+
 function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
   if (spec.from === spec.to) {
     const pos = changes.mapPos(spec.from, 1)
@@ -225,7 +245,12 @@ function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
   }
   const from = changes.mapPos(spec.from, 1)
   const to = changes.mapPos(spec.to, -1)
-  return from <= to ? { ...spec, from, to } : null
+  if (from > to) return null
+  // Mirror that drop rule here so the spec list never counts ranges the
+  // RangeSet has dropped, and a later rebuild never feeds `Decoration.range`
+  // an empty mark/replace.
+  if (from === to && dropsWhenCollapsed(spec)) return null
+  return { ...spec, from, to }
 }
 
 function rebuildRanges(tr: Transaction) {
@@ -453,7 +478,7 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
       return oldWidget && newWidget && oldWidget.eq(newWidget) ? dropped : spec
     })
 
-  return {
+  const next: LiveDeco = {
     deco: mappedDeco.update({
       filter: keep,
       add: additions.map(spec => spec.deco.range(spec.from, spec.to)),
@@ -470,6 +495,16 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
     treeLength,
     pending,
   }
+  // Cardinality is the load-bearing invariant behind the shared `keep`
+  // predicate: one range per spec. If a future change breaks it, rebuild from
+  // the specs instead of feeding CodeMirror a drifted pairs/triples set —
+  // a degraded but self-consistent frame beats a mis-mapped decoration range.
+  if (next.deco.size === next.specs.length) return next
+  // Repairing means rebuilding every range, and a collapsed mark/replace spec is
+  // unrepresentable in a fresh DecorationSet. In that (now impossible) case a
+  // degraded but consistent frame beats throwing on every transaction.
+  const rebuildable = !next.specs.some(unrepresentableAtPoint)
+  return rebuildable ? { ...next, ...decorationSets(next.specs, tr.state) } : next
 }
 
 // 仅供测试：同步排空 pending —— 循环按 ≤LIVE_BUILD_CHUNK_CHARS 切片 dispatch

@@ -13,15 +13,19 @@
  */
 import type { AutoPairOptions } from "@omd/engine"
 import {
-  advanceDocumentIdentity, lazyFileSession, openSession,
+  lazyFileSession, openSession, recoveryKey, sessionPath,
   type EditorSession,
 } from "./session"
+import type { RecoveryDraft } from "./recoveryAdoption"
 import {
   activeSession, addTab, focusTab, openFolder, replaceTabSession,
   type Workspace,
 } from "./workspace"
 import { DEFAULT_SETTINGS, sameAutoPair, type UserSettings } from "./settings"
 import type { DesktopServices } from "./desktopServices"
+import { getGlobalLogger } from "./logger"
+import { keyField, pathField } from "./logPath"
+import { clearRecoveryRecord } from "./recoveryCleanup"
 import type { DocumentScaleRegistry } from "./documentScaleRegistry"
 import type { AppTheme } from "./theme"
 import { t } from "./i18n"
@@ -48,9 +52,15 @@ export interface AppSessionInitHost {
   setContents(tabId: number, contents: string): void
   /** 主 tab 装载（经 resetTabDocumentRef 转发，防过期闭包）。 */
   resetTabDocument(session: EditorSession, contents: string): boolean
+  /** Loads the tab holding `path` if the session restored it lazily, so its
+   *  disk baseline/version exists before the draft is mounted. A failed load
+   *  leaves it lazy and adoption falls back to a new tab. */
+  ensureDraftTarget(path: string): Promise<void>
+  /** Mounts one recovered draft (its matching tab, the pristine untitled tab,
+   *  or a new tab) and returns the id of the tab that now holds it, or `null`
+   *  when it could not be mounted (the record is kept). */
+  adoptRecovery(draft: RecoveryDraft): number | null
   syncDoc(value: string, tabId: number): void
-  /** sessionRef 读取（草稿恢复推进文档身份）。 */
-  getActiveSession(): EditorSession
   /** 恢复成功标记（sessionRestoredRef 写）。 */
   markSessionRestored(): void
 }
@@ -154,16 +164,84 @@ export async function restoreSavedSession(host: AppSessionInitHost): Promise<boo
   return false
 }
 
-export async function restoreDraft(host: AppSessionInitHost): Promise<void> {
+/**
+ * Deletes one record without letting a cleanup failure abort the loop. The
+ * draft is already resolved (declined, empty, or mounted), so a failed delete
+ * only means it is offered once more next launch; skipping the remaining
+ * records would strand the user's other drafts.
+ */
+async function discardRecovery(services: DesktopServices, key: string): Promise<void> {
+  await clearRecoveryRecord(services, key)
+}
+
+/**
+ * Keeps an adopted draft durable under the tab's own key. The mounted content
+ * is memory-only, so the source record may only be deleted once an equivalent
+ * record exists under the key `recoveryWriter` will use from now on; when the
+ * keys already match the existing record is that copy and must be kept.
+ * Returns `true` when the old record may be deleted.
+ */
+async function rearmDraft(
+  services: DesktopServices, recordKey: string, tab: EditorSession, contents: string,
+): Promise<boolean> {
+  const key = recoveryKey(tab)
+  if (key === recordKey) return false
+  const write = services.writeRecovery
+  if (!write) return false
+  try {
+    await write(key, sessionPath(tab), contents)
+    return true
+  } catch {
+    getGlobalLogger().warn("recovery", `could not re-arm draft ${keyField(key)}`)
+    // The source record stays the durable copy.
+    return false
+  }
+}
+
+/**
+ * Offers **every** recovery record, not just the first one. A record is
+ * deleted only after the user declines it or after its draft has been
+ * mounted and re-armed under the tab's key; a transient read failure keeps it
+ * for the next launch.
+ */
+export async function restoreDrafts(host: AppSessionInitHost): Promise<void> {
   const { services } = host
   const records = await services.listRecoveries?.() ?? []
-  const first = records[0]
-  if (!first || !services.readRecovery) return
-  if (!services.confirmRestore?.(first.label)) {
-    await services.clearRecovery?.(first.key)
-    return
+  if (!services.readRecovery) return
+  for (const record of records) {
+    if (!services.confirmRestore?.(record.label)) {
+      await discardRecovery(services, record.key)
+      continue
+    }
+    let contents: string
+    let path: string | null
+    try {
+      ({ contents, path } = await services.readRecovery(record.key))
+    } catch {
+      continue
+    }
+    if (contents === "") {
+      await discardRecovery(services, record.key)
+      continue
+    }
+    // A lazy tab must know its disk baseline before the draft replaces its
+    // content: otherwise its persistence stays "not read" and the next
+    // activation would refetch the file over the draft, after this record is gone.
+    if (path !== null) {
+      // A failed lazy load must not abort the remaining records: adoption then
+      // simply falls back to a new tab (the draft is never lost).
+      try {
+        await host.ensureDraftTarget(path)
+      } catch {
+        getGlobalLogger().warn("recovery", `could not load draft target ${pathField(path)}`)
+      }
+    }
+    if (!host.isMounted()) return
+    const tabId = host.adoptRecovery({ key: record.key, path, contents })
+    if (tabId === null) continue
+    const tab = host.getWorkspace().tabs.find(item => item.id === tabId)
+    if (tab && await rearmDraft(services, record.key, tab, contents)) {
+      await discardRecovery(services, record.key)
+    }
   }
-  const contents = await services.readRecovery(first.key)
-  if (!host.isMounted()) return
-  host.resetTabDocument(advanceDocumentIdentity(host.getActiveSession()), contents)
 }

@@ -236,9 +236,9 @@ describe("App normalization wiring", () => {
 
   it("clears old projection before open, external reload, and draft restore", async () => {
     const harness = makeAppHarness()
-    const read = deferred<string>()
+    const read = deferred<{ path: string | null; contents: string }>()
     harness.services.listRecoveries = vi.fn(async () => [
-      { key: "untitled_1", label: "untitled_1" },
+      { key: "untitled_1", label: "untitled_1", path: null },
     ])
     harness.services.readRecovery = vi.fn(() => read.promise)
     harness.services.confirmRestore = vi.fn(() => true)
@@ -247,13 +247,14 @@ describe("App normalization wiring", () => {
     harness.editorForTab(1).setContents("1. a\n3. b")
     harness.emitPending(1, normalizationId(1))
     expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
-    read.resolve("restored draft")
+    read.resolve({ path: null, contents: "restored draft" })
     await act(async () => { await read.promise })
+    // The active tab is no longer pristine, so the draft must NOT hijack it:
+    // it mounts in a new tab, leaving the pending projection bound to tab 1.
     expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
-
-    harness.editorForTab(1).setContents("1. a\n3. b")
-    harness.emitPending(1, normalizationId(2))
+    harness.activateTab(1)
     expect(screen.getByRole("button", { name: "Save normalization" })).toBeTruthy()
+
     await harness.openIntoActive("/notes/one.md", "1. a\n3. b")
     expect(screen.queryByRole("button", { name: "Save normalization" })).toBeNull()
 
@@ -351,6 +352,7 @@ describe("App normalization autosave and accept/reject", () => {
       expect(harness.services.saveDocument).not.toHaveBeenCalled()
       expect(harness.services.writeRecovery).toHaveBeenCalledWith(
         expect.any(String),
+        "/notes/a.md",
         "1. a\n2. b",
       )
     } finally {
@@ -830,19 +832,6 @@ describe("App document session", () => {
 })
 
 describe("App product shell", () => {
-  it("restores a recovery draft when the user confirms", async () => {
-    const harness = makeAppHarness()
-    harness.services.listRecoveries = vi.fn(async () => [
-      { key: "untitled_1", label: "untitled_1" },
-    ])
-    harness.services.readRecovery = vi.fn(async () => "recovered draft")
-    harness.services.confirmRestore = vi.fn(() => true)
-    harness.renderApp()
-
-    await waitFor(() => expect(editor.reset).toHaveBeenCalledOnce())
-    expectPathShown("unnamed", { dirty: true })
-  })
-
   it("writes untitled edits only to recovery, not the filesystem", async () => {
     const harness = makeAppHarness()
     harness.renderApp({ autosaveMs: 20 })

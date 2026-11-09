@@ -1350,3 +1350,24 @@ Why a pasted `<table>` with `rowspan`/`colspan` has four strict invariants acros
 2. **Container nesting breaks block closure.** Inside `BulletList`, `OrderedList`, or `Blockquote`, a multi-line `HTMLBlock` without container continuation prefixes splits the enclosing container. `smartPaste.ts::canHostComplexTable` inspects the syntax tree at `from` and only permits `allowComplexTable` at top-level `Document` or a top-level `Paragraph`; any other host context downgrades to a GFM table or plain text and increments `unsupportedTable`.
 3. **One closed validator (`parse/complexTable.ts::parseComplexTableBlock`) gates both preview and export.** Only a single top-level `<table>` with whitelisted tags (`thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `br`, `strong`/`b`, `em`/`i`, `del`/`s`, `mark`, `u`, `kbd`, `sub`, `sup`, `code`, `a`, `img`), whitelisted attributes (`rowspan`, `colspan`, `scope`, `align`, `href`, `src`, `alt`, `title`), URLs accepted by `normalizePasteUrl`, and a rectangular 2D span occupancy grid (no overlap, no dangling row/col span, bounded dimensions) produces a `ComplexTableModel`. Anything else returns `null`, leaving the `HTMLBlock` as raw source in preview and escaped text in `exportHtml` / `exportRichHtml`.
 4. **`HTMLBlock` must be in `SELECTION_BLOCKS` (`decorations/build.ts`).** Because `ComplexTableWidget` replaces the full `HTMLBlock` when unselected and unmounts to `line:omd-table-src` when selected, selection transitions into/out of an `HTMLBlock` must expand the decoration rebuild range to the full block node.
+
+## Incremental spec mapping must mirror `RangeSet.map`'s collapse rule
+
+`livePreviewField` keeps a `DecoSpec[]` beside the built `DecorationSet`. On every
+transaction `build.ts::mapSpec` maps each spec's endpoints, and CodeMirror maps the
+built set with `RangeSet.map` independently. Those two mappings **must agree on
+dropped ranges**: `RangeSet.map` discards a range that collapses when
+`newFrom > newTo`, or when `newFrom === newTo && startSide > 0 && endSide <= 0`.
+
+Mark and non-block replace decorations carry non-inclusive sides (`startSide >
+0 && endSide <= 0`), so a deletion swallowing their span maps them to one
+position and CM silently drops them. `LineDecoration` uses `-200000000 /
+-200000000`, so zero-length line decorations survive and must be kept.
+
+Keeping a collapsed `mark:`/`replace:` spec made `deco.size !== specs.length`
+permanently; the cardinality guard then rebuilt the whole set and threw
+`Mark decorations may not be empty` / `Invalid range for replacement decoration`
+on every later transaction. `mapSpec` now drops a spec when `from > to`, or when
+`from === to` and the tag is not `line:`. Regression:
+`test/progressive.test.ts` — "drops specs whose range collapsed instead of
+drifting from the RangeSet".

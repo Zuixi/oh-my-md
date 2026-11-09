@@ -1,10 +1,16 @@
 import type { Text } from "@codemirror/state"
+import {
+  SAFE_PERFORMANCE_POLICY,
+  STANDARD_PERFORMANCE_POLICY,
+  type EditorPerformancePolicy,
+} from "@omd/engine"
 
 /**
  * Spec 05/05b 文档档位策略的单一持有者：字节数、只读标记、暂存 Text、以及
  * 由此推导的安全模式集合，原先散落在 App.tsx 的四个 ref（safeModeTabsRef /
- * docBytesRef / docTextsRef / readonlyTabsRef）现在都在这里。App.tsx 只负责
- * 在正确的时机调用 `classify` / `applyRenderPolicy`，不再直接持有任何 Map/Set。
+ * docBytesRef / docTextsRef / readonlyTabsRef）现在都在这里。`editorScalePolicy`
+ * 在正确的时机调用 `classify` / `performancePolicy`，App.tsx 不再直接持有任何
+ * Map/Set，也不再改写 engine 的进程级全局预算。
  */
 export interface DocumentScaleClassification {
   safeMode: boolean
@@ -14,9 +20,6 @@ export interface DocumentScaleClassification {
 export interface DocumentScaleRegistryDeps {
   safeModeLines: number
   safeModeBytes: number
-  renderBudgetLines: number
-  setRenderBudget(lines: number): void
-  setSafeModeRendering(enabled: boolean): void
 }
 
 export interface DocumentScaleRegistry {
@@ -36,10 +39,10 @@ export interface DocumentScaleRegistry {
   /** Recomputes safe mode from current bytes/read-only state plus the given
    * line count, and updates the cached safe-mode set accordingly. */
   classify(tabId: number, lines: number): DocumentScaleClassification
-  /** Applies the process-global engine render budget/windowing flags for the
-   * given tab's last-classified safe-mode state. Callers must only invoke
-   * this for the active tab. */
-  applyRenderPolicy(tabId: number): void
+  /** The engine policy this tab's view must carry. Every view gets an explicit
+   * policy, so tabs cannot inherit each other's budget/windowing and the
+   * engine's process-global defaults are never consulted. */
+  performancePolicy(tabId: number): EditorPerformancePolicy
   /** Drops all state for a closed tab. */
   remove(tabId: number): void
 }
@@ -95,10 +98,8 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     isSafeMode,
     evaluate,
     classify,
-    applyRenderPolicy(tabId) {
-      const safeMode = isSafeMode(tabId)
-      deps.setRenderBudget(safeMode ? deps.renderBudgetLines : Infinity)
-      deps.setSafeModeRendering(safeMode)
+    performancePolicy(tabId) {
+      return isSafeMode(tabId) ? SAFE_PERFORMANCE_POLICY : STANDARD_PERFORMANCE_POLICY
     },
     remove(tabId) {
       bytesByTab.delete(tabId)

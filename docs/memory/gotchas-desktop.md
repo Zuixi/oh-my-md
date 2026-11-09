@@ -540,3 +540,22 @@ Related design note: index-based reveal guards (`lastRevealedRef`) must be **res
 identity change** — switching tabs can land both documents on the same section index while the
 panel's scrollTop still shows the old document. `App.tsx` remounts `OutlinePanel` with
 `key={workspace.activeId}` so the guard re-arms; a same-index new list must scroll again.
+
+## Recovery keys are file names, not paths (2026-11)
+
+`recoveryKey()` first sanitized the tab identity into a lossy name (`[/\: ]` → `_`). That
+broke on all three platforms at once: two documents differing only in a replaced character
+shared one draft, a long path exceeded the 255-byte component limit (so every keystroke's
+write failed), and Windows reserves `<>:"|?*`, control characters, device names (`CON`,
+`NUL`, `COM1`…), trailing dots/spaces, and treats `:` as an alternate data stream. The key is
+now `slug + "_" + 64-bit hex hash` over the exact identity: bounded (≤65 bytes), ASCII-only
+(also avoids macOS NFD normalization), collision-free in practice, and identical in shape on
+every platform. Rust `valid_key` rejects empty, `.`/`..`, separators, NUL, `:`, and >255 bytes,
+but must keep accepting embedded `..` — `a..b.md` is a legal document name.
+
+Two follow-on traps: (1) a tab's recovery identity moves when save-as changes its path, so the
+old record must be deleted too or the next launch offers an already-saved file as a draft;
+(2) `recoveryWriter.forget` used to drop only timers, so an IPC already in flight could land
+after close-tab deleted the record and recreate it. `forget` now bumps a per-tab epoch and
+resolves only after the in-flight writes settle; a late success/failure must not touch
+`lastWritten` or report.

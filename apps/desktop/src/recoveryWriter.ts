@@ -11,7 +11,7 @@ export interface RecoveryDraft {
 }
 
 export interface RecoveryHost {
-  readonly write?: (key: string, contents: string) => Promise<void>
+  readonly write?: (key: string, path: string | null, contents: string) => Promise<void>
   readonly reportError: (message: string) => void
 }
 
@@ -27,8 +27,13 @@ interface PendingWrite {
 export interface RecoveryWriter {
   /** Schedules one trailing write per tab; settled when the outcome has been surfaced. */
   readonly save: (draft: RecoveryDraft, host: RecoveryHost) => Promise<void>
-  /** Drops a closed tab: cancels its pending write and reporting state (recycled ids stay clean). */
-  readonly forget: (tabId: number) => void
+  /**
+   * Drops a closed tab: cancels its pending write, invalidates its in-flight
+   * one, and clears reporting state (recycled ids stay clean). Resolves once
+   * the tab's in-flight write has settled, so a caller deleting the record
+   * afterwards cannot race a late write that recreates it.
+   */
+  readonly forget: (tabId: number) => Promise<void>
 }
 
 /**
@@ -49,16 +54,37 @@ export function createRecoveryWriter(): RecoveryWriter {
   const suppressed = new Map<number, number>()
   const lastWritten = new Map<number, string>()
   const pending = new Map<number, PendingWrite>()
+  /** Per-tab epoch; `forget` bumps it so a write that settles afterwards is inert. */
+  const epochs = new Map<number, number>()
+  /** Writes already past the timer, so `forget` can wait for their IPC to land. */
+  const inFlight = new Map<number, Set<Promise<void>>>()
 
-  const writeNow = async (entry: PendingWrite) => {
-    pending.delete(entry.draft.tabId)
-    try {
-      await entry.host.write?.(entry.draft.key, entry.draft.contents)
-      lastWritten.set(entry.draft.tabId, entry.draft.contents)
-      announceRecovery(entry.draft, reported, suppressed)
-    } catch (error) {
-      surfaceFailure(reported, suppressed, entry.draft, entry.host, error)
+  const writeNow = (entry: PendingWrite): Promise<void> => {
+    const { tabId } = entry.draft
+    pending.delete(tabId)
+    const epoch = epochs.get(tabId) ?? 0
+    const task = (async () => {
+      try {
+        await entry.host.write?.(entry.draft.key, entry.draft.path, entry.draft.contents)
+        // The tab was closed meanwhile: its record is being deleted, so this
+        // completion must neither revive `lastWritten` nor report success.
+        if ((epochs.get(tabId) ?? 0) !== epoch) return
+        lastWritten.set(tabId, entry.draft.contents)
+        announceRecovery(entry.draft, reported, suppressed)
+      } catch (error) {
+        if ((epochs.get(tabId) ?? 0) !== epoch) return
+        surfaceFailure(reported, suppressed, entry.draft, entry.host, error)
+      }
+    })()
+    const writes = inFlight.get(tabId) ?? new Set<Promise<void>>()
+    writes.add(task)
+    inFlight.set(tabId, writes)
+    const settle = () => {
+      writes.delete(task)
+      if (writes.size === 0) inFlight.delete(tabId)
     }
+    void task.then(settle, settle)
+    return task
   }
 
   return {
@@ -68,25 +94,34 @@ export function createRecoveryWriter(): RecoveryWriter {
       const existing = pending.get(draft.tabId)
       if (existing) window.clearTimeout(existing.timer)
       const entry: PendingWrite = { draft, host, timer: 0 }
-      entry.timer = window.setTimeout(() => { void writeNow(entry) }, RECOVERY_DEBOUNCE_MS)
+      // Reporting must never break recovery: a logger failure here is not the
+      // writer's outcome and has nowhere useful to go.
+      entry.timer = window.setTimeout(
+        () => { void writeNow(entry).catch(() => undefined) },
+        RECOVERY_DEBOUNCE_MS,
+      )
       pending.set(draft.tabId, entry)
       return Promise.resolve()
     },
-    forget: tabId => {
+    forget: async tabId => {
       const entry = pending.get(tabId)
       if (entry) window.clearTimeout(entry.timer)
       pending.delete(tabId)
+      // Invalidate any write that already started; its completion becomes inert.
+      epochs.set(tabId, (epochs.get(tabId) ?? 0) + 1)
       lastWritten.delete(tabId)
       reported.delete(tabId)
       suppressed.delete(tabId)
+      const writes = inFlight.get(tabId)
+      if (writes) await Promise.allSettled([...writes])
     },
   }
 }
 
 /** `path=` carries the location for a named tab. The key is emitted only for a
- *  tab with no path: there `untitled_<id>` is the tab's only identity, while
- *  for a named tab `recoveryKey` would repeat the path in a
- *  separator-substituted form the export redactor cannot collapse. */
+ *  tab with no path: there the generated key is the tab's only identity, while
+ *  for a named tab it would add nothing the path does not already say (and is
+ *  not a path for the export redactor to collapse). */
 function recoveryIdentity(draft: RecoveryDraft): string {
   return draft.path === null
     ? `${pathField("")} ${keyField(draft.key)}`

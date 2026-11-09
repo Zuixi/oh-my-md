@@ -2,7 +2,9 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest"
 import { EditorState } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
-import { blockRenderBudget, isLivePreview, SAFE_MODE_RENDER_BUDGET_LINES, safeModeRenderingEnabled } from "@omd/engine"
+import {
+  blockRenderBudget, isLivePreview, safeModeRenderingEnabled,
+} from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import { createAppHarness, resetMountedApps } from "./appHarness"
 
@@ -68,9 +70,9 @@ describe("large document safe mode", () => {
     expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
     expect(forcedSourceOff(dispatchCalls(view))).toBe(false)
     expect(document.querySelector(".statusbar")?.textContent).toContain("live")
-    // 安全模式预算 + 窗口化装饰仍然生效（与模式正交）。
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    expect(safeModeRenderingEnabled()).toBe(true)
+    // 安全模式只存在于该 view 的 facet 里：进程级全局保持默认（镜像已删除）。
+    expect(blockRenderBudget()).toBe(Infinity)
+    expect(safeModeRenderingEnabled()).toBe(false)
     const banner = document.querySelector(".update-banner-message")
     expect(banner?.textContent).toContain("50010")
     expect(banner?.textContent).toContain("progressively")
@@ -132,45 +134,28 @@ describe("large document safe mode", () => {
     // 同 tab 再次载入超大文档：策略不 dispatch 任何模式变更，
     // 且安全模式预算不因用户的模式选择而失效（预算与模式正交）。
     await harness.openFileTab("/b.md", bigDoc(50010))
-    expect(fakeView.dispatch).not.toHaveBeenCalled()
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    expect(safeModeRenderingEnabled()).toBe(true)
+    // 策略会重新下发 per-view 预算/窗口化（facet reconfigure），但绝不切模式。
+    expect(forcedSourceOff(fakeView.dispatch.mock.calls as unknown[][])).toBe(false)
+    expect(blockRenderBudget()).toBe(Infinity)
+    expect(safeModeRenderingEnabled()).toBe(false)
   })
 
-  it("sets a finite block render budget only for safe-mode documents", async () => {
+  it("shows the safe-mode banner for a big document and clears it for a small one in the same tab", async () => {
     const harness = createAppHarness(editor)
     harness.renderApp()
     await harness.openFileTab("/big.md", bigDoc(50010))
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    // 打开普通小文档后恢复
+    expect(document.querySelector(".update-banner-message")?.textContent).toContain("progressively")
+    // 同一 tab 打开普通小文档后策略回到标准档，横幅随通知清空。
     await harness.openFileTab("/small.md", "small")
-    expect(blockRenderBudget()).toBe(Infinity)
+    expect(document.querySelector(".update-banner-message")).toBeNull()
   })
 
-  it("re-applies the render budget when switching tabs", async () => {
-    // 预算是 engine 全局状态，安全模式是 per-tab 的：切 tab 必须重新应用，
-    // 否则小 tab 继承有限预算（远处块懒渲染）或安全 tab 切回后预算失效。
+  it("never rewrites the engine's process-global compatibility knobs", async () => {
+    // 镜像已删除：安全模式只存在于每个 view 的 facet 里，进程级默认值不得被触碰。
     const harness = createAppHarness(editor)
     harness.renderApp()
     await harness.openFileTab("/big.md", bigDoc(50010))
-    await harness.openInNewTab("/small.md", "small")
-    expect(blockRenderBudget()).toBe(Infinity)
-    harness.activateTab(1)
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    harness.activateTab(2)
-    expect(blockRenderBudget()).toBe(Infinity)
-  })
-
-  it("enables windowed rendering alongside the render budget for safe-mode tabs", async () => {
-    // Task 3：applyRenderBudgetFor 同参联动 setSafeModeRendering —— 安全模式 tab
-    // 启用 over-scale 窗口化装饰（只构建/保留视口附近），切回普通 tab 恢复
-    // 排空到全量的语义。
-    const harness = createAppHarness(editor)
-    harness.renderApp()
-    await harness.openFileTab("/big.md", bigDoc(50010))
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    expect(safeModeRenderingEnabled()).toBe(true)
-    await harness.openFileTab("/small.md", "small")
+    expect(document.querySelector(".update-banner-message")?.textContent).toContain("progressively")
     expect(blockRenderBudget()).toBe(Infinity)
     expect(safeModeRenderingEnabled()).toBe(false)
   })

@@ -13,6 +13,7 @@ import {
 } from "./documentSaveState"
 import type { SaveMode } from "./documentSaveRunner"
 import type { SaveTrigger } from "./normalizationCoordinator"
+import { clearRecoveryRecord } from "./recoveryCleanup"
 import { openSession, recoveryKey, sessionDirty, type EditorSession } from "./session"
 
 export interface ConflictSaveBindingHost {
@@ -86,7 +87,7 @@ export function useConflictSaveBinding(host: ConflictSaveBindingHost) {
       clearRecoveryForTab: tabId => {
         const tab = hostRef.current.getTab(tabId)
         if (!tab) return
-        void hostRef.current.services.clearRecovery?.(recoveryKey(tab))
+        void clearRecoveryRecord(hostRef.current.services, recoveryKey(tab))
       },
     }),
   )

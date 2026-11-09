@@ -1,21 +1,17 @@
 import { Text } from "@codemirror/state"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
+import { SAFE_PERFORMANCE_POLICY, STANDARD_PERFORMANCE_POLICY } from "@omd/engine"
 import { createDocumentScaleRegistry } from "../src/documentScaleRegistry"
 
-const THRESHOLDS = { safeModeLines: 50_000, safeModeBytes: 8_000_000, renderBudgetLines: 60 }
+const THRESHOLDS = { safeModeLines: 50_000, safeModeBytes: 8_000_000 }
 
-function makeRegistry(setRenderBudget = vi.fn(), setSafeModeRendering = vi.fn()) {
-  const registry = createDocumentScaleRegistry({
-    ...THRESHOLDS,
-    setRenderBudget,
-    setSafeModeRendering,
-  })
-  return { registry, setRenderBudget, setSafeModeRendering }
+function makeRegistry() {
+  return createDocumentScaleRegistry(THRESHOLDS)
 }
 
 describe("document scale registry", () => {
   it("classifies safe mode by the line threshold", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     expect(registry.classify(1, THRESHOLDS.safeModeLines)).toEqual({ safeMode: false, readOnly: false })
     expect(registry.isSafeMode(1)).toBe(false)
     expect(registry.classify(1, THRESHOLDS.safeModeLines + 1)).toEqual({ safeMode: true, readOnly: false })
@@ -23,7 +19,7 @@ describe("document scale registry", () => {
   })
 
   it("classifies safe mode by the byte threshold even under the line threshold", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     registry.setBytes(1, THRESHOLDS.safeModeBytes)
     expect(registry.classify(1, 10)).toEqual({ safeMode: false, readOnly: false })
     registry.setBytes(1, THRESHOLDS.safeModeBytes + 1)
@@ -31,7 +27,7 @@ describe("document scale registry", () => {
   })
 
   it("clears bytes when set to undefined, dropping the byte-axis contribution", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     registry.setBytes(1, THRESHOLDS.safeModeBytes + 1)
     expect(registry.classify(1, 10).safeMode).toBe(true)
     registry.setBytes(1, undefined)
@@ -39,7 +35,7 @@ describe("document scale registry", () => {
   })
 
   it("read-only always implies safe mode regardless of size", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     registry.setReadOnly(1, true)
     expect(registry.classify(1, 1)).toEqual({ safeMode: true, readOnly: true })
     expect(registry.isReadOnly(1)).toBe(true)
@@ -48,13 +44,13 @@ describe("document scale registry", () => {
   })
 
   it("isReadOnly/isSafeMode default to false for an unknown tab", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     expect(registry.isReadOnly(99)).toBe(false)
     expect(registry.isSafeMode(99)).toBe(false)
   })
 
   it("stashes and takes a Text exactly once", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     const text = Text.of(["a", "b"])
     expect(registry.takeText(1)).toBeUndefined()
     registry.stashText(1, text)
@@ -62,35 +58,25 @@ describe("document scale registry", () => {
     expect(registry.takeText(1)).toBeUndefined()
   })
 
-  it("applyRenderPolicy sets a finite budget and enables safe-mode rendering only when safe mode is active", () => {
-    const { registry, setRenderBudget, setSafeModeRendering } = makeRegistry()
+  it("performancePolicy derives the engine policy from the cached safe-mode state", () => {
+    const registry = makeRegistry()
     registry.classify(1, THRESHOLDS.safeModeLines + 1)
-    registry.applyRenderPolicy(1)
-    expect(setRenderBudget).toHaveBeenCalledWith(THRESHOLDS.renderBudgetLines)
-    expect(setSafeModeRendering).toHaveBeenCalledWith(true)
+    expect(registry.performancePolicy(1)).toBe(SAFE_PERFORMANCE_POLICY)
 
-    setRenderBudget.mockClear()
-    setSafeModeRendering.mockClear()
     registry.classify(2, 10)
-    registry.applyRenderPolicy(2)
-    expect(setRenderBudget).toHaveBeenCalledWith(Infinity)
-    expect(setSafeModeRendering).toHaveBeenCalledWith(false)
+    expect(registry.performancePolicy(2)).toBe(STANDARD_PERFORMANCE_POLICY)
   })
 
-  it("applyRenderPolicy reads whichever tab id it is given, independent of any notion of an active tab", () => {
-    const { registry, setRenderBudget, setSafeModeRendering } = makeRegistry()
+  it("performancePolicy reads whichever tab id it is given, independent of any notion of an active tab", () => {
+    const registry = makeRegistry()
     registry.classify(1, THRESHOLDS.safeModeLines + 1)
     registry.classify(2, 10)
-    registry.applyRenderPolicy(2)
-    expect(setRenderBudget).toHaveBeenLastCalledWith(Infinity)
-    expect(setSafeModeRendering).toHaveBeenLastCalledWith(false)
-    registry.applyRenderPolicy(1)
-    expect(setRenderBudget).toHaveBeenLastCalledWith(THRESHOLDS.renderBudgetLines)
-    expect(setSafeModeRendering).toHaveBeenLastCalledWith(true)
+    expect(registry.performancePolicy(2)).toBe(STANDARD_PERFORMANCE_POLICY)
+    expect(registry.performancePolicy(1)).toBe(SAFE_PERFORMANCE_POLICY)
   })
 
   it("evaluate reads the line, byte, and read-only axes without mutating cached isSafeMode", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     // Line axis.
     expect(registry.evaluate(1, THRESHOLDS.safeModeLines)).toEqual({ safeMode: false, readOnly: false })
     expect(registry.evaluate(1, THRESHOLDS.safeModeLines + 1)).toEqual({ safeMode: true, readOnly: false })
@@ -108,7 +94,7 @@ describe("document scale registry", () => {
   })
 
   it("evaluate never mutates the cached safe-mode set even after classify has cached a different value", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     registry.classify(1, 10)
     expect(registry.isSafeMode(1)).toBe(false)
     // A render-time evaluate() crossing the threshold must not update the cache.
@@ -120,7 +106,7 @@ describe("document scale registry", () => {
   })
 
   it("remove clears bytes, stashed text, read-only, and safe-mode state for a tab", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     const text = Text.of(["x"])
     registry.setBytes(1, 999)
     registry.setReadOnly(1, true)
@@ -137,7 +123,7 @@ describe("document scale registry", () => {
   })
 
   it("keeps per-tab state independent across multiple tabs", () => {
-    const { registry } = makeRegistry()
+    const registry = makeRegistry()
     registry.setReadOnly(5, true)
     registry.classify(5, 1)
     registry.classify(6, 1)

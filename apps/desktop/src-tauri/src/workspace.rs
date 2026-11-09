@@ -9,6 +9,12 @@ use regex::RegexBuilder;
 
 use crate::windows::WindowBounds;
 
+mod recovery;
+pub use recovery::{
+    clear_recovery, list_recoveries, read_recovery, recovery_dir, write_recovery, RecoveryContents,
+    RecoveryRecord,
+};
+
 static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 // Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
 // runs cannot observe each other's env vars (config_dir() reads them live).
@@ -54,64 +60,9 @@ pub struct QuickOpenResponse {
     pub truncated: bool,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct RecoveryRecord {
-    pub key: String,
-    pub label: String,
-}
-
 // Must match `identifier` in tauri.conf.json; the log plugin already resolves
 // its LogDir from the same identifier, so config and logs share one root.
 const APP_DATA_DIR_NAME: &str = "md.ohmy.desktop";
-
-pub fn recovery_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("OMD_RECOVERY_DIR") {
-        return PathBuf::from(dir);
-    }
-    config_dir().join("recovery")
-}
-
-pub fn write_recovery(key: String, contents: String) -> Result<(), String> {
-    if key.is_empty() || key.contains("..") {
-        return Err("recovery key is invalid".into());
-    }
-    let dir = recovery_dir();
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    fs::write(dir.join(&key), contents).map_err(|e| e.to_string())
-}
-
-pub fn list_recoveries() -> Result<Vec<RecoveryRecord>, String> {
-    let dir = recovery_dir();
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut records = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        records.push(RecoveryRecord {
-            key: name.clone(),
-            label: name,
-        });
-    }
-    records.sort_by(|a, b| a.key.cmp(&b.key));
-    Ok(records)
-}
-
-pub fn read_recovery(key: String) -> Result<String, String> {
-    fs::read_to_string(recovery_dir().join(valid_key(&key)?)).map_err(|e| e.to_string())
-}
-
-pub fn clear_recovery(key: String) -> Result<(), String> {
-    let path = recovery_dir().join(valid_key(&key)?);
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
 
 pub fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("OMD_CONFIG_DIR") {
@@ -518,13 +469,6 @@ pub fn remove_session_shard(label: &str) -> Result<(), String> {
 
 pub fn list_session_windows() -> Result<Vec<SessionWindowEntry>, String> {
     list_session_windows_at(&config_dir())
-}
-
-fn valid_key(key: &str) -> Result<&str, String> {
-    if key.is_empty() || key.contains("..") || key.contains('/') || key.contains('\\') {
-        return Err("recovery key is invalid".into());
-    }
-    Ok(key)
 }
 
 pub fn authorize_workspace_root(path: &Path) -> Result<PathBuf, String> {
@@ -1419,22 +1363,6 @@ mod tests {
     }
 
     #[test]
-    fn recovery_roundtrip() {
-        let _guard = config_env_guard();
-        let dir = tmp("recovery");
-        reset_dir(&dir);
-        std::env::set_var("OMD_RECOVERY_DIR", &dir);
-        write_recovery("untitled_1".into(), "draft".into()).unwrap();
-        let listed = list_recoveries().unwrap();
-        assert_eq!(listed[0].key, "untitled_1");
-        assert_eq!(read_recovery("untitled_1".into()).unwrap(), "draft");
-        clear_recovery("untitled_1".into()).unwrap();
-        assert!(list_recoveries().unwrap().is_empty());
-        std::env::remove_var("OMD_RECOVERY_DIR");
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
     fn settings_and_session_roundtrip() {
         let _guard = config_env_guard();
         let dir = tmp("config");
@@ -1578,24 +1506,6 @@ mod tests {
             .unwrap(),
             r#"{"label":"editor-2","bounds":null,"maximized":true}"#
         );
-    }
-
-    #[test]
-    fn recovery_dir_defaults_under_config_dir() {
-        let _guard = config_env_guard();
-        let dir = tmp("config-recovery");
-        reset_dir(&dir);
-        std::env::set_var("OMD_CONFIG_DIR", &dir);
-        let had_recovery = std::env::var_os("OMD_RECOVERY_DIR");
-        std::env::remove_var("OMD_RECOVERY_DIR");
-
-        assert_eq!(recovery_dir(), dir.join("recovery"));
-
-        if let Some(v) = had_recovery {
-            std::env::set_var("OMD_RECOVERY_DIR", v);
-        }
-        std::env::remove_var("OMD_CONFIG_DIR");
-        fs::remove_dir_all(dir).ok();
     }
 
     #[test]

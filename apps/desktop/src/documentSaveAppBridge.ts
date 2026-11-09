@@ -46,6 +46,7 @@ export function createDocumentSaveAppBridge(deps: {
   readonly onSavedAs?: (path: string) => void
   readonly syncDoc: (doc: string, tabId: number) => void
   readonly clearRecovery: (key: string) => void
+  readonly cancelPendingRecovery?: (tabId: number) => Promise<void>
   readonly onDurabilityWarning: () => void
   readonly incrementFocusToken: () => void
   readonly reportStatus: (message: string) => void
@@ -80,6 +81,7 @@ export function createDocumentSaveAppBridge(deps: {
     onSavedAs: deps.onSavedAs,
     syncDoc: deps.syncDoc,
     clearRecovery: deps.clearRecovery,
+    cancelPendingRecovery: deps.cancelPendingRecovery,
     operationSeq: deps.operationSeq,
     enqueue,
     onDurabilityWarning: deps.onDurabilityWarning,

@@ -49,7 +49,7 @@ describe("deferred doc materialization", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
       expect(harness.services.writeRecovery).toHaveBeenCalledTimes(1)
       expect(harness.services.writeRecovery).toHaveBeenCalledWith(
-        expect.anything(), expect.stringContaining("c"),
+        expect.anything(), "/a.md", expect.stringContaining("c"),
       )
     } finally {
       vi.useRealTimers()

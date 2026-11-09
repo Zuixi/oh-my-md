@@ -7,6 +7,7 @@ import {
 import { initialSaveState, type SaveStateByTab } from "../src/documentSaveState"
 import {
   createFileSession,
+  recoveryKey,
   sessionSavedContents,
   sessionDirty,
   type EditorSession,
@@ -67,9 +68,14 @@ interface RunnerFixture {
   /** Gate the in-flight saveDocument call; resolves when the test lets it finish. */
   readonly pauseSave: () => { readonly finish: () => Promise<void> }
   readonly tab: () => EditorSession
+  readonly clearRecovery: ReturnType<typeof vi.fn>
+  readonly cancelPendingRecovery: ReturnType<typeof vi.fn>
 }
 
-function makeRunner(currentDoc: string): RunnerFixture {
+function makeRunner(
+  currentDoc: string,
+  options: { saveAsPath?: string } = {},
+): RunnerFixture {
   // getContents 的可变来源：直接闭包初始参数会在 editor.edit 后变 stale，
   // 未来复用此 fixture 的链路（如 autosave）会拿到旧快照 —— 持有者随 edit 同步。
   const doc = { current: currentDoc }
@@ -81,6 +87,8 @@ function makeRunner(currentDoc: string): RunnerFixture {
   let saveStates: SaveStateByTab = { [TAB_ID]: initialSaveState() }
   let normalization: NormalizationByTab = {}
   const syncDoc = vi.fn()
+  const clearRecovery = vi.fn()
+  const cancelPendingRecovery = vi.fn(async () => undefined)
   let gate: Promise<void> | null = null
 
   const host: DocumentSaveHost = {
@@ -95,7 +103,7 @@ function makeRunner(currentDoc: string): RunnerFixture {
     getViews: () => views,
     getSaveStates: () => saveStates,
     setSaveStates: next => { saveStates = next },
-    pickSavePath: async () => null,
+    pickSavePath: async () => options.saveAsPath ?? null,
     saveDocument: async (_path, contents, _expected) => {
       if (gate) await gate
       const result: SaveDocumentResult = {
@@ -114,7 +122,8 @@ function makeRunner(currentDoc: string): RunnerFixture {
     revealFolder: () => undefined,
     rememberRecent: () => undefined,
     syncDoc,
-    clearRecovery: () => undefined,
+    clearRecovery,
+    cancelPendingRecovery,
     operationSeq: { current: 0 },
     enqueue: (_tabId, work) => work(),
     onDurabilityWarning: () => undefined,
@@ -145,6 +154,8 @@ function makeRunner(currentDoc: string): RunnerFixture {
       }
     },
     tab: () => workspace.tabs.find(item => item.id === TAB_ID)!,
+    clearRecovery,
+    cancelPendingRecovery,
   }
 }
 
@@ -184,5 +195,41 @@ describe("createGuardedDocumentSaver save baseline", () => {
     // 基线仍是已写盘的快照：tab 保持脏态（late edit 未保存）。
     expect(sessionSavedContents(fx.tab())).toBe("mine")
     expect(sessionDirty(fx.tab(), syncedDoc)).toBe(true)
+  })
+
+  it("drops the old recovery record after save-as moves the tab's identity", async () => {
+    const target = "/notes/b.md"
+    const fx = makeRunner("mine", { saveAsPath: target })
+
+    await fx.saveFile(TAB_ID, "explicit", { kind: "saveAs" })
+
+    const savedKey = recoveryKey(createFileSession(
+      TAB_ID, target, "mine", versionFor(PATH, "mine"),
+    ))
+    // The tab moved from `/notes/a.md` to `/notes/b.md`; the record under the
+    // old key describes a draft the user already saved, so it must not be
+    // offered again on the next launch.
+    expect(fx.clearRecovery).toHaveBeenCalledWith(savedKey)
+    expect(fx.clearRecovery).toHaveBeenCalledWith(
+      recoveryKey(createFileSession(TAB_ID, PATH, BASELINE, versionFor(PATH, BASELINE))),
+    )
+    expect(fx.clearRecovery).toHaveBeenCalledTimes(2)
+    // A draft timer armed under the old key must be stopped before the record
+    // is deleted, or it would recreate it moments later.
+    expect(fx.cancelPendingRecovery).toHaveBeenCalledWith(TAB_ID)
+    expect(fx.cancelPendingRecovery.mock.invocationCallOrder[0])
+      .toBeLessThan(fx.clearRecovery.mock.invocationCallOrder[1])
+  })
+
+  it("clears only the current record when the path does not change", async () => {
+    const fx = makeRunner("mine")
+
+    await fx.saveFile(TAB_ID, "explicit")
+
+    expect(fx.clearRecovery).toHaveBeenCalledTimes(1)
+    expect(fx.clearRecovery).toHaveBeenCalledWith(
+      recoveryKey(createFileSession(TAB_ID, PATH, BASELINE, versionFor(PATH, BASELINE))),
+    )
+    expect(fx.cancelPendingRecovery).not.toHaveBeenCalled()
   })
 })
