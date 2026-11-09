@@ -175,6 +175,32 @@ describe("recovery writer", () => {
     expect(write).toHaveBeenCalledWith("notes_1_md", "/notes/1.md", "three")
   })
 
+  it("serializes a tab's writes so a slow stale write cannot land last", async () => {
+    vi.useFakeTimers()
+    const resolvers: Array<() => void> = []
+    const write = vi.fn(
+      (_key: string, _path: string | null, _contents: string) =>
+        new Promise<void>(resolve => { resolvers.push(resolve) }),
+    )
+    const writer = createRecoveryWriter()
+    const { host } = makeHost(write)
+
+    await writer.save(draftFor(1, "slow"), host)
+    await settle()
+    expect(write).toHaveBeenCalledTimes(1)
+
+    // 第二次编辑的 trailing 到点时，第一次写还挂在慢盘 IPC 上：新草稿必须
+    // 排队等它落定，而不是并发下发 —— 否则旧内容可能最后落盘，磁盘草稿倒退。
+    await writer.save(draftFor(1, "fresh"), host)
+    await settle()
+    expect(write).toHaveBeenCalledTimes(1)
+
+    resolvers[0]!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(write).toHaveBeenCalledTimes(2)
+    expect(write.mock.calls[1]).toEqual(["notes_1_md", "/notes/1.md", "fresh"])
+  })
+
   it("skips the write when contents are unchanged since the last write", async () => {
     vi.useFakeTimers()
     const write = vi.fn(async () => undefined)
