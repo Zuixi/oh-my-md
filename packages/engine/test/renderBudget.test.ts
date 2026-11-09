@@ -74,4 +74,23 @@ describe("block render budget", () => {
     expect(MarkerWidget.rendered.length).toBe(4)
     view.destroy()
   })
+
+  it("does not start another view's deferred blocks on a policy change", async () => {
+    setBlockRenderBudget(1)
+    MarkerWidget.rendered.length = 0
+    const viewA = viewWithMarkers(6, 0)
+    const viewB = viewWithMarkers(2, 0)
+    await flush()
+    expect(MarkerWidget.rendered.length).toBeGreaterThan(0)
+
+    // B 视图的更新（这里用一笔 selection 交易代表任何触发 flush 的 update）不得
+    // 提前启动 A 的挂起块：A 的补渲只能等 A 自己的光标/视口/策略变化。
+    const before = MarkerWidget.rendered.length
+    viewB.dispatch({ selection: { anchor: 0 } })
+    await flush()
+    expect(MarkerWidget.rendered.length).toBe(before)
+
+    viewA.destroy()
+    viewB.destroy()
+  })
 })

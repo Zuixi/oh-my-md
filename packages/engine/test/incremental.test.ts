@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { beforeAll, describe, expect, it } from "vitest"
 import { type ChangeDesc, EditorState, StateEffect } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
-import { forceParsing, syntaxTree } from "@codemirror/language"
+import { forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import { editorExtensions } from "../src/index"
 import { buildLiveDecorations, drainPendingLiveBuild, livePreviewField } from "../src/decorations/build"
 import { blockSelectionOverlay } from "../src/decorations/blockSelectionOverlay"
@@ -91,6 +91,13 @@ function liveState(
     parent,
   })
   forceParsing(view, doc.length, 10000)
+  // forceParsing 的 10000 是“单次调用的解析预算”，CPU 繁忙（vitest 并行
+  // worker）时一次调不完大文档，syntaxTree 停在中途：增量字段随后随解析推进
+  // 补建装饰，而 freshKeys 的全量重建拿完整树 —— 两边对拍就随机差出上千个
+  // strong/EmphasisMark。循环到 syntaxTreeAvailable 为真，保证确定性。
+  while (!syntaxTreeAvailable(view.state, doc.length)) {
+    forceParsing(view, doc.length, 10000)
+  }
   drainPendingLiveBuild(view)
   const state = view.state
   view.destroy()
@@ -262,6 +269,11 @@ describe("incremental live decorations", () => {
     })
     const before = view.state.field(livePreviewField).treeLength
     forceParsing(view, doc.length, 5000)
+    // 与 liveState 同理：单次调用预算在 CPU 繁忙时可能不够，循环补足保证
+    // 断言的是行为而不是调度运气。
+    while (!syntaxTreeAvailable(view.state, doc.length)) {
+      forceParsing(view, doc.length, 5000)
+    }
     const after = view.state.field(livePreviewField).treeLength
     expect(after).toBeGreaterThanOrEqual(before)
     expect(syntaxTree(view.state).length).toBe(doc.length)

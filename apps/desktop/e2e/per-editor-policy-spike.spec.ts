@@ -81,7 +81,7 @@ test("two editors mount identical 10,000-line documents with independent policie
   expect(state.b.pendingRanges).toBeGreaterThan(0)
 })
 
-test("100 policy alternations preserve both views", async ({ page }) => {
+test("100 policy alternations preserve both views and never touch view A", async ({ page }) => {
   await openSpike(page)
 
   const result = await page.evaluate(count => {
@@ -113,6 +113,9 @@ test("100 policy alternations preserve both views", async ({ page }) => {
       if (spike.viewA !== viewA || spike.viewB !== viewB) violations.push(`view identity at ${index}`)
       if (spike.viewA.dom !== domA || spike.viewB.dom !== domB) violations.push(`dom identity at ${index}`)
       if (current.policy !== baseline.policy) violations.push(`view A policy at ${index}`)
+      if (current.transactionCount !== baseline.transactionCount) {
+        violations.push(`view A transactions at ${index}: ${current.transactionCount}`)
+      }
       if (current.domFingerprint !== baseline.domFingerprint) {
         violations.push(`view A dom fingerprint at ${index}`)
       }
@@ -126,6 +129,8 @@ test("100 policy alternations preserve both views", async ({ page }) => {
 
     return {
       violations: violations.slice(0, 10),
+      baselineTransactions: baseline.transactionCount,
+      finalTransactions: spike.diagnostics("A").transactionCount,
       baselineSource,
       finalSource: sourceHash(),
       baselineSelection,
@@ -135,6 +140,7 @@ test("100 policy alternations preserve both views", async ({ page }) => {
   }, ALTERNATIONS)
 
   expect(result.violations).toEqual([])
+  expect(result.finalTransactions).toBe(result.baselineTransactions)
   expect(result.finalSource).toBe(result.baselineSource)
   expect(result.finalSelection).toBe(result.baselineSelection)
   expect(result.policyB).toBe("safe")
@@ -162,10 +168,9 @@ test("view B keeps out-of-window pending in safe mode and drains fully in standa
   expect((await diagnosticsOf(page, "B")).pendingRanges).toBeGreaterThan(0)
 
   const finalA = await diagnosticsOf(page, "A")
-  // B 的策略切换会经全局渲染预算队列（renderBudget.flushDeferredBlockRenders）
-  // 提前启动 A 挂起的块 widget 渲染，其完成的 measureBlockWidget effect 是落在
-  // A 上的真实事务 —— 计数不增不是当前实现的不变量。真正要守的是：切换不改变
-  // A 的文档、装饰与 DOM（不会错误渲染、不会丢内容），且 A 的渐进排空照常收敛。
+  // B 的策略切换不得触碰 A：不 dispatch 事务（渲染预算的 flush 只重查本视图的
+  // 挂起块，见 renderBudget.ts），A 的文档、装饰与 DOM 保持原样。
+  expect(finalA.transactionCount).toBe(baselineA.transactionCount)
   expect(finalA.pendingRanges).toBe(0)
   expect(finalA.domFingerprint).toBe(baselineA.domFingerprint)
 })
