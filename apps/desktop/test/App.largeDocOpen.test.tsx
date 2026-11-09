@@ -1,13 +1,14 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
-import { Text } from "@codemirror/state"
+import { EditorState, Text } from "@codemirror/state"
 import {
   blockRenderBudget,
-  SAFE_MODE_RENDER_BUDGET_LINES,
+  editorPerformancePolicy,
+  performancePolicyExtension,
+  SAFE_PERFORMANCE_POLICY,
   safeModeRenderingEnabled,
-  setBlockRenderBudget,
-  setSafeModeRendering,
+  STANDARD_PERFORMANCE_POLICY,
 } from "@omd/engine"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { DocumentOpenStream } from "../src/desktopServices"
@@ -43,15 +44,32 @@ vi.mock("../src/Editor", async importOriginal => {
   }
 })
 
-afterEach(() => {
-  resetMountedApps()
-  // 安全模式全局是进程级的（setSafeModeRendering/setBlockRenderBudget 直接改
-  // engine 模块状态）：本文件驱动/断言它，归位防止污染后续测试。
-  setSafeModeRendering(false)
-  setBlockRenderBudget(Infinity)
-})
+afterEach(() => resetMountedApps())
 
 const MB = 1024 * 1024
+
+interface PolicyView {
+  state: EditorState
+  dispatch(spec: Parameters<EditorState["update"]>[0]): void
+  focus(): void
+  destroy(): void
+  dom: HTMLElement
+}
+
+/** A fake view whose state is a real `EditorState`, so the per-view engine
+ *  performance facet can be observed exactly as `Editor.ts` mounts it. */
+function policyView(doc: string | Text): PolicyView {
+  const view: PolicyView = {
+    state: EditorState.create({ doc, extensions: [performancePolicyExtension(null)] }),
+    dispatch(spec) {
+      view.state = view.state.update(spec).state
+    },
+    focus: () => undefined,
+    destroy: () => undefined,
+    dom: document.createElement("div"),
+  }
+  return view
+}
 
 /** Cmd+O 触发 runOpen → pickPath，等待 readDocument 完成（或不发生）。 */
 async function pressOpenAndSettle(harness: ReturnType<typeof createAppHarness>, path: string) {
@@ -157,8 +175,10 @@ describe("open tiers (Spec 05b)", () => {
     expect(harness.editorForTab(1).getOptions().doc).toBe(singleLine)
     // 默认 Live：键完全缺席（undefined 赋值也算缺席的更严口径），防回归。
     expect("defaultLivePreview" in harness.editorForTab(1).getOptions()).toBe(false)
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    expect(safeModeRenderingEnabled()).toBe(true)
+    // 字节轴安全模式通过横幅暴露；进程级全局保持默认（无兼容镜像）。
+    expect(document.querySelector(".update-banner-message")?.textContent).toContain("progressively")
+    expect(safeModeRenderingEnabled()).toBe(false)
+    expect(blockRenderBudget()).toBe(Infinity)
   })
 
   it("opens a HUGE file read-only in live preview after confirm", async () => {
@@ -177,7 +197,7 @@ describe("open tiers (Spec 05b)", () => {
     expect(options.readOnly).toBe(true)
     expect("plainText" in options).toBe(false)
     expect("defaultLivePreview" in options).toBe(false)
-    expect(safeModeRenderingEnabled()).toBe(true)
+    expect(safeModeRenderingEnabled()).toBe(false)
     await waitFor(() => {
       expect(document.querySelector(".update-banner-message")?.textContent)
         .toContain("read-only")
@@ -443,11 +463,10 @@ describe("lazy session restore (Spec 05b)", () => {
     expect(harness.services.readDocument).toHaveBeenCalledTimes(1)
   })
 
-  it("keeps the active over-scale tab's safe mode when restore creates lazy placeholder views", async () => {
+  it("keeps the over-scale tab's safe policy when restore creates lazy placeholder views", async () => {
     // I-1 回归：restore 的主 tab 复用 tabs[0] 的 id，activeId 全程不变 ——
-    // ensureViews 为惰性占位 tab 建空 view 时若应用进程级全局（空文档 →
-    // safe-mode OFF / 预算 Infinity），激活的 over-scale tab 会静默丢窗口化，
-    // 且 [activeId] effect 因 id 未变不会纠正。全局只允许跟随激活 tab 档位。
+    // ensureViews 为惰性占位 tab 建空 view 时，策略只在各自的 view 上生效，
+    // 不得影响激活的 over-scale tab 的策略。
     const big = bigDoc(50010)
     const harness = createAppHarness(editor)
     harness.seedFile("/big.md", big)
@@ -457,15 +476,24 @@ describe("lazy session restore (Spec 05b)", () => {
       openPaths: ["/big.md", "/lazy.md"],
       activePath: "/big.md",
     }))
-    harness.renderApp()
-    await waitFor(() => {
-      expect(harness.editorForTab(1).getOptions().doc).toBe(big)
+    const views = new Map<number, PolicyView>()
+    editor.create.mockImplementation((_parent, options) => {
+      const view = policyView(options.doc)
+      views.set(options.tabId, view)
+      return view as unknown as EditorView
     })
+    editor.reset.mockImplementation((view, options) => {
+      ;(view as unknown as { state: EditorState }).state = policyView(options.doc).state
+    })
+    harness.renderApp()
     // 惰性占位 tab 的空 view 已由 ensureViews 创建（策略在其上运行过）。
-    await waitFor(() => expect(harness.allEditors()).toHaveLength(2))
-    expect(harness.editorForTab(1).getOptions().doc).toBe(big)
-    expect(blockRenderBudget()).toBe(SAFE_MODE_RENDER_BUDGET_LINES)
-    expect(safeModeRenderingEnabled()).toBe(true)
+    await waitFor(() => expect(views.size).toBe(2))
+    expect(views.get(1)!.state.doc.toString()).toBe(big)
+    expect(editorPerformancePolicy(views.get(1)!.state)).toEqual(SAFE_PERFORMANCE_POLICY)
+    expect(editorPerformancePolicy(views.get(2)!.state)).toEqual(STANDARD_PERFORMANCE_POLICY)
+    // 进程级全局保持默认：不存在跨 tab 的共享状态可以互相覆盖。
+    expect(blockRenderBudget()).toBe(Infinity)
+    expect(safeModeRenderingEnabled()).toBe(false)
   })
 
   it("clears read-only state when a failed lazy load retries at a lower tier", async () => {
@@ -537,6 +565,8 @@ describe("lazy session restore (Spec 05b)", () => {
     harness.activateTab(1)
     harness.activateTab(2)
     await waitFor(() => expect(harness.editorForTab(2).getOptions().doc).toBe("lazy body"))
+    // 过期字节数没有把普通文档钉在安全模式：横幅不出现，全局也从未被改写。
+    expect(document.querySelector(".update-banner-message")).toBeNull()
     expect(safeModeRenderingEnabled()).toBe(false)
     expect(blockRenderBudget()).toBe(Infinity)
   })

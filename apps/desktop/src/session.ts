@@ -1,5 +1,6 @@
 import type { DocumentVersion, ExistingDiskSnapshot } from "./desktopServices"
 import { t } from "./i18n"
+import { currentWindowLabel } from "./windowScope"
 
 export type SessionPersistence =
   | { readonly kind: "untitled"; readonly savedContents: string }
@@ -131,6 +132,55 @@ export function retargetSessionPath(
   }
 }
 
+/** Longest readable part kept from the identity; the hash carries uniqueness. */
+const RECOVERY_KEY_SLUG_MAX = 48
+
+/**
+ * Recovery-file identity.
+ *
+ * A named tab keys on its path so drafts survive restarts and dedupe per file.
+ * An untitled tab has no path, so its tab id is the only stable-in-process
+ * identity — but tab ids restart at 1 in every window and on every launch.
+ * Prefixing the window label keeps concurrent windows from overwriting each
+ * other's drafts; cross-run reuse is intentional, because the next launch's
+ * untitled tab is exactly the tab that draft belongs to.
+ *
+ * The key must also be a *portable file name*: it is written inside the app's
+ * recovery directory on Windows, macOS, and Linux alike. A lossy sanitizer was
+ * not enough — two paths differing only in a replaced character (`a b.md` vs
+ * `a_b.md`) shared one draft, a whole long path could exceed the 255-byte name
+ * limit (write failure on every keystroke), and Windows reserves `<>:"|?*`,
+ * device names, and trailing dots/spaces. So the key is an ASCII slug plus a
+ * 64-bit hash of the exact identity: bounded, collision-free in practice, and
+ * identical in shape on every platform. The stored envelope still holds the
+ * exact path, so adoption never depends on this name.
+ */
 export function recoveryKey(session: EditorSession): string {
-  return (sessionPath(session) ?? `untitled_${session.id}`).replace(/[/\\: ]/g, "_")
+  const path = sessionPath(session)
+  const identity = path ?? `untitled_${currentWindowLabel()}_${session.id}`
+  return `${recoveryKeySlug(identity)}_${recoveryKeyHash(identity)}`
+}
+
+/** Readable, filename-safe tail of the identity (never a Windows device name
+ *  because the `_<hash>` suffix makes the base name longer than the device
+ *  name, and dots are removed so it cannot read as an extension). */
+function recoveryKeySlug(identity: string): string {
+  const slug = identity
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  // The end of a path is the file name, which is what makes a record readable
+  // when its envelope is unreadable; the hash still disambiguates the rest.
+  return slug.slice(-RECOVERY_KEY_SLUG_MAX) || "draft"
+}
+
+/** 64 bits (two independent 32-bit lanes) over the exact identity, in hex. */
+function recoveryKeyHash(identity: string): string {
+  let fnv = 0x811c9dc5
+  let djb = 5381
+  for (let index = 0; index < identity.length; index++) {
+    const code = identity.charCodeAt(index)
+    fnv = Math.imul(fnv ^ code, 0x01000193)
+    djb = (Math.imul(djb, 33) ^ code) >>> 0
+  }
+  return `${(fnv >>> 0).toString(16).padStart(8, "0")}${djb.toString(16).padStart(8, "0")}`
 }

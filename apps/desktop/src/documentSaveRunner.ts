@@ -87,6 +87,10 @@ export interface DocumentSaveHost {
   readonly rememberRecent: (path: string) => void
   readonly syncDoc: (doc: string, tabId: number) => void
   readonly clearRecovery: (key: string) => void
+  /** Stops the tab's pending draft write when its recovery identity moved
+   *  (save-as): a timer armed under the old key must not resurrect the record
+   *  just deleted. Absent in hosts without a recovery writer. */
+  readonly cancelPendingRecovery?: (tabId: number) => Promise<void>
   readonly operationSeq: { current: number }
   readonly enqueue: (tabId: number, work: () => Promise<void>) => Promise<void>
   readonly onDurabilityWarning: () => void
@@ -256,7 +260,12 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
           if (!stillTarget()) return
           const currentTab = host.getTab(tabId)
           if (!currentTab) return
+          // Save-as changes the tab's recovery identity; the old record must go
+          // once the new one is clear, or the next launch offers the already
+          // saved file as a draft.
+          const previousRecoveryKey = recoveryKey(currentTab)
           const saved = markSaved(currentTab, targetPath, snapshot, result.version)
+          const savedRecoveryKey = recoveryKey(saved)
           host.setWorkspace(replaceTabSession(host.getWorkspace(), saved))
           host.revealFolder(targetPath)
           host.rememberRecent(targetPath)
@@ -275,7 +284,11 @@ export function createGuardedDocumentSaver(host: DocumentSaveHost) {
             view.state.doc === docAtStart ? snapshot : view.state.doc.toString(),
             tabId,
           )
-          host.clearRecovery(recoveryKey(saved))
+          host.clearRecovery(savedRecoveryKey)
+          if (previousRecoveryKey !== savedRecoveryKey) {
+            await host.cancelPendingRecovery?.(tabId)
+            host.clearRecovery(previousRecoveryKey)
+          }
           host.setSaveStates(updateTabSaveState(
             host.getSaveStates(),
             tabId,

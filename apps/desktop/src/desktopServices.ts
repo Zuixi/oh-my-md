@@ -148,6 +148,13 @@ export const DOCUMENT_ERROR_CODES = [
 export interface RecoveryRecord {
   key: string
   label: string
+  /** The draft's document path when the writer recorded one. */
+  path: string | null
+}
+
+export interface RecoveredDraft {
+  path: string | null
+  contents: string
 }
 
 export interface ViewMenuState {
@@ -230,9 +237,9 @@ export interface DesktopServices {
   listSnapshots?: (path: string) => Promise<SnapshotEntry[]>
   readSnapshot?: (path: string, fileName: string) => Promise<string>
   clearSnapshots?: (path: string) => Promise<void>
-  writeRecovery?: (key: string, contents: string) => Promise<void>
+  writeRecovery?: (key: string, path: string | null, contents: string) => Promise<void>
   listRecoveries?: () => Promise<RecoveryRecord[]>
-  readRecovery?: (key: string) => Promise<string>
+  readRecovery?: (key: string) => Promise<RecoveredDraft>
   clearRecovery?: (key: string) => Promise<void>
   confirmDiscard: () => boolean
   confirmClose?: () => boolean
@@ -466,9 +473,9 @@ export const defaultServices: DesktopServices = {
   readSnapshot: (path, fileName) =>
     invoke<string>("read_snapshot", { path, fileName }),
   clearSnapshots: path => invoke<void>("clear_snapshots", { path }),
-  writeRecovery: (key, contents) => invoke("write_recovery", { key, contents }),
+  writeRecovery: (key, path, contents) => invoke("write_recovery", { key, path, contents }),
   listRecoveries: () => invoke<RecoveryRecord[]>("list_recoveries"),
-  readRecovery: (key) => invoke<string>("read_recovery", { key }),
+  readRecovery: (key) => invoke<RecoveredDraft>("read_recovery", { key }),
   clearRecovery: (key) => invoke("clear_recovery", { key }),
   confirmDiscard: () => window.confirm(t("confirm.discard")),
   confirmClose: () => window.confirm(t("confirm.close")),

@@ -188,6 +188,24 @@ describe("progressive live decoration build", () => {
     cleanup()
   })
 
+  it("drops specs whose range collapsed instead of drifting from the RangeSet", () => {
+    // A deletion that swallows a whole marked span maps its endpoints to the
+    // same position. CodeMirror drops that zero-length range; the spec list
+    // must drop it too, otherwise deco.size !== specs.length forever and the
+    // next full rebuild throws on an empty mark/replace.
+    const { view, cleanup } = seededView("a **bold** b")
+    const start = view.state.doc.toString().indexOf("**bold**")
+    view.dispatch({ changes: { from: start, to: start + "**bold**".length } })
+
+    const field = view.state.field(livePreviewField)
+    expect(field.specs.some(spec => spec.from === spec.to)).toBe(false)
+    expect(field.deco.size).toBe(field.specs.length)
+    // The incremental result must match a fresh rebuild of the remaining text.
+    expect(field.specs.map(spec => `${spec.tag}:${spec.from}:${spec.to}`).sort())
+      .toEqual(buildLiveDecorations(view.state).specs.map(spec => `${spec.tag}:${spec.from}:${spec.to}`).sort())
+    cleanup()
+  })
+
   it("keeps pending sorted and disjoint when a deletion collapses two ranges together", () => {
     // docChanged 映射的回归守卫：删除「head 尾字符 + 种子区」会把左右两段 pending
     // 压到同一点（重叠），必须归一化合并回有序不相交 —— 分片驱动据此假设挑区间。

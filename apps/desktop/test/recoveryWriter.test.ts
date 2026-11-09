@@ -70,18 +70,17 @@ describe("recovery writer", () => {
     const [target, message] = logged.mock.calls[0]
     expect(target).toBe("recovery")
     expect(message).toBe(`${t("error.recoveryWriteFailed")}: disk full path=/notes/1.md`)
-    // `path=` identifies a named tab, and `recoveryKey` is derived from that path
-    // (`notes_1_md`) — a separator-substituted copy the export redactor's
-    // separator rule cannot collapse. So the record must carry no key, in any
-    // form; a regression that re-adds it fails here.
+    // `path=` already identifies a named tab; the derived key would only add
+    // an opaque duplicate. So the record must carry no key, in any form; a
+    // regression that re-adds it fails here.
     expect(message).not.toContain("key=")
     expect(message).not.toContain(named.key)
   })
 
   it("keeps the key for an untitled tab, whose only identity is the key", async () => {
     vi.useFakeTimers()
-    // `draft.path` is null for an untitled tab (`recoveryKey` gives it
-    // `untitled_<id>`); a path-only record would leave that tab anonymous.
+    // `draft.path` is null for an untitled tab, whose generated `recoveryKey`
+    // is its only identity; a path-only record would leave it anonymous.
     const message = await loggedFailure({
       tabId: 7,
       key: "untitled_7",
@@ -173,7 +172,7 @@ describe("recovery writer", () => {
     expect(write).not.toHaveBeenCalled()
     await settle()
     expect(write).toHaveBeenCalledTimes(1)
-    expect(write).toHaveBeenCalledWith("notes_1_md", "three")
+    expect(write).toHaveBeenCalledWith("notes_1_md", "/notes/1.md", "three")
   })
 
   it("skips the write when contents are unchanged since the last write", async () => {
@@ -196,11 +195,61 @@ describe("recovery writer", () => {
     const { host } = makeHost(write)
     writer.save(draftFor(1, "x"), host)
     await settle()
-    expect(write).toHaveBeenCalledWith("notes_1_md", "x")
+    expect(write).toHaveBeenCalledWith("notes_1_md", "/notes/1.md", "x")
     writer.save(draftFor(2, "y"), host)
     writer.forget(2)
     await settle()
     expect(write).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("recovery writer forget", () => {
+  it("waits for an in-flight write and ignores its late success", async () => {
+    vi.useFakeTimers()
+    let finish!: () => void
+    const write = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    const { host } = makeHost(write)
+    const writer = createRecoveryWriter()
+    const draft = draftFor(1)
+
+    await writer.save(draft, host)
+    await settle()
+    expect(write).toHaveBeenCalledOnce()
+
+    // Closing the tab must not delete the record while this IPC may still land.
+    let forgotten = false
+    const forgetting = writer.forget(1).then(() => { forgotten = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(forgotten).toBe(false)
+
+    finish()
+    await forgetting
+    expect(forgotten).toBe(true)
+
+    // The late success must not become the dedupe baseline: a recycled id with
+    // the same draft still writes (its record was deleted after the close).
+    await writer.save(draft, host)
+    await settle()
+    expect(write).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not report a write that failed after its tab was forgotten", async () => {
+    vi.useFakeTimers()
+    let fail!: (error: Error) => void
+    const write = vi.fn(() => new Promise<void>((_resolve, reject) => { fail = reject }))
+    const { host, reportError } = makeHost(write)
+    const writer = createRecoveryWriter()
+
+    await writer.save(draftFor(1), host)
+    await settle()
+
+    const forgetting = writer.forget(1)
+    await vi.advanceTimersByTimeAsync(0)
+    fail(new Error("disk full"))
+    await forgetting
+
+    // The tab is gone; a modal alert about its draft would be meaningless.
+    expect(reportError).not.toHaveBeenCalled()
   })
 })
 

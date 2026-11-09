@@ -224,7 +224,7 @@ describe("App Settings & Session Restore integration", () => {
       vi.mocked(harness.services.getSessionState!).mockResolvedValue(savedSession)
       harness.seedFile("/projects/shard.md", "Shard content")
       harness.services.listRecoveries = vi.fn(async () => [])
-      harness.services.readRecovery = vi.fn(async () => "")
+      harness.services.readRecovery = vi.fn(async () => ({ path: null, contents: "" }))
 
       harness.renderApp()
 

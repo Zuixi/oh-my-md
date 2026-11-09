@@ -91,11 +91,35 @@ describe("EditorSession", () => {
   it("derives label and recovery key from persistence", () => {
     const session = createFileSession(3, "/notes/a b.md", "body", version)
     expect(sessionLabel(session)).toBe("a b.md")
-    expect(recoveryKey(session)).toBe("_notes_a_b.md")
+    expect(recoveryKey(session)).toMatch(/^notes_a_b_md_[0-9a-f]{16}$/)
   })
 
   it("builds a recovery key from path or untitled id", () => {
-    expect(recoveryKey(createSession(2))).toBe("untitled_2")
-    expect(recoveryKey(createFileSession(1, "/notes/My Doc.md", "", version))).toBe("_notes_My_Doc.md")
+    // Window label keeps concurrent windows' untitled drafts from colliding;
+    // the default test window is "main".
+    expect(recoveryKey(createSession(2))).toMatch(/^untitled_main_2_[0-9a-f]{16}$/)
+    expect(recoveryKey(createFileSession(1, "/notes/My Doc.md", "", version)))
+      .toMatch(/^notes_My_Doc_md_[0-9a-f]{16}$/)
+    expect(recoveryKey(createSession(2))).toBe(recoveryKey(createSession(2)))
+    expect(recoveryKey(createSession(2))).not.toBe(recoveryKey(createSession(3)))
+  })
+
+  it("never reuses one key for paths a lossy sanitizer conflated", () => {
+    const spaced = createFileSession(3, "/notes/a b.md", "", version)
+    const underscored = createFileSession(4, "/notes/a_b.md", "", version)
+    expect(recoveryKey(spaced)).not.toBe(recoveryKey(underscored))
+  })
+
+  it("keeps recovery keys portable file names on every platform", () => {
+    // Windows reserves <>:"|?*, control characters, and trailing dots/spaces;
+    // a long path must still fit the 255-byte name limit shared by ext4/APFS/NTFS.
+    const deep = createFileSession(
+      5, `/${"nested/".repeat(300)}résumé 文件?:*.md`, "", version,
+    )
+    const key = recoveryKey(deep)
+    expect(key).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(key.length).toBeLessThanOrEqual(65)
+    expect(key).toMatch(/_[0-9a-f]{16}$/)
+    expect(recoveryKey(deep)).toBe(key)
   })
 })

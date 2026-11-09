@@ -9,8 +9,7 @@ import type { Text } from "@codemirror/state"
 import { createEditorStatusStore } from "./editorStatusStore"
 import { createDocumentScaleRegistry, type DocumentScaleRegistry } from "./documentScaleRegistry"
 import {
-  documentStats, SAFE_MODE_RENDER_BUDGET_LINES,
-  setBlockRenderBudget, setSafeModeRendering,
+  documentStats,
   type AutoPairOptions, type OutlineItem,
 } from "@omd/engine"
 import { type ImagePasteOptions } from "./imagePaste"
@@ -19,6 +18,9 @@ import {
   sessionContentLoaded, sessionDirty, sessionPath,
   type EditorSession,
 } from "./session"
+import { createRecoveryAdopter } from "./recoveryAdoption"
+import { clearRecoveryAfterForget, clearRecoveryRecord, createPendingRecoveryCanceller } from "./recoveryCleanup"
+import { createEditorScalePolicyApplier, type LargeDocNotice } from "./editorScalePolicy"
 import {
   activeSession, addTab, baseName, closeTab, createWorkspace, ensureFolder,
   focusTab, openFolder, pathWithinDir, replaceTabSession, resolveMarkdownHref,
@@ -35,7 +37,7 @@ import { createRecoveryWriter } from "./recoveryWriter"
 import { createDocumentSaveAppBridge } from "./documentSaveAppBridge"
 import { createDocumentOpen, type DocumentOpen, type QuickOpenState } from "./documentOpen"
 import { createFileTreeActions } from "./fileTreeActions"
-import { loadInitialSettings, restoreDraft, restoreSavedSession, type AppSessionInitHost } from "./appSessionInit"
+import { loadInitialSettings, restoreDrafts, restoreSavedSession, type AppSessionInitHost } from "./appSessionInit"
 import { restartToApplyLogging } from "./appLoggingActions"
 import { persistSettingsChange } from "./settingsPersistence"
 import { useConflictSaveBinding } from "./conflictSaveBinding"
@@ -119,7 +121,6 @@ import { initLocale, setLocale, t as localeT, useT } from "./i18n"
 import { reportSaveStateTransitions } from "./saveDiagnostics"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import {
-  LARGE_DOC_LINES,
   MARKDOWN_EXTENSIONS,
   RELEASES_URL,
   SAFE_MODE_BYTES,
@@ -296,25 +297,20 @@ export default function App({
   const updateCheckTimerRef = useRef<number | null>(null)
   // Spec 05/05b：文档档位（安全模式集合、字节数、只读标记、流式打开暂存 Text）
   // 的单一持有者，取代原先四个并行的 ref（safeModeTabsRef / docBytesRef /
-  // docTextsRef / readonlyTabsRef）。预算/窗口化是 engine 进程级全局而安全模式
-  // 是 per-tab 的，激活切换时经 registry.applyRenderPolicy 重应用（useEffect on
-  // activeId 兜住 focusTab/会话恢复等全部路径）。
+  // docTextsRef / readonlyTabsRef）。安全模式与由此推导的 per-view engine 策略
+  // （performancePolicy）都是 per-tab 的，随 view 创建/文档重载推送进该 view，
+  // 因此不存在激活切换时需要重应用的进程级状态。
   const documentScaleRegistryRef = useRef<DocumentScaleRegistry | null>(null)
   if (!documentScaleRegistryRef.current) {
     documentScaleRegistryRef.current = createDocumentScaleRegistry({
       safeModeLines: SAFE_MODE_LINES,
       safeModeBytes: SAFE_MODE_BYTES,
-      renderBudgetLines: SAFE_MODE_RENDER_BUDGET_LINES,
-      setRenderBudget: setBlockRenderBudget,
-      setSafeModeRendering,
     })
   }
   const documentScaleRegistry = documentScaleRegistryRef.current
   // LARGE 档流式打开的进度（overlay 百分比）。
   const [openingProgress, setOpeningProgress] = useState<{ bytesRead: number; byteLength: number } | null>(null)
-  const [largeDocNotice, setLargeDocNotice] = useState<
-    { sessionId: number; lines: number; safeMode: boolean; readonly?: boolean } | null
-  >(null)
+  const [largeDocNotice, setLargeDocNotice] = useState<LargeDocNotice | null>(null)
   const [statsRequested, setStatsRequested] = useState(0)
   const [openingLabel, setOpeningLabel] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -457,7 +453,11 @@ export default function App({
       services.notifySuccess?.(t("notify.saveAsCompleted", { name: baseName(path) }))
     },
     syncDoc,
-    clearRecovery: key => { void services.clearRecovery?.(key) },
+    clearRecovery: key => { void clearRecoveryRecord(services, key) },
+    cancelPendingRecovery: createPendingRecoveryCanceller({
+      forget: tabId => recoveryWriterRef.current.forget(tabId), save: saveRecovery,
+      load: tabId => [tabById(tabId), docsRef.current.get(tabId)],
+    }),
     onDurabilityWarning: () => showTransientStatus(t(DURABILITY_WARNING)),
     incrementFocusToken: () => setConflictFocusToken(token => token + 1),
     reportStatus: showTransientStatus,
@@ -614,39 +614,20 @@ export default function App({
       spellcheck: settingsRef.current.spellcheck,
       autoPair: settingsRef.current.autoPair,
       readOnly,
+      performancePolicy: documentScaleRegistry.performancePolicy(tabId),
     }
   }
 
-  /**
-   * Spec 05 / 05b（2026-08-20 渐进渲染落地后）：超大文档进入安全模式 ——
-   * 不再强制源码模式（默认 Live，装饰以视口优先构建 + idle 排空），策略只负责
-   * 块渲染预算 + 窗口化装饰 + 一次性提示 + 按需字数，任何模式下都生效。
-   * 所有新建 view 的路径（resetTabDocument、ensureViews 的新标签/会话恢复/初始挂载）
-   * 必须经由此入口，否则文件树、搜索面板等入口打开的大文档会绕过安全模式。
-   * 行数取 view.state.doc.lines（免费），绝不对全文 split。
-   *
-   * 预算/窗口化是 engine 进程级全局，而 App 每 tab 各挂一个 view：只有激活
-   * tab 的档位才允许改写全局（本函数只做 per-tab 标记 + 激活 tab 的全局应用），
-   * 否则会话恢复为惰性占位 tab 建空 view 时会把激活 50MB tab 的窗口化翻掉。
-   */
-  function applyDocumentScalePolicy(view: EditorView, tabId: number) {
-    const lines = view.state.doc.lines
-    const { safeMode, readOnly: readonly } = documentScaleRegistry.classify(tabId, lines)
-    // 全局只跟随激活 tab：restore 主 tab 复用 tabs[0] 的 id，activeId 全程不变，
-    // 惰性空 view 在此应用全局后 [activeId] effect 不会纠正 —— 激活的 over-scale
-    // tab 会丢窗口化/预算（I-1）。非激活 tab 只标记，切换由 effect 重应用。
-    if (tabId === workspaceRef.current.activeId) documentScaleRegistry.applyRenderPolicy(tabId)
-    setLargeDocNotice(
-      readonly
-        ? { sessionId: tabId, lines, safeMode: true, readonly: true }
-        : safeMode
-          ? { sessionId: tabId, lines, safeMode: true }
-          : lines > LARGE_DOC_LINES
-            ? { sessionId: tabId, lines, safeMode: false }
-            : null,
-    )
-    setStatsRequested(0)
-  }
+  // 档位策略（分类 + per-view facet）在 editorScalePolicy；App 只提供 registry
+  // 与两个 UI setter。
+  const applyDocumentScalePolicy = useMemo(
+    () => createEditorScalePolicyApplier({
+      registry: documentScaleRegistry,
+      setNotice: setLargeDocNotice,
+      requestStats: () => setStatsRequested(0),
+    }),
+    [],
+  )
 
   function resetTabDocument(nextSession: EditorSession, contents: string, docText?: Text): boolean {
     const view = viewsRef.current.get(nextSession.id)
@@ -740,10 +721,6 @@ export default function App({
       if (tab.id === workspaceRef.current.activeId) viewRef.current = view
       applyDocumentScalePolicy(view, tab.id)
     }
-    // 不变量（I-1）：ensureViews 结束时进程级预算/窗口化必须与激活 tab 的档位
-    // 一致。循环可能只为非激活 tab 建 view（如会话恢复的惰性占位），策略在非
-    // 激活 tab 上不碰全局 —— 此处按激活 tab 幂等重应用，钉死最终状态。
-    documentScaleRegistry.applyRenderPolicy(workspaceRef.current.activeId)
     jumpPending()
     focusPendingEditor()
   }
@@ -773,6 +750,18 @@ export default function App({
     else hostsRef.current.delete(id)
   }
 
+  // 回收草稿的落点由 recoveryAdoption 决定：只有唯一的空白未命名标签页才会被复用，
+  // 其余每条草稿各开一页，绝不覆盖用户已有的内容。
+  const adoptRecovery = useMemo(() => createRecoveryAdopter({
+    getWorkspace: () => workspaceRef.current,
+    commitWorkspace,
+    getContents: tabId => docsRef.current.get(tabId) ?? "",
+    setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
+    resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
+    mountNewTab,
+    syncDoc,
+  }), [])
+
   useEffect(() => {
     mountedRef.current = true
     ensureViews()
@@ -789,7 +778,9 @@ export default function App({
         getContents: tabId => docsRef.current.get(tabId) ?? "",
         setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
         resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
-        syncDoc, getActiveSession: () => sessionRef.current,
+        ensureDraftTarget: loadDraftTarget,
+        adoptRecovery,
+        syncDoc,
         markSessionRestored: () => { sessionRestoredRef.current = true },
       }
       const initial = await loadInitialSettings(sessionInit)
@@ -808,16 +799,13 @@ export default function App({
       } else {
         // Session shards are per-window (get_session_state resolves the
         // calling webview), so EVERY window consults its own shard here —
-        // restored editor-N windows reopen their tabs and folder. Only the
-        // draft-recovery prompt below is main-gated. A window without a
-        // shard (empty payload) keeps its fresh untitled tab and never
-        // drafts: recovery records are app-global, so a non-main window
-        // offering one would hijack the main window's record.
-        const restored = await restoreSavedSession(sessionInit)
-        if (!restored && isMainWindow()) {
-          await restoreDraft(sessionInit)
-        }
+        // restored editor-N windows reopen their tabs and folder.
+        await restoreSavedSession(sessionInit)
       }
+      // Draft recovery is app-global and main-gated: every record is offered,
+      // but only after the shard/open requests have settled, so a draft never
+      // steals the tab an explicit launch just opened.
+      if (isMainWindow()) await restoreDrafts(sessionInit)
     })()
     return () => {
       mountedRef.current = false
@@ -883,12 +871,6 @@ export default function App({
   useEffect(() => {
     ensureViews()
   }, [workspace.tabs])
-
-  // 预算重应用兜住所有激活路径（activateTab、会话恢复 focusTab 等）；effect 在 DOM
-  // 提交后、CM 视口重测量前运行，widget 渲染前预算已就位。
-  useEffect(() => {
-    documentScaleRegistry.applyRenderPolicy(workspace.activeId)
-  }, [workspace.activeId])
 
   useEffect(() => {
     document.documentElement.style.setProperty("--omd-font-size", `${settings.fontSize}px`)
@@ -1283,11 +1265,26 @@ export default function App({
     }
   }
 
+  /**
+   * Loads a restored lazy tab before its recovery draft is mounted, so the tab
+   * has the disk baseline/version a guarded save compares against. Adoption
+   * skips still-lazy tabs, so a failed load leaves the draft in a new tab.
+   */
+  async function loadDraftTarget(path: string) {
+    const tab = workspaceRef.current.tabs.find(item => sessionPath(item) === path)
+    if (tab && !sessionContentLoaded(tab)) await loadLazyTab(tab)
+  }
+
+  /** Registers a new tab's derived state; callers own contents and ws commit. */
+  function mountNewTab(tabId: number) {
+    docVersionsRef.current.set(tabId, 0)
+    commitSaveState({ ...saveStateRef.current, [tabId]: initialSaveState() })
+  }
+
   function newTab() {
     const tab = createSession(workspaceRef.current.nextId)
     docsRef.current.set(tab.id, "")
-    docVersionsRef.current.set(tab.id, 0)
-    commitSaveState({ ...saveStateRef.current, [tab.id]: initialSaveState() })
+    mountNewTab(tab.id)
     commitWorkspace(addTab(workspaceRef.current, tab))
     syncDoc("", tab.id)
   }
@@ -1319,7 +1316,8 @@ export default function App({
     if (!closed.tabs.some(item => item.id === id)) {
       commitNormalization(clearTabNormalization(normalizationRef.current, id))
       commitSaveState(removeTabSaveState(saveStateRef.current, id))
-      recoveryWriterRef.current.forget(id)
+      // A draft write that lands after the delete would recreate the record.
+      clearRecoveryAfterForget(recoveryWriterRef.current.forget(id), services, recoveryKey(tab))
       docsRef.current.delete(id)
       // 大纲缓存随 tab 一起销毁（版本号 + 缓存条目），防 id 复用时串数据/泄漏。
       docVersionsRef.current.delete(id)

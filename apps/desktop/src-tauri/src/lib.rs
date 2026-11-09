@@ -514,8 +514,8 @@ async fn delete_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn write_recovery(key: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::write_recovery(key, contents))
+async fn write_recovery(key: String, path: Option<String>, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::write_recovery(key, path, contents))
         .await
         .map_err(|error| format!("recovery write task failed: {error}"))?
 }
@@ -528,7 +528,7 @@ async fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
 }
 
 #[tauri::command]
-async fn read_recovery(key: String) -> Result<String, String> {
+async fn read_recovery(key: String) -> Result<workspace::RecoveryContents, String> {
     tauri::async_runtime::spawn_blocking(move || workspace::read_recovery(key))
         .await
         .map_err(|error| format!("recovery read task failed: {error}"))?

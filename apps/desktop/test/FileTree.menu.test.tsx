@@ -341,7 +341,10 @@ describe("FileTree sidebar menu", () => {
     expect(editor.reset.mock.calls.length).toBe(resets)
     expect(harness.editorForTab(1)).toBe(handle)
     await waitFor(() => expect(harness.services.writeRecovery).toHaveBeenCalledWith(
-      "C__notes_ideas_doc.md", "latest edit",
+      recoveryKey(createFileSession(1, `${to}\\doc.md`, "saved", {
+        resolvedPath: `${to}\\doc.md`, fingerprint: "v1:aa",
+      })),
+      `${to}\\doc.md`, "latest edit",
     ))
     expect(screen.getByText("doc.md", { selector: ".filetree-name" })).toBeTruthy()
   })
