@@ -1,9 +1,10 @@
-import { waitFor } from "@testing-library/react"
+import { act, fireEvent, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createSession, recoveryKey } from "../src/session"
-import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
+import { RECOVERY_DEBOUNCE_MS } from "../src/recoveryWriter"
+import { createFileSession, createSession, recoveryKey } from "../src/session"
+import { createAppHarness, expectPathShown, resetMountedApps, versionFor } from "./appHarness"
 
 // Keys the launch tabs will use from now on (default window: "main").
 const KEY_1 = recoveryKey(createSession(1))
@@ -112,5 +113,44 @@ describe("App recovery drafts", () => {
 
     await waitFor(() =>
       expect(harness.services.clearRecovery).toHaveBeenCalledWith(KEY_1))
+  })
+
+  it("re-arms an edit made during save-as under the new key and drops the old record", async () => {
+    const harness = makeAppHarness()
+    const paused = harness.pauseNextSave()
+    vi.mocked(harness.services.pickSavePath).mockResolvedValue("/notes/b.md")
+    harness.renderApp()
+    await harness.openFileTab("/notes/a.md", "disk body")
+
+    // 与 App 的身份推导保持一致的键：旧路径基线、保存后的新快照。
+    const oldKey = recoveryKey(createFileSession(
+      1, "/notes/a.md", "disk body", versionFor("/notes/a.md", "disk body"),
+    ))
+    const newKey = recoveryKey(createFileSession(
+      1, "/notes/b.md", "mine", versionFor("/notes/b.md", "mine"),
+    ))
+
+    // 旧键草稿防抖挂起中触发 save-as，并在保存期间继续编辑。
+    edit(harness, 1, "mine")
+    fireEvent.keyDown(window, { key: "s", metaKey: true, shiftKey: true })
+    await waitFor(() => expect(harness.services.saveDocument).toHaveBeenCalledOnce())
+    edit(harness, 1, "mine + late edit")
+
+    paused.resolve()
+    await act(async () => paused.promise)
+    // The late edit is still unsaved, so the tab stays dirty under the new path.
+    await waitFor(() => expectPathShown("/notes/b.md", { dirty: true }))
+
+    // 保存移动了身份：两个键的记录都必须清掉。
+    await waitFor(() => expect(harness.services.clearRecovery).toHaveBeenCalledWith(oldKey))
+    expect(harness.services.clearRecovery).toHaveBeenCalledWith(newKey)
+    // 保存期间落下的编辑仍未保存：cancelPendingRecovery 必须按新键重武装，
+    // 而不是让这批编辑在崩溃时无草稿可恢复。
+    await waitFor(() => expect(harness.services.writeRecovery)
+      .toHaveBeenCalledWith(newKey, "/notes/b.md", "mine + late edit"), { timeout: 2500 })
+    // 旧键的待写已被 forget 取消：迟到草稿不得复活已删除的记录。
+    await new Promise(resolve => window.setTimeout(resolve, RECOVERY_DEBOUNCE_MS + 100))
+    expect(harness.services.writeRecovery)
+      .not.toHaveBeenCalledWith(oldKey, "/notes/a.md", "mine + late edit")
   })
 })

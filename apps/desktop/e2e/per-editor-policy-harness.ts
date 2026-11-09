@@ -112,9 +112,14 @@ function mountSpikeEditor(host: HTMLElement, tabId: number): EditorView {
 }
 
 function countTransactions(view: EditorView, key: SpikeView): void {
+  // Count *transactions*, not update notifications: CodeMirror also fires
+  // listeners for transaction-free updates (viewport/geometry recalcs, font
+  // re-measure), and headless CI runs those at different times than local
+  // browsers. The invariant under test is that policy changes on one view
+  // dispatch no transaction on the other.
   view.dispatch({
     effects: StateEffect.appendConfig.of(
-      EditorView.updateListener.of(() => { transactions[key] += 1 }),
+      EditorView.updateListener.of(update => { transactions[key] += update.transactions.length }),
     ),
   })
   transactions[key] = 0

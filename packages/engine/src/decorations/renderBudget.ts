@@ -58,7 +58,7 @@ export function dropPendingBlockRender(entry: PendingRender): void {
   pending.delete(entry)
 }
 
-export function flushDeferredBlockRenders(): number {
+export function flushDeferredBlockRenders(trigger?: EditorView): number {
   let started = 0
   for (const entry of [...pending]) {
     // widget 已销毁，或所属 view 已拆除（CM 不保证 destroy 回调逐 widget 触发）
@@ -66,6 +66,10 @@ export function flushDeferredBlockRenders(): number {
       pending.delete(entry)
       continue
     }
+    // 触发视图限定的重查：本视图的光标/视口/策略变化只重查本视图的挂起块。
+    // 全量重查会让另一视图的策略切换提前启动这里的渲染（其完成的
+    // measureBlockWidget 回落为本视图的真实事务），破坏逐视图策略隔离。
+    if (trigger && entry.view !== trigger) continue
     if (withinRenderBudget(entry.view, entry.pos)) {
       pending.delete(entry)
       entry.start()
@@ -75,13 +79,14 @@ export function flushDeferredBlockRenders(): number {
   return started
 }
 
-// 挂进 editorExtensions()：光标/文档/视口变化、或本视图策略被重新配置时重查挂起块。
+// 挂进 editorExtensions()：本视图的光标/文档/视口变化、或本视图策略被重新配置时
+// 重查本视图的挂起块。
 export const renderBudgetFlush = () => EditorView.updateListener.of(update => {
   const policyChanged = !samePerformancePolicy(
     editorPerformancePolicy(update.startState),
     editorPerformancePolicy(update.state),
   )
   if (update.docChanged || update.selectionSet || update.viewportChanged || policyChanged) {
-    flushDeferredBlockRenders()
+    flushDeferredBlockRenders(update.view)
   }
 })

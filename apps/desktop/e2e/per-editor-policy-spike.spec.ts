@@ -168,6 +168,8 @@ test("view B keeps out-of-window pending in safe mode and drains fully in standa
   expect((await diagnosticsOf(page, "B")).pendingRanges).toBeGreaterThan(0)
 
   const finalA = await diagnosticsOf(page, "A")
+  // B 的策略切换不得触碰 A：不 dispatch 事务（渲染预算的 flush 只重查本视图的
+  // 挂起块，见 renderBudget.ts），A 的文档、装饰与 DOM 保持原样。
   expect(finalA.transactionCount).toBe(baselineA.transactionCount)
   expect(finalA.pendingRanges).toBe(0)
   expect(finalA.domFingerprint).toBe(baselineA.domFingerprint)

@@ -58,12 +58,19 @@ export function createRecoveryWriter(): RecoveryWriter {
   const epochs = new Map<number, number>()
   /** Writes already past the timer, so `forget` can wait for their IPC to land. */
   const inFlight = new Map<number, Set<Promise<void>>>()
+  /** Settling write each tab's next write queues behind, so two overlapping
+   *  IPCs can never invert: a slow write of old contents must not land after
+   *  the newer draft and push the record backwards. */
+  const chains = new Map<number, Promise<void>>()
 
   const writeNow = (entry: PendingWrite): Promise<void> => {
     const { tabId } = entry.draft
     pending.delete(tabId)
     const epoch = epochs.get(tabId) ?? 0
+    const previous = chains.get(tabId) ?? Promise.resolve()
     const task = (async () => {
+      await previous.catch(() => undefined)
+      if ((epochs.get(tabId) ?? 0) !== epoch) return
       try {
         await entry.host.write?.(entry.draft.key, entry.draft.path, entry.draft.contents)
         // The tab was closed meanwhile: its record is being deleted, so this
@@ -76,12 +83,16 @@ export function createRecoveryWriter(): RecoveryWriter {
         surfaceFailure(reported, suppressed, entry.draft, entry.host, error)
       }
     })()
+    chains.set(tabId, task)
     const writes = inFlight.get(tabId) ?? new Set<Promise<void>>()
     writes.add(task)
     inFlight.set(tabId, writes)
     const settle = () => {
       writes.delete(task)
       if (writes.size === 0) inFlight.delete(tabId)
+      // Only the newest task owns the chain slot; a queued successor has
+      // already captured this task as its `previous`.
+      if (chains.get(tabId) === task) chains.delete(tabId)
     }
     void task.then(settle, settle)
     return task

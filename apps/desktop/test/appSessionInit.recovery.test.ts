@@ -72,8 +72,11 @@ describe("draft recovery startup", () => {
     expect(ensureDraftTarget).toHaveBeenCalledTimes(1)
     expect(ensureDraftTarget).toHaveBeenCalledWith("/a.md")
     // Both keys differ from the records', so both drafts are re-armed first.
+    // The path draft keeps its recorded path even though adoption fell back to
+    // an untitled tab (its identity must survive the record swap); the
+    // path-less draft re-arms path-less.
     expect(writeRecovery).toHaveBeenCalledTimes(2)
-    expect(writeRecovery).toHaveBeenNthCalledWith(1, KEY_2, null, "draft")
+    expect(writeRecovery).toHaveBeenNthCalledWith(1, KEY_2, "/a.md", "draft")
     expect(writeRecovery).toHaveBeenNthCalledWith(2, KEY_3, null, "draft")
     expect(clearRecovery).toHaveBeenCalledTimes(2)
     expect(clearRecovery).toHaveBeenNthCalledWith(1, "_a.md")
@@ -166,7 +169,9 @@ describe("draft recovery startup", () => {
 
     await restoreDrafts(host)
 
-    expect(writeRecovery).toHaveBeenCalledWith(KEY_2, null, "draft")
+    // The fallback tab is untitled, but the record keeps the draft's original
+    // path so the next launch can still return it to its file tab.
+    expect(writeRecovery).toHaveBeenCalledWith(KEY_2, "/a.md", "draft")
     expect(clearRecovery).not.toHaveBeenCalled()
   })
 })

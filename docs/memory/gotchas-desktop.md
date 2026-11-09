@@ -558,4 +558,13 @@ old record must be deleted too or the next launch offers an already-saved file a
 (2) `recoveryWriter.forget` used to drop only timers, so an IPC already in flight could land
 after close-tab deleted the record and recreate it. `forget` now bumps a per-tab epoch and
 resolves only after the in-flight writes settle; a late success/failure must not touch
-`lastWritten` or report.
+`lastWritten` or report. Writes are also serialized per tab: a slow IPC carrying old contents
+must never land after the newer draft queued behind it.
+
+Known limitation (deliberate, do not "fix" casually): adoption matches a draft's recorded
+path to tabs by **exact string**. Spelling variants of the same file — case differences on
+NTFS/APFS, macOS NFD, a symlinked or drive-letter-alias path — produce a separate key/record
+and the draft falls back to a fresh tab instead of its file tab. Content is never lost; only
+the association degrades. Platform-aware normalization was rejected: a wrong rule would mount
+a draft into the *wrong* file's tab, which is strictly worse than an extra tab. Revisit only
+on a real user report.

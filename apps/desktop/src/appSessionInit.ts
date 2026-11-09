@@ -179,17 +179,22 @@ async function discardRecovery(services: DesktopServices, key: string): Promise<
  * is memory-only, so the source record may only be deleted once an equivalent
  * record exists under the key `recoveryWriter` will use from now on; when the
  * keys already match the existing record is that copy and must be kept.
+ * `draftPath` is the envelope's recorded path: when the path's own tab could
+ * not be loaded and adoption fell back to an untitled tab, the path is still
+ * the draft's identity and the re-armed record must carry it, or the next
+ * launch could no longer return the draft to its file tab.
  * Returns `true` when the old record may be deleted.
  */
 async function rearmDraft(
   services: DesktopServices, recordKey: string, tab: EditorSession, contents: string,
+  draftPath: string | null,
 ): Promise<boolean> {
   const key = recoveryKey(tab)
   if (key === recordKey) return false
   const write = services.writeRecovery
   if (!write) return false
   try {
-    await write(key, sessionPath(tab), contents)
+    await write(key, draftPath ?? sessionPath(tab), contents)
     return true
   } catch {
     getGlobalLogger().warn("recovery", `could not re-arm draft ${keyField(key)}`)
@@ -240,7 +245,7 @@ export async function restoreDrafts(host: AppSessionInitHost): Promise<void> {
     const tabId = host.adoptRecovery({ key: record.key, path, contents })
     if (tabId === null) continue
     const tab = host.getWorkspace().tabs.find(item => item.id === tabId)
-    if (tab && await rearmDraft(services, record.key, tab, contents)) {
+    if (tab && await rearmDraft(services, record.key, tab, contents, path)) {
       await discardRecovery(services, record.key)
     }
   }
