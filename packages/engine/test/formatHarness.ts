@@ -1,5 +1,6 @@
 import type { EditorState, TransactionSpec } from "@codemirror/state"
 import type { Command, EditorView } from "@codemirror/view"
+import { inlinePlanState } from "../src/format/inlineCommands"
 import { makeState } from "./helpers"
 
 export interface TestSelection {
@@ -10,7 +11,7 @@ export interface TestSelection {
 /** Runs a command against a fresh, fully parsed state and returns the result. */
 export function run(command: Command, doc: string, selection: TestSelection): EditorState {
   const { from, to = from } = selection
-  const state = makeState(doc).update({ selection: { anchor: from, head: to } }).state
+  const state = makeState(doc, [inlinePlanState]).update({ selection: { anchor: from, head: to } }).state
   const result = attempt(command, state)
   if (!result.handled) throw new Error("command was not handled")
   return result.next
