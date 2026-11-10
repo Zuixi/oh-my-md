@@ -117,7 +117,7 @@ fn build_window(
     } else {
         WebviewUrl::CustomProtocol(url)
     };
-    WebviewWindowBuilder::new(app, label.to_owned(), url)
+    let built = WebviewWindowBuilder::new(app, label.to_owned(), url)
         .inner_size(spec.width_css, 600.0)
         .position(x, y)
         .visible(visible)
@@ -126,7 +126,20 @@ fn build_window(
         .focused(false)
         .resizable(false)
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // `build` may hand back a detached handle before the runtime stores the
+    // registered window. Re-resolve from the manager so later `with_webview`
+    // and URL messages target the registered instance.
+    app.get_webview_window(label)
+        .ok_or_else(|| format!("export window {label} was not registered"))
+        .map(|window| {
+            #[cfg(feature = "export-smoke")]
+            eprintln!(
+                "[export-smoke] manager handle matches label={}",
+                window.label()
+            );
+            window
+        })
 }
 
 /// Parse the JSON emitted by `PROBE_SCRIPT`. WebView2 wraps the expression
