@@ -49,7 +49,7 @@ fn with_core<T: Send + 'static>(
         .app_handle()
         .run_on_main_thread(move || {
             let inner_error_tx = error_tx.clone();
-            if let Err(error) = main_window.with_webview(move |platform| {
+            let dispatched = main_window.with_webview(move |platform| {
                 #[cfg(feature = "export-smoke")]
                 eprintln!("[export-smoke] with_webview closure");
                 let result = (|| {
@@ -61,7 +61,13 @@ fn with_core<T: Send + 'static>(
                 if let Err(error) = result {
                     let _ = inner_error_tx.send(Err(error));
                 }
-            }) {
+            });
+            #[cfg(feature = "export-smoke")]
+            eprintln!(
+                "[export-smoke] with_webview dispatched ok={}",
+                dispatched.is_ok()
+            );
+            if let Err(error) = dispatched {
                 let _ = error_tx.send(Err(error.to_string()));
             }
         })

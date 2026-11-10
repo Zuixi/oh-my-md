@@ -116,6 +116,16 @@ fn build_window(
                 .resizable(false)
                 .build()
                 .map_err(|error| error.to_string());
+        #[cfg(feature = "export-smoke")]
+        if let Ok(window) = &built {
+            eprintln!(
+                "[export-smoke] built label={} url={:?} visible={:?} size={:?}",
+                window.label(),
+                window.url(),
+                window.is_visible(),
+                window.inner_size()
+            );
+        }
         let _ = tx.send(built);
     })
     .map_err(|error| error.to_string())?;
@@ -193,6 +203,13 @@ pub(crate) async fn render_with_window(
     // has returned; give the webview a moment to register before the first
     // `with_webview` dispatch (a message sent before registration is dropped).
     tokio::time::sleep(Duration::from_millis(250)).await;
+    #[cfg(feature = "export-smoke")]
+    eprintln!(
+        "[export-smoke] after delay url={:?} visible={:?} size={:?}",
+        window.url(),
+        window.is_visible(),
+        window.inner_size()
+    );
 
     let cleanup = |window: &WebviewWindow| {
         let _ = window.close();
