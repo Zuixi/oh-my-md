@@ -601,3 +601,9 @@ WebView2, Linux WebKitGTK), so the document must be self-contained and determini
   a 2/2/3 px line respectively.
 - Height limits are reported (`height-clamped`), never silently truncated. PDF is bounded by
   the PDF page limit; PNG by the RGBA area budget and the 16383 px side ceiling.
+- Windows WebView2 shares one user-data directory across all windows, so every webview must be
+  created with the same `additionalBrowserArgs`. The main window sets them in `tauri.conf.json`
+  (`HideCursorWhileTyping` etc.); `export_host.rs` passes the identical list through
+  `WINDOWS_ADDITIONAL_BROWSER_ARGS`. Omit them and the second environment fails while Tauri
+  still registers the window: `url()`/`size()`/`with_webview()` all return
+  `FailedToReceiveMessage`, and a custom-protocol export page never reports ready.

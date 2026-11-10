@@ -11,6 +11,15 @@ use std::path::{Component, Path, PathBuf};
 #[path = "export_host.rs"]
 pub(crate) mod export_host;
 
+// Windows shares one WebView2 user-data directory across windows, so every
+// webview must be created with the same browser arguments. The main window sets
+// these in `tauri.conf.json`; pass the identical list here or WebView2 refuses
+// the second environment and Tauri registers a window whose webview cannot
+// receive messages (`FailedToReceiveMessage`).
+#[cfg(any(windows, test))]
+const WINDOWS_ADDITIONAL_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HideCursorWhileTyping";
+
 /// Inlined images make the export document self-contained; a 4K screenshot with
 /// several retina images can exceed the old 8 MiB cap quickly.
 const MAX_EXPORT_HTML_BYTES: usize = 32 * 1024 * 1024;
@@ -396,5 +405,24 @@ mod tests {
         let (normal, warning) = spec.clamp_height_css(1200.0);
         assert_eq!(normal, 1200.0);
         assert!(warning.is_none());
+    }
+}
+
+#[cfg(test)]
+mod browser_args_tests {
+    use super::WINDOWS_ADDITIONAL_BROWSER_ARGS;
+
+    #[test]
+    fn windows_browser_args_match_the_main_window_config() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid tauri config");
+        let main = config["app"]["windows"]
+            .as_array()
+            .and_then(|windows| windows.iter().find(|window| window["label"] == "main"))
+            .expect("main window config");
+        assert_eq!(
+            main["additionalBrowserArgs"].as_str(),
+            Some(WINDOWS_ADDITIONAL_BROWSER_ARGS)
+        );
     }
 }

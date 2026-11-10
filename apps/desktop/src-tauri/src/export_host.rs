@@ -75,15 +75,6 @@ pub fn serve<R: Runtime>(
     }
 }
 
-// Windows shares one WebView2 user-data directory across windows, so every
-// webview must be created with the same browser arguments. The main window sets
-// these in `tauri.conf.json`; pass the identical list here or WebView2 refuses
-// the second environment and Tauri registers a window whose webview cannot
-// receive messages (`FailedToReceiveMessage`).
-#[cfg(windows)]
-const WINDOWS_ADDITIONAL_BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HideCursorWhileTyping";
-
 pub(crate) type ProbeFn = fn(&WebviewWindow) -> Result<Option<Probe>, String>;
 pub(crate) type CaptureFn = fn(&WebviewWindow, &ExportSpec, &Probe) -> Result<Vec<u8>, String>;
 
@@ -128,7 +119,7 @@ fn build_window(
         .resizable(false);
     #[cfg(windows)]
     {
-        builder = builder.additional_browser_args(WINDOWS_ADDITIONAL_BROWSER_ARGS);
+        builder = builder.additional_browser_args(super::WINDOWS_ADDITIONAL_BROWSER_ARGS);
     }
     let built = builder.build().map_err(|error| error.to_string())?;
     // `build` may hand back a detached handle before the runtime stores the
