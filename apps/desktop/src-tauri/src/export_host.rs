@@ -134,10 +134,20 @@ fn build_window(
         .ok_or_else(|| format!("export window {label} was not registered"))
         .map(|window| {
             #[cfg(feature = "export-smoke")]
-            eprintln!(
-                "[export-smoke] manager handle matches label={}",
-                window.label()
-            );
+            {
+                eprintln!(
+                    "[export-smoke] manager handle matches label={}",
+                    window.label()
+                );
+                if let Some(webview) = app.get_webview(label) {
+                    eprintln!("[export-smoke] raw webview url={:?}", webview.url());
+                    webview.with_webview(|_| {
+                        eprintln!("[export-smoke] raw with_webview entered");
+                    });
+                } else {
+                    eprintln!("[export-smoke] raw webview missing");
+                }
+            }
             window
         })
 }
