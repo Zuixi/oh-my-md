@@ -54,9 +54,7 @@ async function openSpike(page: Page): Promise<void> {
   await waitReady(page, "B")
   await expectPendingInWindow(page, "A", 0)
   await expectPendingInWindow(page, "B", 0)
-  await expect
-    .poll(async () => (await diagnosticsOf(page, "A")).pendingRanges, { timeout: SETTLE_TIMEOUT_MS })
-    .toBe(0)
+  expect((await diagnosticsOf(page, "A")).pendingRanges).toBe(0)
 }
 
 test("two editors mount identical 10,000-line documents with independent policies", async ({ page }) => {

@@ -1,6 +1,8 @@
 import "../src/styles.css"
 import { EditorView } from "@codemirror/view"
 import { StateEffect } from "@codemirror/state"
+import { forceParsing } from "@codemirror/language"
+import { drainPendingLiveBuild } from "@omd/engine/src/decorations/build"
 import {
   SAFE_MODE_RENDER_BUDGET_LINES,
   SAFE_PERFORMANCE_POLICY,
@@ -233,6 +235,10 @@ countTransactions(viewB, "B")
 if (auditMode === null) {
   setPolicy("A", "standard")
   setPolicy("B", "safe")
+  // Establish a fully built A baseline synchronously; Chromium can otherwise complete
+  // its first standard-mode idle drain after the test captures its baseline.
+  forceParsing(viewA, viewA.state.doc.length, 10_000)
+  drainPendingLiveBuild(viewA)
 } else if (auditMode === "local") {
   setPolicy("A", "standard")
 }
