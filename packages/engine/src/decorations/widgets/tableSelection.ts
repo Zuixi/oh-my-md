@@ -1,6 +1,11 @@
 import type { StateEffect } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
 import { cellLanguage } from "../../parse/cell"
+import { decodeHtmlEntity } from "../../parse/entities"
+import { escapeParts } from "../../semantic/breaks"
+import { imageParts } from "../../semantic/image"
+import { linkParts } from "../../semantic/link"
+import { stringReferenceContext } from "../../semantic/references"
 import type { TableCellData } from "../../tables/model"
 import type { TableContext } from "../../tables/navigate"
 import { trimmedCellCaret } from "./tableCellEdit"
@@ -105,25 +110,58 @@ function alignVisibleGlyphs(source: string, visible: string): VisibleGlyph[] {
   return glyphs
 }
 
+const HIDDEN_MARK_NODES = new Set([
+  "EmphasisMark", "StrikethroughMark", "HighlightMark", "UnderlineMark", "KbdMark",
+  "LinkMark", "CodeMark", "MathMark", "HeaderMark", "ListMark", "QuoteMark",
+  "TaskMarker", "URL", "CodeInfo", "TableDelimiter", "RiseMark",
+])
+
 /**
- * Source spans the projection renders as one glyph the source does not spell as those
- * characters: an HTML entity (`&amp;` renders `&`) or an emoji shortcode (`:smile:` renders
- * 😀). Their inner characters are markup, so matching a visible glyph inside them would
- * anchor a selection to bytes the user never saw (`&hellip;hello` must map `hello` onto the
- * literal text, not onto the `h` of the entity name).
+ * Source spans hidden or replaced by the cell projection (`parseCell`): syntax marks, link
+ * URLs/titles, image syntax, `<br>`/`<hr>` tags, escape backslashes, emoji shortcodes, and
+ * HTML entities. Matching a visible glyph inside these spans would anchor a selection to
+ * hidden markup instead of the text the user actually pointed at.
  */
 function unspellableSpans(source: string): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = []
+  const references = stringReferenceContext(source)
   // The cell parser owns what counts as an entity/shortcode; never re-detect the syntax here.
   cellLanguage().parser.parse(source).iterate({
     enter: node => {
-      if (node.name === "Entity" || node.name === "Emoji") spans.push([node.from, node.to])
+      if (HIDDEN_MARK_NODES.has(node.name) || node.name === "Emoji") {
+        spans.push([node.from, node.to])
+        return
+      }
+      if (node.name === "Entity") {
+        const decoded = decodeHtmlEntity(source.slice(node.from, node.to))
+        spans.push([decoded === "&" ? node.from + 1 : node.from, node.to])
+        return
+      }
+      if (node.name === "Escape") {
+        const parts = escapeParts(node.node)
+        if (parts) spans.push([parts.markerFrom, parts.markerTo])
+        return
+      }
+      if (node.name === "Link") {
+        const parts = linkParts(node.node, references)
+        if (parts && parts.kind !== "autolink") {
+          spans.push([node.from, parts.labelFrom], [parts.labelTo, node.to])
+        }
+        return
+      }
+      if (node.name === "Image" && imageParts(node.node, references)) {
+        spans.push([node.from, node.to])
+        return
+      }
+      if (node.name === "HTMLTag" && /^<(br|hr)\s*\/?>/i.test(source.slice(node.from, node.to))) {
+        spans.push([node.from, node.to])
+      }
     },
   })
   return spans
 }
 
-/** Next place the source spells `glyph` outside entity/shortcode markup, or -1. */
+/** Next place the source spells `glyph` outside hidden cell markup, or -1. */
 function spellingIndex(
   source: string,
   glyph: string,
@@ -131,7 +169,7 @@ function spellingIndex(
   markup: readonly (readonly [number, number])[],
 ): number {
   const inside = (at: number): boolean =>
-    markup.some(([start, end]) => at > start && at + glyph.length <= end)
+    markup.some(([start, end]) => at < end && at + glyph.length > start)
   let found = source.indexOf(glyph, from)
   while (found >= 0 && inside(found)) found = source.indexOf(glyph, found + 1)
   return found
@@ -161,7 +199,7 @@ export function renderedCellSourceOffset(
   // A press on cell padding or a textless glyph (image/`<br>`) has no rendered column:
   // pick the nearer cell edge instead of guessing a character inside the content.
   const rect = element.getBoundingClientRect()
-  const near = clientX < rect.left + rect.width / 2 ? 0 : visible.length
+  const near = rect.width <= 0 || clientX < rect.left + rect.width / 2 ? 0 : visible.length
   return cellVisibleSourceOffset(cell.source, visible, near)
 }
 

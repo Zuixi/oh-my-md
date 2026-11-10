@@ -262,6 +262,37 @@ test("a table without outer pipes still maps a rendered cell onto its source", a
   await expectSelection(page, "alpha | **bold**\n\nTail", NO_OUTER_PIPES_DOC)
 })
 
+const SHADOWED_MARKUP_TABLE_DOC = `Lede paragraph.
+
+| Entity | Link |
+| --- | --- |
+| &hellip;hello | [go](https://e.test/target)target |
+
+Tail paragraph.`
+
+test("an editable table drag after a leading entity or link URL anchors on the visible glyph", async ({ page }) => {
+  await openTable(page, SHADOWED_MARKUP_TABLE_DOC)
+  // Press right before `hello` (second text node, after `…`) in the editable cell.
+  const helloStart = await page.evaluate(() => {
+    const cell = [...document.querySelectorAll<HTMLElement>(".omd-table td")]
+      .find(candidate => candidate.textContent === "\u2026hello")
+    const textNode = cell?.childNodes[1]
+    if (!textNode) throw new Error("missing entity tail text node")
+    const range = document.createRange()
+    range.setStart(textNode, 0)
+    range.setEnd(textNode, 1)
+    const rect = range.getBoundingClientRect()
+    return { x: rect.left + 0.5, y: rect.top + rect.height / 2 }
+  })
+  await pressCell(page, helloStart)
+  await dragTo(page, await linePoint(page, "Tail paragraph.", 4))
+  await expectSelection(
+    page,
+    "hello | [go](https://e.test/target)target |\n\nTail",
+    SHADOWED_MARKUP_TABLE_DOC,
+  )
+})
+
 const EXTRA_CELL_DOC = `Lede paragraph.
 
 | A | B |

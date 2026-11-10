@@ -243,6 +243,33 @@ describe("table pointer gestures", () => {
     expect(tableCellSlotAt(document.body)).toBeNull()
     cleanup()
   })
+
+  it("anchors an editable cell press on the rendered glyph before opening the cell projection", async () => {
+    const doc = "| &hellip;hello | B |\n| --- | --- |\n| 1 | 2 |"
+    const { view, cleanup } = mount(doc)
+    const cell = await renderedCell(view, ".omd-table thead th")
+    const original = document.elementFromPoint.bind(document)
+    let hitFirstText = ""
+    document.elementFromPoint = (x, y) => {
+      const spans = cell.querySelectorAll<HTMLElement>(".omd-table-cell-view [data-from]")
+      if (spans.length >= 2) {
+        hitFirstText = spans[0].textContent ?? ""
+        spans[1].getBoundingClientRect = () => new DOMRect(10, 0, 50, 20)
+        return spans[1]
+      }
+      return original(x, y)
+    }
+    try {
+      press(cell, 10, 10)
+      move(10 + TABLE_POINTER_DRIFT_PX + 1, 10)
+      release()
+      expect(hitFirstText).toBe("\u2026")
+      expect(view.state.selection.main.anchor).toBe(doc.indexOf("hello"))
+    } finally {
+      document.elementFromPoint = original
+      cleanup()
+    }
+  })
 })
 
 
@@ -275,5 +302,16 @@ describe("cellVisibleSourceOffset markup shadowing", () => {
     // `&` is what `&amp;` renders: the entity start is a real visible glyph boundary.
     expect(cellVisibleSourceOffset("x &amp; y", "x & y", 2)).toBe(2)
     expect(cellVisibleSourceOffset("x &amp; y", "x & y", 3)).toBe(3)
+  })
+
+  it("does not match visible text inside hidden link URLs, image alt text, html tags, or leading shortcode colons", () => {
+    expect(cellVisibleSourceOffset("<u>u</u>x", projected("<u>u</u>x"), 0)).toBe(3)
+    expect(cellVisibleSourceOffset("<kbd>k</kbd>x", projected("<kbd>k</kbd>x"), 0)).toBe(5)
+    expect(cellVisibleSourceOffset("<br>b", projected("<br>b"), 0)).toBe(4)
+    expect(cellVisibleSourceOffset("a<br>b", projected("a<br>b"), 2)).toBe(6)
+    expect(cellVisibleSourceOffset("[go](https://e.test/target)target", projected("[go](https://e.test/target)target"), 3)).toBe(28)
+    expect(cellVisibleSourceOffset("![alt](https://e.test/a.png)alt", projected("![alt](https://e.test/a.png)alt"), 0)).toBe(28)
+    expect(cellVisibleSourceOffset(":smile::x", projected(":smile::x"), 2)).toBe(7)
+    expect(cellVisibleSourceOffset("&lt;&", projected("&lt;&"), 1)).toBe(4)
   })
 })
