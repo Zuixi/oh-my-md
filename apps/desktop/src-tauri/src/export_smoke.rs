@@ -53,13 +53,9 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     // window; a window built from `setup` can otherwise be registered before the
     // runtime is ready to receive its messages.
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    if let Some(main) = app.get_webview_window("main") {
-        eprintln!(
-            "[export-smoke] main url={:?} visible={:?}",
-            main.url(),
-            main.is_visible()
-        );
-    }
+    // Do not query `main.url()` here: WKWebView reports no URL until its first
+    // navigation commits, and wry unwraps that `Option` inside `url()`, which
+    // panics the macOS smoke before the export window is built.
     eprintln!(
         "[export-smoke] windows={:?}",
         app.webview_windows().keys().collect::<Vec<_>>()
