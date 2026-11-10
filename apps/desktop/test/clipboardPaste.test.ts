@@ -168,3 +168,13 @@ describe("clipboard paste controller", () => {
     expect(store.commit).toHaveBeenCalledWith("batch-2")
   })
 })
+
+describe("plain clipboard text with Windows line endings", () => {
+  it("inserts CRLF text and leaves the caret right after it", async () => {
+    const ctx = setup("tail", EditorSelection.single(0))
+    await pasteFromSystemClipboard(ctx.view, reader(null, "a\r\nb\r\n"), ctx.options)
+    expect(ctx.view.state.doc.toString()).toBe("a\nb\ntail")
+    expect(ctx.view.state.selection.main.head).toBe(4)
+    expect(ctx.errors).toEqual([])
+  })
+})

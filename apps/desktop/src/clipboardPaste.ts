@@ -239,7 +239,11 @@ function shouldUsePlainText(view: EditorView): boolean {
     (!range.empty && inVerbatim(view.state, range.to - 1)))
 }
 
-function dispatchText(view: EditorView, target: Extract<PasteJobTarget, { kind: "active" }>, text: string): void {
+function dispatchText(view: EditorView, target: Extract<PasteJobTarget, { kind: "active" }>, raw: string): void {
+  // CodeMirror stores CRLF/CR as LF; computing the caret from the raw length
+  // (Windows clipboard text) would point past the inserted text, or past the
+  // document end and throw.
+  const text = raw.replace(/\r\n?/g, "\n")
   if (!text) return
   const changes = target.ranges.map(range => ({ from: range.from, to: range.to, insert: text }))
   view.dispatch({
