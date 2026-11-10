@@ -121,7 +121,7 @@ fn build_window(
     {
         builder = builder.additional_browser_args(super::WINDOWS_ADDITIONAL_BROWSER_ARGS);
     }
-    let built = builder.build().map_err(|error| error.to_string())?;
+    builder.build().map_err(|error| error.to_string())?;
     // `build` may hand back a detached handle before the runtime stores the
     // registered window. Re-resolve from the manager so later `with_webview`
     // and URL messages target the registered instance.
