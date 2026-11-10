@@ -189,6 +189,11 @@ pub(crate) async fn render_with_window(
         }
     };
 
+    // Windows WebView2 creation is asynchronous even though the window builder
+    // has returned; give the webview a moment to register before the first
+    // `with_webview` dispatch (a message sent before registration is dropped).
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
     let cleanup = |window: &WebviewWindow| {
         let _ = window.close();
         app.state::<ExportProtocolState>().remove(&token);
