@@ -6,6 +6,7 @@
 
 use super::{ExportFormat, ExportSpec};
 use std::path::PathBuf;
+use tauri::Manager;
 
 const SMOKE_HEIGHT_CSS: u32 = 600;
 const DEFAULT_WIDTH_CSS: u32 = 800;
@@ -52,6 +53,17 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     // window; a window built from `setup` can otherwise be registered before the
     // runtime is ready to receive its messages.
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    if let Some(main) = app.get_webview_window("main") {
+        eprintln!(
+            "[export-smoke] main url={:?} visible={:?}",
+            main.url(),
+            main.is_visible()
+        );
+    }
+    eprintln!(
+        "[export-smoke] windows={:?}",
+        app.webview_windows().keys().collect::<Vec<_>>()
+    );
     let width_css = env_u32("OMD_EXPORT_SMOKE_WIDTH", DEFAULT_WIDTH_CSS)?;
     let scale = env_u32("OMD_EXPORT_SMOKE_SCALE", DEFAULT_SCALE)?;
     let out = std::env::var_os("OMD_EXPORT_SMOKE_OUT")
