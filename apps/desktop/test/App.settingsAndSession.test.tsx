@@ -71,6 +71,8 @@ describe("App Settings & Session Restore integration", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      exportWidth: 800,
+      exportScale: 2,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: false,

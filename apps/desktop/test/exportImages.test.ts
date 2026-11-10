@@ -1,0 +1,114 @@
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  EXPORT_MAX_IMAGE_BYTES,
+  EXPORT_MAX_TOTAL_IMAGE_BYTES,
+  makeExportImageResolver,
+  resolveDocRelativePath,
+} from "../src/exportImages"
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://localhost/${path.replace(/^\//, "")}`,
+}))
+
+function imageResponse(bytes: number, type = "image/png"): Response {
+  return new Response(new Blob([new Uint8Array(bytes)], { type }))
+}
+
+describe("resolveDocRelativePath", () => {
+  it("joins a relative image against the document directory", () => {
+    expect(resolveDocRelativePath("/docs/note.md", "assets/pic.png")).toBe(
+      "/docs/assets/pic.png",
+    )
+  })
+
+  it("keeps POSIX and Windows absolute paths", () => {
+    expect(resolveDocRelativePath("/docs/note.md", "/tmp/pic.png")).toBe("/tmp/pic.png")
+    expect(resolveDocRelativePath("C:\\docs\\note.md", "D:/pic.png")).toBe("D:/pic.png")
+  })
+
+  it("normalizes a Windows document directory before joining", () => {
+    expect(resolveDocRelativePath("C:\\docs\\note.md", "assets/pic.png")).toBe(
+      "C:/docs/assets/pic.png",
+    )
+  })
+
+  it("passes through data, http and asset URLs", () => {
+    for (const src of [
+      "data:image/png;base64,AAAA",
+      "https://example.com/a.png",
+      "http://example.com/a.png",
+      "asset://localhost/a.png",
+    ]) {
+      expect(resolveDocRelativePath("/docs/note.md", src)).toBe(src)
+    }
+  })
+})
+
+describe("makeExportImageResolver", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("inlines a local image as a data URL and caches the read", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse(4))
+    vi.stubGlobal("fetch", fetchMock)
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    const first = await resolve("assets/pic.png")
+    const second = await resolve("assets/pic.png")
+    expect(first).toMatch(/^data:image\/png;base64,/)
+    expect(second).toBe(first)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledWith("asset://localhost/docs/assets/pic.png")
+  })
+
+  it("leaves data and remote images untouched", async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    await expect(resolve("data:image/png;base64,AAAA")).resolves.toBe(
+      "data:image/png;base64,AAAA",
+    )
+    await expect(resolve("https://example.com/a.png")).resolves.toBe(
+      "https://example.com/a.png",
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("returns the source when there is no document path", async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+    const resolve = makeExportImageResolver(() => null)
+    await expect(resolve("assets/pic.png")).resolves.toBe("assets/pic.png")
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("rejects a failed read", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })))
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    await expect(resolve("assets/missing.png")).rejects.toThrow(/failed to read image/)
+  })
+
+  it("rejects a non-image response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(imageResponse(4, "text/plain")))
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    await expect(resolve("assets/not-image.png")).rejects.toThrow(/not an image/)
+  })
+
+  it("rejects an image over the per-image cap", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(imageResponse(EXPORT_MAX_IMAGE_BYTES + 1)),
+    )
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    await expect(resolve("assets/huge.png")).rejects.toThrow(/too large/)
+  })
+
+  it("rejects a document whose images exceed the total cap", async () => {
+    const perImage = Math.floor(EXPORT_MAX_TOTAL_IMAGE_BYTES / 3) + 1
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => imageResponse(perImage)))
+    const resolve = makeExportImageResolver(() => "/docs/note.md")
+    await resolve("assets/a.png")
+    await resolve("assets/b.png")
+    await expect(resolve("assets/c.png")).rejects.toThrow(/too large/)
+  })
+})

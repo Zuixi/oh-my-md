@@ -182,12 +182,23 @@ export type PrepareUpdateRestartResult =
   | { readonly kind: "ready" }
   | { readonly kind: "timedOut" }
 
+export interface ExportWarning {
+  code: string
+  detail?: string | null
+}
+
 export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
   pickFolder?: () => Promise<string | null>
   pickExportPath?: (format?: "html" | "png" | "pdf") => Promise<string | null>
-  exportPreview?: (html: string, path: string, format: "pdf" | "png") => Promise<string | null>
+  exportPreview?: (
+    html: string,
+    path: string,
+    format: "pdf" | "png",
+    scale: number,
+    width: number,
+  ) => Promise<ExportWarning | null>
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
   readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
@@ -390,8 +401,8 @@ export const defaultServices: DesktopServices = {
   deletePath: async path => {
     await invoke("delete_path", { path })
   },
-  exportPreview: async (html, path, format) => {
-    return await invoke<string | null>("export_preview", { html, path, format })
+  exportPreview: async (html, path, format, scale, width) => {
+    return await invoke<ExportWarning | null>("export_preview", { html, path, format, scale, width })
   },
   loadRecents: () => {
     try {

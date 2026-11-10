@@ -5,11 +5,11 @@ import {
 } from "@omd/engine"
 import type { Dispatch, RefObject, SetStateAction } from "react"
 import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
-import { exportCurrent, loadCustomCss } from "./appExportActions"
+import { exportCurrent, loadCustomCss, type ExportRenderOptions } from "./appExportActions"
 import { pastePlainText } from "./pastePlainText"
 import { pasteFromSystemClipboard, type ClipboardPasteOptions } from "./clipboardPaste"
 import { systemClipboardReader } from "./clipboardPayload"
-import { makeImageResolver } from "./Editor"
+import { makeExportImageResolver } from "./exportImages"
 import { pickAndInsertImage, type ImagePasteOptions } from "./imagePaste"
 import { sessionPath, type EditorSession } from "./session"
 import type { Workspace } from "./workspace"
@@ -53,6 +53,7 @@ export interface AppCommandsContext {
   readonly setTypewriter: Dispatch<SetStateAction<boolean>>
   readonly setAboutOpen: Dispatch<SetStateAction<boolean>>
   readonly customCss: string
+  readonly exportOptions: () => ExportRenderOptions
   readonly showTransientStatus: (message: string) => void
   readonly updateCoordinatorRef: RefObject<UpdateCoordinator | null>
   readonly pasteOptions: (tabId: number, documentId: number) => ClipboardPasteOptions
@@ -69,7 +70,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
     requestCloseTab, clearRecents, openVersionHistory,
     setTheme, setCustomCss, setFocusMode, setSettingsOpen, setSidebarOpen,
     setOutlineOpen, setTypewriter, setAboutOpen,
-    customCss, showTransientStatus, updateCoordinatorRef,
+    customCss, exportOptions, showTransientStatus, updateCoordinatorRef,
     pasteOptions, imageInsertOptions, documentScaleRegistry,
   } = ctx
 
@@ -170,9 +171,24 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
       findReplace.setReplaceOpen(false)
     } },
     { id: "search", label: t("cmd.label.search"), shortcut: shortcutFor("search"), run: () => search.setOpen(true) },
-    { id: "export-html", label: t("cmd.label.export-html"), run: () => void exportCurrent(services, viewRef.current, "html", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
-    { id: "export-pdf", label: t("cmd.label.export-pdf"), run: () => void exportCurrent(services, viewRef.current, "pdf", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
-    { id: "export-image", label: t("cmd.label.export-image"), run: () => void exportCurrent(services, viewRef.current, "png", { resolveImageSrc: makeImageResolver(() => { const t = tabById(workspaceRef.current.activeId); return t ? sessionPath(t) : null }) }, customCss, showTransientStatus) },
+    ...(["html", "pdf", "png"] as const).map(kind => ({
+      id: kind === "png" ? "export-image" : `export-${kind}`,
+      label: t(kind === "png" ? "cmd.label.export-image" : `cmd.label.export-${kind}`),
+      run: () => {
+        const tab = tabById(workspaceRef.current.activeId)
+        const docPath = tab ? sessionPath(tab) : null
+        const renderOptions = exportOptions()
+        void exportCurrent(
+          services,
+          viewRef.current,
+          kind,
+          { resolveImageSrc: makeExportImageResolver(() => docPath) },
+          customCss,
+          showTransientStatus,
+          renderOptions,
+        )
+      },
+    })),
     { id: "clear-recents", label: t("cmd.label.clear-recents"), run: clearRecents },
     { id: "check-updates", label: t("cmd.label.check-updates"), run: () => { void updateCoordinatorRef.current?.check("manual") } },
     { id: "export-diagnostics", label: t("cmd.label.export-diagnostics"), run: () => void exportDiagnostics(services) },

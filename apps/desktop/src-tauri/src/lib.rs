@@ -799,10 +799,7 @@ pub fn run() {
     // `file:line`. The hook chains to the default one, so a panic raised
     // before the logger exists still reaches stderr.
     logging::install_panic_hook();
-    #[cfg(target_os = "macos")]
-    let builder = logging::install_webview_termination_hook(tauri::Builder::default());
-    #[cfg(not(target_os = "macos"))]
-    let builder = tauri::Builder::default();
+    let builder = export::builder_with_export_protocol();
     builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // Markdown file arguments open in this instance (macOS delivers

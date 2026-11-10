@@ -281,6 +281,19 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 亮/暗主题与自定义 CSS；Typewriter 当前行居中；Focus 非当前行降透明度
 - [ ] 打开 `large.md` 后多标签切换与文件树刷新时滚动仍流畅
 
+### 高清 PNG 导出（2026-11，macOS / Windows / Linux）
+
+- [ ] Settings → Export 可设宽度（640/800/1200/1920 CSS px）与清晰度（1x/2x/3x）；界面显示最终像素宽度。
+- [ ] macOS：`800×2` 导出 PNG 为 1600 px 宽；`1920×2` 为 3840 px（4K）；`800×3` 为 2400 px。三种倍率下文字、公式、Mermaid、Shiki 代码边缘清晰，无 1x 放大后的糊边。
+- [ ] 1 CSS px 黑色竖线在 2x 导出中占恰好 2 个设备像素、3x 中占 3 个设备像素（macOS 已验证：2x→2 px，3x→3 px，4K 宽度→3840 px）。
+- [ ] 含本地图片的文档导出 PNG/PDF 后图片存在且清晰；导出的 HTML 在浏览器离线打开时图片仍显示（本地图已内嵌为 data URL）。
+- [ ] 含 KaTeX 的文档导出 HTML/PDF/PNG 时公式排版正确（KaTeX CSS 与 woff2 字体内嵌），不出现回退字体或散落的 span。
+- [ ] 暗色主题导出仍为暗色；自定义 CSS 的 `html[data-theme="dark"]` 规则生效。
+- [ ] 超长文档在单张图片高度上限处出现 "height-clamped" 警告并说明降低宽度/清晰度或导出 PDF；不静默截断。
+- [ ] Windows（WebView2）与 Linux（WebKitGTK）文件菜单均可导出 PNG；PDF 菜单仅 macOS 出现。Windows/Linux 导出的 PNG 宽度与设置一致，内容完整。
+- [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；PDF 仅 macOS。
+- [ ] 导出失败（旧 WebView2/CDP 不可用、Linux 缩放能力不足）时出现可操作错误，不产出 1x 模糊图。
+
 ## 有序列表规范化确认（Source Fidelity）
 
 Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写 marker、显示 dirty 与非模态提示条。以下项需 `pnpm dev` 目视；VoiceOver / IME 在本环境未跑则标 **NOT RUN**。

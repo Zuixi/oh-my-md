@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { SettingsModal } from "../src/SettingsModal"
 import { DEFAULT_SETTINGS, FONT_FAMILY_PRESETS, type UserSettings } from "../src/settings"
@@ -36,6 +37,8 @@ describe("SettingsModal", () => {
     expect(screen.getByLabelText("Tab Size")).toBeTruthy()
     expect(screen.getByLabelText("Default Mode")).toBeTruthy()
     expect(screen.getByLabelText("Spellcheck")).toBeTruthy()
+    expect(screen.getByLabelText("Export Width")).toBeTruthy()
+    expect(screen.getByLabelText("Quality")).toBeTruthy()
     expect(screen.getByLabelText("Enable verbose logging")).toBeTruthy()
   })
 
@@ -219,6 +222,8 @@ describe("SettingsModal", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      exportWidth: 1200,
+      exportScale: 3,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: false,
@@ -249,6 +254,8 @@ describe("SettingsModal", () => {
       spellcheck: true,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      exportWidth: 1200,
+      exportScale: 3,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: false,
@@ -385,6 +392,58 @@ describe("SettingsModal", () => {
     expect(screen.queryByPlaceholderText("Search fonts…")).toBeNull()
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeTruthy()
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+// PNG export size: width × scale is the exported bitmap's pixel width. Both
+// selects drive the same draft-save path as every other row, so each change
+// commits through onSave immediately.
+describe("export settings", () => {
+  it("shows the current export width and scale", () => {
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={{ ...DEFAULT_SETTINGS, exportWidth: 1200, exportScale: 3 }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByLabelText("Export Width")).toHaveProperty("value", "1200")
+    expect(screen.getByLabelText("Quality")).toHaveProperty("value", "3")
+    expect(screen.getByText("Resulting image width: 3600 px")).toBeTruthy()
+  })
+
+  it("saves width and scale changes and updates the pixel width", () => {
+    const onSave = vi.fn()
+    function ExportHarness() {
+      const [settings, setSettings] = useState(DEFAULT_SETTINGS)
+      return (
+        <SettingsModal
+          isOpen={true}
+          settings={settings}
+          onSave={next => {
+            onSave(next)
+            setSettings(next)
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    }
+    render(<ExportHarness />)
+
+    const widthSelect = screen.getByLabelText("Export Width")
+    const scaleSelect = screen.getByLabelText("Quality")
+    expect(widthSelect).toHaveProperty("value", "800")
+    expect(scaleSelect).toHaveProperty("value", "2")
+    expect(screen.getByText("Resulting image width: 1600 px")).toBeTruthy()
+
+    fireEvent.change(widthSelect, { target: { value: "1920" } })
+    fireEvent.change(scaleSelect, { target: { value: "3" } })
+
+    expect(screen.getByText("Resulting image width: 5760 px")).toBeTruthy()
+    expect(onSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ exportWidth: 1920, exportScale: 3 }),
+    )
   })
 })
 

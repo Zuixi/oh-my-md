@@ -203,7 +203,7 @@ describe("rich html export", () => {
   it("includes base typography CSS and preserves Shiki dark CSS", async () => {
     const html = await exportRichHtml(makeState("# Hi\n\nbody\n"))
     expect(html).toContain(`<style>${EXPORT_BODY_CSS}</style>`)
-    expect(html).toContain("prefers-color-scheme: dark")
+    expect(html).toContain('html[data-omd-theme="dark"] .shiki')
   })
 
   it("injects customCss after the base CSS so user rules win", async () => {

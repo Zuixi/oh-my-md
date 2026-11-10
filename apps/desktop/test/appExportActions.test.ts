@@ -65,11 +65,36 @@ describe("exportCurrent", () => {
   it("reports a warning when exportPreview signals render timeout", async () => {
     const services = makeServices({
       pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
-      exportPreview: vi.fn().mockResolvedValue("Export completed with partial render; some content may be missing"),
+      exportPreview: vi.fn().mockResolvedValue({
+        code: "partial-render",
+        detail: "Export completed with partial render; some content may be missing",
+      }),
     })
     await exportCurrent(services, makeView(), "pdf")
     expect(vi.mocked(services.reportError as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      expect.stringContaining(t("error.export.warning", { detail: "" }).split(":")[0].trim()),
+      t("export.warning.partialRender"),
+    )
+  })
+
+  it("passes the configured scale and width to exportPreview", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
+    })
+    await exportCurrent(services, makeView(), "png", {}, undefined, undefined, {
+      width: 1920,
+      scale: 3,
+      theme: "dark",
+    })
+    expect(vi.mocked(services.exportPreview as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.any(String),
+      "/out/doc.png",
+      "png",
+      3,
+      1920,
+    )
+    expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ theme: "dark", fullWidth: true }),
     )
   })
 
@@ -78,7 +103,7 @@ it("threads customCss into exportRichHtml options", async () => {
     await exportCurrent(services, makeView(), "html", {}, ".foo{color:red}")
     expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ customCss: ".foo{color:red}" }),
+      expect.objectContaining({ customCss: ".foo{color:red}", fullWidth: false }),
     )
   })
 

@@ -1,15 +1,19 @@
-use super::ExportFormat;
+use super::{
+    ExportFormat, ExportSpec, ExportWarning, RenderOutput, EXPORT_MIN_HEIGHT_CSS,
+    EXPORT_TIMEOUT_SECS,
+};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread, ClassType, DefinedClass, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSWindow,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace,
+    NSGraphicsContext, NSImage, NSRectFill, NSWindow, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
+    MainThreadMarker, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSPoint,
+    NSRect, NSSize, NSString,
 };
 use objc2_web_kit::{
     WKNavigation, WKNavigationDelegate, WKPDFConfiguration, WKWebView, WKWebViewConfiguration,
@@ -19,12 +23,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
-const PAGE_WIDTH: f64 = 800.0;
-const MIN_PAGE_HEIGHT: f64 = 600.0;
-const MAX_PAGE_HEIGHT: f64 = 16_384.0;
 const OFFSCREEN_X: f64 = -20_000.0;
 const OFFSCREEN_Y: f64 = -20_000.0;
-
 /// How long to wait for `window.__omdExportReady` before exporting anyway.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const READY_POLL_MS: u64 = 100;
@@ -76,7 +76,8 @@ struct ExportIvars {
     window: RefCell<Option<Retained<NSWindow>>>,
     webview: RefCell<Option<Retained<WKWebView>>>,
     format: ExportFormat,
-    tx: RefCell<Option<mpsc::Sender<Result<(Vec<u8>, Option<String>), String>>>>,
+    spec: ExportSpec,
+    tx: RefCell<Option<mpsc::Sender<Result<RenderOutput, String>>>>,
 }
 
 define_class!(
@@ -124,17 +125,17 @@ thread_local! {
     static LIVE_EXPORTS: RefCell<Vec<Retained<ExportDelegate>>> = RefCell::new(Vec::new());
 }
 
-pub async fn render(
+pub(crate) async fn render(
     app: AppHandle,
     html: String,
+    spec: ExportSpec,
     format: ExportFormat,
-    timeout_secs: u64,
-) -> Result<(Vec<u8>, Option<String>), String> {
+) -> Result<RenderOutput, String> {
     let (tx, rx) = mpsc::channel();
-    app.run_on_main_thread(move || begin(html, format, tx))
+    app.run_on_main_thread(move || begin(html, spec, format, tx))
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        rx.recv_timeout(Duration::from_secs(timeout_secs))
+        rx.recv_timeout(Duration::from_secs(EXPORT_TIMEOUT_SECS))
             .map_err(|_| "export timed out".to_string())
     })
     .await
@@ -143,36 +144,38 @@ pub async fn render(
 
 fn begin(
     html: String,
+    spec: ExportSpec,
     format: ExportFormat,
-    tx: mpsc::Sender<Result<(Vec<u8>, Option<String>), String>>,
+    tx: mpsc::Sender<Result<RenderOutput, String>>,
 ) {
     let fail = tx.clone();
-    if let Err(error) = start(html, format, tx) {
+    if let Err(error) = start(html, spec, format, tx) {
         let _ = fail.send(Err(error));
     }
 }
 
 fn start(
     html: String,
+    spec: ExportSpec,
     format: ExportFormat,
-    tx: mpsc::Sender<Result<(Vec<u8>, Option<String>), String>>,
+    tx: mpsc::Sender<Result<RenderOutput, String>>,
 ) -> Result<(), String> {
     let mtm = MainThreadMarker::new().ok_or("export must run on the main thread")?;
-    let window = make_window(mtm);
-    let webview = make_webview(mtm);
+    let window = make_window(mtm, spec);
+    let webview = make_webview(mtm, spec);
     window.setContentView(Some(webview.as_super()));
     window.orderFront(None);
-    let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, tx);
+    let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx);
     unsafe { webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
     unsafe { webview.loadHTMLString_baseURL(&NSString::from_str(&html), None) };
     park(delegate);
     Ok(())
 }
 
-fn make_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
+fn make_window(mtm: MainThreadMarker, spec: ExportSpec) -> Retained<NSWindow> {
     let rect = CGRect::new(
         CGPoint::new(OFFSCREEN_X, OFFSCREEN_Y),
-        CGSize::new(PAGE_WIDTH, MIN_PAGE_HEIGHT),
+        CGSize::new(spec.width_css, EXPORT_MIN_HEIGHT_CSS),
     );
     let window = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -187,8 +190,11 @@ fn make_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     window
 }
 
-fn make_webview(mtm: MainThreadMarker) -> Retained<WKWebView> {
-    let frame = CGRect::new(CGPoint::ZERO, CGSize::new(PAGE_WIDTH, MIN_PAGE_HEIGHT));
+fn make_webview(mtm: MainThreadMarker, spec: ExportSpec) -> Retained<WKWebView> {
+    let frame = CGRect::new(
+        CGPoint::ZERO,
+        CGSize::new(spec.width_css, EXPORT_MIN_HEIGHT_CSS),
+    );
     let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
     unsafe { WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &configuration) }
 }
@@ -199,18 +205,20 @@ impl ExportDelegate {
         window: Retained<NSWindow>,
         webview: Retained<WKWebView>,
         format: ExportFormat,
-        tx: mpsc::Sender<Result<(Vec<u8>, Option<String>), String>>,
+        spec: ExportSpec,
+        tx: mpsc::Sender<Result<RenderOutput, String>>,
     ) -> Retained<Self> {
         let this = mtm.alloc::<Self>().set_ivars(ExportIvars {
             window: RefCell::new(Some(window)),
             webview: RefCell::new(Some(webview)),
             format,
+            spec,
             tx: RefCell::new(Some(tx)),
         });
         unsafe { msg_send![super(this), init] }
     }
 
-    fn complete(&self, result: Result<(Vec<u8>, Option<String>), String>) {
+    fn complete(&self, result: Result<RenderOutput, String>) {
         let tx = self.ivars().tx.borrow_mut().take();
         if let Some(webview) = self.ivars().webview.borrow_mut().take() {
             unsafe { webview.setNavigationDelegate(None) };
@@ -247,7 +255,12 @@ fn poll_ready(state: PollState) {
             after_ready(
                 state.delegate.clone(),
                 state.webview.clone(),
-                Some("Export completed with partial render; renderer did not signal ready within 5 s".to_string()),
+                Some(ExportWarning {
+                    code: "partial-render".into(),
+                    detail: Some(
+                        "the export page did not finish loading fonts or images within 5 s".into(),
+                    ),
+                }),
             );
         } else {
             schedule_poll(
@@ -266,11 +279,12 @@ fn poll_ready(state: PollState) {
 fn after_ready(
     delegate: Retained<ExportDelegate>,
     webview: Retained<WKWebView>,
-    warning: Option<String>,
+    partial: Option<ExportWarning>,
 ) {
+    let spec = delegate.ivars().spec;
     let script = NSString::from_str(&super::measure_export_script(
-        MIN_PAGE_HEIGHT as i32,
-        MAX_PAGE_HEIGHT as i32,
+        EXPORT_MIN_HEIGHT_CSS,
+        1_000_000.0,
     ));
     let eval_view = webview.clone();
     let block = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
@@ -278,8 +292,10 @@ fn after_ready(
             delegate.complete(Err(message));
             return;
         }
-        let height = js_number(value).unwrap_or(MIN_PAGE_HEIGHT);
-        resize_and_capture(delegate.clone(), webview.clone(), height, warning.clone());
+        let measured = js_number(value).unwrap_or(EXPORT_MIN_HEIGHT_CSS);
+        let (height, clamp_warning) = spec.clamp_height_css_for(measured, delegate.ivars().format);
+        let warning = clamp_warning.or_else(|| partial.clone());
+        resize_and_capture(delegate.clone(), webview.clone(), height, warning);
     });
     unsafe { eval_view.evaluateJavaScript_completionHandler(&script, Some(&block)) };
 }
@@ -288,10 +304,10 @@ fn resize_and_capture(
     delegate: Retained<ExportDelegate>,
     webview: Retained<WKWebView>,
     height: f64,
-    warning: Option<String>,
+    warning: Option<ExportWarning>,
 ) {
-    let height = height.clamp(MIN_PAGE_HEIGHT, MAX_PAGE_HEIGHT);
-    let size = CGSize::new(PAGE_WIDTH, height);
+    let spec = delegate.ivars().spec;
+    let size = CGSize::new(spec.width_css, height);
     if let Some(window) = delegate.ivars().window.borrow().as_ref() {
         window.setFrame_display(
             CGRect::new(CGPoint::new(OFFSCREEN_X, OFFSCREEN_Y), size),
@@ -308,12 +324,15 @@ fn resize_and_capture(
 fn capture_pdf(
     delegate: Retained<ExportDelegate>,
     webview: Retained<WKWebView>,
-    warning: Option<String>,
+    warning: Option<ExportWarning>,
 ) {
     let config = unsafe { WKPDFConfiguration::new(main_thread()) };
     unsafe { config.setRect(webview.bounds()) };
     let block = RcBlock::new(move |data: *mut NSData, error: *mut NSError| {
-        delegate.complete(pdf_bytes(data, error).map(|bytes| (bytes, warning.clone())));
+        delegate.complete(pdf_bytes(data, error).map(|bytes| RenderOutput {
+            bytes,
+            warning: warning.clone(),
+        }));
     });
     unsafe { webview.createPDFWithConfiguration_completionHandler(Some(&config), &block) };
 }
@@ -321,27 +340,75 @@ fn capture_pdf(
 fn capture_png(
     delegate: Retained<ExportDelegate>,
     webview: Retained<WKWebView>,
-    warning: Option<String>,
+    warning: Option<ExportWarning>,
 ) {
+    let spec = delegate.ivars().spec;
+    let size = webview.bounds().size;
     let config = unsafe { WKPDFConfiguration::new(main_thread()) };
     unsafe { config.setRect(webview.bounds()) };
     let block = RcBlock::new(move |data: *mut NSData, error: *mut NSError| {
-        delegate.complete(png_from_pdf_data(data, error).map(|bytes| (bytes, warning.clone())));
+        let result = pdf_bytes(data, error)
+            .and_then(|pdf| rasterize_pdf_to_png_scaled(&pdf, size.width, size.height, spec.scale));
+        delegate.complete(result.map(|bytes| RenderOutput {
+            bytes,
+            warning: warning.clone(),
+        }));
     });
     unsafe { webview.createPDFWithConfiguration_completionHandler(Some(&config), &block) };
 }
 
-fn png_from_pdf_data(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> {
-    rasterize_pdf_to_png(&pdf_bytes(data, error)?)
-}
-
-fn rasterize_pdf_to_png(pdf: &[u8]) -> Result<Vec<u8>, String> {
+fn rasterize_pdf_to_png_scaled(
+    pdf: &[u8],
+    width_css: f64,
+    height_css: f64,
+    scale: f64,
+) -> Result<Vec<u8>, String> {
     if !pdf.starts_with(b"%PDF") {
         return Err("PDF export did not produce a PDF".into());
     }
+    let width = (width_css * scale).round().max(1.0) as isize;
+    let height = (height_css * scale).round().max(1.0) as isize;
+    let rep = unsafe {
+        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+            NSBitmapImageRep::alloc(),
+            std::ptr::null_mut(),
+            width,
+            height,
+            8,
+            4,
+            true,
+            false,
+            NSDeviceRGBColorSpace,
+            0,
+            0,
+        )
+    }
+    .ok_or("failed to allocate export bitmap")?;
+    let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)
+        .ok_or("failed to create export graphics context")?;
     let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(pdf))
         .ok_or("failed to rasterize exported PDF")?;
-    encode_png(&image)
+    let rect = NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        NSSize::new(width as f64, height as f64),
+    );
+    NSGraphicsContext::saveGraphicsState_class();
+    NSGraphicsContext::setCurrentContext(Some(&context));
+    NSColor::whiteColor().setFill();
+    NSRectFill(rect);
+    image.drawInRect(rect);
+    NSGraphicsContext::restoreGraphicsState_class();
+
+    let png = unsafe {
+        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+    }
+    .ok_or("failed to encode PNG")?;
+    let bytes = png.to_vec();
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok(bytes)
+    } else {
+        Err("image export did not produce PNG".into())
+    }
 }
 
 fn pdf_bytes(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> {
@@ -353,23 +420,6 @@ fn pdf_bytes(data: *mut NSData, error: *mut NSError) -> Result<Vec<u8>, String> 
         Ok(bytes)
     } else {
         Err("PDF export did not produce a PDF".into())
-    }
-}
-
-fn encode_png(image: &NSImage) -> Result<Vec<u8>, String> {
-    let tiff = image
-        .TIFFRepresentation()
-        .ok_or("snapshot produced no image")?;
-    let rep = NSBitmapImageRep::imageRepWithData(&tiff).ok_or("snapshot is not a bitmap")?;
-    let png = unsafe {
-        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
-    }
-    .ok_or("failed to encode PNG")?;
-    let bytes = png.to_vec();
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Ok(bytes)
-    } else {
-        Err("image export did not produce PNG".into())
     }
 }
 
@@ -447,20 +497,31 @@ startxref
 %%EOF
 ";
 
+    fn png_size(png: &[u8]) -> (u32, u32) {
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        (
+            u32::from_be_bytes(png[16..20].try_into().unwrap()),
+            u32::from_be_bytes(png[20..24].try_into().unwrap()),
+        )
+    }
+
     #[test]
-    fn rasterize_pdf_to_png_emits_png_signature() {
-        let png = rasterize_pdf_to_png(TINY_PDF).expect("pdf should rasterize");
-        assert!(
-            png.starts_with(b"\x89PNG\r\n\x1a\n"),
-            "expected PNG signature, got {} bytes",
-            png.len()
-        );
-        assert!(png.len() > 32);
+    fn rasterize_pdf_to_png_is_one_to_one_at_scale_one() {
+        let png =
+            rasterize_pdf_to_png_scaled(TINY_PDF, 80.0, 40.0, 1.0).expect("pdf should rasterize");
+        assert_eq!(png_size(&png), (80, 40));
+    }
+
+    #[test]
+    fn rasterize_pdf_to_png_honors_retina_scale() {
+        let png =
+            rasterize_pdf_to_png_scaled(TINY_PDF, 80.0, 40.0, 2.0).expect("pdf should rasterize");
+        assert_eq!(png_size(&png), (160, 80));
     }
 
     #[test]
     fn rasterize_pdf_to_png_rejects_non_pdf() {
-        assert!(rasterize_pdf_to_png(b"not-a-pdf").is_err());
+        assert!(rasterize_pdf_to_png_scaled(b"not-a-pdf", 80.0, 40.0, 1.0).is_err());
     }
 
     #[test]

@@ -159,11 +159,16 @@ describe("platform-specific Rust code", () => {
     const exportRs = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
 
     expect(exportRs).toMatch(
-      /#\[cfg\(any\(target_os = "macos", test\)\)\]\s+pub\(crate\) fn measure_export_script/,
+      /#\[cfg\(target_os = "macos"\)\]\s+#\[path = "export_native\.rs"\]\s+mod platform;/,
     )
     expect(exportRs).toMatch(
-      /#\[cfg\(target_os = "macos"\)\]\s+const EXPORT_TIMEOUT_SECS/,
+      /#\[cfg\(windows\)\]\s+#\[path = "export_windows\.rs"\]\s+mod platform;/,
     )
+    expect(exportRs).toMatch(
+      /#\[cfg\(target_os = "linux"\)\]\s+#\[path = "export_linux\.rs"\]\s+mod platform;/,
+    )
+    // The measurement/ready protocol is shared by every backend.
+    expect(exportRs).toContain("pub(crate) fn measure_export_script")
   })
 
   it("does not compile Unix xattr helpers into Windows release builds", () => {
