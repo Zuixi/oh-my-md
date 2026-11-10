@@ -132,6 +132,10 @@ fn build_window(
                 window.is_visible(),
                 window.inner_size()
             );
+            eprintln!(
+                "[export-smoke] windows after build={:?}",
+                app_for_main.webview_windows().keys().collect::<Vec<_>>()
+            );
         }
         let _ = tx.send(built);
     })
