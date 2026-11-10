@@ -14,13 +14,13 @@ import { blockWidgetRange, registerBlockWidget } from "../blockSelectionOverlay"
 import { measureBlockWidget } from "../widgetMeasure"
 import { icon } from "../icons"
 import { blockPrefixOf } from "../../format/blockPrefix"
+import {
+  CODE_POINTER_DRIFT_PX, startCodeSelectionDrag, type CodeSelectionDragHandle,
+} from "./codeSelection"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
 const COPY_RESET_MS = 1500
-// 判定“点击”与“拖动选择”的位移阈值（px）：click 事件在拖动后也会触发，
-// 超过阈值视为拖选文本（保持渲染、走浏览器原生选择），不进入源码。
-const CLICK_DRIFT_PX = 4
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 const htmlCache = createCodeHtmlCache()
@@ -157,6 +157,7 @@ export class CodeWidget extends BlockWidget {
   private codePending: PendingRender | null = null
   private langPickerDestroy: (() => void) | null = null
   private copyReset: ReturnType<typeof setTimeout> | null = null
+  private codeDrag: CodeSelectionDragHandle | null = null
 
   private readonly srcLines: number
 
@@ -196,21 +197,26 @@ export class CodeWidget extends BlockWidget {
     body.className = "omd-block-body omd-code-body omd-code-lines"
     wrap.appendChild(body)
 
-    // 点击代码体进入源码编辑（Typora 模型）：光标落到被点击的内容行，块随
-    // blockSelected 卸载成带样式的原生源码行。在 click（而非 mousedown）上派发，
-    // 拖选复制不被打断；header chrome（标题/语言/复制）不触发。捕获阶段记录
-    // mousedown，避免 header 自己的 stopPropagation 留下过期坐标。
+    // Clicking the code body enters source editing (Typora model): the caret lands on
+    // the clicked content line and the block unmounts into styled native source lines.
+    // A drag instead owns a source-backed selection (codeSelection.ts); the click
+    // handler below only runs for presses that stay within the drift threshold.
     let down: { x: number; y: number } | null = null
     wrap.addEventListener("mousedown", e => {
-      down = e.button === 0 && !(e.target instanceof Element && e.target.closest(".omd-code-header"))
-        ? { x: e.clientX, y: e.clientY }
-        : null
+      const chrome = e.target instanceof Element
+        && e.target.closest(".omd-code-header, .omd-block-edit")
+      down = e.button === 0 && !chrome ? { x: e.clientX, y: e.clientY } : null
+      if (!down) return
+      const range = blockWidgetRange(this, view, wrap)
+      if (range) {
+        this.codeDrag = startCodeSelectionDrag({ view, body, src: this.opts.src, range, event: e })
+      }
     }, true)
     wrap.addEventListener("click", e => {
       const start = down
       down = null
       if (!start) return
-      if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) > CLICK_DRIFT_PX) return
+      if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) > CODE_POINTER_DRIFT_PX) return
       if (e.target instanceof Element && e.target.closest(".omd-code-header")) return
       if (view.state.readOnly) return
       e.preventDefault()
@@ -301,6 +307,11 @@ export class CodeWidget extends BlockWidget {
   }
 
   override destroy(dom?: HTMLElement) {
+    // A gesture that already committed a selection legitimately outlives the widget (the
+    // unmount is the reveal) and maps against its captured frame; only a press that never
+    // moved would otherwise keep window listeners bound to this destroyed widget.
+    if (this.codeDrag && !this.codeDrag.dragging) this.codeDrag.cancel()
+    this.codeDrag = null
     if (this.copyReset) clearTimeout(this.copyReset)
     this.langPickerDestroy?.()
     this.langPickerDestroy = null
