@@ -101,15 +101,22 @@ fn build_window(
     let app_for_main = app.clone();
     let label = label.to_owned();
     let width = spec.width_css;
+    // WebKitGTK only snapshots a mapped widget, so Linux must be visible (far
+    // off-screen). WebView2 on Windows creates and captures its surface more
+    // reliably for a hidden normal-position window; showing it can leave a
+    // transient frame on screen.
+    let (visible, x, y) = if cfg!(windows) {
+        (false, 0.0, 0.0)
+    } else {
+        (true, -20_000.0, -20_000.0)
+    };
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let built =
             WebviewWindowBuilder::new(&app_for_main, label, WebviewUrl::CustomProtocol(url))
-                // Visible but far off-screen: WebKitGTK only produces snapshots for a
-                // mapped widget, while the other engines accept a mapped window too.
                 .inner_size(width, 600.0)
-                .position(-20_000.0, -20_000.0)
-                .visible(true)
+                .position(x, y)
+                .visible(visible)
                 .decorations(false)
                 .skip_taskbar(true)
                 .focused(false)
