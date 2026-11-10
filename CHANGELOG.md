@@ -2,37 +2,60 @@
 
 All notable changes to this project are documented here, generated from conventional commits.
 
+## v0.1.2 - 2026-11-10
+
+### Bug Fixes
+
+- Query gh release with isDraft/isPrerelease fields in promote workflow (2087a80)
+- Select the minisign binary matching the runner arch in promote workflow (79aae52)
+- Decode tauri base64 signatures and use minisign conventional sibling in promote (feb3e86)
+- Make formatting shortcuts semantic and composable (897d894)
+- Keep emoji completion closed after the closing colon (6a95bea)
+- Make recovery drafts portable and race-safe across platforms (013ec85)
+- Serialize recovery writes, keep draft paths, test save-as end to end (d11c4ea)
+- Policy-spike e2e asserts DOM/pending invariants, not transaction counts (0d0b4c3)
+- Scope render-budget flush to the updated view (fe6623a)
+- Preserve recovery drafts across rename (0589bf8)
+- Keep selected blocks readable (3a8ff62)
+- Select code source on drag (4bb6c75)
+- Select table source on drag (9f62f6f)
+- Close selection paint and markup mapping gaps (0f90df2)
+### Chores
+
+- Remove personal VS Code theme overrides (bd4750f)
+### Documentation
+
+- Plan Markdown selection (80c2cce)
+- Cover preview selection QA (4712b9d)
+### Testing
+
+- Align drift guards with current contracts (555e616)
+- Settle policy spike baseline (5c30512)
+- Mount inlinePlanState in formatHarness (6b00af5)
 ## v0.1.1 - 2026-11-04
 
 ### Bug Fixes
 
 - Gate webview termination helpers to macOS so non-macOS release builds pass -D warnings (65e2d58)
+### Chores
 
+- Prepare v0.1.1 release (5c88f3b)
 ## v0.1.0 - 2026-11-03
 
 ### Bug Fixes
 
-- Lock session shard removal on window close (838a1f1)
-- Restore non-main window session shards on mount (03455ae)
-- Make outline hover visible and match sidebar default width (a90f692)
 - Normalize pasted block boundaries so tables render without Enter (7b478dd)
 - Eliminate layout jitter on code blocks and blank lines (9e5154b)
 - Compact table layout and prevent cell shift on edit (9840ec7)
-- Probe the log directory and register the logger without panicking (d8652ec)
-- Anchor session markers so determination lines cannot fake an exit intent (d7119c4)
-- Let Error bypass the log_frontend budget and report window collapses (14a44c5)
-- Deliver the logger facade on its own timer and stop counting bypassed errors as breaker drops (d487866)
-- Keep describeThrown throw-proof for Proxy-shaped thrown values (ef6297d)
-- Keep a terminal log line for every failed save and name the tab in recovery records (a95017c)
-- Stop leaking a path-derived recovery key past the export redactor (fb5e535)
-- Stop the diagnostics bundle lying about paths and the previous session (b60ad3e)
-- Close the four logging/diagnostics holes from the branch review (6c783ab)
 - Never discard a table cell edit on blur, cell switch, or source entry (c956aa1)
 - Drive quote continuation and toggling from the syntax tree (018fbb3)
 - Keep Enter inside a quote prefix from duplicating its space (76f57a0)
 - Enter and fold in-quote code at the content, not the quote mark (81049cb)
 - Keep the quote bar on the caret line and in-quote code chrome (b5391da)
 - Keep Tab moving when a cell commit is text-equivalent (fad970d)
+- Lock session shard removal on window close (838a1f1)
+- Restore non-main window session shards on mount (03455ae)
+- Make outline hover visible and match sidebar default width (a90f692)
 - Give the engine sole ownership of Enter in quotes and code fences (959aaa9)
 - Clamp the caret out of folded line prefixes and indent code lines (226c207)
 - Keep async block widgets rendering after a tile rebuild (ea53ee2)
@@ -56,6 +79,16 @@ All notable changes to this project are documented here, generated from conventi
 - Drop the redundant SetRegView 32 restore in the silent MSI guard (5f78f86)
 - Stabilize table editing and Windows dialog pointer (080d345)
 - Keep the foreign caret's cell offset when the follower opens a session (e2b61f2)
+- Make formatting shortcuts semantic and composable (b83b2f0)
+- Probe the log directory and register the logger without panicking (d8652ec)
+- Anchor session markers so determination lines cannot fake an exit intent (d7119c4)
+- Let Error bypass the log_frontend budget and report window collapses (14a44c5)
+- Deliver the logger facade on its own timer and stop counting bypassed errors as breaker drops (d487866)
+- Keep describeThrown throw-proof for Proxy-shaped thrown values (ef6297d)
+- Keep a terminal log line for every failed save and name the tab in recovery records (a95017c)
+- Stop leaking a path-derived recovery key past the export redactor (fb5e535)
+- Stop the diagnostics bundle lying about paths and the previous session (b60ad3e)
+- Close the four logging/diagnostics holes from the branch review (6c783ab)
 - Make the home-relative log_dir assertion separator-agnostic (51be10e)
 ### Chores
 
@@ -65,16 +98,11 @@ All notable changes to this project are documented here, generated from conventi
 - Prepare v0.1.0 release (69c95cb)
 ### Documentation
 
-- Multi-window implementation plan (e359534)
-- Multi-window gotchas and QA matrix (8d68c8b)
-- Specify and plan the logging and diagnostics work (ffea5ea)
-- Correct the plan's classify sample so a clean end wins (40698e3)
-- Fix the bootstrap scan order and add the missing webview hook task (c527d75)
-- Add troubleshooting guidance and file the logging gotchas (5361bce)
-- Correct the macOS menu path, the redaction claim, and two unshipped retention promises (2d222cb)
 - Record the new table, quote, and fence editing contracts (14ed2c7)
 - Record the quote-bar and in-quote editing findings (91a3df3)
 - Refresh the verification record for the finished branch (b5888dd)
+- Multi-window implementation plan (e359534)
+- Multi-window gotchas and QA matrix (8d68c8b)
 - Plan a markdown-aware auto pair (2b01df4)
 - Fix the cjk skip expectation in the auto pair plan (0df8d6b)
 - Correct the auto pair trace table and cjk test bullet (6a2f10e)
@@ -94,9 +122,17 @@ All notable changes to this project are documented here, generated from conventi
 - Document rendered-table cell caret three-state contract (86d46a0)
 - Document the single-exe Windows installer policy (e15ef6a)
 - Correct the registry-view note after the SetRegView audit (36e9327)
+- Specify and plan the logging and diagnostics work (ffea5ea)
+- Correct the plan's classify sample so a clean end wins (40698e3)
+- Fix the bootstrap scan order and add the missing webview hook task (c527d75)
+- Add troubleshooting guidance and file the logging gotchas (5361bce)
+- Correct the macOS menu path, the redaction claim, and two unshipped retention promises (2d222cb)
 - Record P1-P5 split completion and module map (fcb5b9d)
 ### Features
 
+- Vertical enter nav, column alignment and sticky table header (38c9064)
+- Render and complete fenced code blocks inside quotes (a52c147)
+- Highlight 19 more fence languages in the editing state (19d73c7)
 - Window registry for multi-window host (e6dac4b)
 - Counting flush gate across windows (ab105dc)
 - Window-scoped flush ack and pending opens (29b628c)
@@ -108,19 +144,6 @@ All notable changes to this project are documented here, generated from conventi
 - Route file opens across windows (ff67e44)
 - Restore windows from session snapshot (99c374e)
 - Per-window watch sets (2eee36c)
-- Vertical enter nav, column alignment and sticky table header (38c9064)
-- Add logging constants, level policy and a write probe (9dc3d95)
-- Reconstruct the previous session outcome from log tails (c9a00aa)
-- Record session boundaries and capture panics (7ab3359)
-- Add a narrow log_frontend command with a per-window budget (73a1935)
-- Add a rate-limited frontend logging facade (9f68c3c)
-- Capture uncaught frontend errors and render failures (62c9d6b)
-- Deliver queued log records before the webview is torn down (2372ba1)
-- Add escaped structured path fields with a shared fixture (0e3ce6d)
-- Give users a way to find, raise, and verify the logs (e66483a)
-- Enrich the diagnostics bundle and tighten export redaction (e8f318c)
-- Render and complete fenced code blocks inside quotes (a52c147)
-- Highlight 19 more fence languages in the editing state (19d73c7)
 - Pair brackets, quotes, and markdown markers on input (21cad0f)
 - Expose auto pair toggles in settings (31d9e10)
 - Add read-only table navigation queries (4b6439b)
@@ -138,12 +161,23 @@ All notable changes to this project are documented here, generated from conventi
 - Guard silent NSIS installs against leftover MSI installs (20951e1)
 - Ship only the NSIS installer and deep-link manual updates (603a137)
 - Make heading levels legible in live preview (14735c2)
+- Inline file tree create and rename (2a3483b)
+- Add logging constants, level policy and a write probe (9dc3d95)
+- Reconstruct the previous session outcome from log tails (c9a00aa)
+- Record session boundaries and capture panics (7ab3359)
+- Add a narrow log_frontend command with a per-window budget (73a1935)
+- Add a rate-limited frontend logging facade (9f68c3c)
+- Capture uncaught frontend errors and render failures (62c9d6b)
+- Deliver queued log records before the webview is torn down (2372ba1)
+- Add escaped structured path fields with a shared fixture (0e3ce6d)
+- Give users a way to find, raise, and verify the logs (e66483a)
+- Enrich the diagnostics bundle and tighten export redaction (e8f318c)
 - Add opt-in logging, diagnostics bundle, and App.tsx split P1 (aa4d16c)
 - Track outline current section with the caret and unify sidebar row states (b70b1e4)
 ### Performance
 
-- Estimate block widget heights and reuse decoration identity to stop scroll desync (2bea8a9)
 - Patch table cells in place instead of rebuilding the widget DOM (c597d0f)
+- Estimate block widget heights and reuse decoration identity to stop scroll desync (2bea8a9)
 - Hoist the auto pair closer sets and single-source their defaults (89cd5ea)
 - Measure typing inside a table after source-mode editing (e7946cb)
 - Measure the table toolbar only when its anchor can move (dab68e7)
@@ -151,8 +185,8 @@ All notable changes to this project are documented here, generated from conventi
 ### Refactor
 
 - Move blocking IO commands off main thread (c9d0d6d)
-- Route existing error paths through the logger and log boundaries (cdc0e46)
 - Drop the table cell input overlay (6193e0f)
+- Route existing error paths through the logger and log boundaries (cdc0e46)
 - Extract fileTreeActions bridge from App.tsx (split P2) (ddd119d)
 - Extract documentOpen coordinator from App.tsx (split P3) (af0526d)
 - Extract appSessionInit startup flows from App.tsx (split P4) (451940d)
@@ -160,8 +194,6 @@ All notable changes to this project are documented here, generated from conventi
 - Move the logging setup choreography out of lib.rs (22d60a9)
 ### Testing
 
-- Make the boundary-forgery tests fail when neutralization is removed (e643a03)
-- Make the logging env tests order-independent and drive the menu id (3af8898)
 - Guard quote typing and Enter continuation with an advisory bench (9ccf33e)
 - Cover table edit continuity and in-quote code rendering in a browser (d81d055)
 - Cover atomic backspace fallthrough next to auto pair (7611ce7)
@@ -173,6 +205,8 @@ All notable changes to this project are documented here, generated from conventi
 - Pin bounded widget churn and document the mount/unmount leak (37ad66b)
 - Align fence e2e with smart brace enter (299c0af)
 - Align table e2e with default cell caret editing (5268f1c)
+- Make the boundary-forgery tests fail when neutralization is removed (e643a03)
+- Make the logging env tests order-independent and drive the menu id (3af8898)
 - Align table e2e with the cell-session interaction model (895eda4)
 ## v0.0.1 - 2026-09-04
 
