@@ -103,7 +103,7 @@ fn build_window(
     // event handler (it can deadlock/fail before the HWND is registered); the
     // builder dispatches CreateWindow to the loop and returns a detached handle.
     let (visible, x, y) = if cfg!(windows) {
-        (false, 0.0, 0.0)
+        (true, 0.0, 0.0)
     } else {
         (true, -20_000.0, -20_000.0)
     };
