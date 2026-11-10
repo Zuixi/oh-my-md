@@ -9,7 +9,7 @@ use crate::export::{ExportFormat, ExportSpec, Probe, RenderOutput, PROBE_SCRIPT}
 use base64::Engine;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
-use tauri::{Manager, WebviewWindow};
+use tauri::WebviewWindow;
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, ExecuteScriptCompletedHandler};
 use windows::core::HSTRING;
@@ -40,40 +40,23 @@ fn with_core<T: Send + 'static>(
     eprintln!("[export-smoke] with_core enter");
     let (tx, rx) = mpsc::channel();
     let error_tx = tx.clone();
-    // Dispatch `with_webview` from the main thread explicitly. It is documented
-    // as thread-safe, but on Windows the WebView2 controller is created by the
-    // event loop; calling this immediately after `build` from a worker can
-    // otherwise be delivered before the webview is registered.
-    let main_window = window.clone();
+    // Call from the worker: `with_webview` posts the closure to the event loop.
+    // Blocking inside that closure would deadlock WebView2 completions.
     window
-        .app_handle()
-        .run_on_main_thread(move || {
-            let inner_error_tx = error_tx.clone();
-            let dispatched = main_window.with_webview(move |platform| {
-                #[cfg(feature = "export-smoke")]
-                eprintln!("[export-smoke] with_webview closure");
-                let result = (|| {
-                    let controller = platform.controller();
-                    let core =
-                        unsafe { controller.CoreWebView2() }.map_err(|error| error.to_string())?;
-                    f(&core, tx)
-                })();
-                if let Err(error) = result {
-                    let _ = inner_error_tx.send(Err(error));
-                }
-            });
+        .with_webview(move |platform| {
             #[cfg(feature = "export-smoke")]
-            eprintln!(
-                "[export-smoke] with_webview dispatched ok={}",
-                dispatched.is_ok()
-            );
-            if let Err(error) = dispatched {
-                let _ = error_tx.send(Err(error.to_string()));
+            eprintln!("[export-smoke] with_webview closure");
+            let result = (|| {
+                let controller = platform.controller();
+                let core =
+                    unsafe { controller.CoreWebView2() }.map_err(|error| error.to_string())?;
+                f(&core, tx)
+            })();
+            if let Err(error) = result {
+                let _ = error_tx.send(Err(error));
             }
         })
         .map_err(|error| error.to_string())?;
-    // Wait outside the main-thread callback: ExecuteScript/CDP completions are
-    // dispatched on that same thread, so blocking inside it would deadlock.
     match rx.recv_timeout(timeout) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => {

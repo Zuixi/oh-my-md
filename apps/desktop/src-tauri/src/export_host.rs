@@ -98,50 +98,25 @@ fn build_window(
 ) -> Result<WebviewWindow, String> {
     let url = tauri::Url::parse(&format!("omd-export://localhost/{token}"))
         .map_err(|error| error.to_string())?;
-    let app_for_main = app.clone();
-    let label = label.to_owned();
-    let width = spec.width_css;
-    // WebKitGTK only snapshots a mapped widget, so Linux must be visible (far
-    // off-screen). WebView2 on Windows creates and captures its surface more
-    // reliably for a hidden normal-position window; showing it can leave a
-    // transient frame on screen.
+    // Build from the async worker, not the event-loop thread. Tauri documents
+    // that WebView2 window creation must not run inside a synchronous command or
+    // event handler (it can deadlock/fail before the HWND is registered); the
+    // builder dispatches CreateWindow to the loop and returns a detached handle.
     let (visible, x, y) = if cfg!(windows) {
         (false, 0.0, 0.0)
     } else {
         (true, -20_000.0, -20_000.0)
     };
-    let (tx, rx) = std::sync::mpsc::channel();
-    app.run_on_main_thread(move || {
-        let built =
-            WebviewWindowBuilder::new(&app_for_main, label, WebviewUrl::CustomProtocol(url))
-                .inner_size(width, 600.0)
-                .position(x, y)
-                .visible(visible)
-                .decorations(false)
-                .skip_taskbar(true)
-                .focused(false)
-                .resizable(false)
-                .build()
-                .map_err(|error| error.to_string());
-        #[cfg(feature = "export-smoke")]
-        if let Ok(window) = &built {
-            eprintln!(
-                "[export-smoke] built label={} url={:?} visible={:?} size={:?}",
-                window.label(),
-                window.url(),
-                window.is_visible(),
-                window.inner_size()
-            );
-            eprintln!(
-                "[export-smoke] windows after build={:?}",
-                app_for_main.webview_windows().keys().collect::<Vec<_>>()
-            );
-        }
-        let _ = tx.send(built);
-    })
-    .map_err(|error| error.to_string())?;
-    rx.recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "export window creation timed out".to_string())?
+    WebviewWindowBuilder::new(app, label.to_owned(), WebviewUrl::CustomProtocol(url))
+        .inner_size(spec.width_css, 600.0)
+        .position(x, y)
+        .visible(visible)
+        .decorations(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .resizable(false)
+        .build()
+        .map_err(|error| error.to_string())
 }
 
 /// Parse the JSON emitted by `PROBE_SCRIPT`. WebView2 wraps the expression
