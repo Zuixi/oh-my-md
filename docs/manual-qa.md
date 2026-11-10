@@ -293,6 +293,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] Windows（WebView2）与 Linux（WebKitGTK）文件菜单均可导出 PNG；PDF 菜单仅 macOS 出现。Windows/Linux 导出的 PNG 宽度与设置一致，内容完整。
 - [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；PDF 仅 macOS。
 - [ ] 导出失败（旧 WebView2/CDP 不可用、Linux 缩放能力不足）时出现可操作错误，不产出 1x 模糊图。
+- [ ] 自动化冒烟（CI 三个平台）：`cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke` 输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`；Linux 需在 Xvfb 下运行（CI 已配置）。
 
 ## 有序列表规范化确认（Source Fidelity）
 

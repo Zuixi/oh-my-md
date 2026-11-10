@@ -235,12 +235,10 @@ fn finish_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn scale_math_keeps_css_width_and_device_pixels() {
         for (width, scale, gdk) in [
-            (800.0, 2.0, 1.0),
+            (800.0_f64, 2.0, 1.0),
             (800.0, 2.0, 2.0),
             (800.0, 2.0, 1.25),
             (1200.0, 3.0, 1.5),

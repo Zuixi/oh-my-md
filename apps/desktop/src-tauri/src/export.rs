@@ -29,7 +29,7 @@ pub const EXPORT_MIN_HEIGHT_CSS: f64 = 600.0;
 #[cfg(target_os = "macos")]
 pub const EXPORT_TIMEOUT_SECS: u64 = 20;
 #[cfg(any(windows, target_os = "linux"))]
-pub const EXPORT_READY_TIMEOUT_MS: u64 = 5_000;
+pub const EXPORT_READY_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {

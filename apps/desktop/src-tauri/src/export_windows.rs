@@ -14,7 +14,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, ExecuteScriptCompletedHandler};
 use windows::core::HSTRING;
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) async fn render(
@@ -36,10 +36,14 @@ fn with_core<T: Send + 'static>(
         + Send
         + 'static,
 ) -> Result<T, String> {
+    #[cfg(feature = "export-smoke")]
+    eprintln!("[export-smoke] with_core enter");
     let (tx, rx) = mpsc::channel();
     let error_tx = tx.clone();
     window
         .with_webview(move |platform| {
+            #[cfg(feature = "export-smoke")]
+            eprintln!("[export-smoke] with_webview closure");
             let result = (|| {
                 let controller = platform.controller();
                 let core =
@@ -53,8 +57,11 @@ fn with_core<T: Send + 'static>(
         .map_err(|error| error.to_string())?;
     // Wait outside the main-thread callback: ExecuteScript/CDP completions are
     // dispatched on that same thread, so blocking inside it would deadlock.
-    rx.recv_timeout(timeout)
-        .map_err(|_| "webview callback timed out".to_string())?
+    rx.recv_timeout(timeout).map_err(|_| {
+        #[cfg(feature = "export-smoke")]
+        eprintln!("[export-smoke] with_core timeout");
+        "webview callback timed out".to_string()
+    })?
 }
 
 fn probe(window: &WebviewWindow) -> Result<Option<Probe>, String> {
