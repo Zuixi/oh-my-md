@@ -48,6 +48,10 @@ pub fn run() {
 }
 
 async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
+    // Let the app's event loop enter its running state before building a second
+    // window; a window built from `setup` can otherwise be registered before the
+    // runtime is ready to receive its messages.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     let width_css = env_u32("OMD_EXPORT_SMOKE_WIDTH", DEFAULT_WIDTH_CSS)?;
     let scale = env_u32("OMD_EXPORT_SMOKE_SCALE", DEFAULT_SCALE)?;
     let out = std::env::var_os("OMD_EXPORT_SMOKE_OUT")
