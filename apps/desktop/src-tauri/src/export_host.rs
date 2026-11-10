@@ -107,7 +107,13 @@ fn build_window(
     } else {
         (true, -20_000.0, -20_000.0)
     };
-    WebviewWindowBuilder::new(app, label.to_owned(), WebviewUrl::CustomProtocol(url))
+    let url = if std::env::var_os("OMD_EXPORT_SMOKE_PLAIN_URL").is_some() {
+        eprintln!("[export-smoke] using plain about:blank URL");
+        WebviewUrl::External("about:blank".parse().map_err(|error| error.to_string())?)
+    } else {
+        WebviewUrl::CustomProtocol(url)
+    };
+    WebviewWindowBuilder::new(app, label.to_owned(), url)
         .inner_size(spec.width_css, 600.0)
         .position(x, y)
         .visible(visible)
@@ -191,7 +197,8 @@ pub(crate) async fn render_with_window(
     tokio::time::sleep(Duration::from_millis(250)).await;
     #[cfg(feature = "export-smoke")]
     eprintln!(
-        "[export-smoke] after delay url={:?} visible={:?} size={:?}",
+        "[export-smoke] after delay windows={:?} url={:?} visible={:?} size={:?}",
+        app.webview_windows().keys().collect::<Vec<_>>(),
         window.url(),
         window.is_visible(),
         window.inner_size()
