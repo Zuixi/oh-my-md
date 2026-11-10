@@ -1,0 +1,25 @@
+name: Export smoke (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows export smoke
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Enable long paths
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.87.0
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm --filter @omd/desktop build
+      - name: Run export smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke 2>&1 | tee smoke.log
+          grep -q "EXPORT_SMOKE_OK width=1600 height=1200 scale=2" smoke.log
