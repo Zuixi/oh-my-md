@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here, generated from conventional commits.
 
+## v0.1.3 - 2026-11-10
+
+### CI
+
+- Update release macOS runner to macos-latest (e17ed4c)
 ## v0.1.2 - 2026-11-10
 
 ### Bug Fixes
@@ -23,6 +28,7 @@ All notable changes to this project are documented here, generated from conventi
 ### Chores
 
 - Remove personal VS Code theme overrides (bd4750f)
+- Prepare v0.1.2 release (b2a5b93)
 ### Documentation
 
 - Plan Markdown selection (80c2cce)
