@@ -725,7 +725,7 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   padding-left: 2.5em;
   font-size: 0.9em;
   line-height: 1.45;
-  background: var(--omd-code-block-bg);
+  background-color: var(--omd-code-bg);
   border-left: 1px solid var(--omd-border);
   border-right: 1px solid var(--omd-border);
   counter-increment: omd-code-line;
@@ -1700,7 +1700,7 @@ hover 与当前项同用 --omd-bar 灰底，当前项再加 2px 左缘 --omd-lin
    without it the caret line loses the omd-codeblock background and the block
    reads as if the caret sat outside it. */
 .editor-host .cm-content .cm-activeLine { background: transparent; }
-.editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background: var(--omd-code-bg); }
+.editor-host .cm-content .cm-line.omd-codeblock.cm-activeLine { background-color: var(--omd-code-bg); }
 /* 源码态表格同理，而且更致命：源码态要求光标就在表格里，所以缺了这条规则，
    光标那一行永远丢掉网格底色。这里用 background-color 而非简写，紧挨着的
    .omd-blockquote.cm-activeLine 规则画的引用条因此不会被清掉（同为 0,5,0，

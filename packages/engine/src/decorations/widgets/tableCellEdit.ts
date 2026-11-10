@@ -96,7 +96,7 @@ export function renderEditableCell(
   options?: CellParseOptions,
 ): void {
   parent.replaceChildren()
-  const bounded = Math.min(Math.max(caret, 0), source.length)
+  const bounded = caret < 0 ? -1 : Math.min(Math.max(caret, 0), source.length)
   const ctx: RenderCtx = {
     source,
     caret: bounded,
@@ -106,7 +106,7 @@ export function renderEditableCell(
   const top = parser().parse(source).topNode
   if (top.from > 0) appendText(parent, source.slice(0, top.from), 0, top.from)
   renderChildren(parent, top, ctx, source.length)
-  placeCaret(parent, bounded)
+  placeCaret(parent, Math.max(0, bounded))
 }
 
 export function cellSourceOffsetAt(root: HTMLElement, clientX: number, clientY: number): number | null {
@@ -121,6 +121,9 @@ export function cellSourceOffsetAt(root: HTMLElement, clientX: number, clientY: 
   const rect = span.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) return from
   const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+  if (to - from > 1 && Array.from(span.textContent ?? "").length <= 1) {
+    return ratio < 0.5 ? from : to
+  }
   return from + Math.round((to - from) * ratio)
 }
 
@@ -179,7 +182,14 @@ export function focusEditableCell(
   if (projection.childNodes.length === 0) {
     const start = trimmedCellCaret(input.value)
     input.setSelectionRange(start, start)
-    syncEditableCell(projection, cell, input, options)
+    if (cellCaret === undefined && clientX !== undefined && clientY !== undefined) {
+      // Initial pointer entry hits a folded cell; render with caret = -1 so leading
+      // entities/links/emojis do not unfold at offset 0 and shift the text under (clientX, clientY).
+      renderEditableCell(projection, input.value, -1, options)
+      positionTableCellInput(cell, input)
+    } else {
+      syncEditableCell(projection, cell, input, options)
+    }
   }
   input.focus()
   const hit = clientX !== undefined && clientY !== undefined

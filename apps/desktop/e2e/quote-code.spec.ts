@@ -73,6 +73,10 @@ test("clicking an in-quote code block keeps the chrome and the bar while editing
 
   const image = await page.evaluate(backgroundImage(".omd-code-header"))
   expect(image).toContain("linear-gradient")
+  const lineImages = await page.evaluate(() =>
+    [...document.querySelectorAll(".cm-line.omd-codeblock-num")].map(el => getComputedStyle(el).backgroundImage))
+  expect(lineImages).toHaveLength(2)
+  for (const lineImage of lineImages) expect(lineImage).toContain("linear-gradient")
 
   // The quote indentation is part of the chrome's own padding, so the title must
   // not drift away from the code content below it (before the CSS fix it sat a

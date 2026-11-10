@@ -93,6 +93,7 @@ interface TableInputController {
 
 const tableInputControllers = new WeakMap<HTMLElement, TableInputController>()
 const viewInputControllers = new WeakMap<EditorView, TableInputController>()
+const hostDragHandles = new WeakMap<HTMLElement, TableSelectionDragHandle>()
 let tableInputControllerCount = 0
 
 export function activeTableInputControllerCountForTest(): number {
@@ -365,8 +366,6 @@ export class TableWidget extends BlockWidget {
   readonly table: TableData
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
-  /** Cell press that may still promote into a source-backed selection (tableSelection.ts). */
-  private tableDrag: TableSelectionDragHandle | null = null
   /** 工具栏目标格的行列（行序与源码槽一致：0 = 表头，1 = 首数据行）。 */
   private row = 0
   private col = 0
@@ -529,12 +528,13 @@ export class TableWidget extends BlockWidget {
   }
 
   override destroy(dom?: HTMLElement) {
+    const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
     // A gesture that already committed a selection legitimately outlives the widget (the
     // reveal IS the unmount); only a press that never moved would otherwise keep window
     // listeners bound to this widget's cell session.
-    if (this.tableDrag && !this.tableDrag.dragging) this.tableDrag.cancel()
-    this.tableDrag = null
-    const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
+    const drag = host ? hostDragHandles.get(host) : undefined
+    if (drag && !drag.dragging) drag.cancel()
+    if (host) hostDragHandles.delete(host)
     if (host) tableInputControllers.get(host)?.destroy()
     if (dom) releaseDom(this, dom)
     super.destroy(dom)
@@ -573,7 +573,7 @@ export class TableWidget extends BlockWidget {
       : activateTableCellInput(
         view, host, slot.row, slot.column, table, event.clientX, event.clientY,
       )
-    owner.tableDrag = startTableSelectionDrag({
+    const drag = startTableSelectionDrag({
       view,
       event,
       anchor: table.from + cell.from
@@ -582,6 +582,8 @@ export class TableWidget extends BlockWidget {
         owner.cellDataAt(row, column)),
       revealEffects: [closeTableEdit(), revealTableSource.of(null)],
     })
+    if (drag) hostDragHandles.set(host, drag)
+    else hostDragHandles.delete(host)
     // Read-only views have no input to hold focus, so the selection gesture focuses the editor.
     if (view.state.readOnly) view.focus()
     return true

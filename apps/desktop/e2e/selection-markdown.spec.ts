@@ -402,6 +402,12 @@ test("a forward drag inside rendered code selects source bytes", async ({ page }
   await openCodeEditor(page, CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 0, 6, "before"), await codePoint(page, 1, 10, "after"))
   await expectSelection(page, 'alpha = "one"\nconst beta', CODE_DOC, "forward")
+  // Non-active revealed code lines must also show the selection tint, not hide `.cm-selectionLayer`
+  // behind an opaque line background.
+  await expectPartialSelectionPaint(
+    page,
+    await sourceLineBoxes(page, 'const alpha = "one"', [6, 11], [0, 5]),
+  )
 })
 
 test("a reverse drag inside rendered code selects source bytes", async ({ page }) => {

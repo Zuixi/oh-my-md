@@ -160,4 +160,16 @@ describe("table source mode", () => {
     expect(isTableSourceRevealed(next)).toBe(false)
     expect(next.field(livePreviewField).specs.some(s => s.tag === "widget:block:table")).toBe(true)
   })
+
+  it("keeps a revealed pipe-less table in source mode when an in-table selection spans [from, to]", () => {
+    const doc = "Name | Value\n--- | ---\nalpha | beta"
+    const state = makeState(doc, [editorExtensions()], { anchor: 0 })
+    const revealed = state.update({
+      selection: { anchor: 0, head: doc.length },
+      effects: revealTableSource.of(null),
+    }).state
+    const specs = revealed.field(livePreviewField).specs
+    expect(specs.filter(s => s.tag === "line:omd-table-src").length).toBe(3)
+    expect(specs.some(s => s.tag === "widget:block:table")).toBe(false)
+  })
 })

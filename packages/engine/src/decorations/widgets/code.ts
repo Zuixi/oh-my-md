@@ -24,6 +24,7 @@ const COPY_RESET_MS = 1500
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 
 const htmlCache = createCodeHtmlCache()
+const wrapDragHandles = new WeakMap<HTMLElement, CodeSelectionDragHandle>()
 
 export interface CodeChromeOptions {
   readonly title: string
@@ -157,7 +158,6 @@ export class CodeWidget extends BlockWidget {
   private codePending: PendingRender | null = null
   private langPickerDestroy: (() => void) | null = null
   private copyReset: ReturnType<typeof setTimeout> | null = null
-  private codeDrag: CodeSelectionDragHandle | null = null
 
   private readonly srcLines: number
 
@@ -209,13 +209,16 @@ export class CodeWidget extends BlockWidget {
       if (!down) return
       const range = blockWidgetRange(this, view, wrap)
       if (range) {
-        this.codeDrag = startCodeSelectionDrag({ view, body, src: this.opts.src, range, event: e })
+        const drag = startCodeSelectionDrag({ view, body, src: this.opts.src, range, event: e })
+        if (drag) wrapDragHandles.set(wrap, drag)
+        else wrapDragHandles.delete(wrap)
       }
     }, true)
     wrap.addEventListener("click", e => {
       const start = down
       down = null
       if (!start) return
+      if (wrapDragHandles.get(wrap)?.dragging) return
       if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) > CODE_POINTER_DRIFT_PX) return
       if (e.target instanceof Element && e.target.closest(".omd-code-header")) return
       if (view.state.readOnly) return
@@ -310,8 +313,10 @@ export class CodeWidget extends BlockWidget {
     // A gesture that already committed a selection legitimately outlives the widget (the
     // unmount is the reveal) and maps against its captured frame; only a press that never
     // moved would otherwise keep window listeners bound to this destroyed widget.
-    if (this.codeDrag && !this.codeDrag.dragging) this.codeDrag.cancel()
-    this.codeDrag = null
+    const targetDom = dom ?? this.currentDom
+    const drag = targetDom ? wrapDragHandles.get(targetDom) : undefined
+    if (drag && !drag.dragging) drag.cancel()
+    if (targetDom) wrapDragHandles.delete(targetDom)
     if (this.copyReset) clearTimeout(this.copyReset)
     this.langPickerDestroy?.()
     this.langPickerDestroy = null
