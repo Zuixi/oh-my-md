@@ -36,7 +36,7 @@ describe("release workflow", () => {
     const windows = jobBlock("windows", "linux")
     const linux = jobBlock("linux", "publish")
 
-    expect(macos).toContain("runs-on: macos-14")
+    expect(macos).toContain("runs-on: macos-latest")
     expect(macos).toContain("aarch64-apple-darwin")
     expect(macos).toContain("x86_64-apple-darwin")
     expect(macos).toMatch(/--target universal-apple-darwin.*--bundles app,dmg/s)

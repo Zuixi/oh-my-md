@@ -15,7 +15,7 @@ permissions:
 jobs:
   macos:
     name: macOS Universal DMG
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 120
     env:
       RUSTFLAGS: -D warnings
