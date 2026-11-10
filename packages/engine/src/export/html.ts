@@ -90,6 +90,13 @@ function cellChildrenHtml(children: CellNode[]): string {
   return children.map(cellNodeHtml).join("")
 }
 
+/** `3. a` exports as `<ol start="3">`; a list starting at 1 keeps the bare `<ol>`. */
+function orderedListOpen(node: SyntaxNode, state: EditorState): string {
+  const mark = node.getChild("ListItem")?.getChild("ListMark")
+  const start = mark ? Number.parseInt(state.doc.sliceString(mark.from, mark.to), 10) : 1
+  return Number.isFinite(start) && start !== 1 ? `ol start="${start}"` : "ol"
+}
+
 // 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致。
 function cellNodeHtml(node: CellNode): string {
   switch (node.type) {
@@ -334,7 +341,7 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
       return `<pre><code>${escapeHtml(fencedText(node, state) || state.doc.sliceString(node.from, node.to))}</code></pre>`
     case "BulletList":
     case "OrderedList":
-      return `<${node.name === "OrderedList" ? "ol" : "ul"}>${children(node, state, ctx)}</${node.name === "OrderedList" ? "ol" : "ul"}>`
+      return `<${node.name === "OrderedList" ? orderedListOpen(node, state) : "ul"}>${children(node, state, ctx)}</${node.name === "OrderedList" ? "ol" : "ul"}>`
     case "ListItem": return `<li>${children(node, state, ctx)}</li>`
     case "Blockquote": return `<blockquote>${children(node, state, ctx)}</blockquote>`
     case "HorizontalRule": return "<hr>"
@@ -530,7 +537,7 @@ function renderRich(
     case "Subscript": return richChildren(node, state, opts, ctx).then(s => `<sub>${s}</sub>`)
     case "Superscript": return richChildren(node, state, opts, ctx).then(s => `<sup>${s}</sup>`)
     case "BulletList": return richChildren(node, state, opts, ctx).then(s => `<ul>${s}</ul>`)
-    case "OrderedList": return richChildren(node, state, opts, ctx).then(s => `<ol>${s}</ol>`)
+    case "OrderedList": return richChildren(node, state, opts, ctx).then(s => `<${orderedListOpen(node, state)}>${s}</ol>`)
     case "ListItem": return richChildren(node, state, opts, ctx).then(s => `<li>${s}</li>`)
     case "Blockquote": return richChildren(node, state, opts, ctx).then(s => `<blockquote>${s}</blockquote>`)
     default:
