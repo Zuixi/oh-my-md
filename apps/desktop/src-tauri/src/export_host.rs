@@ -109,7 +109,11 @@ fn build_window(
     };
     let url = if std::env::var_os("OMD_EXPORT_SMOKE_PLAIN_URL").is_some() {
         eprintln!("[export-smoke] using plain about:blank URL");
-        WebviewUrl::External("about:blank".parse().map_err(|error| error.to_string())?)
+        WebviewUrl::External(
+            "about:blank"
+                .parse::<tauri::Url>()
+                .map_err(|error| error.to_string())?,
+        )
     } else {
         WebviewUrl::CustomProtocol(url)
     };
