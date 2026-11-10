@@ -315,13 +315,21 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
    CodeMirror's height map does not include vertical margins on block
    decorations. Keep whitespace inside the measured widget DOM. */
 .editor-host .omd-block { position: relative; padding: 0.5em 0; }
-/* 选区完整包含块时保持渲染的选中态覆盖（Typora 语义：选区是视觉的） */
-.editor-host .omd-block.omd-block-covered::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--omd-selection-bg, #d7d4f0);
-  pointer-events: none;
+/* A selection that fully covers a rendered block keeps the widget mounted (see
+   `blockSelectionOverlay.ts`) and has to read as selected. The widget paints its
+   own opaque backgrounds, so the tint replaces them instead of being painted
+   above the widget: an overlay layer would cover the code/table glyphs and leave
+   correct source text behind a blank-looking block. */
+.editor-host .omd-block.omd-block-covered,
+.editor-host .omd-block.omd-block-covered .omd-code-header,
+.editor-host .omd-block.omd-block-covered .omd-table th {
+  background-color: var(--omd-selection-bg, #d7d4f0);
+}
+/* Shiki writes the code background inline, and dark mode re-declares it with
+   !important on every token, so the covered tint must outrank both. */
+.editor-host .omd-block.omd-block-covered .omd-code-lines .shiki,
+.editor-host .omd-block.omd-block-covered .omd-code-lines .shiki span {
+  background-color: var(--omd-selection-bg, #d7d4f0) !important;
 }
 .editor-host .omd-block-edit {
   position: absolute; top: 2px; right: 4px; z-index: 1;
