@@ -1,4 +1,5 @@
 import { parseCell, type CellNode, type CellParseOptions } from "../../parse/cell"
+import type { TableCellData } from "../../tables/model"
 
 export type ResolveSrc = (src: string) => string
 
@@ -93,4 +94,36 @@ export function renderTableCellContent(
   options?: CellParseOptions,
 ): void {
   for (const node of parseCell(source, options)) renderCellNode(parent, node, resolveSrc)
+}
+
+/** Accessible label for a synthesized missing cell (ragged row visual fill). */
+const MISSING_CELL_TITLE = "Missing source cell; add a column or edit Markdown source"
+
+/**
+ * Full visual state of one cell slot: content plus the ragged-row missing-slot semantics.
+ * `renderInto`, the in-place `updateDOM` patch, and the restore after a cell session all
+ * share this so the missing-slot semantics live in one place.
+ * `cell === null` is a ragged row's synthesized placeholder: it has no source slot, so it is
+ * visually unavailable and never participates in editing.
+ */
+export function renderCellSlot(
+  el: HTMLElement,
+  cell: TableCellData | null,
+  resolveSrc?: ResolveSrc,
+  resolveReference?: CellParseOptions["resolveReference"],
+): void {
+  el.style.removeProperty("position")
+  el.replaceChildren()
+  if (cell === null) {
+    el.classList.add("omd-table-cell-missing")
+    el.setAttribute("aria-disabled", "true")
+    el.title = MISSING_CELL_TITLE
+    return
+  }
+  el.classList.remove("omd-table-cell-missing")
+  el.removeAttribute("aria-disabled")
+  el.removeAttribute("title")
+  // The table layer already consumed the `\|` shielding backslash, so the cell source is GFM
+  // table semantics; reference definitions come from outside the table.
+  renderTableCellContent(el, cell.text, resolveSrc, { pipeEscapes: "gfm-table", resolveReference })
 }

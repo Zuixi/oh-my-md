@@ -22,12 +22,19 @@ import {
   mountEditableCell,
   syncEditableCell,
 } from "./tableCellEdit"
+import {
+  pressCaretOffset,
+  renderedTablePointerOffset,
+  startTableSelectionDrag,
+  tableCellSlotAt,
+  type TableSelectionDragHandle,
+} from "./tableSelection"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon } from "../icons"
 // cell 的 DOM 投影独立成文件（table.ts 已到增长上限）：这里只保留兼容再导出，
 // 既有调用方（tables.test.ts 等）继续从 table.ts 取 renderTableCellContent。
-import { renderTableCellContent, type ResolveSrc } from "./tableCell"
+import { renderCellSlot, renderTableCellContent, type ResolveSrc } from "./tableCell"
 
 export { renderTableCellContent }
 export type { ResolveSrc }
@@ -285,15 +292,15 @@ function activateTableCellInput(
   clientX?: number,
   clientY?: number,
   cellCaret?: number,
-): void {
-  if (view.state.readOnly) return
+): TableInputController | null {
+  if (view.state.readOnly) return null
   const cell = tableCellDataRows(table.data)[row]?.[column]
   const cellEl = tableCellElements(host)[row]?.[column]
-  if (!cell || !cellEl) return
+  if (!cell || !cellEl) return null
   const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
   if (existing && existing.host === host && existing.row === row && existing.column === column) {
     existing.focusAt(clientX, clientY, cellCaret)
-    return
+    return existing
   }
   if (existing) {
     existing.destroy()
@@ -311,6 +318,7 @@ function activateTableCellInput(
   const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
   controller.revision = getTableEditSession(view.state)?.revision ?? 0
   controller.focusAt(clientX, clientY, cellCaret)
+  return controller
 }
 
 export const tableDirectEditEnabled = Facet.define<boolean, boolean>({
@@ -337,29 +345,6 @@ function sameTableShape(a: TableData, b: TableData): boolean {
     && a.rows.every((row, index) => row.cells.length === b.rows[index].cells.length)
 }
 
-/** 单个单元格槽位的完整视觉状态（内容 + ragged 缺失槽语义），renderInto 与 updateDOM 共用。 */
-function renderCellSlot(
-  el: HTMLElement,
-  cell: TableCellData | null,
-  resolveSrc?: ResolveSrc,
-  resolveReference?: ResolveReference,
-): void {
-  el.style.removeProperty("position")
-  el.replaceChildren()
-  if (cell === null) {
-    // ragged 行缺失源码槽的视觉填充：语义标识为不可用（没有源码可改）。
-    el.classList.add("omd-table-cell-missing")
-    el.setAttribute("aria-disabled", "true")
-    el.title = MISSING_CELL_TITLE
-    return
-  }
-  el.classList.remove("omd-table-cell-missing")
-  el.removeAttribute("aria-disabled")
-  el.removeAttribute("title")
-  // 表格层已经吃掉 `\|` 的屏蔽反斜杠，cell 源是 GFM 表格语义；定义来自表格外。
-  renderTableCellContent(el, cell.text, resolveSrc, { pipeEscapes: "gfm-table", resolveReference })
-}
-
 /** 对齐按钮的 active 高亮必须跟着目标列的对齐方式走（渲染态与原地补丁态共用）。 */
 function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): void {
   for (const act of ["align-left", "align-center", "align-right"] as const) {
@@ -367,9 +352,6 @@ function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): v
     if (btn) btn.classList.toggle("omd-table-tool-active", act === `align-${currentAlign}`)
   }
 }
-
-/** 合成缺失单元格（ragged 行的视觉填充）的语义标注。 */
-const MISSING_CELL_TITLE = "Missing source cell; add a column or edit Markdown source"
 
 /**
  * 表格的**渲染态**：光标在表外时的投影 + 结构工具栏。
@@ -383,6 +365,8 @@ export class TableWidget extends BlockWidget {
   readonly table: TableData
   private view: EditorView | undefined
   private wrap: HTMLDivElement | undefined
+  /** Cell press that may still promote into a source-backed selection (tableSelection.ts). */
+  private tableDrag: TableSelectionDragHandle | null = null
   /** 工具栏目标格的行列（行序与源码槽一致：0 = 表头，1 = 首数据行）。 */
   private row = 0
   private col = 0
@@ -545,6 +529,11 @@ export class TableWidget extends BlockWidget {
   }
 
   override destroy(dom?: HTMLElement) {
+    // A gesture that already committed a selection legitimately outlives the widget (the
+    // reveal IS the unmount); only a press that never moved would otherwise keep window
+    // listeners bound to this widget's cell session.
+    if (this.tableDrag && !this.tableDrag.dragging) this.tableDrag.cancel()
+    this.tableDrag = null
     const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
     if (host) tableInputControllers.get(host)?.destroy()
     if (dom) releaseDom(this, dom)
@@ -567,21 +556,34 @@ export class TableWidget extends BlockWidget {
     const target = event.target
     if (!(target instanceof Element)) return false
     if (target.closest(`.${TABLE_INPUT_CLASS}`)) return true
-    const cellEl = target.closest<HTMLTableCellElement>("td, th")
-    const host = cellEl?.closest<HTMLElement>(".omd-block-body")
+    const slot = tableCellSlotAt(target)
+    const host = slot?.element.closest<HTMLElement>(".omd-block-body")
     const owner = host ? domOwner.get(host) : undefined
     const view = owner?.view ?? this.view
-    if (!cellEl || !host || !owner || !owner.directEdit || !view) return false
-    if (view.state.readOnly) return false
-    const row = cellEl.parentElement instanceof HTMLTableRowElement
-      ? cellEl.parentElement.rowIndex
-      : 0
-    const column = cellEl.cellIndex
+    if (!slot || !host || !owner || !owner.directEdit || !view) return false
     const table = tableAt(view.state, owner.livePos())
-    if (!table || !owner.cellDataAt(row, column)) return false
+    const cell = table ? owner.cellDataAt(slot.row, slot.column) : null
+    // A ragged row's synthesized cell has no source slot: no session and no selection bytes.
+    if (!table || !cell) return false
     event.preventDefault()
-    // 打开会话，不把文档选区派发进表格。
-    activateTableCellInput(view, host, row, column, table, event.clientX, event.clientY)
+    // Press keeps the click: the cell session opens exactly as before. Only a pointer that
+    // keeps travelling becomes a source-backed selection (tableSelection.ts).
+    const controller = view.state.readOnly
+      ? null
+      : activateTableCellInput(
+        view, host, slot.row, slot.column, table, event.clientX, event.clientY,
+      )
+    owner.tableDrag = startTableSelectionDrag({
+      view,
+      event,
+      anchor: table.from + cell.from
+        + pressCaretOffset(cell, slot.element, controller?.input ?? null, event),
+      renderedOffset: move => renderedTablePointerOffset(move, table, (row, column) =>
+        owner.cellDataAt(row, column)),
+      revealEffects: [closeTableEdit(), revealTableSource.of(null)],
+    })
+    // Read-only views have no input to hold focus, so the selection gesture focuses the editor.
+    if (view.state.readOnly) view.focus()
     return true
   }
 
@@ -602,14 +604,12 @@ export class TableWidget extends BlockWidget {
   }
 
   protected clickPos(view: EditorView, event: MouseEvent, _wrap: HTMLElement): number {
-    const cellEl = event.target instanceof Element
-      ? event.target.closest<HTMLTableCellElement>("td, th")
-      : null
+    const slot = tableCellSlotAt(event.target)
     // 无单元格命中（padding 已被 shouldEnterSource 挡掉，剩下的是 `</>` 按钮）：直接回退，
     // 不查表 —— 该路径的 view 可能来自没有真实 EditorState 的调用方。
     // 若直接编辑态输入框仍挂在当前表格里，先在进入源码事务前卸载，防止随后 view.focus()
     // 触发的同步 focusout 发送 closeTableEdit 而打断外层历史或留下瞬态残留。
-    if (!cellEl) {
+    if (!slot) {
       const host = _wrap.querySelector<HTMLElement>(".omd-block-body")
       const active = host ? tableInputControllers.get(host) : undefined
       if (active) {
@@ -620,12 +620,8 @@ export class TableWidget extends BlockWidget {
     }
     const table = tableAt(view.state, this.livePos())
     if (!table) return this.livePos()
-    // rowIndex 含 thead：表头 = 0，与 CellSlot.row 同一口径。
-    const rowIndex = cellEl.parentElement instanceof HTMLTableRowElement
-      ? cellEl.parentElement.rowIndex
-      : 0
-    const slots = [table.data.header, ...table.data.rows]
-    const cell = slots[rowIndex]?.cells[cellEl.cellIndex]
+    // slot.row counts the thead row: header = 0, the same slot order as `CellSlot.row`.
+    const cell = tableCellDataRows(table.data)[slot.row]?.[slot.column]
     if (!cell) return this.livePos()
     const leading = cell.source.length - cell.source.trimStart().length
     return table.from + cell.from + leading

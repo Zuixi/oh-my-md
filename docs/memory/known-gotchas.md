@@ -16,6 +16,7 @@
 - **Unclosed fences run to document end** — decide "unterminated" by counting CodeMark children; never treat `lineAt(node.to)` as the closing fence.
 - **atomicRanges: three rules** — no `mark:`/`line:` tags, no `widget:block:*`, no line-start or cross-line atoms.
 - **Selection is visual, the caret is editing** — a non-empty selection reveals nothing; mid-drag reveal relayouts shift `posAtCoords`.
+- **Rendered widget text is not a CodeMirror selection** — native code/table drags can copy an old caret; map gestures to source offsets and tint covered blocks behind their glyphs.
 - **Tests may need to force the syntax tree** — use `makeState`; for large docs mount a temp view + `forceParsing`; compare incremental against `buildLiveDecorations` on the same state.
 - **Block widget geometry can desync CM's heightmap** — async widgets need a sync placeholder plus a field refresh; no vertical margins on block DOM; identity before `eq()`; opaque replaces quantize `posAtCoords`.
 - **Block widgets must declare `estimatedHeight`** — CM estimates unknown-height blocks at one line, over-drawing the viewport on scroll (table-doc jank); estimates live in `widgetHeights.ts` with a test + bench guard.
