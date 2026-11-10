@@ -177,7 +177,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
       run: () => {
         const tab = tabById(workspaceRef.current.activeId)
         const docPath = tab ? sessionPath(tab) : null
-        const renderOptions = exportOptions()
+        const renderOptions = { ...exportOptions(), sourcePath: docPath }
         void exportCurrent(
           services,
           viewRef.current,

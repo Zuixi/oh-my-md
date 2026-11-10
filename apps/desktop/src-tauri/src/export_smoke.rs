@@ -65,8 +65,29 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     let out = std::env::var_os("OMD_EXPORT_SMOKE_OUT")
         .map_or_else(|| std::env::temp_dir().join(PNG_OUTPUT_NAME), PathBuf::from);
     let spec = ExportSpec::new(width_css, scale)?;
-    let output = super::platform::render(app, smoke_html(), spec, ExportFormat::Png).await?;
-    let (width, height) = png_dimensions(&output.bytes)?;
+    let html = smoke_html();
+    // Drive the real Tauri command body rather than the platform function, so
+    // path validation, styled HTML, atomic write and warning serialization are
+    // covered on every platform (the dialog/IPC envelope is covered by tests).
+    let requested = out
+        .to_str()
+        .ok_or_else(|| format!("invalid smoke output path: {}", out.display()))?;
+    let target = super::validate_export(requested, ExportFormat::Png, &html)?;
+    let target_text = target
+        .to_str()
+        .ok_or_else(|| format!("invalid smoke target path: {}", target.display()))?;
+    super::export_preview(
+        app,
+        html,
+        target_text.to_owned(),
+        "png".to_owned(),
+        scale,
+        width_css,
+    )
+    .await?;
+    let bytes =
+        std::fs::read(&target).map_err(|error| format!("read {}: {error}", target.display()))?;
+    let (width, height) = png_dimensions(&bytes)?;
     if width != spec.device_width() || height != SMOKE_HEIGHT_CSS * scale {
         return Err(format!(
             "expected {}x{}, rendered {width}x{height}",
@@ -74,11 +95,9 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
             SMOKE_HEIGHT_CSS * scale
         ));
     }
-    std::fs::write(&out, &output.bytes)
-        .map_err(|error| format!("write {}: {error}", out.display()))?;
     Ok(format!(
         "EXPORT_SMOKE_OK width={width} height={height} scale={scale} path={}",
-        out.display()
+        target.display()
     ))
 }
 

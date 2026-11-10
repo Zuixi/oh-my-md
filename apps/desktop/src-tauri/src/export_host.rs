@@ -127,7 +127,6 @@ fn build_window(
     // and URL messages target the registered instance.
     app.get_webview_window(label)
         .ok_or_else(|| format!("export window {label} was not registered"))
-        .map(|window| window)
 }
 
 /// Parse the JSON emitted by `PROBE_SCRIPT`. WebView2 wraps the expression

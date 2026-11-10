@@ -28,6 +28,20 @@ const OFFSCREEN_Y: f64 = -20_000.0;
 /// How long to wait for `window.__omdExportReady` before exporting anyway.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const READY_POLL_MS: u64 = 100;
+/// Error reported by every timeout path so the caller sees one stable message.
+const EXPORT_TIMEOUT_MESSAGE: &str = "export timed out";
+/// One-shot deadline after which a parked offscreen export is closed and
+/// rejected. It matches the previous channel timeout, so the cleanup does not
+/// shorten the time a legitimate large export may take. Strictly shorter than
+/// `EXPORT_CHANNEL_BACKSTOP` so this cleanup normally wins; otherwise a page
+/// that never finishes navigating would leave its hidden window and delegate
+/// parked for the life of the process.
+const EXPORT_CLEANUP_MS: u64 = EXPORT_TIMEOUT_SECS * 1_000;
+/// Extra time for the main-queue cleanup message to arrive before the blocking
+/// channel wait gives up. The backstop only fires if the main queue never ran.
+const EXPORT_BACKSTOP_GRACE_SECS: u64 = 2;
+const EXPORT_CHANNEL_BACKSTOP: Duration =
+    Duration::from_secs(EXPORT_TIMEOUT_SECS + EXPORT_BACKSTOP_GRACE_SECS);
 
 // GCD FFI — dispatch_after_f avoids block ABI complexity.
 use std::os::raw::c_void;
@@ -63,13 +77,28 @@ unsafe extern "C" fn poll_trampoline(ctx: *mut c_void) {
     poll_ready(*state);
 }
 
-fn schedule_poll(state: PollState, delay_ms: u64) {
-    let ctx = Box::into_raw(Box::new(state)) as *mut c_void;
+/// Schedules `work` on the main queue after `delay_ms`. The context box is
+/// owned by the dispatch: the trampoline reclaims it when the timer fires.
+fn dispatch_after(delay_ms: u64, context: *mut c_void, work: DispatchFunctionT) {
     unsafe {
         let when = dispatch_time(DISPATCH_TIME_NOW, (delay_ms as i64) * NSEC_PER_MSEC);
         let queue = (&raw const _dispatch_main_q).cast_mut().cast::<c_void>();
-        dispatch_after_f(when, queue, ctx, poll_trampoline);
+        dispatch_after_f(when, queue, context, work);
     }
+}
+
+fn schedule_poll(state: PollState, delay_ms: u64) {
+    let context = Box::into_raw(Box::new(state)) as *mut c_void;
+    dispatch_after(delay_ms, context, poll_trampoline);
+}
+
+struct TimeoutState {
+    delegate: Retained<ExportDelegate>,
+}
+
+unsafe extern "C" fn timeout_trampoline(context: *mut c_void) {
+    let state = unsafe { Box::from_raw(context as *mut TimeoutState) };
+    state.delegate.fail_if_pending(EXPORT_TIMEOUT_MESSAGE);
 }
 
 struct ExportIvars {
@@ -135,8 +164,8 @@ pub(crate) async fn render(
     app.run_on_main_thread(move || begin(html, spec, format, tx))
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        rx.recv_timeout(Duration::from_secs(EXPORT_TIMEOUT_SECS))
-            .map_err(|_| "export timed out".to_string())
+        rx.recv_timeout(EXPORT_CHANNEL_BACKSTOP)
+            .map_err(|_| EXPORT_TIMEOUT_MESSAGE.to_string())
     })
     .await
     .map_err(|error| error.to_string())??
@@ -166,9 +195,11 @@ fn start(
     window.setContentView(Some(webview.as_super()));
     window.orderFront(None);
     let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx);
+    // Park (and arm the cleanup deadline) before navigation can report anything,
+    // so every completion path finds a live `LIVE_EXPORTS` entry to remove.
+    park(delegate.clone());
     unsafe { webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
     unsafe { webview.loadHTMLString_baseURL(&NSString::from_str(&html), None) };
-    park(delegate);
     Ok(())
 }
 
@@ -218,8 +249,24 @@ impl ExportDelegate {
         unsafe { msg_send![super(this), init] }
     }
 
+    /// Completion for the scheduled cleanup deadline. A finished export has
+    /// already taken its sender, so a late timer must not send, close or unpark
+    /// a second time.
+    fn fail_if_pending(&self, message: &str) {
+        let pending = self.ivars().tx.borrow().is_some();
+        if pending {
+            self.complete(Err(message.to_string()));
+        }
+    }
+
     fn complete(&self, result: Result<RenderOutput, String>) {
-        let tx = self.ivars().tx.borrow_mut().take();
+        // The sender is the one-shot latch: only the first completion may send,
+        // detach the webview, close the window and unpark. Every later path
+        // (scheduled timeout, in-flight poll block, duplicate navigation error)
+        // is a no-op.
+        let Some(tx) = take_pending(&self.ivars().tx) else {
+            return;
+        };
         if let Some(webview) = self.ivars().webview.borrow_mut().take() {
             unsafe { webview.setNavigationDelegate(None) };
         }
@@ -227,14 +274,23 @@ impl ExportDelegate {
             window.close();
         }
         unpark(self);
-        if let Some(tx) = tx {
-            let _ = tx.send(result);
-        }
+        let _ = tx.send(result);
     }
 }
 
+/// Takes the one-shot completion sender; `None` means another path already
+/// completed this export, which makes every later completion a no-op.
+fn take_pending<T>(slot: &RefCell<Option<T>>) -> Option<T> {
+    slot.borrow_mut().take()
+}
+
+/// Registers the delegate as live and arms the cleanup deadline. The dispatch
+/// keeps its own reference to the delegate until the timer fires, so a normal
+/// completion can safely drop the `LIVE_EXPORTS` entry first.
 fn park(delegate: Retained<ExportDelegate>) {
-    LIVE_EXPORTS.with(|live| live.borrow_mut().push(delegate));
+    LIVE_EXPORTS.with(|live| live.borrow_mut().push(delegate.clone()));
+    let context = Box::into_raw(Box::new(TimeoutState { delegate })) as *mut c_void;
+    dispatch_after(EXPORT_CLEANUP_MS, context, timeout_trampoline);
 }
 
 fn unpark(delegate: &ExportDelegate) {
@@ -532,5 +588,30 @@ startxref
     #[test]
     fn ready_poll_interval_is_one_hundred_ms() {
         assert_eq!(READY_POLL_MS, 100);
+    }
+
+    #[test]
+    fn cleanup_deadline_fires_before_the_channel_backstop() {
+        let cleanup = Duration::from_millis(EXPORT_CLEANUP_MS);
+        assert_eq!(
+            cleanup,
+            Duration::from_secs(EXPORT_TIMEOUT_SECS),
+            "cleanup must preserve the previous export deadline"
+        );
+        assert_eq!(
+            EXPORT_CHANNEL_BACKSTOP,
+            Duration::from_secs(EXPORT_TIMEOUT_SECS + EXPORT_BACKSTOP_GRACE_SECS)
+        );
+        assert!(
+            cleanup < EXPORT_CHANNEL_BACKSTOP,
+            "scheduled cleanup {cleanup:?} must beat the backstop {EXPORT_CHANNEL_BACKSTOP:?}"
+        );
+    }
+
+    #[test]
+    fn take_pending_completes_only_once() {
+        let slot: RefCell<Option<u8>> = RefCell::new(Some(1));
+        assert_eq!(take_pending(&slot), Some(1));
+        assert_eq!(take_pending(&slot), None);
     }
 }

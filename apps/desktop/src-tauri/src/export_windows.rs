@@ -82,6 +82,8 @@ fn probe(window: &WebviewWindow) -> Result<Option<Probe>, String> {
 
 fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<Vec<u8>, String> {
     let params = capture_params(spec, probe);
+    let expected_width = spec.device_width();
+    let expected_height = expected_device_height(spec, probe);
     let raw: String = with_core(window, CAPTURE_TIMEOUT, move |core, tx| {
         let handler =
             CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |_hr, result| {
@@ -93,7 +95,17 @@ fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<V
         unsafe { core.CallDevToolsProtocolMethod(&method, &params, &handler) }
             .map_err(|error| error.to_string())
     })?;
-    decode_capture(&raw, spec.device_width())
+    decode_capture(&raw, expected_width, expected_height)
+}
+
+/// CSS height requested in the CDP clip. The request and the expected device
+/// height both derive from this value so rounding cannot desynchronize them.
+fn clip_height_css(probe: &Probe) -> f64 {
+    probe.height_css.round()
+}
+
+fn expected_device_height(spec: &ExportSpec, probe: &Probe) -> u32 {
+    (clip_height_css(probe) * spec.scale).round().max(1.0) as u32
 }
 
 fn capture_params(spec: &ExportSpec, probe: &Probe) -> String {
@@ -105,14 +117,14 @@ fn capture_params(spec: &ExportSpec, probe: &Probe) -> String {
             "x": 0,
             "y": 0,
             "width": spec.width_css.round(),
-            "height": probe.height_css.round(),
+            "height": clip_height_css(probe),
             "scale": spec.scale,
         }
     })
     .to_string()
 }
 
-fn decode_capture(raw: &str, expected_width: u32) -> Result<Vec<u8>, String> {
+fn decode_capture(raw: &str, expected_width: u32, expected_height: u32) -> Result<Vec<u8>, String> {
     let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|error| format!("invalid CDP response: {error}"))?;
     if let Some(error) = value.get("error") {
@@ -125,11 +137,11 @@ fn decode_capture(raw: &str, expected_width: u32) -> Result<Vec<u8>, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|error| format!("invalid PNG base64: {error}"))?;
-    require_png(&bytes, expected_width)?;
+    require_png(&bytes, expected_width, expected_height)?;
     Ok(bytes)
 }
 
-fn require_png(bytes: &[u8], expected_width: u32) -> Result<(), String> {
+fn require_png(bytes: &[u8], expected_width: u32, expected_height: u32) -> Result<(), String> {
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() < 24 {
         return Err("capture did not produce a valid PNG".into());
     }
@@ -138,6 +150,13 @@ fn require_png(bytes: &[u8], expected_width: u32) -> Result<(), String> {
         return Err(format!(
             "WebView2 screenshot is {} px wide, expected {} px; the display scale could not be overridden",
             width, expected_width
+        ));
+    }
+    let height = u32::from_be_bytes(bytes[20..24].try_into().expect("PNG height slice"));
+    if height != expected_height {
+        return Err(format!(
+            "WebView2 screenshot is {} px tall, expected {} px; the document would be truncated",
+            height, expected_height
         ));
     }
     Ok(())
@@ -183,6 +202,50 @@ mod tests {
     #[test]
     fn decode_rejects_non_png() {
         let raw = serde_json::json!({"data": "aGVsbG8="}).to_string();
-        assert!(decode_capture(&raw, 1600).is_err());
+        assert!(decode_capture(&raw, 1600, 2400).is_err());
+    }
+
+    /// PNG signature + IHDR type and dimensions; enough for the header checks.
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::from(&b"\x89PNG\r\n\x1a\n"[..]);
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn expected_device_height_scales_the_requested_clip() {
+        let spec = ExportSpec::new(800, 2).unwrap();
+        let probe = Probe {
+            height_css: 1200.0,
+            incomplete: false,
+        };
+        assert_eq!(expected_device_height(&spec, &probe), 2400);
+        let params = capture_params(&spec, &probe);
+        let value: serde_json::Value = serde_json::from_str(&params).unwrap();
+        assert_eq!(value["clip"]["height"], 1200.0);
+    }
+
+    #[test]
+    fn require_png_accepts_the_requested_size() {
+        assert!(require_png(&png_header(1600, 2400), 1600, 2400).is_ok());
+    }
+
+    #[test]
+    fn require_png_rejects_a_short_capture() {
+        let error = require_png(&png_header(1600, 2398), 1600, 2400)
+            .expect_err("a short capture must be rejected");
+        assert!(error.contains("2398 px tall"), "{error}");
+        assert!(error.contains("expected 2400 px"), "{error}");
+        assert!(error.contains("truncated"), "{error}");
+    }
+
+    #[test]
+    fn require_png_still_rejects_the_wrong_width() {
+        let error = require_png(&png_header(800, 2400), 1600, 2400)
+            .expect_err("a 1x capture must still be rejected");
+        assert!(error.contains("800 px wide"), "{error}");
     }
 }

@@ -191,7 +191,10 @@ export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
   pickFolder?: () => Promise<string | null>
-  pickExportPath?: (format?: "html" | "png" | "pdf") => Promise<string | null>
+  pickExportPath?: (
+    format?: "html" | "png" | "pdf",
+    sourcePath?: string | null,
+  ) => Promise<string | null>
   exportPreview?: (
     html: string,
     path: string,
@@ -282,6 +285,10 @@ export interface DesktopServices {
   reportError: (message: string) => void
   /** Fire-and-forget success feedback (toast-backed in production; optional so tests/browser builds may omit it). */
   notifySuccess?: (message: string) => void
+  /** Non-fatal export warning; the artifact was already written successfully. */
+  notifyWarning?: (message: string) => void
+  /** Shows a blocking progress toast; the returned stop function is idempotent. */
+  notifyProgress?: (message: string) => () => void
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   listenDragDrop?: (handler: (paths: string[]) => void) => () => void
@@ -353,8 +360,8 @@ export const defaultServices: DesktopServices = {
   pickOpenPath: () => pickPath("file", [...MARKDOWN_EXTENSIONS]),
   pickSavePath: () => pickPath("save", ["md"]),
   pickFolder: () => pickPath("folder", []),
-  pickExportPath: async (format = "html") => {
-    const path = await save(exportSaveOptions(format))
+  pickExportPath: async (format = "html", sourcePath) => {
+    const path = await save(exportSaveOptions(format, sourcePath))
     return typeof path === "string" ? path : null
   },
   pickCssPath: () => pickPath("file", ["css"]),
@@ -575,6 +582,20 @@ export const defaultServices: DesktopServices = {
     toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS })
   },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
+  notifyWarning: message => { toast.warning(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
+  notifyProgress: message => {
+    const id = toast.loading(message, {
+      autoClose: false,
+      closeOnClick: false,
+      draggable: false,
+    })
+    let dismissed = false
+    return () => {
+      if (dismissed) return
+      dismissed = true
+      toast.dismiss(id)
+    }
+  },
   listenMenu: handler => {
     const pending = listen<string>(
       "menu-command",

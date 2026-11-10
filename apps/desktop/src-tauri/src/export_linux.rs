@@ -40,6 +40,10 @@ const RELAYOUT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 /// throttled, rAF suppressed, webview torn down) the capture fails instead of
 /// snapshotting a layout that does not match the requested scale.
 const RELAYOUT_TIMEOUT: Duration = Duration::from_secs(2);
+/// A fractional `zoom_level` can round the snapshot by one device pixel, so one
+/// pixel of height slack is allowed. Anything more means the surface was
+/// captured at the wrong size and the document would be cut off.
+const SNAPSHOT_HEIGHT_TOLERANCE_PX: u32 = 1;
 
 pub(crate) async fn render(
     app: tauri::AppHandle,
@@ -103,10 +107,15 @@ fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<V
         .map_err(|error| error.to_string())?;
 
     let expected_width = spec.device_width();
+    let expected_height = expected_device_height(spec, probe);
     with_view(window, CAPTURE_TIMEOUT, move |view, tx| {
         view.set_zoom_level(zoom);
-        await_relayout(&view, tx, expected_width);
+        await_relayout(&view, tx, expected_width, expected_height);
     })
+}
+
+fn expected_device_height(spec: &ExportSpec, probe: &Probe) -> u32 {
+    (probe.height_css * spec.scale).round().max(1.0) as u32
 }
 
 /// Starts the two-animation-frame relayout handshake and, once it has
@@ -116,6 +125,7 @@ fn await_relayout(
     view: &webkit2gtk::WebView,
     tx: mpsc::Sender<Result<Vec<u8>, String>>,
     expected_width: u32,
+    expected_height: u32,
 ) {
     let poll_view = view.clone();
     // The flag is only polled after the clearing script has run, so a previous
@@ -126,7 +136,7 @@ fn await_relayout(
         None,
         None::<&webkit2gtk::gio::Cancellable>,
         move |result| match result {
-            Ok(_) => poll_relayout(poll_view, tx, expected_width),
+            Ok(_) => poll_relayout(poll_view, tx, expected_width, expected_height),
             Err(error) => {
                 let _ = tx.send(Err(format!("failed to start WebKitGTK relayout: {error}")));
             }
@@ -141,6 +151,7 @@ fn poll_relayout(
     view: webkit2gtk::WebView,
     tx: mpsc::Sender<Result<Vec<u8>, String>>,
     expected_width: u32,
+    expected_height: u32,
 ) {
     let started = Instant::now();
     // `ControlFlow::Break` removes the source, so a settled or failed poll stops
@@ -178,7 +189,7 @@ fn poll_relayout(
                 match result {
                     Ok(value) if value.to_boolean() => {
                         settled.set(true);
-                        snapshot(&callback_view, tx, expected_width);
+                        snapshot(&callback_view, tx, expected_width, expected_height);
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -196,13 +207,14 @@ fn snapshot(
     view: &webkit2gtk::WebView,
     tx: mpsc::Sender<Result<Vec<u8>, String>>,
     expected_width: u32,
+    expected_height: u32,
 ) {
     view.snapshot(
         SnapshotRegion::FullDocument,
         SnapshotOptions::NONE,
         None::<&webkit2gtk::gio::Cancellable>,
         move |result| {
-            let _ = tx.send(finish_snapshot(result, expected_width));
+            let _ = tx.send(finish_snapshot(result, expected_width, expected_height));
         },
     );
 }
@@ -210,6 +222,7 @@ fn snapshot(
 fn finish_snapshot(
     result: Result<cairo::Surface, webkit2gtk::glib::Error>,
     expected_width: u32,
+    expected_height: u32,
 ) -> Result<Vec<u8>, String> {
     let surface = result.map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
@@ -230,11 +243,27 @@ fn finish_snapshot(
             width, expected_width
         ));
     }
+    check_snapshot_height(height, expected_height)?;
     Ok(bytes)
+}
+
+/// Height check kept free of `cairo::Surface` so it is unit-testable. The
+/// measured document height and the zoomed window can round against each other
+/// by one device pixel; anything larger means content was cut off.
+fn check_snapshot_height(captured_height: u32, expected_height: u32) -> Result<(), String> {
+    if captured_height.abs_diff(expected_height) > SNAPSHOT_HEIGHT_TOLERANCE_PX {
+        return Err(format!(
+            "WebKitGTK snapshot is {} px tall, expected {} px; the document would be truncated",
+            captured_height, expected_height
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn scale_math_keeps_css_width_and_device_pixels() {
         for (width, scale, gdk) in [
@@ -248,5 +277,32 @@ mod tests {
             assert!((logical_width / zoom - width).abs() < f64::EPSILON);
             assert!((logical_width * gdk - width * scale).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn expected_device_height_scales_the_measured_page() {
+        let spec = ExportSpec::new(800, 2).unwrap();
+        let probe = Probe {
+            height_css: 1234.5,
+            incomplete: false,
+        };
+        assert_eq!(expected_device_height(&spec, &probe), 2469);
+    }
+
+    #[test]
+    fn snapshot_height_allows_one_pixel_of_zoom_rounding() {
+        assert!(check_snapshot_height(1200, 1200).is_ok());
+        assert!(check_snapshot_height(1201, 1200).is_ok());
+        assert!(check_snapshot_height(1199, 1200).is_ok());
+    }
+
+    #[test]
+    fn snapshot_height_rejects_a_truncated_document() {
+        let error =
+            check_snapshot_height(1200, 2400).expect_err("a half-height snapshot must be rejected");
+        assert!(error.contains("1200 px tall"), "{error}");
+        assert!(error.contains("expected 2400 px"), "{error}");
+        assert!(error.contains("truncated"), "{error}");
+        assert!(check_snapshot_height(1203, 1200).is_err());
     }
 }
