@@ -36,16 +36,12 @@ fn with_core<T: Send + 'static>(
         + Send
         + 'static,
 ) -> Result<T, String> {
-    #[cfg(feature = "export-smoke")]
-    eprintln!("[export-smoke] with_core enter");
     let (tx, rx) = mpsc::channel();
     let error_tx = tx.clone();
     // Call from the worker: `with_webview` posts the closure to the event loop.
     // Blocking inside that closure would deadlock WebView2 completions.
     window
         .with_webview(move |platform| {
-            #[cfg(feature = "export-smoke")]
-            eprintln!("[export-smoke] with_webview closure");
             let result = (|| {
                 let controller = platform.controller();
                 let core =
