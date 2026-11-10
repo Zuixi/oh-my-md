@@ -133,7 +133,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        # WebView2 152 on windows-2025 has an upstream runtime regression;
+        # the 2022 image keeps a working evergreen runtime for the export smoke.
+        os: [macos-latest, ubuntu-latest, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
