@@ -621,6 +621,8 @@ export async function exportRichHtml(
   const katexStyle = katexCss ? `<style>${katexCss}</style>` : ""
   const baseStyle = `<style>${EXPORT_BODY_CSS}</style>`
   const customStyle = options.customCss ? `<style>${options.customCss}</style>` : ""
-  const widthStyle = options.fullWidth ? "<style>body{max-width:none}</style>" : ""
+  const widthStyle = options.fullWidth
+    ? "<style>html,body{max-width:none;overflow-x:hidden}</style>"
+    : ""
   return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8"><title>oh-my-md</title>${katexStyle}${baseStyle}${widthStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${EXPORT_READY_SCRIPT}</body></html>`
 }

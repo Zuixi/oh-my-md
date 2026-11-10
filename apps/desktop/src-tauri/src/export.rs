@@ -1,4 +1,10 @@
 use serde::Serialize;
+
+#[path = "app_context.rs"]
+pub(crate) mod app_context;
+#[cfg(feature = "export-smoke")]
+#[path = "export_smoke.rs"]
+pub mod export_smoke;
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -204,15 +210,15 @@ pub(crate) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
 
 #[cfg(target_os = "macos")]
 #[path = "export_native.rs"]
-mod platform;
+pub(crate) mod platform;
 
 #[cfg(windows)]
 #[path = "export_windows.rs"]
-mod platform;
+pub(crate) mod platform;
 
 #[cfg(target_os = "linux")]
 #[path = "export_linux.rs"]
-mod platform;
+pub(crate) mod platform;
 
 #[tauri::command]
 pub async fn export_preview(

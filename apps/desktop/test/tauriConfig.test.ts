@@ -159,13 +159,13 @@ describe("platform-specific Rust code", () => {
     const exportRs = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
 
     expect(exportRs).toMatch(
-      /#\[cfg\(target_os = "macos"\)\]\s+#\[path = "export_native\.rs"\]\s+mod platform;/,
+      /#\[cfg\(target_os = "macos"\)\]\s+#\[path = "export_native\.rs"\]\s+pub\(crate\) mod platform;/,
     )
     expect(exportRs).toMatch(
-      /#\[cfg\(windows\)\]\s+#\[path = "export_windows\.rs"\]\s+mod platform;/,
+      /#\[cfg\(windows\)\]\s+#\[path = "export_windows\.rs"\]\s+pub\(crate\) mod platform;/,
     )
     expect(exportRs).toMatch(
-      /#\[cfg\(target_os = "linux"\)\]\s+#\[path = "export_linux\.rs"\]\s+mod platform;/,
+      /#\[cfg\(target_os = "linux"\)\]\s+#\[path = "export_linux\.rs"\]\s+pub\(crate\) mod platform;/,
     )
     // The measurement/ready protocol is shared by every backend.
     expect(exportRs).toContain("pub(crate) fn measure_export_script")

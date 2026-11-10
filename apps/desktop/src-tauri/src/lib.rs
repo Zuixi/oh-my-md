@@ -1,7 +1,7 @@
 mod app_lifecycle;
 mod diagnostics;
 mod documents;
-mod export;
+pub mod export;
 mod fonts;
 #[cfg(test)]
 mod log_capture;
@@ -1049,7 +1049,7 @@ pub fn run() {
             fonts::list_system_fonts
         ])
         .manage(paste_assets::PasteAssetState::default())
-        .build(tauri::generate_context!())
+        .build(export::app_context::context())
         .expect("error while building oh-my-md")
         .run(|app, event| {
             // macOS "open with"/double-click/Finder-dock drops arrive here.

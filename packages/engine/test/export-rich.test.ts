@@ -299,9 +299,9 @@ describe("exportRichHtml", () => {
 
   it("can use the full render width for native screenshots", async () => {
     const html = await exportRichHtml(makeState("hello"), { fullWidth: true })
-    expect(html).toContain("<style>body{max-width:none}</style>")
+    expect(html).toContain("<style>html,body{max-width:none;overflow-x:hidden}</style>")
     const reading = await exportRichHtml(makeState("hello"))
-    expect(reading).not.toContain("body{max-width:none}")
+    expect(reading).not.toContain("<style>html,body{max-width:none")
   })
 
   it("embeds the KaTeX stylesheet with inlined fonts and no relative font URLs", async () => {
