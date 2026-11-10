@@ -112,20 +112,11 @@ fn build_window(
     // event handler (it can deadlock/fail before the HWND is registered); the
     // builder dispatches CreateWindow to the loop and returns a detached handle.
     let (visible, x, y) = if cfg!(windows) {
-        (true, 0.0, 0.0)
+        (false, 0.0, 0.0)
     } else {
         (true, -20_000.0, -20_000.0)
     };
-    let url = if std::env::var_os("OMD_EXPORT_SMOKE_PLAIN_URL").is_some() {
-        eprintln!("[export-smoke] using plain about:blank URL");
-        WebviewUrl::External(
-            "about:blank"
-                .parse::<tauri::Url>()
-                .map_err(|error| error.to_string())?,
-        )
-    } else {
-        WebviewUrl::CustomProtocol(url)
-    };
+    let url = WebviewUrl::CustomProtocol(url);
     #[allow(unused_mut)]
     let mut builder = WebviewWindowBuilder::new(app, label.to_owned(), url)
         .inner_size(spec.width_css, 600.0)
@@ -145,22 +136,7 @@ fn build_window(
     // and URL messages target the registered instance.
     app.get_webview_window(label)
         .ok_or_else(|| format!("export window {label} was not registered"))
-        .map(|window| {
-            #[cfg(feature = "export-smoke")]
-            {
-                eprintln!(
-                    "[export-smoke] manager handle matches label={}",
-                    window.label()
-                );
-                if let Some(main) = app.get_webview_window("main") {
-                    eprintln!("[export-smoke] main with_webview enter");
-                    main.with_webview(|_| eprintln!("[export-smoke] main with_webview entered"));
-                }
-                window.eval("console.log('export-eval')").ok();
-                eprintln!("[export-smoke] eval sent");
-            }
-            window
-        })
+        .map(|window| window)
 }
 
 /// Parse the JSON emitted by `PROBE_SCRIPT`. WebView2 wraps the expression
