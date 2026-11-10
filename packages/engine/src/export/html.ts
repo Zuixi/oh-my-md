@@ -14,6 +14,7 @@ import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
 import { snapshotReferenceContext, type MarkdownReferenceContext } from "../semantic/references"
 import { createMathHtmlCache } from "./mathHtmlCache"
+import { tableDataFromNode, type TableRowData } from "../tables/model"
 import { EXPORT_BODY_CSS } from "./styles"
 
 const SKIP = new Set([
@@ -119,6 +120,26 @@ function cellNodeHtml(node: CellNode): string {
 }
 
 // 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致；
+/**
+ * Cell sources per row from the shared table model (`tables/model.ts`, the
+ * one the table widget uses). Lezer emits no TableCell node for an empty slot
+ * (`| 1 |  | 3 |`), so walking TableCell children dropped empty cells and
+ * shifted the rest left. Rows are normalized to the delimiter-row column count
+ * (GFM: short rows are padded, extra cells ignored). Null when the model
+ * cannot be built; callers then keep the node walk.
+ */
+function tableGrid(node: SyntaxNode, state: EditorState): { header: string[]; rows: string[][] } | null {
+  const data = tableDataFromNode(node, state)
+  if (!data) return null
+  const width = data.delimiter.cells.length
+  const sources = (row: TableRowData) => Array.from({ length: width }, (_, i) => row.cells[i]?.source.trim() ?? "")
+  return { header: sources(data.header), rows: data.rows.map(sources) }
+}
+
+function cellSourceHtml(source: string, ctx: MarkdownReferenceContext): string {
+  return cellChildrenHtml(parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference }))
+}
+
 // 单元格外的引用定义由导出级的同一份 snapshot context 解析。
 function cellText(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceContext): string {
   return cellChildrenHtml(parseCell(cellSource(node, state), {
@@ -339,6 +360,12 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
     case "Blockquote": return `<blockquote>${children(node, state, ctx)}</blockquote>`
     case "HorizontalRule": return "<hr>"
     case "Table": {
+      const grid = tableGrid(node, state)
+      if (grid) {
+        const row = (cells: string[], tag: "th" | "td") =>
+          `<tr>${cells.map(source => `<${tag}>${cellSourceHtml(source, ctx)}</${tag}>`).join("")}</tr>`
+        return `<table><thead>${row(grid.header, "th")}</thead>${grid.rows.map(cells => row(cells, "td")).join("")}</table>`
+      }
       let html = "<table>"
       for (let child = node.firstChild; child; child = child.nextSibling) {
         if (child.name === "TableHeader") html += `<thead>${renderRow(child, state, "th", ctx)}</thead>`
@@ -496,6 +523,22 @@ function renderRich(
         anchorHtml(parts.href, parts.title, label))
     }
     case "Table": {
+      const grid = tableGrid(node, state)
+      if (grid) {
+        return (async () => {
+          const row = async (cells: string[], tag: "th" | "td") => {
+            let html = "<tr>"
+            for (const source of cells) {
+              const nodes = parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference })
+              html += `<${tag}>${await richCellNodesHtml(nodes, opts)}</${tag}>`
+            }
+            return `${html}</tr>`
+          }
+          let html = `<table><thead>${await row(grid.header, "th")}</thead>`
+          for (const cells of grid.rows) html += await row(cells, "td")
+          return `${html}</table>`
+        })()
+      }
       return (async () => {
         let html = "<table>"
         for (let child = node.firstChild; child; child = child.nextSibling) {
