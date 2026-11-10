@@ -139,14 +139,12 @@ fn build_window(
                     "[export-smoke] manager handle matches label={}",
                     window.label()
                 );
-                if let Some(webview) = app.get_webview(label) {
-                    eprintln!("[export-smoke] raw webview url={:?}", webview.url());
-                    webview.with_webview(|_| {
-                        eprintln!("[export-smoke] raw with_webview entered");
-                    });
-                } else {
-                    eprintln!("[export-smoke] raw webview missing");
+                if let Some(main) = app.get_webview_window("main") {
+                    eprintln!("[export-smoke] main with_webview enter");
+                    main.with_webview(|_| eprintln!("[export-smoke] main with_webview entered"));
                 }
+                window.eval("console.log('export-eval')").ok();
+                eprintln!("[export-smoke] eval sent");
             }
             window
         })
