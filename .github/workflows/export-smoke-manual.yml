@@ -23,5 +23,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OMD_EXPORT_SMOKE_PLAIN_URL=1 cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke 2>&1 | tee smoke.log
+          cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke 2>&1 | tee smoke.log
           grep -q "EXPORT_SMOKE_OK width=1600 height=1200 scale=2" smoke.log
