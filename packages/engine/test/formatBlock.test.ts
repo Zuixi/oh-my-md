@@ -199,6 +199,12 @@ describe("code block", () => {
     expect(next.doc.toString()).toBe("```\npara one\npara two\n```")
   })
 
+  it("wraps only the Lezer paragraph when adjacent to a $$ math block without a blank line", () => {
+    const doc = "intro\n$$E=mc^2$$"
+    const next = run(toggleCodeBlock, doc, { from: 2 })
+    expect(next.doc.toString()).toBe("```\nintro\n```\n$$E=mc^2$$")
+  })
+
   it("round-trips through the selection produced by wrapping", () => {
     const doc = "line one\nline two"
     const on = run(toggleCodeBlock, doc, { from: 0, to: doc.length })

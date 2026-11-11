@@ -107,7 +107,7 @@ export abstract class BlockWidget extends WidgetType {
     view.focus()
   }
   /** 点击不进源码的块（代码块、数学弹窗）由此钩子接管后续交互；默认保持聚焦编辑器。 */
-  protected onWrapClick(view: EditorView, _wrap: HTMLElement): void { view.focus() }
+  protected onWrapClick(view: EditorView, _wrap: HTMLElement, _event: MouseEvent): void { view.focus() }
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
 
@@ -137,7 +137,7 @@ export abstract class BlockWidget extends WidgetType {
       }
       if (!this.enterSourceOnClick()) {
         e.preventDefault()
-        this.onWrapClick(view, wrap)
+        this.onWrapClick(view, wrap, e)
         return
       }
       e.preventDefault()

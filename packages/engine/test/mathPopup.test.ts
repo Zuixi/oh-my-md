@@ -370,4 +370,99 @@ describe("math block popup editor", () => {
     expect(errors.map(String)).toEqual([])
     view.destroy()
   })
+
+  it("stops mousedown inside a quoted math block popup from triggering outer caretClamp and closing the popup", async () => {
+    const quotedDoc = "> $$\n> x+y\n> $$\n\n> tail"
+    const { view, errors } = makeView(quotedDoc)
+    await tick()
+    clickBlock(view)
+    const popup = await waitFor(".omd-math-popup", view) as HTMLElement
+
+    const inner = innerViewOf(view)
+    expect(inner.state.doc.toString()).toBe("x+y")
+
+    const content = contentOf(view)
+    content.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 5,
+      clientY: 5,
+    }))
+    // Popup must stay open and focused even inside a blockquote
+    expect(view.dom.querySelector(".omd-math-popup")).toBe(popup)
+    expect(document.activeElement).toBe(content)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("places the popup caret proportionally to where the math block preview was clicked", async () => {
+    const doc = "$$\nabcdefghij\n$$\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const block = view.dom.querySelector(".omd-math") as HTMLElement
+    const body = block.querySelector(".omd-block-body") as HTMLElement
+    vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      top: 50,
+      width: 200,
+      height: 40,
+      right: 300,
+      bottom: 90,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    block.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 160, // 30% of 200px -> index 3 of 10 chars
+      clientY: 70,
+    }))
+    const inner = innerViewOf(view)
+    expect(inner.state.selection.main.anchor).toBe(3)
+
+    // Clicking again at 80% moves the popup caret to index 8
+    body.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 260,
+      clientY: 70,
+    }))
+    expect(inner.state.selection.main.anchor).toBe(8)
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
+
+  it("clicking an InlineMath widget reveals its source with the caret at the clicked offset", async () => {
+    const doc = "energy $abcdefghij$ here\n\ntail"
+    const { view, errors } = makeView(doc)
+    await tick()
+    const inline = view.dom.querySelector(".omd-inline-math") as HTMLElement
+    expect(inline).toBeTruthy()
+    vi.spyOn(inline, "getBoundingClientRect").mockReturnValue({
+      left: 50,
+      top: 20,
+      width: 100,
+      height: 20,
+      right: 150,
+      bottom: 40,
+      x: 50,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    inline.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 90, // 40% of 100px -> offset 4 inside "abcdefghij" ("energy $".length = 8 -> anchor 12)
+      clientY: 30,
+    }))
+    expect(view.state.selection.main.anchor).toBe(12)
+    expect(view.dom.querySelector(".omd-inline-math")).toBeNull() // unfolded to source
+    expect(errors.map(String)).toEqual([])
+    view.destroy()
+  })
 })

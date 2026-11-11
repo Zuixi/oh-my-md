@@ -33,3 +33,59 @@ test("```lang + Enter mid-document creates the rendered block in place", async (
   expect(text.indexOf("  return 0;")).toBeLessThan(close)
   expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
 })
+
+test("rendered math block popup has a visible caret, click-to-offset placement, and works inside a blockquote", async ({ page }) => {
+  const doc = [
+    "> $$",
+    "> abcdefghij",
+    "> $$",
+    "",
+    "Energy $x+y+z$ formula.",
+    "",
+    "Tail.",
+  ].join("\n")
+  await page.goto(`/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
+
+  const mathBody = page.locator(".omd-math .omd-block-body")
+  await expect(mathBody).toHaveAttribute("data-omd-render", "katex")
+
+  // Click near the left-middle (30%) of the rendered KaTeX formula
+  const box = await mathBody.boundingBox()
+  expect(box).toBeTruthy()
+  await page.mouse.click(box!.x + box!.width * 0.3, box!.y + box!.height * 0.5)
+
+  const popup = page.locator(".omd-math-popup")
+  await expect(popup).toBeVisible()
+
+  // Native caret inside popup must NOT be transparent (tightSelection must not bleed into nested editors)
+  const popupCaretColor = await page.locator(".omd-math-popup .cm-line").first().evaluate(
+    el => getComputedStyle(el).caretColor,
+  )
+  expect(popupCaretColor).not.toBe("rgba(0, 0, 0, 0)")
+  expect(popupCaretColor).not.toBe("transparent")
+
+  // Clicking inside the popup editor keeps the popup open and moves the caret within the popup,
+  // and the popup's .cm-content does NOT inherit the outer editor's 50vh bottom padding!
+  const popupEditor = page.locator(".omd-math-popup .cm-content")
+  const editorBox = await popupEditor.boundingBox()
+  expect(editorBox).toBeTruthy()
+  expect(editorBox!.height).toBeLessThan(60)
+  await page.mouse.click(editorBox!.x + 12, editorBox!.y + editorBox!.height * 0.5)
+  await expect(popup).toBeVisible()
+
+  // Type inside the popup and verify live write-back to the quoted MathBlock
+  await page.keyboard.type("K")
+  const updatedDoc = await page.evaluate(() => window.__view.state.doc.toString())
+  expect(updatedDoc).toMatch(/^> \$\$\n> [a-z]*K[a-z]*\n> \$\$/m)
+
+  // Clicking an inline math widget unfolds it into source at the clicked offset
+  const inlineMath = page.locator(".omd-inline-math")
+  await expect(inlineMath).toBeVisible()
+  const inlineBox = await inlineMath.boundingBox()
+  expect(inlineBox).toBeTruthy()
+  await page.mouse.click(inlineBox!.x + inlineBox!.width * 0.5, inlineBox!.y + inlineBox!.height * 0.5)
+  await expect(inlineMath).toHaveCount(0)
+
+  expect(await page.evaluate(() => window.__harnessErrors)).toEqual([])
+})
+
