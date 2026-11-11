@@ -23,4 +23,14 @@ describe("tables with empty cells", () => {
   it("ignores cells beyond the header width (GFM)", () => {
     expect(grid(exportHtml(makeState("| a |\n|---|\n| 1 | extra |")))).toEqual([["a"], ["1"]])
   })
+
+  it("preserves column alignments on exported th and td elements", async () => {
+    const doc = "| left | center | right | none |\n|:---|:---:|---:|---|\n| 1 | 2 | 3 | 4 |"
+    const aligns = (html: string) =>
+      [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("tr")]
+        .map(tr => [...tr.children].map(cell => cell.getAttribute("align") ?? ""))
+    const expected = [["left", "center", "right", ""], ["left", "center", "right", ""]]
+    expect(aligns(exportHtml(makeState(doc)))).toEqual(expected)
+    expect(aligns(await exportRichHtml(makeState(doc)))).toEqual(expected)
+  })
 })
