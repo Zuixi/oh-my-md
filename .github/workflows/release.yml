@@ -247,8 +247,12 @@ jobs:
           draft: true
           name: "oh-my-md ${{ github.ref_name }}"
           body: |
+            > **Update-channel repair**: The v0.1.4 in-app update was published with a mismatched signature on all platforms — the download completed but verification failed with "The update could not be verified". v0.1.5 publishes a consistent signed update set so users on 0.1.3 and earlier can update in-app again. It carries the same application code as v0.1.4 plus the Smart Paste and long-image export improvements below. If you already installed v0.1.4 manually, you can stay on it and will receive future updates normally.
+
             ## Features
 
+            - **Smart Paste preserves math and code**: Raw LaTeX delimiters (`$$`, `$`, `\[\]`, `\(\)`), MathJax/KaTeX annotations, and Markdown code fences now survive Smart Paste without escaping.
+            - **Smoother, taller image export**: The save dialog opens immediately (closing the menu first) instead of freezing the UI while HTML/KaTeX/Shiki prepare; the long-image height/area budget is 4x larger and GPU capture auto-adapts its scale on ultra-tall documents.
             - **Cross-platform high-DPI PNG export**: Export rendered Markdown documents to PNG on macOS, Windows, and Linux with configurable width, 1x / 2x / 3x pixel density, and user-cancelable native capture (#49).
             - **Math & LaTeX editing overhaul**:
               - Clicking a rendered `$$...$$` math block or `$...$` inline formula jumps the caret to the clicked TeX position (#54).
@@ -272,9 +276,9 @@ jobs:
 
             Download from [GitHub Releases](https://github.com/Zuixi/oh-my-md/releases/tag/${{ github.ref_name }}). Installed `oh-my-md` (`0.1.0+`) supports in-app updates verified with minisign (confirm download, then confirm restart).
 
-            - **macOS (Apple Silicon & Intel Universal)**: `oh-my-md_0.1.4_universal.dmg`
-            - **Windows (x64 NSIS installer)**: `oh-my-md_0.1.4_x64-setup.exe`
-            - **Linux (x64)**: `oh-my-md_0.1.4_amd64.AppImage` / `oh-my-md_0.1.4_amd64.deb` (requires GTK 3 and WebKitGTK 4.1)
+            - **macOS (Apple Silicon & Intel Universal)**: `oh-my-md_0.1.5_universal.dmg`
+            - **Windows (x64 NSIS installer)**: `oh-my-md_0.1.5_x64-setup.exe`
+            - **Linux (x64)**: `oh-my-md_0.1.5_amd64.AppImage` / `oh-my-md_0.1.5_amd64.deb` (requires GTK 3 and WebKitGTK 4.1)
             - **Checksums & Updater**: `SHA256SUMS.txt` · `latest.json`
 
             > **Note on unsigned packages**: These packages are not code-signed yet; macOS Gatekeeper or Windows SmartScreen may prompt on first launch. Verify downloads against `SHA256SUMS.txt`.
@@ -283,8 +287,12 @@ jobs:
 
             ---
 
+            > **更新通道修复**：v0.1.4 的应用内更新在所有平台上发布了不匹配的签名——下载完成后校验失败（"无法验证更新"）。v0.1.5 发布了一套签名一致的更新，0.1.3 及更早版本的用户可以重新通过应用内更新升级。它包含与 v0.1.4 相同的应用代码，以及下列智能粘贴与长图导出改进。如果你已手动安装 v0.1.4，可以继续使用，后续更新不受影响。
+
             ## 新功能 (Features)
 
+            - **智能粘贴保留数学公式与代码**：粘贴富文本时，原始 LaTeX 定界符（`$$`、`$`、`\[\]`、`\(\)`）、MathJax/KaTeX 标注以及 Markdown 代码围栏不再被转义破坏。
+            - **更流畅的长图导出**：导出保存对话框立即弹出（先关闭菜单），不再因 HTML/KaTeX/Shiki 预处理而卡顿；长图高度/面积上限提升 4 倍，超长文档下 GPU 截图自动适配缩放。
             - **跨平台高清 PNG 导出**：支持在 macOS、Windows 和 Linux 上将 Markdown 渲染结果导出为高清 PNG，支持自定义导出宽度、1x / 2x / 3x 倍率选择以及原生任务隨時取消 (#49)。
             - **数学公式（Math / LaTeX）编辑体验全面升级**：
               - 点击渲染后的 `$$...$$` 块级公式或 `$...$` 行内公式，光标自动跳转到点击位置对应的 TeX 源码字符偏移处 (#54)。
@@ -308,9 +316,9 @@ jobs:
 
             从 [GitHub Releases](https://github.com/Zuixi/oh-my-md/releases/tag/${{ github.ref_name }}) 下载。已安装的 `oh-my-md`（`0.1.0+`）支持基于 minisign 签名校验的应用内自动更新（确认下载、确认重启后生效）。
 
-            - **macOS (Apple Silicon & Intel 通用包)**: `oh-my-md_0.1.4_universal.dmg`
-            - **Windows (x64 安装包)**: `oh-my-md_0.1.4_x64-setup.exe`
-            - **Linux (x64)**: `oh-my-md_0.1.4_amd64.AppImage` / `oh-my-md_0.1.4_amd64.deb`（需 GTK 3 与 WebKitGTK 4.1）
+            - **macOS (Apple Silicon & Intel 通用包)**: `oh-my-md_0.1.5_universal.dmg`
+            - **Windows (x64 安装包)**: `oh-my-md_0.1.5_x64-setup.exe`
+            - **Linux (x64)**: `oh-my-md_0.1.5_amd64.AppImage` / `oh-my-md_0.1.5_amd64.deb`（需 GTK 3 与 WebKitGTK 4.1）
             - **校验与更新清单**: `SHA256SUMS.txt` · `latest.json`
 
             感谢 [@berd2](https://github.com/berd2) (HJ Kim)：这次更新里有你的反馈与代码（#50、#51、#52、#53）。所有贡献者见[贡献墙](https://github.com/Zuixi/oh-my-md/graphs/contributors)。
