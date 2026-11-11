@@ -168,3 +168,24 @@ describe("clipboard paste controller", () => {
     expect(store.commit).toHaveBeenCalledWith("batch-2")
   })
 })
+
+describe("plain clipboard text with Windows line endings", () => {
+  it("inserts CRLF text and leaves the caret right after it", async () => {
+    const ctx = setup("tail", EditorSelection.single(0))
+    await pasteFromSystemClipboard(ctx.view, reader(null, "a\r\nb\r\n"), ctx.options)
+    expect(ctx.view.state.doc.toString()).toBe("a\nb\ntail")
+    expect(ctx.view.state.selection.main.head).toBe(4)
+    expect(ctx.errors).toEqual([])
+  })
+
+  it("maps multiple selections with CRLF text and keeps every cursor after its insertion", async () => {
+    const ctx = setup("ab", EditorSelection.create([
+      EditorSelection.cursor(0),
+      EditorSelection.cursor(2),
+    ]))
+    await pasteFromSystemClipboard(ctx.view, reader(null, "x\r\ny"), ctx.options)
+    expect(ctx.view.state.doc.toString()).toBe("x\nyabx\ny")
+    expect(ctx.view.state.selection.ranges.map(r => r.head)).toEqual([3, 8])
+    expect(ctx.errors).toEqual([])
+  })
+})
