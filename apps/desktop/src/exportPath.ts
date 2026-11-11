@@ -1,4 +1,4 @@
-import { baseName, childPath, parentDir } from "./workspace"
+import { baseName, childPath, parentDir, plainPath } from "./workspace"
 
 export type ExportFormat = "html" | "pdf" | "png"
 
@@ -18,11 +18,14 @@ export function exportSaveOptions(format: ExportFormat, sourcePath?: string | nu
 
 function defaultExportPath(format: ExportFormat, sourcePath?: string | null): string {
   if (!sourcePath) return `export.${format}`
-  const dir = parentDir(sourcePath)
-  const name = baseName(sourcePath)
+  // Rust file commands may return Windows verbatim paths (`\\?\C:\...`);
+  // the save dialog wants the user-facing form, not the native prefix.
+  const source = plainPath(sourcePath)
+  const dir = parentDir(source)
+  const name = baseName(source)
   // `baseName` echoes the whole path for a trailing separator; that is a
   // directory, not a document with a reusable stem.
-  if (dir === null || !name || name === sourcePath) return `export.${format}`
+  if (dir === null || !name || name === source) return `export.${format}`
   // Strip only the final extension: `notes.v2.md` keeps `notes.v2`.
   const extensionAt = name.lastIndexOf(".")
   const stem = extensionAt >= 0 ? name.slice(0, extensionAt) : name

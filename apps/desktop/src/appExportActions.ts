@@ -5,8 +5,6 @@ import { ExportImageError } from "./exportImages"
 import { t } from "./i18n"
 import { baseName } from "./workspace"
 
-const REMOTE_IMAGE_RE = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/
-
 export interface ExportRenderOptions {
   width: number
   scale: number
@@ -23,10 +21,6 @@ const DEFAULT_RENDER_OPTIONS: ExportRenderOptions = { width: 800, scale: 2, them
  * correct because each editor window owns its own JS context.
  */
 let exportInFlight = false
-
-export function hasRemoteImages(doc: string): boolean {
-  return REMOTE_IMAGE_RE.test(doc)
-}
 
 function warningMessage(warning: ExportWarning): string {
   if (warning.code === "height-clamped") {
@@ -65,15 +59,20 @@ export async function exportCurrent(
   }
   try {
     stopProgress = services.notifyProgress?.(t("export.progress"))
-    if ((kind === "pdf" || kind === "png") && hasRemoteImages(view.state.doc.toString())) {
-      onNotice?.(t("export.remoteImageWarning"))
-    }
+    const wantsRemoteWarning = kind === "pdf" || kind === "png"
+    let sawRemoteImage = false
     const html = await exportRichHtml(view.state, {
       ...exportOptions,
       customCss,
       theme: renderOptions.theme,
       fullWidth: kind !== "html",
+      onRemoteImage: wantsRemoteWarning
+        ? () => { sawRemoteImage = true }
+        : undefined,
     })
+    // The engine reports remote images while rendering, so reference-style and
+    // table-cell images warn too; a regex over the raw document missed both.
+    if (sawRemoteImage) onNotice?.(t("export.remoteImageWarning"))
     if (kind === "html") {
       const path = await requestExportPath(services, "html", renderOptions.sourcePath)
       if (path) {
@@ -145,6 +144,8 @@ function exportFailureMessage(error: unknown): string {
         return t("export.error.imageTooLarge", { src: error.src })
       case "total-too-large":
         return t("export.error.imagesTotalTooLarge")
+      case "timeout":
+        return t("export.error.imageTimeout", { src: error.src })
     }
   }
   return errorMessage(t("error.export.failed"), error)

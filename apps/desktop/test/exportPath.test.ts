@@ -24,6 +24,12 @@ describe("export save dialog", () => {
     })
   })
 
+  it("strips a Windows verbatim prefix before suggesting a path", () => {
+    expect(exportSaveOptions("png", String.raw`\\?\C:\docs\note.md`).defaultPath).toBe(
+      "C:\\docs\\note.png",
+    )
+  })
+
   it("strips only the final extension", () => {
     expect(exportSaveOptions("png", "/docs/notes.v2.md").defaultPath).toBe(
       "/docs/notes.v2.png",

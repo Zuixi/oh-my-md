@@ -9,6 +9,8 @@ export const EXPORT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
  * and KaTeX CSS.
  */
 export const EXPORT_MAX_TOTAL_IMAGE_BYTES = 16 * 1024 * 1024
+/** A hung network mount must not hold the export (and its single-flight lock) forever. */
+export const EXPORT_IMAGE_FETCH_TIMEOUT_MS = 15_000
 
 export type ExportImageErrorCode =
   | "no-document-path"
@@ -16,6 +18,7 @@ export type ExportImageErrorCode =
   | "not-image"
   | "too-large"
   | "total-too-large"
+  | "timeout"
 
 /**
  * A tagged image failure the export pipeline can turn into an actionable,
@@ -47,6 +50,8 @@ function imageErrorDetail(code: ExportImageErrorCode, src: string): string {
       return `image is too large to embed: ${src}`
     case "total-too-large":
       return `the document's images are too large to embed in one export: ${src}`
+    case "timeout":
+      return `timed out reading image: ${src}`
   }
 }
 
@@ -100,18 +105,26 @@ export function makeExportImageResolver(getDocPath: () => string | null) {
     if (cached) return cached
 
     const pending = (async () => {
-      let response: Response
-      try {
-        response = await fetch(convertFileSrc(absolute))
-      } catch {
-        throw new ExportImageError("read-failed", src)
-      }
-      if (!response.ok) throw new ExportImageError("read-failed", src)
+      const controller = new AbortController()
+      const timer = setTimeout(
+        () => controller.abort(),
+        EXPORT_IMAGE_FETCH_TIMEOUT_MS,
+      )
       let blob: Blob
       try {
+        const response = await fetch(convertFileSrc(absolute), {
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new ExportImageError("read-failed", src)
         blob = await response.blob()
-      } catch {
-        throw new ExportImageError("read-failed", src)
+      } catch (error) {
+        if (error instanceof ExportImageError) throw error
+        throw new ExportImageError(
+          controller.signal.aborted ? "timeout" : "read-failed",
+          src,
+        )
+      } finally {
+        clearTimeout(timer)
       }
       if (!blob.type.startsWith("image/")) {
         throw new ExportImageError("not-image", src)

@@ -169,6 +169,44 @@ describe("exportRichHtml", () => {
     expect(html).not.toContain("![pic][img]")
   })
 
+  it("reports remote images through onRemoteImage, including reference and table images", async () => {
+    const seen: string[] = []
+    const doc = [
+      "![inline](https://a.example/x.png)",
+      "",
+      "![ref][img]",
+      "",
+      "| cell |",
+      "|---|",
+      "| ![table](https://b.example/y.png) |",
+      "",
+      "[img]: https://c.example/z.png",
+    ].join("\n")
+    await exportRichHtml(makeState(doc), { onRemoteImage: src => { seen.push(src) } })
+    expect(seen.sort()).toEqual([
+      "https://a.example/x.png",
+      "https://b.example/y.png",
+      "https://c.example/z.png",
+    ])
+  })
+
+  it("does not report local images as remote", async () => {
+    const seen: string[] = []
+    await exportRichHtml(makeState("![local](./pic.png)"), {
+      resolveImageSrc: src => `file:///resolved/${src}`,
+      onRemoteImage: src => { seen.push(src) },
+    })
+    expect(seen).toEqual([])
+  })
+
+  it("escapes a closing style tag in custom CSS", async () => {
+    const html = await exportRichHtml(makeState("hello"), {
+      customCss: "body{color:red}</style><script>globalThis.pwned=true</script>",
+    })
+    expect(html).not.toContain("</style><script>")
+    expect(html).toContain("<\\/style><script>")
+  })
+
   it("rewrites local relative image src via resolveImageSrc", async () => {
     const doc = "![pic](./pic.png \"P\")"
     const html = await exportRichHtml(makeState(doc), {
@@ -315,6 +353,7 @@ describe("exportRichHtml", () => {
     const html = await exportRichHtml(makeState("hello"))
     expect(html).toContain("document.fonts.ready")
     expect(html).toContain("img.decode()")
+    expect(html).toContain("catch(() => { incomplete = true })")
     expect(html).toContain("4500")
     expect(html).toContain("window.__omdExportIncomplete")
     expect(html).toContain("window.__omdExportHeight")

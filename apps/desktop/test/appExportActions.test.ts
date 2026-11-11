@@ -24,6 +24,16 @@ function makeServices(overrides: Partial<DesktopServices> = {}): DesktopServices
   } as unknown as DesktopServices
 }
 
+const RICH_EXPORT_HTML =
+  '<!doctype html><html><body>rich<script>window.__omdExportReady=true</script></body></html>'
+
+function mockReportedRemoteImage(src: string): void {
+  vi.mocked(exportRichHtml).mockImplementationOnce(async (_state, options) => {
+    options?.onRemoteImage?.(src)
+    return RICH_EXPORT_HTML
+  })
+}
+
 function makeView(doc = ""): EditorView {
   return { state: { doc: { toString: () => doc } } } as unknown as EditorView
 }
@@ -142,6 +152,7 @@ it("threads customCss into exportRichHtml options", async () => {
       pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
     })
     const onNotice = vi.fn()
+    mockReportedRemoteImage("https://example.com/x.png")
     await exportCurrent(services, makeView("![](https://example.com/x.png)"), "pdf", {}, undefined, onNotice)
     expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
@@ -160,6 +171,7 @@ it("threads customCss into exportRichHtml options", async () => {
       pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
     })
     const onNotice = vi.fn()
+    mockReportedRemoteImage("http://example.com/y.png")
     await exportCurrent(services, makeView("text ![](http://example.com/y.png) end"), "png", {}, undefined, onNotice)
     expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
@@ -294,6 +306,7 @@ it("threads customCss into exportRichHtml options", async () => {
       ["not-image", "assets/doc.txt", t("export.error.imageUnsupported", { src: "assets/doc.txt" })],
       ["too-large", "assets/huge.png", t("export.error.imageTooLarge", { src: "assets/huge.png" })],
       ["total-too-large", "assets/c.png", t("export.error.imagesTotalTooLarge")],
+      ["timeout", "assets/hang.png", t("export.error.imageTimeout", { src: "assets/hang.png" })],
     ]
     for (const [code, src, expected] of cases) {
       vi.mocked(exportRichHtml).mockRejectedValueOnce(new ExportImageError(code, src))

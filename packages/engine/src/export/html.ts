@@ -71,7 +71,11 @@ function imageHtml(src: string, alt: string, title: string | null): string {
 // never inlined. Resolution is async so hosts can read local files into data URLs.
 async function richImageSrc(src: string, opts: ExportRichHtmlOptions): Promise<string> {
   const isRemote = /^https?:\/\//i.test(src)
-  if (isRemote || !opts.resolveImageSrc) return src
+  if (isRemote) {
+    opts.onRemoteImage?.(src)
+    return src
+  }
+  if (!opts.resolveImageSrc) return src
   return (await opts.resolveImageSrc(src)) ?? src
 }
 
@@ -410,6 +414,8 @@ export interface ExportRichHtmlOptions {
   fullWidth?: boolean
   /** User custom CSS, appended after the base typography so it wins. */
   customCss?: string
+  /** Called once per http(s) image so native hosts can warn before capture. */
+  onRemoteImage?: (src: string) => void
 }
 
 const mathHtmlCache = createMathHtmlCache()
@@ -599,13 +605,22 @@ const EXPORT_READY_SCRIPT = `<script>(async () => {
   let incomplete = false
   const waits = []
   if (document.fonts && document.fonts.ready) waits.push(document.fonts.ready.catch(() => {}))
-  for (const img of document.images) waits.push(img.decode().catch(() => {}))
+  for (const img of document.images) {
+    // A failed decode means the exported image is missing content even though
+    // it resolves quickly; surface it as partial instead of a clean success.
+    waits.push(Promise.resolve().then(() => img.decode()).catch(() => { incomplete = true }))
+  }
   const timeout = new Promise(resolve => setTimeout(() => { incomplete = true; resolve() }, 4500))
   await Promise.race([Promise.all(waits), timeout])
   window.__omdExportIncomplete = incomplete
   window.__omdExportReady = true
   window.__omdExportHeight = Math.max(document.documentElement?.scrollHeight ?? 0, document.body?.scrollHeight ?? 0)
 })()</script>`
+
+/** Prevent user CSS from closing the style element and injecting markup. */
+function escapeStyleText(css: string): string {
+  return css.replace(/<\/style/gi, "<\\/style")
+}
 
 export async function exportRichHtml(
   state: EditorState,
@@ -620,7 +635,9 @@ export async function exportRichHtml(
   // KaTeX first so both the base typography and user CSS can override it.
   const katexStyle = katexCss ? `<style>${katexCss}</style>` : ""
   const baseStyle = `<style>${EXPORT_BODY_CSS}</style>`
-  const customStyle = options.customCss ? `<style>${options.customCss}</style>` : ""
+  const customStyle = options.customCss
+    ? `<style>${escapeStyleText(options.customCss)}</style>`
+    : ""
   const widthStyle = options.fullWidth
     ? "<style>html,body{max-width:none;overflow-x:hidden}</style>"
     : ""

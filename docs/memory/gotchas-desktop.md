@@ -601,6 +601,10 @@ WebView2, Linux WebKitGTK), so the document must be self-contained and determini
   a 2/2/3 px line respectively.
 - Height limits are reported (`height-clamped`), never silently truncated. PDF is bounded by
   the PDF page limit; PNG by the RGBA area budget and the 16383 px side ceiling.
+- Custom CSS is interpolated into a `<style>` element in the exported document. Escape every
+  case-insensitive `</style` as `<\/style`; otherwise user CSS can close the element and inject
+  markup/script into the export webview (whose CSP currently allows inline scripts). Markdown
+  content itself is escaped, but custom CSS is not Markdown.
 - Windows WebView2 shares one user-data directory across all windows, so every webview must be
   created with the same `additionalBrowserArgs`. The main window sets them in `tauri.conf.json`
   (`HideCursorWhileTyping` etc.); `export_host.rs` passes the identical list through

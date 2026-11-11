@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  EXPORT_IMAGE_FETCH_TIMEOUT_MS,
   EXPORT_MAX_IMAGE_BYTES,
   EXPORT_MAX_TOTAL_IMAGE_BYTES,
   ExportImageError,
@@ -65,7 +66,10 @@ describe("makeExportImageResolver", () => {
     expect(first).toMatch(/^data:image\/png;base64,/)
     expect(second).toBe(first)
     expect(fetchMock).toHaveBeenCalledOnce()
-    expect(fetchMock).toHaveBeenCalledWith("asset://localhost/docs/assets/pic.png")
+    expect(fetchMock).toHaveBeenCalledWith(
+      "asset://localhost/docs/assets/pic.png",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 
   it("leaves data and remote images untouched", async () => {
@@ -106,7 +110,10 @@ describe("makeExportImageResolver", () => {
     vi.stubGlobal("fetch", fetchMock)
     const resolve = makeExportImageResolver(() => null)
     await expect(resolve("/tmp/pic.png")).resolves.toMatch(/^data:image\/png;base64,/)
-    expect(fetchMock).toHaveBeenCalledWith("asset://localhost/tmp/pic.png")
+    expect(fetchMock).toHaveBeenCalledWith(
+      "asset://localhost/tmp/pic.png",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 
   it("rejects a failed read with a tagged error", async () => {
@@ -117,6 +124,32 @@ describe("makeExportImageResolver", () => {
       src: "assets/missing.png",
     })
     await expect(resolve("assets/missing.png")).rejects.toThrow(/failed to read image/)
+  })
+
+  it("times out a hung image read instead of holding the export forever", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new Error("aborted"))
+            })
+          }),
+        ),
+      )
+      const resolve = makeExportImageResolver(() => "/docs/note.md")
+      const pending = resolve("assets/hang.png")
+      const assertion = expect(pending).rejects.toMatchObject({
+        code: "timeout",
+        src: "assets/hang.png",
+      })
+      await vi.advanceTimersByTimeAsync(EXPORT_IMAGE_FETCH_TIMEOUT_MS)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("rejects a network-level read failure with a tagged error", async () => {

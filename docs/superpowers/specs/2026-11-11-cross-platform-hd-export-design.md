@@ -38,12 +38,14 @@ Windows 共享 WebView2 user-data 目录，所有 webview 必须使用与主窗�
 - 前端同一时刻只允许一个导出；进度 toast 在整个准备/渲染期间保持，结束或失败后关闭。
 - 保存对话框默认建议文档同目录、同 stem 的文件（`note.md → note.png`）；未保存草稿使用 `export.<format>`。
 - 未保存文档中的相对图片无法解析时直接报错，提示先保存，避免产出缺图的“成功”文件。
-- 本地图片读取失败、非图片、单图/总量超限使用带 `src` 的结构化错误，前端本地化展示。
+- 本地图片读取失败、非图片、单图/总量超限、读取超时使用带 `src` 的结构化错误，前端本地化展示。每次图片读取有 15 s 超时，避免网络盘挂起时永久占用导出单飞锁。
+- 远程图片由引擎在渲染时通过 `onRemoteImage` 上报（含引用式与表格内图片）；页面内图片解码失败会置 `__omdExportIncomplete`，以 `partial-render` 告警而不是静默缺图。
+- 自定义 CSS 中的 `</style` 必须转义，防止用户 CSS 提前关闭样式元素并注入标记；导出窗口 CSP 不应被视为隔离边界。
 - `height-clamped` / `partial-render` 时文件已写入，使用警告 toast，不伪装成失败；其他错误才走红错误 toast。
 - macOS 导出在 20 s 主队列 deadline 关闭离屏窗口并从活跃集合移除 delegate；22 s 通道超时仅作后备，不缩短既有导出时限。
 
 ## 验证
 
 - CI 三平台冒烟：同一 `export-smoke` 二进制调用真实的 `export_preview` 命令体（路径校验、原子写入、平台后端）并输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`；Linux 在 Xvfb + dbus 下运行。
-- 单元测试：尺寸/夹取、Windows CDP 参数与 PNG 解码、Linux 缩放数学、路径/格式校验、HTML 体积、WebView2 参数漂移。
+- 单元测试：尺寸/夹取、Windows CDP 参数与 PNG 解码、Linux 缩放数学、路径/格式校验、HTML 体积、图片读取超时/解码失败告警、自定义 CSS 转义、TS↔Rust 导出限制漂移、WebView2 参数漂移。
 - 人工：`docs/manual-qa.md` 的高清 PNG 清单，重点看 1 CSS px 线条在 2x/3x 下的像素宽度、长文档截断告警、三平台菜单与错误提示。

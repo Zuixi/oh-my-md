@@ -362,6 +362,7 @@ export const zh: Record<string, string> = {
   "export.error.imageUnsupported": "{src} 不是受支持的图片文件。",
   "export.error.imageTooLarge": "图片 {src} 过大，无法在一次导出中内嵌。",
   "export.error.imagesTotalTooLarge": "文档中的图片总大小过大，无法在一次导出中内嵌。",
+  "export.error.imageTimeout": "读取图片 {src} 超时，请确认文件或网络磁盘仍然可用。",
   "error.export.diagnosticsFailed": "诊断信息导出失败",
   "error.restart.failed": "重启失败",
   "error.restart.settingsNotSaved": "日志设置无法保存到磁盘，因此没有重启 oh-my-md。",

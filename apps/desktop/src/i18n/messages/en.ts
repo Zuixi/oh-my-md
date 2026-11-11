@@ -362,6 +362,7 @@ export const en: Record<string, string> = {
   "export.error.imageUnsupported": "{src} is not a supported image file.",
   "export.error.imageTooLarge": "Image {src} is too large to embed in one export.",
   "export.error.imagesTotalTooLarge": "The document's images are too large to embed in one export.",
+  "export.error.imageTimeout": "Timed out reading image {src}. Check that the file or network drive is still available.",
   "error.export.diagnosticsFailed": "Diagnostics export failed",
   "error.restart.failed": "Restart failed",
   "error.restart.settingsNotSaved": "The logging setting could not be saved to disk, so oh-my-md was not restarted.",

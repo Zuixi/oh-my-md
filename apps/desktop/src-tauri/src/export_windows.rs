@@ -153,7 +153,9 @@ fn require_png(bytes: &[u8], expected_width: u32, expected_height: u32) -> Resul
         ));
     }
     let height = u32::from_be_bytes(bytes[20..24].try_into().expect("PNG height slice"));
-    if height != expected_height {
+    // One pixel of rounding slack matches the Linux check. More than that is a
+    // real truncation (or a stale/incorrect clip), not renderer noise.
+    if height.abs_diff(expected_height) > 1 {
         return Err(format!(
             "WebView2 screenshot is {} px tall, expected {} px; the document would be truncated",
             height, expected_height
@@ -231,6 +233,11 @@ mod tests {
     #[test]
     fn require_png_accepts_the_requested_size() {
         assert!(require_png(&png_header(1600, 2400), 1600, 2400).is_ok());
+    }
+
+    #[test]
+    fn require_png_accepts_one_pixel_of_height_rounding() {
+        assert!(require_png(&png_header(1600, 2399), 1600, 2400).is_ok());
     }
 
     #[test]
