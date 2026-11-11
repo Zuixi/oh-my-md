@@ -247,16 +247,73 @@ jobs:
           draft: true
           name: "oh-my-md ${{ github.ref_name }}"
           body: |
-            ## Unsigned preview packages
+            ## Features
 
-            These macOS, Windows, and Linux packages are unsigned. macOS
-            Gatekeeper, Windows SmartScreen, or Linux desktop security may warn
-            before first launch. Verify downloads against `SHA256SUMS.txt`.
+            - **Cross-platform high-DPI PNG export**: Export rendered Markdown documents to PNG on macOS, Windows, and Linux with configurable width, 1x / 2x / 3x pixel density, and user-cancelable native capture (#49).
+            - **Math & LaTeX editing overhaul**:
+              - Clicking a rendered `$$...$$` math block or `$...$` inline formula jumps the caret to the clicked TeX position (#54).
+              - Typing `$$` (including inside blockquotes `> $$`) and pressing `Enter` auto-completes the closing `$$` fence and places the caret on the inner line (#54).
+              - Added `Mod-Enter` / `Shift-Enter` shortcuts to close the math popup editor and return focus to the document (#54).
 
-            The `latest.json` manifest and per-platform `.sig` files are the
-            signed candidate updater set. They ship with the Release but are
-            not promoted to the stable endpoint until the protected manual
-            workflow publishes them.
+            ## Bug Fixes
+
+            - Let a line starting with `$$` interrupt a running paragraph without requiring a blank line, and keep `toggleCodeBlock` bounded to the active paragraph (#53, #54).
+            - Restored visible carets/selections, compact popup height, and stable focus when clicking or pasting inside the `.omd-math-popup` LaTeX editor, including inside blockquotes and lists (#54).
+            - Strip and restore `> ` prefixes for multi-line math blocks inside blockquotes across live preview, popup editing, and HTML export (#54).
+            - Preserve empty GFM table cells and column alignment (`align="..."`) in synchronous and rich HTML exports (#50).
+            - Preserve custom ordered-list start numbers (`<ol start="N">`) in synchronous and rich HTML exports (#51).
+            - Normalize Windows CRLF/CR line endings before computing single- and multi-cursor caret offsets during plain-text paste (#52).
+
+            ## Documentation
+
+            - Updated English and Chinese READMEs (`README.md`, `README-zh.md`), manual QA checklists (`docs/manual-qa.md`), and cross-platform high-DPI export design specs.
+
+            ## Install
+
+            Download from [GitHub Releases](https://github.com/Zuixi/oh-my-md/releases/tag/${{ github.ref_name }}). Installed `oh-my-md` (`0.1.0+`) supports in-app updates verified with minisign (confirm download, then confirm restart).
+
+            - **macOS (Apple Silicon & Intel Universal)**: `oh-my-md_0.1.4_universal.dmg`
+            - **Windows (x64 NSIS installer)**: `oh-my-md_0.1.4_x64-setup.exe`
+            - **Linux (x64)**: `oh-my-md_0.1.4_amd64.AppImage` / `oh-my-md_0.1.4_amd64.deb` (requires GTK 3 and WebKitGTK 4.1)
+            - **Checksums & Updater**: `SHA256SUMS.txt` · `latest.json`
+
+            > **Note on unsigned packages**: These packages are not code-signed yet; macOS Gatekeeper or Windows SmartScreen may prompt on first launch. Verify downloads against `SHA256SUMS.txt`.
+
+            Thanks to [@berd2](https://github.com/berd2) (HJ Kim), whose reports and code went into this release (#50, #51, #52, #53). Everyone who helped: [contributors](https://github.com/Zuixi/oh-my-md/graphs/contributors).
+
+            ---
+
+            ## 新功能 (Features)
+
+            - **跨平台高清 PNG 导出**：支持在 macOS、Windows 和 Linux 上将 Markdown 渲染结果导出为高清 PNG，支持自定义导出宽度、1x / 2x / 3x 倍率选择以及原生任务隨時取消 (#49)。
+            - **数学公式（Math / LaTeX）编辑体验全面升级**：
+              - 点击渲染后的 `$$...$$` 块级公式或 `$...$` 行内公式，光标自动跳转到点击位置对应的 TeX 源码字符偏移处 (#54)。
+              - 输入 `$$`（含引用块内 `> $$`）后按 `Enter` 自动补全闭合 `$$` 围栏并将光标置于中间编辑行 (#54)。
+              - 公式弹窗支持 `Mod-Enter` / `Shift-Enter` 快捷收起并返回正文焦点 (#54)。
+
+            ## 问题修复 (Bug Fixes)
+
+            - 支持以 `$$` 开头的公式块直接打断上文段落而无需空行，并修复紧邻公式块时代码块切换的范围边界 (#53, #54)。
+            - 修复 `.omd-math-popup` 公式弹窗内光标/选区不可见、弹窗底部继承外层 `50vh` 留白，以及在引用块/列表内点击弹窗导致失焦关闭的问题 (#54)。
+            - 支持引用块内多行数学公式（`> $$\n> ...\n> $$`）在实时预览、弹窗编辑与 HTML 导出中自动剥离与还原 `> ` 前缀 (#54)。
+            - 修复 HTML 导出（同步与富文本）中 GFM 表格空单元格丢失及列对齐属性（`align="..."`）未保留的问题 (#50)。
+            - 修复 HTML 导出中非 1 起始的有序列表编号（`<ol start="N">`）丢失的问题 (#51)。
+            - 修复粘贴含 Windows `CRLF` 换行符的纯文本时单光标与多光标偏移计算越界的问题 (#52)。
+
+            ## 文档 (Documentation)
+
+            - 更新中英文说明文档（`README.md`、`README-zh.md`）、手动验收清单（`docs/manual-qa.md`）与跨平台高清导出设计规范。
+
+            ## 安装 (Install)
+
+            从 [GitHub Releases](https://github.com/Zuixi/oh-my-md/releases/tag/${{ github.ref_name }}) 下载。已安装的 `oh-my-md`（`0.1.0+`）支持基于 minisign 签名校验的应用内自动更新（确认下载、确认重启后生效）。
+
+            - **macOS (Apple Silicon & Intel 通用包)**: `oh-my-md_0.1.4_universal.dmg`
+            - **Windows (x64 安装包)**: `oh-my-md_0.1.4_x64-setup.exe`
+            - **Linux (x64)**: `oh-my-md_0.1.4_amd64.AppImage` / `oh-my-md_0.1.4_amd64.deb`（需 GTK 3 与 WebKitGTK 4.1）
+            - **校验与更新清单**: `SHA256SUMS.txt` · `latest.json`
+
+            感谢 [@berd2](https://github.com/berd2) (HJ Kim)：这次更新里有你的反馈与代码（#50、#51、#52、#53）。所有贡献者见[贡献墙](https://github.com/Zuixi/oh-my-md/graphs/contributors)。
 
             ## Upgrading from an MSI install?
 

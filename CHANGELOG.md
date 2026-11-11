@@ -2,11 +2,62 @@
 
 All notable changes to this project are documented here, generated from conventional commits.
 
+## v0.1.4 - 2026-11-11
+
+### Bug Fixes
+
+- Keep empty GFM table cells in HTML export (332fcf6)
+- Compile Linux smoke tests and retry Windows capture (cb3cb09)
+- Dispatch WebView2 callbacks from the main thread (1f99219)
+- Create the Windows export window hidden at the origin (4236984)
+- Build the Windows export window from the worker thread (cbcefb0)
+- Resolve the registered export window from the manager (13750b7)
+- Share WebView2 browser args with the export window (689bba2)
+- Drop the unused export window handle (86bf728)
+- Close export hardening gaps (517494b)
+- Preserve GFM table column alignment in HTML export (3216d42)
+- Keep ordered list start numbers in HTML export (5648d18)
+- Compute the plain-paste caret from normalized line breaks (8261acd)
+- Normalize CRLF and map multi-cursor carets across plain paste (70a433e)
+- Overhaul math editing UX and let $$ interrupt paragraphs (2d8d7b1)
+### CI
+
+- Run the Windows export smoke on the 2022 runner (f8b93ff)
+### Chores
+
+- Remove temporary Windows export diagnostics (7fe3a94)
+- Resolve PR 50 against main (8aee7dd)
+### Features
+
+- Add cross-platform high-DPI PNG capture (a9f8bb9)
+- Verify native exports on all three platforms (65557c4)
+- Harden cross-platform PNG export UX and capture checks (6b1c18e)
+- Add user-cancelable export with native cancellation (c2c64e4)
+### Testing
+
+- Diagnose Windows export window registration (8192f9c)
+- Start the export smoke after the event loop is ready (ba62099)
+- Expose WebView2 window creation errors (c857109)
+- Trigger the manual smoke workflow on the feature branch (5efc61f)
+- Log the main window runtime state (bf954ef)
+- Log window registration after creation (6ca535a)
+- Isolate the Windows custom protocol (deebb14)
+- Annotate the plain smoke URL type (d14d9ee)
+- Show the plain Windows export window (13538f2)
+- Probe the raw webview handle (f3045f6)
+- Compare main with_webview and export eval (d0819e1)
+- Run the custom protocol with shared browser args (f3cae35)
+- Run the Windows smoke on the custom protocol (f3ba964)
+- Guard WebView2 browser args against config drift (1e7398f)
+- Avoid reading the uncommitted macOS main URL (99122d0)
 ## v0.1.3 - 2026-11-10
 
 ### CI
 
 - Update release macOS runner to macos-latest (e17ed4c)
+### Chores
+
+- Prepare v0.1.3 release (e534cd6)
 ## v0.1.2 - 2026-11-10
 
 ### Bug Fixes
