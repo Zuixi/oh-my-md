@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here, generated from conventional commits.
 
+## v0.1.5 - 2026-11-11
+
+### Chores
+
+- Bump version to 0.1.5 (aab18b4)
+- Update v0.1.5 release notes (a3491dd)
 ## v0.1.4 - 2026-11-11
 
 ### Bug Fixes
@@ -27,12 +33,14 @@ All notable changes to this project are documented here, generated from conventi
 
 - Remove temporary Windows export diagnostics (7fe3a94)
 - Resolve PR 50 against main (8aee7dd)
+- Prepare v0.1.4 release (b74174a)
 ### Features
 
 - Add cross-platform high-DPI PNG capture (a9f8bb9)
 - Verify native exports on all three platforms (65557c4)
 - Harden cross-platform PNG export UX and capture checks (6b1c18e)
 - Add user-cancelable export with native cancellation (c2c64e4)
+- Smart paste math/fence preservation and instant long-image export (c46e313)
 ### Testing
 
 - Diagnose Windows export window registration (8192f9c)
