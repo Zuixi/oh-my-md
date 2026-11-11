@@ -14,6 +14,7 @@ import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
 import { snapshotReferenceContext, type MarkdownReferenceContext } from "../semantic/references"
 import { createMathHtmlCache } from "./mathHtmlCache"
+import { tableDataFromNode, type TableAlignment, type TableRowData } from "../tables/model"
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
 
@@ -79,11 +80,6 @@ async function richImageSrc(src: string, opts: ExportRichHtmlOptions): Promise<s
   return (await opts.resolveImageSrc(src)) ?? src
 }
 
-// 每个 cell 都按 GFM 表格语义解析：表格层已经吃掉了 `\|` 的屏蔽反斜杠。
-function cellSource(node: SyntaxNode, state: EditorState): string {
-  return state.doc.sliceString(node.from, node.to).trim()
-}
-
 function fencedText(node: SyntaxNode, state: EditorState): string {
   const parts: string[] = []
   for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -124,13 +120,35 @@ function cellNodeHtml(node: CellNode): string {
   }
 }
 
+interface ExportTableGrid {
+  readonly header: string[]
+  readonly rows: string[][]
+  readonly aligns: readonly TableAlignment[]
+}
+
+/**
+ * Cell sources per row from the shared table model (`tables/model.ts`, the
+ * one the table widget uses). Lezer emits no TableCell node for an empty slot
+ * (`| 1 |  | 3 |`), so walking TableCell children dropped empty cells and
+ * shifted the rest left. Rows are normalized to the delimiter-row column count
+ * (GFM: short rows are padded, extra cells ignored).
+ */
+function tableGrid(node: SyntaxNode, state: EditorState): ExportTableGrid | null {
+  const data = tableDataFromNode(node, state)
+  if (!data) return null
+  const width = data.delimiter.cells.length
+  const sources = (row: TableRowData) => Array.from({ length: width }, (_, i) => row.cells[i]?.source.trim() ?? "")
+  return { header: sources(data.header), rows: data.rows.map(sources), aligns: data.aligns }
+}
+
+function alignAttr(align: TableAlignment | undefined): string {
+  return align ? ` align="${align}"` : ""
+}
+
 // 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致；
 // 单元格外的引用定义由导出级的同一份 snapshot context 解析。
-function cellText(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceContext): string {
-  return cellChildrenHtml(parseCell(cellSource(node, state), {
-    pipeEscapes: "gfm-table",
-    resolveReference: ctx.resolveReference,
-  }))
+function cellSourceHtml(source: string, ctx: MarkdownReferenceContext): string {
+  return cellChildrenHtml(parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference }))
 }
 
 // rich 版的同一份 CellNode 投影：语义与同步导出一致，只有两处不同 —— cell 数学
@@ -175,28 +193,6 @@ async function richCellNodesHtml(
   return html
 }
 
-async function richRowHtml(
-  node: SyntaxNode,
-  state: EditorState,
-  cell: "th" | "td",
-  opts: ExportRichHtmlOptions,
-  ctx: MarkdownReferenceContext,
-): Promise<string> {
-  let html = "<tr>"
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name !== "TableCell") continue
-    const content = await richCellNodesHtml(
-      parseCell(cellSource(child, state), {
-        pipeEscapes: "gfm-table",
-        resolveReference: ctx.resolveReference,
-      }),
-      opts,
-    )
-    html += `<${cell}>${content}</${cell}>`
-  }
-  return `${html}</tr>`
-}
-
 // 链接可见文本：autolink 取语义层给的文本，普通链接渲染 label 区间内的格式化内容。
 function labelHtml(
   node: SyntaxNode,
@@ -206,19 +202,6 @@ function labelHtml(
 ): string {
   if (parts.kind === "autolink") return escapeHtml(parts.text)
   return children(node, state, ctx, parts.labelFrom, parts.labelTo)
-}
-
-function renderRow(
-  node: SyntaxNode,
-  state: EditorState,
-  cell: "th" | "td",
-  ctx: MarkdownReferenceContext,
-): string {
-  let html = "<tr>"
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "TableCell") html += `<${cell}>${cellText(child, state, ctx)}</${cell}>`
-  }
-  return `${html}</tr>`
 }
 
 function complexInlineHtml(
@@ -373,12 +356,11 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
     case "Blockquote": return `<blockquote>${children(node, state, ctx)}</blockquote>`
     case "HorizontalRule": return "<hr>"
     case "Table": {
-      let html = "<table>"
-      for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (child.name === "TableHeader") html += `<thead>${renderRow(child, state, "th", ctx)}</thead>`
-        if (child.name === "TableRow") html += renderRow(child, state, "td", ctx)
-      }
-      return `${html}</table>`
+      const grid = tableGrid(node, state)
+      if (!grid) return escapeHtml(state.doc.sliceString(node.from, node.to))
+      const row = (cells: string[], tag: "th" | "td") =>
+        `<tr>${cells.map((source, i) => `<${tag}${alignAttr(grid.aligns[i])}>${cellSourceHtml(source, ctx)}</${tag}>`).join("")}</tr>`
+      return `<table><thead>${row(grid.header, "th")}</thead>${grid.rows.map(cells => row(cells, "td")).join("")}</table>`
     }
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
@@ -538,12 +520,19 @@ function renderRich(
         anchorHtml(parts.href, parts.title, label))
     }
     case "Table": {
+      const grid = tableGrid(node, state)
+      if (!grid) return escapeHtml(state.doc.sliceString(node.from, node.to))
       return (async () => {
-        let html = "<table>"
-        for (let child = node.firstChild; child; child = child.nextSibling) {
-          if (child.name === "TableHeader") html += `<thead>${await richRowHtml(child, state, "th", opts, ctx)}</thead>`
-          if (child.name === "TableRow") html += await richRowHtml(child, state, "td", opts, ctx)
+        const row = async (cells: string[], tag: "th" | "td") => {
+          let html = "<tr>"
+          for (const [i, source] of cells.entries()) {
+            const nodes = parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference })
+            html += `<${tag}${alignAttr(grid.aligns[i])}>${await richCellNodesHtml(nodes, opts)}</${tag}>`
+          }
+          return `${html}</tr>`
         }
+        let html = `<table><thead>${await row(grid.header, "th")}</thead>`
+        for (const cells of grid.rows) html += await row(cells, "td")
         return `${html}</table>`
       })()
     }
