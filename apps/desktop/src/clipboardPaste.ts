@@ -17,6 +17,7 @@ import {
 import type { ImagePasteOptions } from "./imagePaste"
 import { fileToPasteAsset, nativePasteAssetStore } from "./pasteAssets"
 import { runPasteJob, type PasteJobOptions, type PasteJobTarget } from "./pasteJob"
+import { dispatchPlainTextRanges } from "./pastePlainText"
 import { isWindows } from "./platform"
 import { t } from "./i18n"
 import { SMART_PASTE_STATUS_CHARS } from "./constants"
@@ -240,18 +241,7 @@ function shouldUsePlainText(view: EditorView): boolean {
 }
 
 function dispatchText(view: EditorView, target: Extract<PasteJobTarget, { kind: "active" }>, raw: string): void {
-  // CodeMirror stores CRLF/CR as LF; computing the caret from the raw length
-  // (Windows clipboard text) would point past the inserted text, or past the
-  // document end and throw.
-  const text = raw.replace(/\r\n?/g, "\n")
-  if (!text) return
-  const changes = target.ranges.map(range => ({ from: range.from, to: range.to, insert: text }))
-  view.dispatch({
-    changes,
-    selection: { anchor: changes[changes.length - 1].from + text.length },
-    userEvent: "input.paste",
-    scrollIntoView: true,
-  })
+  dispatchPlainTextRanges(view, target, raw)
 }
 
 function dispatchPlan(view: EditorView, range: { readonly from: number; readonly to: number }, plan: SmartPastePlan): void {

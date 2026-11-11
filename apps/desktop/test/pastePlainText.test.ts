@@ -97,4 +97,13 @@ describe("pastePlainText", () => {
     await pastePlainText(ctx.view, ctx.options)
     expect(ctx.view.state.doc.toString()).toBe("abXef")
   })
+
+  it("normalizes CRLF line endings so pasting at document end keeps the caret in bounds", async () => {
+    stub("a\r\nb\r\n")
+    const ctx = setup("tail", EditorSelection.single(4))
+    await pastePlainText(ctx.view, ctx.options)
+    expect(ctx.view.state.doc.toString()).toBe("taila\nb\n")
+    expect(ctx.view.state.selection.main.head).toBe(8)
+    expect(ctx.errors).toEqual([])
+  })
 })
