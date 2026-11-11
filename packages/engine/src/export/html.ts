@@ -14,6 +14,7 @@ import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
 import { snapshotReferenceContext, type MarkdownReferenceContext } from "../semantic/references"
 import { createMathHtmlCache } from "./mathHtmlCache"
+import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
 
 const SKIP = new Set([
@@ -67,10 +68,15 @@ function imageHtml(src: string, alt: string, title: string | null): string {
 }
 
 // Rich export rewrites only local relative paths: remote http/https images are
-// never inlined.
-function richImageSrc(src: string, opts: ExportRichHtmlOptions): string {
+// never inlined. Resolution is async so hosts can read local files into data URLs.
+async function richImageSrc(src: string, opts: ExportRichHtmlOptions): Promise<string> {
   const isRemote = /^https?:\/\//i.test(src)
-  return (!isRemote && opts.resolveImageSrc) ? (opts.resolveImageSrc(src) ?? src) : src
+  if (isRemote) {
+    opts.onRemoteImage?.(src)
+    return src
+  }
+  if (!opts.resolveImageSrc) return src
+  return (await opts.resolveImageSrc(src)) ?? src
 }
 
 // 每个 cell 都按 GFM 表格语义解析：表格层已经吃掉了 `\|` 的屏蔽反斜杠。
@@ -148,7 +154,7 @@ function richCellNodeHtml(
     case "link":
       return richCellNodesHtml(node.children, opts).then(s =>
         `<a href="${escapeHtml(node.href)}"${titleAttr(node.title)}>${s}</a>`)
-    case "image": return imageHtml(richImageSrc(node.src, opts), node.alt, node.title)
+    case "image": return richImageSrc(node.src, opts).then(s => imageHtml(s, node.alt, node.title))
     case "br": return "<br>"
     case "hr": return "<hr>"
     case "ul": return richCellNodesHtml(node.children, opts).then(s => `<ul>${s}</ul>`)
@@ -278,6 +284,34 @@ function renderComplexTableHtml(
   return `<table>${thead}${tbody}</table>`
 }
 
+// renderComplexTableHtml stays sync by design: collect every image src from the
+// parsed model, await the (possibly async) host resolver, then hand the renderer
+// a pure Map-backed lookup so it keeps its synchronous shape.
+async function renderComplexTableHtmlWithImages(
+  model: ComplexTableModel,
+  opts: ExportRichHtmlOptions,
+): Promise<string> {
+  const srcs = collectComplexImageSrcs(model)
+  const resolved = new Map<string, string>()
+  await Promise.all(srcs.map(async (src) => {
+    resolved.set(src, await richImageSrc(src, opts))
+  }))
+  return renderComplexTableHtml(model, src => resolved.get(src) ?? src)
+}
+
+function collectComplexImageSrcs(model: ComplexTableModel): string[] {
+  const srcs: string[] = []
+  for (const row of model.rows) for (const cell of row) collectInlineImageSrcs(cell.children, srcs)
+  return srcs
+}
+
+function collectInlineImageSrcs(nodes: readonly ComplexTableInline[], out: string[]): void {
+  for (const node of nodes) {
+    if (node.type === "image") out.push(node.src)
+    if ("children" in node) collectInlineImageSrcs(node.children, out)
+  }
+}
+
 function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceContext): string {
   if (SKIP.has(node.name)) return ""
   switch (node.name) {
@@ -372,9 +406,16 @@ export function exportHtml(state: EditorState): string {
 // ---------------------------------------------------------------------------
 
 export interface ExportRichHtmlOptions {
-  resolveImageSrc?: (src: string) => string
+  /** Local image resolver; may return a promise (e.g. to read the file first). */
+  resolveImageSrc?: (src: string) => string | Promise<string>
+  /** Explicit export theme; drives the data-omd-theme/data-theme root attributes. */
+  theme?: "light" | "dark"
+  /** Use the full render width instead of the 720px reading column (native screenshots). */
+  fullWidth?: boolean
   /** User custom CSS, appended after the base typography so it wins. */
   customCss?: string
+  /** Called once per http(s) image so native hosts can warn before capture. */
+  onRemoteImage?: (src: string) => void
 }
 
 const mathHtmlCache = createMathHtmlCache()
@@ -395,15 +436,16 @@ async function renderMathHtml(tex: string, displayMode: boolean): Promise<string
 
 let _mermaidCounter = 0
 
-let _mermaidInitialized = false
-
-async function renderMermaidHtml(src: string): Promise<string> {
+async function renderMermaidHtml(src: string, theme: "light" | "dark"): Promise<string> {
   try {
     const mermaid = (await import("mermaid")).default
-    if (!_mermaidInitialized) {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict" })
-      _mermaidInitialized = true
-    }
+    // Mermaid's global config must be re-applied per export; alternating light
+    // and dark exports would otherwise reuse the previous palette.
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: theme === "dark" ? "dark" : "default",
+    })
     const id = `omd-export-mmd-${++_mermaidCounter}`
     const { svg } = await mermaid.render(id, src)
     return svg
@@ -480,13 +522,13 @@ function renderRich(
       const codeText = fencedText(node, state) || state.doc.sliceString(node.from, node.to)
       const infoNode = node.getChild("CodeInfo")
       const lang = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to).trim() : ""
-      if (lang.toLowerCase() === "mermaid") return renderMermaidHtml(codeText)
+      if (lang.toLowerCase() === "mermaid") return renderMermaidHtml(codeText, opts.theme ?? "light")
       return renderCodeHtml(codeText, lang)
     }
     case "Image": {
       const parts = imageParts(node, ctx)
       if (!parts) return escapeHtml(state.doc.sliceString(node.from, node.to))
-      return imageHtml(richImageSrc(parts.src, opts), parts.alt, parts.title)
+      return richImageSrc(parts.src, opts).then(src => imageHtml(src, parts.alt, parts.title))
     }
     case "Link":
     case "Autolink": {
@@ -508,7 +550,7 @@ function renderRich(
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
       const model = parseComplexTableBlock(raw)
-      if (model) return renderComplexTableHtml(model, src => richImageSrc(src, opts))
+      if (model) return renderComplexTableHtmlWithImages(model, opts)
       return escapeHtml(raw)
     }
     // Structural containers: richly render their children.
@@ -541,26 +583,63 @@ function renderRich(
   }
 }
 
-// Dark-scheme mapping for dual-theme shiki output; mirrors the app stylesheet.
+// Dark-scheme mapping for dual-theme shiki output; scoped to the export
+// document's explicit theme attribute (mirrors the app stylesheet).
 const SHIKI_DARK_CSS = `<style>
-@media (prefers-color-scheme: dark) {
-  .shiki, .shiki span {
-    color: var(--shiki-dark) !important;
-    background-color: var(--shiki-dark-bg) !important;
-    font-style: var(--shiki-dark-font-style) !important;
-    font-weight: var(--shiki-dark-font-weight) !important;
-    text-decoration: var(--shiki-dark-text-decoration) !important;
-  }
+html[data-omd-theme="dark"] .shiki,
+html[data-omd-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
 }
 </style>`
+
+// Inline readiness handshake consumed by the native exporters: they wait for
+// window.__omdExportReady and then measure window.__omdExportHeight. Fonts
+// and image decodes must settle before the height is read; a 4500 ms ceiling
+// keeps a hung decode from stalling the export and is flagged through
+// window.__omdExportIncomplete.
+const EXPORT_READY_SCRIPT = `<script>(async () => {
+  let incomplete = false
+  const waits = []
+  if (document.fonts && document.fonts.ready) waits.push(document.fonts.ready.catch(() => {}))
+  for (const img of document.images) {
+    // A failed decode means the exported image is missing content even though
+    // it resolves quickly; surface it as partial instead of a clean success.
+    waits.push(Promise.resolve().then(() => img.decode()).catch(() => { incomplete = true }))
+  }
+  const timeout = new Promise(resolve => setTimeout(() => { incomplete = true; resolve() }, 4500))
+  await Promise.race([Promise.all(waits), timeout])
+  window.__omdExportIncomplete = incomplete
+  window.__omdExportReady = true
+  window.__omdExportHeight = Math.max(document.documentElement?.scrollHeight ?? 0, document.body?.scrollHeight ?? 0)
+})()</script>`
+
+/** Prevent user CSS from closing the style element and injecting markup. */
+function escapeStyleText(css: string): string {
+  return css.replace(/<\/style/gi, "<\\/style")
+}
 
 export async function exportRichHtml(
   state: EditorState,
   options: ExportRichHtmlOptions = {},
 ): Promise<string> {
+  const theme = options.theme ?? "light"
   const ctx = snapshotReferenceContext(state)
-  const body = await renderRich(syntaxTree(state).topNode, state, options, ctx)
+  const [body, katexCss] = await Promise.all([
+    renderRich(syntaxTree(state).topNode, state, options, ctx),
+    loadKatexExportCss(),
+  ])
+  // KaTeX first so both the base typography and user CSS can override it.
+  const katexStyle = katexCss ? `<style>${katexCss}</style>` : ""
   const baseStyle = `<style>${EXPORT_BODY_CSS}</style>`
-  const customStyle = options.customCss ? `<style>${options.customCss}</style>` : ""
-  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title>${baseStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}<script>window.__omdExportReady = true</script></body></html>`
+  const customStyle = options.customCss
+    ? `<style>${escapeStyleText(options.customCss)}</style>`
+    : ""
+  const widthStyle = options.fullWidth
+    ? "<style>html,body{max-width:none;overflow-x:hidden}</style>"
+    : ""
+  return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8"><title>oh-my-md</title>${katexStyle}${baseStyle}${widthStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${EXPORT_READY_SCRIPT}</body></html>`
 }

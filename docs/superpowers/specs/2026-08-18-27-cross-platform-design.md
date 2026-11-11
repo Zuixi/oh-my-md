@@ -1,7 +1,7 @@
 # 27 Cross-Platform Support(Windows / Linux)
 
 **日期：** 2026-08-18  
-**状态：** 待用户审核  
+**状态：** 待用户审核；PNG 导出门控已被 `2026-11-11-cross-platform-hd-export-design.md` 取代（三平台均支持 PNG；PDF 仍仅 macOS）
 **路线图：** `docs/superpowers/specs/2026-08-13-00-product-roadmap-design.md`  
 **父设计：** `docs/superpowers/specs/2026-08-10-oh-my-md-design.md`  
 **关联：** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`(其非目标「不做 Windows/Linux 打包」由本规格接手)、`docs/competitors/marktext/cross-platform.md`(本地竞品分析)
@@ -26,7 +26,7 @@
 
 - **不做自定义标题栏/无边框窗口**(MarkText 的最大复杂度来源)；三平台保留系统装饰。
 - **不做 Windows/Linux 代码签名**。沿用 MarkText 先例：不签名 + SHA256SUMS + 用户侧说明；macOS 签名公证维持 13 号规格不变。
-- **不承诺导出全平台对齐**：PDF/PNG 导出在非 macOS 上隐藏入口(P4 才做打印对话框 PDF);HTML 导出本就跨平台。
+- **不承诺导出全平台对齐**：PDF 导出在非 macOS 上隐藏入口(P4 才做打印对话框 PDF);HTML 导出本就跨平台。**2026-11-11 更新：PNG 已在三平台实现，见 `2026-11-11-cross-platform-hd-export-design.md`。**
 - **不做 E2E 自动化**(路线图已定)；非 macOS 验证 = CI 自动检查 + VM 手动 QA。
 - 不构建 arm64 Linux / Windows 产物(仅 x86_64;macOS 维持现有 arch)。
 - 不引入三份硬编码键位表(见决策 D7,与 MarkText 不同)。

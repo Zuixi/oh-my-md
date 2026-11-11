@@ -70,7 +70,7 @@ import {
 } from "./updateCoordinator"
 import { updateRestartReadiness } from "./updateRestartReadiness"
 import { createTauriUpdateAdapter, type UpdateAdapter } from "./updateAdapter"
-import { applyTheme, type AppTheme } from "./theme"
+import { applyTheme, resolveTheme, type AppTheme } from "./theme"
 import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
 import { buildAppCommands } from "./appCommands"
 import { isMacOS, isWindows } from "./platform"
@@ -1454,7 +1454,7 @@ export default function App({
     setOutlineOpen,
     setTypewriter,
     setAboutOpen,
-    customCss,
+    customCss, exportOptions: () => ({ width: settingsRef.current.exportWidth, scale: settingsRef.current.exportScale, theme: resolveTheme(theme) }),
     showTransientStatus,
     updateCoordinatorRef,
     pasteOptions,

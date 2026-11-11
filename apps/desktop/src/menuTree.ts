@@ -42,7 +42,7 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
       { id: "version-history" },
       { id: "export-html" },
       { id: "export-pdf", macOSOnly: true },
-      { id: "export-image", macOSOnly: true, separatorAfter: true },
+      { id: "export-image", separatorAfter: true },
       { id: "preferences" },
       { id: "quit" },
     ],

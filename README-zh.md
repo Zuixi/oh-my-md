@@ -53,7 +53,7 @@ Typora 证明了 Markdown 编辑器可以像现代文字处理器一样顺滑—
 
 **导出**
 - **HTML 导出支持 macOS、Windows 和 Linux。**
-- **PDF 与 PNG 导出目前仅支持 macOS。** 各格式均保留 Live 预览中的公式、代码高亮、表格与图表。
+- **PDF 导出目前仅支持 macOS；PNG 导出已支持 macOS、Windows 与 Linux。** 可在设置中选择 PNG 宽度与 1x/2x/3x 清晰度。各格式均保留 Live 预览中的公式、代码高亮、表格与图表。
 
 **外观**
 - 亮 / 暗主题（代码主题跟随），支持自定义 CSS

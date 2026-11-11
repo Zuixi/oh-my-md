@@ -1,7 +1,7 @@
 mod app_lifecycle;
 mod diagnostics;
 mod documents;
-mod export;
+pub mod export;
 mod fonts;
 #[cfg(test)]
 mod log_capture;
@@ -18,7 +18,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
-
 const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
 const MAX_RECENT_FILES: usize = 10;
@@ -799,10 +798,7 @@ pub fn run() {
     // `file:line`. The hook chains to the default one, so a panic raised
     // before the logger exists still reaches stderr.
     logging::install_panic_hook();
-    #[cfg(target_os = "macos")]
-    let builder = logging::install_webview_termination_hook(tauri::Builder::default());
-    #[cfg(not(target_os = "macos"))]
-    let builder = tauri::Builder::default();
+    let builder = export::builder_with_export_protocol();
     builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // Markdown file arguments open in this instance (macOS delivers
@@ -1049,10 +1045,11 @@ pub fn run() {
             app_lifecycle::restart_app,
             menu::set_menu_locale,
             export::export_preview,
+            export::cancel_export,
             fonts::list_system_fonts
         ])
         .manage(paste_assets::PasteAssetState::default())
-        .build(tauri::generate_context!())
+        .build(export::app_context::context())
         .expect("error while building oh-my-md")
         .run(|app, event| {
             // macOS "open with"/double-click/Finder-dock drops arrive here.

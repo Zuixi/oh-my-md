@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { makeState } from "./helpers"
 
 // 同步导出（export.test.ts）同一组形状的 rich 版本：只该在 cell 数学 / 本地图片上不同。
@@ -18,6 +20,14 @@ vi.mock("mermaid", () => ({
     render: vi.fn().mockResolvedValue({ svg: "<svg>mock-mermaid</svg>" }),
   },
 }))
+
+// Vitest stubs `*.css` imports (test CSS processing is disabled), so re-supply
+// the real KaTeX stylesheet: katexAssets.ts must see actual CSS to exercise
+// its fonts/ URL → data-URL rewriting. The desktop Vite build inlines it.
+vi.mock("katex/dist/katex.min.css?inline", () => {
+  const require = createRequire(import.meta.url)
+  return { default: readFileSync(require.resolve("katex/dist/katex.min.css"), "utf8") }
+})
 
 // Import after mocks are set up.
 const { exportRichHtml, exportHtml } = await import("../src/export/html")
@@ -63,7 +73,7 @@ describe("exportRichHtml", () => {
   it("emits dual-theme code colors and a dark-scheme stylesheet", async () => {
     const html = await exportRichHtml(makeState("```js\nconst x = 1\n```"))
     expect(html).toContain("--shiki-dark")
-    expect(html).toContain("prefers-color-scheme: dark")
+    expect(html).toContain('html[data-omd-theme="dark"] .shiki')
   })
 
   it("renders valid mermaid as SVG", async () => {
@@ -159,6 +169,44 @@ describe("exportRichHtml", () => {
     expect(html).not.toContain("![pic][img]")
   })
 
+  it("reports remote images through onRemoteImage, including reference and table images", async () => {
+    const seen: string[] = []
+    const doc = [
+      "![inline](https://a.example/x.png)",
+      "",
+      "![ref][img]",
+      "",
+      "| cell |",
+      "|---|",
+      "| ![table](https://b.example/y.png) |",
+      "",
+      "[img]: https://c.example/z.png",
+    ].join("\n")
+    await exportRichHtml(makeState(doc), { onRemoteImage: src => { seen.push(src) } })
+    expect(seen.sort()).toEqual([
+      "https://a.example/x.png",
+      "https://b.example/y.png",
+      "https://c.example/z.png",
+    ])
+  })
+
+  it("does not report local images as remote", async () => {
+    const seen: string[] = []
+    await exportRichHtml(makeState("![local](./pic.png)"), {
+      resolveImageSrc: src => `file:///resolved/${src}`,
+      onRemoteImage: src => { seen.push(src) },
+    })
+    expect(seen).toEqual([])
+  })
+
+  it("escapes a closing style tag in custom CSS", async () => {
+    const html = await exportRichHtml(makeState("hello"), {
+      customCss: "body{color:red}</style><script>globalThis.pwned=true</script>",
+    })
+    expect(html).not.toContain("</style><script>")
+    expect(html).toContain("<\\/style><script>")
+  })
+
   it("rewrites local relative image src via resolveImageSrc", async () => {
     const doc = "![pic](./pic.png \"P\")"
     const html = await exportRichHtml(makeState(doc), {
@@ -250,5 +298,65 @@ describe("exportRichHtml", () => {
     expect(html).toContain("http://example.com/img.png")
     expect(html).toContain('alt="alt"')
     expect(html).not.toContain("should-not-be-used")
+  })
+
+  it("emits explicit light theme attributes by default", async () => {
+    const html = await exportRichHtml(makeState("# Hi"))
+    expect(html).toMatch(/<html data-omd-theme="light" data-theme="light">/)
+  })
+
+  it("emits explicit dark theme attributes and dark-scoped base CSS", async () => {
+    const html = await exportRichHtml(makeState("# Hi"), { theme: "dark" })
+    expect(html).toMatch(/<html data-omd-theme="dark" data-theme="dark">/)
+    expect(html).toContain('html[data-omd-theme="dark"] body')
+    expect(html).not.toContain("prefers-color-scheme")
+  })
+
+  it("awaits a promise-returning resolveImageSrc for inline images", async () => {
+    const html = await exportRichHtml(makeState("![pic](./pic.png \"P\")"), {
+      resolveImageSrc: async (src) => `data:image/png;base64,${src}`,
+    })
+    expect(html).toContain('<img src="data:image/png;base64,./pic.png" alt="pic" title="P">')
+  })
+
+  it("awaits a promise-returning resolveImageSrc for a complex table image", async () => {
+    const doc = [
+      "<table>",
+      "<tbody>",
+      "<tr>",
+      '<td><img src="./local.png" alt="local"></td>',
+      "</tr>",
+      "</tbody>",
+      "</table>",
+    ].join("\n")
+    const html = await exportRichHtml(makeState(doc), {
+      resolveImageSrc: async (src) => `data:image/png;base64,${src}`,
+    })
+    expect(html).toContain('<td><img src="data:image/png;base64,./local.png" alt="local"></td>')
+  })
+
+  it("can use the full render width for native screenshots", async () => {
+    const html = await exportRichHtml(makeState("hello"), { fullWidth: true })
+    expect(html).toContain("<style>html,body{max-width:none;overflow-x:hidden}</style>")
+    const reading = await exportRichHtml(makeState("hello"))
+    expect(reading).not.toContain("<style>html,body{max-width:none")
+  })
+
+  it("embeds the KaTeX stylesheet with inlined fonts and no relative font URLs", async () => {
+    const html = await exportRichHtml(makeState("$a$"))
+    expect(html).toContain(".katex")
+    expect(html).toContain("data:font/woff2")
+    expect(html).not.toContain("fonts/KaTeX_")
+  })
+
+  it("waits for fonts and image decodes before marking the export ready", async () => {
+    const html = await exportRichHtml(makeState("hello"))
+    expect(html).toContain("document.fonts.ready")
+    expect(html).toContain("img.decode()")
+    expect(html).toContain("catch(() => { incomplete = true })")
+    expect(html).toContain("4500")
+    expect(html).toContain("window.__omdExportIncomplete")
+    expect(html).toContain("window.__omdExportHeight")
+    expect(html).toContain("window.__omdExportReady = true")
   })
 })
