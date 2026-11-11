@@ -12,14 +12,21 @@ export const EXPORT_BODY_CSS = `body {
   color: #1f2328;
   word-wrap: break-word;
 }
-@media (prefers-color-scheme: dark) {
-  body { color: #e6edf3; background: #0d1117; }
-  a { color: #58a6ff; }
-  code, pre, blockquote, table { background: #161b22; }
-  code, pre { color: #e6edf3; }
-  th, td { border-color: #30363d; }
-  blockquote { border-left-color: #30363d; color: #8b949e; }
-}
+/* Dark palette keyed to the document's explicit data-omd-theme attribute
+   (exportRichHtml sets it from options.theme) instead of the OS preference,
+   so exports are deterministic and screenshot-stable. */
+html[data-omd-theme="dark"] { background: #0d1117; }
+html[data-omd-theme="dark"] body { color: #e6edf3; background: #0d1117; }
+html[data-omd-theme="dark"] a { color: #58a6ff; }
+html[data-omd-theme="dark"] code,
+html[data-omd-theme="dark"] pre,
+html[data-omd-theme="dark"] blockquote,
+html[data-omd-theme="dark"] table { background: #161b22; }
+html[data-omd-theme="dark"] code,
+html[data-omd-theme="dark"] pre { color: #e6edf3; }
+html[data-omd-theme="dark"] th,
+html[data-omd-theme="dark"] td { border-color: #30363d; }
+html[data-omd-theme="dark"] blockquote { border-left-color: #30363d; color: #8b949e; }
 h1, h2, h3, h4, h5, h6 {
   line-height: 1.25;
   margin: 1.4em 0 0.6em;

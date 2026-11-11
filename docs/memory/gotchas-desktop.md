@@ -577,3 +577,37 @@ and the draft falls back to a fresh tab instead of its file tab. Content is neve
 the association degrades. Platform-aware normalization was rejected: a wrong rule would mount
 a draft into the *wrong* file's tab, which is strictly worse than an extra tab. Revisit only
 on a real user report.
+
+## High-DPI export: self-contained document, explicit theme, scale at capture (2026-11)
+
+`exportRichHtml` feeds three different renderers (HTML file, macOS WKWebView, Windows
+WebView2, Linux WebKitGTK), so the document must be self-contained and deterministic:
+
+- Local images must become `data:` URLs at export time. `asset://` URLs work in the app
+  webview, but not in an exported `.html` opened in a browser or in a raw/offscreen native
+  export webview. The resolver lives in `exportImages.ts` and enforces per-image/total caps.
+- KaTeX needs its stylesheet and woff2 fonts inside the document (`katexAssets.ts` uses
+  Vite's `?inline`); `renderToString` alone produces unstyled spans. Embed the CSS before the
+  base/custom CSS so themes can override it.
+- Theme is explicit (`html[data-omd-theme="dark"][data-theme="dark"]`), never
+  `prefers-color-scheme`: an offscreen webview does not necessarily share the app's theme.
+- Never upscale a 1x bitmap. `ExportSpec` defines output as `width_css × scale`; macOS
+  rasterizes a vector PDF through `NSBitmapImageRep`, Windows uses CDP
+  `Page.captureScreenshot` `clip.scale`, and Linux sets `zoom = scale / gdkScale` while
+  widening the window so the CSS layout width stays constant, then rejects a surface whose
+  width is not `width_css × scale`.
+- Verify sharpness with a 1 CSS px line: at 2x it must occupy exactly 2 device pixels, at 3x
+  exactly 3. The macOS probe produced 1600/3840/2400-wide PNGs for 800×2 / 1920×2 / 800×3 and
+  a 2/2/3 px line respectively.
+- Height limits are reported (`height-clamped`), never silently truncated. PDF is bounded by
+  the PDF page limit; PNG by the RGBA area budget and the 16383 px side ceiling.
+- Custom CSS is interpolated into a `<style>` element in the exported document. Escape every
+  case-insensitive `</style` as `<\/style`; otherwise user CSS can close the element and inject
+  markup/script into the export webview (whose CSP currently allows inline scripts). Markdown
+  content itself is escaped, but custom CSS is not Markdown.
+- Windows WebView2 shares one user-data directory across all windows, so every webview must be
+  created with the same `additionalBrowserArgs`. The main window sets them in `tauri.conf.json`
+  (`HideCursorWhileTyping` etc.); `export_host.rs` passes the identical list through
+  `WINDOWS_ADDITIONAL_BROWSER_ARGS`. Omit them and the second environment fails while Tauri
+  still registers the window: `url()`/`size()`/`with_webview()` all return
+  `FailedToReceiveMessage`, and a custom-protocol export page never reports ready.
