@@ -2101,6 +2101,9 @@ html[data-theme="dark"] {
   scrollbar-width: thin;
   scrollbar-color: var(--omd-border) transparent;
 }
+.editor-host .omd-math-popup .cm-content {
+  padding: 6px 10px;
+}
 .editor-host .omd-math-popup .cm-scroller::-webkit-scrollbar { height: 8px; width: 8px; }
 .editor-host .omd-math-popup .cm-scroller::-webkit-scrollbar-thumb {
   background: var(--omd-border); border-radius: 4px;

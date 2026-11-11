@@ -13,6 +13,9 @@ export const Math: MarkdownConfig = {
   parseBlock: [{
     name: "MathBlock",
     before: "FencedCode",   // $$ 行没有其他主人，尽早接管
+    endLeaf(_cx, line) {
+      return line.text.slice(line.pos).startsWith("$$")
+    },
     parse(cx, line) {
       const rest = line.text.slice(line.pos)
       if (!rest.startsWith("$$")) return false

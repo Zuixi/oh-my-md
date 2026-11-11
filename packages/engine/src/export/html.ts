@@ -17,6 +17,7 @@ import { createMathHtmlCache } from "./mathHtmlCache"
 import { tableDataFromNode, type TableAlignment, type TableRowData } from "../tables/model"
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
+import { mathTexOf } from "../semantic/math"
 
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
@@ -503,7 +504,7 @@ function renderRich(
       return renderMathHtml(tex.trim(), false)
     }
     case "MathBlock": {
-      const tex = state.doc.sliceString(node.from, node.to).replace(/^\$\$|\$\$\s*$/g, "").trim()
+      const tex = mathTexOf(state.doc.sliceString(node.from, node.to))
       return renderMathHtml(tex, true)
     }
     case "FencedCode":

@@ -30,31 +30,36 @@ function unclosedFenceLine(state: EditorState) {
   // 向上只会撞到 Blockquote/文档根，永远找不到 FencedCode（引用内/缩进围栏因此
   // 一直补全不了）。行尾前一个字符必定在围栏节点内部。
   let node = syntaxTree(state).resolveInner(Math.max(line.from, line.to - 1), 1)
-  while (node && node.name !== "FencedCode") {
+  while (node && node.name !== "FencedCode" && node.name !== "MathBlock") {
     if (!node.parent) return null
     node = node.parent
   }
   // 围栏必须从本行开始（引用/缩进前缀不算节点内容）：内容行的行尾同样命中同一个
-  // FencedCode（node.from 在更早的行上），必须排除，否则正文行尾按 Enter 会补围栏。
+  // FencedCode/MathBlock（node.from 在更早的行上），必须排除，否则正文行尾按 Enter 会补围栏。
   if (!node || node.from < line.from || node.from > line.to) return null
-  // 未闭合 ⇔ FencedCode 只有一个 CodeMark（开头）。不能用“节点不越过本行”
-  // 判定：CommonMark 把未闭合围栏吞到文档末尾，文档中间输入 ```cpp 时下方
+  const markName = node.name === "MathBlock" ? "MathMark" : "CodeMark"
+  // 未闭合 ⇔ 只有一个开启标记（开头）。不能用“节点不越过本行”
+  // 判定：CommonMark 把未闭合围栏吞到文档末尾，文档中间输入 ```cpp 或 $$ 时下方
   // 文字全在节点内，旧守卫会永远拦截（用户只能裸敲源码）。闭合后下方文字
-  // 自动回到块后成为普通段落；完整块的围栏行（两个 CodeMark）照旧不劫持。
+  // 自动回到块后成为普通段落；完整块的围栏行（两个标记）照旧不劫持。
   let markCount = 0
   for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "CodeMark") markCount++
+    if (child.name === markName) markCount++
   }
   if (markCount !== 1) return null
   for (let parent = node.parent; parent; parent = parent.parent) {
     if (parent.name === "ListItem") return null
   }
-  const mark = node.getChild("CodeMark")
+  const mark = node.getChild(markName)
   if (!mark || mark.from < line.from || mark.to > line.to) return null
+  // MathBlock 首行只允许纯 `$$`（加可选空白）触发补全；`$$x+y` 正在输入单行公式，不劫持。
+  if (node.name === "MathBlock" && state.doc.sliceString(mark.to, line.to).trim() !== "") {
+    return null
+  }
   return {
     line,
     closing: state.doc.sliceString(mark.from, mark.to),
-    // CodeMark 之前的原文：引用前缀 / 缩进，续写时逐行照抄。
+    // Mark 之前的原文：引用前缀 / 缩进，续写时逐行照抄。
     prefix: state.doc.sliceString(line.from, mark.from),
   }
 }

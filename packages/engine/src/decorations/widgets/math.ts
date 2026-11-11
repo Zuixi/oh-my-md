@@ -3,29 +3,14 @@ import { EditorState, Prec, type Extension } from "@codemirror/state"
 import { HighlightStyle, StreamLanguage, syntaxHighlighting, syntaxTree } from "@codemirror/language"
 import { tags } from "@lezer/highlight"
 import { stex } from "@codemirror/legacy-modes/mode/stex"
-import { history, historyKeymap } from "@codemirror/commands"
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import type { SyntaxNode } from "@lezer/common"
 import { BlockWidget, applyBlockEmbed } from "../blockWidget"
 import { MATH_BLOCK_ESTIMATE_PX } from "../widgetHeights"
 import { blockWidgetRange } from "../blockSelectionOverlay"
+import { mathEditorTexOf, mathTexOf, rebuildMathSrc } from "../../semantic/math"
 
-export function mathTexOf(src: string): string {
-  return src.replace(/^\$\$|\$\$\s*$/g, "").trim()
-}
-
-/** rebuildMathSrc 的严格逆运算：编辑器路径专用，不吞围栏内侧空白（渲染用 mathTexOf）。
- *  Tab/缩进产生的前后空白必须往返一致，否则同步会把内层刚输入的内容回滚。 */
-export function mathEditorTexOf(src: string): string {
-  const multi = src.match(/^\$\$\n([\s\S]*)\n\$\$$/)
-  if (multi) return multi[1]
-  const single = src.match(/^\$\$([\s\S]*)\$\$$/)
-  return single ? single[1] : src
-}
-
-/** 按原分隔符形态重建块文本：原块含换行 → 多行包裹，否则单行包裹。 */
-export function rebuildMathSrc(src: string, tex: string): string {
-  return src.includes("\n") ? `$$\n${tex}\n$$` : `$$${tex}$$`
-}
+export { mathEditorTexOf, mathTexOf, rebuildMathSrc }
 
 // stex 流式语法把控制序列（\frac 等）标为 "tag"（StreamLanguage 映射成 tags.tagName），
 // 注释/括号/字符串各有标准 tag。颜色复用桌面侧已有的 --omd-syn-* 双主题 token
@@ -47,13 +32,21 @@ function latexPopupExtensions(close: () => void, refocusOuter: () => void): Exte
     StreamLanguage.define(stex),
     syntaxHighlighting(LATEX_HIGHLIGHT, { fallback: true }),
     EditorView.lineWrapping,
-    // 弹窗内自带 undo/redo：事件被 ignoreEvent 屏蔽后外层键映射收不到
-    // Cmd+Z，不装就是相对 textarea 时代的倒退。
+    // 弹窗内自带 defaultKeymap + undo/redo：事件被屏蔽后外层键映射收不到
+    // 快捷键，内层独立承载光标移动、删除与 Cmd+Z。
     history(),
-    keymap.of(historyKeymap),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
     Prec.highest(keymap.of([
       {
         key: "Escape",
+        run: () => { close(); refocusOuter(); return true },
+      },
+      {
+        key: "Mod-Enter",
+        run: () => { close(); refocusOuter(); return true },
+      },
+      {
+        key: "Shift-Enter",
         run: () => { close(); refocusOuter(); return true },
       },
       {
@@ -64,6 +57,61 @@ function latexPopupExtensions(close: () => void, refocusOuter: () => void): Exte
   ]
 }
 
+/**
+ * 根据预览区域的点击坐标计算对应 TeX 字符串的字符偏移：
+ * - 无有效布局几何（happy-dom 或 0 宽高）时默认落在末尾（方便直接追加/退格）；
+ * - 多行公式先按纵向比例定位行，再按横向比例定位该行内字符；
+ * - 单行公式直接按横向比例定位字符。
+ */
+function clickRatioOffset(
+  tex: string,
+  container: Element | null,
+  event?: MouseEvent,
+): number {
+  if (!event || !container) return 0
+  const inner = container.querySelector(".katex-html, .katex")
+  const innerRect = inner?.getBoundingClientRect()
+  const rect = innerRect && innerRect.width > 0 ? innerRect : container.getBoundingClientRect()
+  if (rect.width <= 0) return 0
+  const rx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+  const lines = tex.split("\n")
+  if (lines.length <= 1 || rect.height <= 0) {
+    return Math.round(rx * tex.length)
+  }
+  const ry = Math.min(0.999, Math.max(0, (event.clientY - rect.top) / rect.height))
+  const lineIdx = Math.min(lines.length - 1, Math.floor(ry * lines.length))
+  let offset = 0
+  for (let i = 0; i < lineIdx; i++) offset += lines[i].length + 1
+  return offset + Math.round(rx * lines[lineIdx].length)
+}
+
+const POPUP_STOP_EVENTS = [
+  "mousedown",
+  "mouseup",
+  "click",
+  "dblclick",
+  "contextmenu",
+  "keydown",
+  "keyup",
+  "keypress",
+  "input",
+  "beforeinput",
+  "paste",
+  "copy",
+  "cut",
+  "drop",
+  "compositionstart",
+  "compositionupdate",
+  "compositionend",
+] as const
+
+function isolatePopupEvents(popup: HTMLElement): void {
+  const stop = (e: Event) => { e.stopPropagation() }
+  for (const type of POPUP_STOP_EVENTS) {
+    popup.addEventListener(type, stop)
+  }
+}
+// widget 实例会轮换，实例字段会指向已漂移的旧 this，DOM 才是稳定的查找锚点。
 // 内层编辑器实例挂在 popup DOM 上而不是 widget 实例字段里：pass-1 复用 DOM 时
 // widget 实例会轮换，实例字段会指向已漂移的旧 this，DOM 才是稳定的查找锚点。
 type MathPopupHost = HTMLElement & { __omdMathPopupView?: EditorView }
@@ -173,18 +221,33 @@ export class MathBlockWidget extends BlockWidget {
       || event.type === "keydown" || event.type === "keyup"
       || event.type === "keypress" || event.type === "input"
       || event.type === "click"
+      || event.type === "focusin" || event.type === "focusout"
+      || event.type === "focus" || event.type === "blur"
       // 内层编辑器是 contenteditable，中文输入走 composition 事件族，
       // 不屏蔽会漏进外层 CM 的输入状态机
       || event.type === "compositionstart" || event.type === "compositionupdate"
       || event.type === "compositionend"
   }
 
-  protected onWrapClick(view: EditorView, wrap: HTMLElement) {
+  protected onWrapClick(view: EditorView, wrap: HTMLElement, event?: MouseEvent) {
     if (view.state.readOnly) { view.focus(); return }
+    const body = wrap.querySelector<HTMLElement>(".omd-block-body")
     const existing = popupEditorOf(wrap)
-    if (existing) { existing.focus(); return }
+    if (existing) {
+      const tex = existing.state.doc.toString()
+      const anchor = clickRatioOffset(tex, body, event)
+      existing.dispatch({ selection: { anchor } })
+      existing.focus()
+      return
+    }
+    const range = this.liveRange(view, wrap) ?? blockWidgetRange(this, view, wrap)
+    const initialTex = range
+      ? mathEditorTexOf(view.state.sliceDoc(range.from, range.to))
+      : mathEditorTexOf(this.src)
+    const initialAnchor = clickRatioOffset(initialTex, body, event)
     const popup = document.createElement("div")
     popup.className = "omd-math-popup"
+    isolatePopupEvents(popup)
     const host = document.createElement("div")
     host.className = "omd-math-editor"
     popup.appendChild(host)
@@ -205,7 +268,7 @@ export class MathBlockWidget extends BlockWidget {
     inner = new EditorView({
       parent: host,
       state: EditorState.create({
-        doc: mathEditorTexOf(this.src),
+        doc: initialTex,
         extensions: [
           latexPopupExtensions(close, () => view.focus()),
           EditorView.updateListener.of(u => {
@@ -215,14 +278,28 @@ export class MathBlockWidget extends BlockWidget {
       }),
     })
     ;(popup as MathPopupHost).__omdMathPopupView = inner
+    let pointerInPopup = false
+    popup.addEventListener("mousedown", () => {
+      pointerInPopup = true
+      setTimeout(() => { pointerInPopup = false }, 50)
+    }, true)
     popup.addEventListener("focusout", e => {
       if (e.relatedTarget instanceof Node && popup.contains(e.relatedTarget)) return
+      if (pointerInPopup) {
+        queueMicrotask(() => {
+          if (!closed) inner.focus()
+        })
+        return
+      }
       close()
     })
     this.resizeObs?.disconnect()
     this.resizeObs = new ResizeObserver(() => view.requestMeasure())
     this.resizeObs.observe(popup)
     inner.focus()
+    if (initialAnchor > 0) {
+      inner.dispatch({ selection: { anchor: initialAnchor } })
+    }
     view.requestMeasure()
   }
 
@@ -277,13 +354,33 @@ export class InlineMathWidget extends WidgetType {
 
   constructor(readonly tex: string) { super() }
   eq(other: InlineMathWidget) { return this.tex === other.tex }
-  toDOM() {
+  toDOM(view: EditorView) {
     const el = document.createElement("span")
     el.className = "omd-inline-math"
+    el.addEventListener("mousedown", e => {
+      if (e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
+      if (!view?.state || view.state.readOnly) return
+      let pos: number
+      try { pos = view.posAtDOM(el) } catch { return }
+      let node: SyntaxNode | null = syntaxTree(view.state).resolveInner(pos, 1)
+      while (node && node.name !== "InlineMath") node = node.parent
+      if (!node || node.to - node.from < 2) return
+      e.preventDefault()
+      e.stopPropagation()
+      const innerTex = view.state.sliceDoc(node.from + 1, node.to - 1)
+      const offset = clickRatioOffset(innerTex, el, e)
+      const anchor = Math.min(node.to - 1, Math.max(node.from + 1, node.from + 1 + offset))
+      view.dispatch({ selection: { anchor }, scrollIntoView: true })
+      view.focus()
+    })
     renderMath(el, this.tex, false, () => this.alive).catch(() => {
       if (this.alive) el.textContent = `$${this.tex}$`
     })
     return el
+  }
+
+  override ignoreEvent(event: Event) {
+    return event.type === "mousedown"
   }
 
   destroy(_dom?: HTMLElement) {

@@ -39,6 +39,9 @@ export function clipboardPasteExtension(options: ClipboardPasteOptions): Extensi
     }),
     EditorView.domEventHandlers({
       contextmenu(event, view) {
+        if (event.target instanceof Element && event.target.closest(".cm-editor") !== view.dom) {
+          return false
+        }
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
         if (pos === null) {
           contextMenuTarget = null
@@ -52,6 +55,9 @@ export function clipboardPasteExtension(options: ClipboardPasteOptions): Extensi
         return false
       },
       paste(event, view) {
+        if (event.target instanceof Element && event.target.closest(".cm-editor") !== view.dom) {
+          return false
+        }
         if (view.state.readOnly) {
           contextMenuTarget = null
           return true

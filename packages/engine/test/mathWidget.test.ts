@@ -31,8 +31,18 @@ describe("math source helpers", () => {
     for (const tex of ["x+y", "  x+y", "x+y  ", "\\frac{a}{b} % c", "a\n b"]) {
       expect(mathEditorTexOf(rebuildMathSrc("$$\nx\n$$", tex))).toBe(tex)
       expect(mathEditorTexOf(rebuildMathSrc("$$x$$", tex))).toBe(tex)
+      expect(mathEditorTexOf(rebuildMathSrc("$$\n> x\n> $$", tex))).toBe(tex)
+      expect(mathEditorTexOf(rebuildMathSrc("> $$\n> x\n> $$", tex))).toBe(tex)
+      expect(mathEditorTexOf(rebuildMathSrc("> > $$\n> > x\n> > $$", tex))).toBe(tex)
     }
     expect(mathEditorTexOf("$$ x $$")).toBe(" x ")   // 单行围栏内空白原样保留
+  })
+
+  it("strips and restores blockquote prefixes for multi-line math in quotes", () => {
+    const quoted = "> $$\n> \\int_0^1 x dx\n> = \\frac{1}{2}\n> $$"
+    expect(mathTexOf(quoted)).toBe("\\int_0^1 x dx\n= \\frac{1}{2}")
+    expect(mathEditorTexOf(quoted)).toBe("\\int_0^1 x dx\n= \\frac{1}{2}")
+    expect(rebuildMathSrc(quoted, "a + b\nc + d")).toBe("> $$\n> a + b\n> c + d\n> $$")
   })
 })
 

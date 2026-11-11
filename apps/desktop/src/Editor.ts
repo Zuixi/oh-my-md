@@ -271,8 +271,8 @@ function createEditorState(
       }),
       EditorView.theme({
         "&": { height: "100%", fontSize: "15px" },
-        ".cm-scroller": { overflow: "auto", lineHeight: "1.7" },
-        ".cm-content": {
+        "& > .cm-scroller": { overflow: "auto", lineHeight: "1.7" },
+        "& > .cm-scroller > .cm-content": {
           padding: "16px 24px max(16px, 50vh)",
           maxWidth: `var(--omd-content-width, ${CONTENT_MAX_WIDTH}px)`,
           margin: "0 auto",

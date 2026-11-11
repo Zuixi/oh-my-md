@@ -30,6 +30,14 @@ describe("math parsing", () => {
     expect(n.indexOf("Paragraph")).toBeGreaterThan(n.indexOf("MathBlock"))
   })
 
+  it("lets a $$ line interrupt a running paragraph without a blank line", () => {
+    expect(nodeText("intro\n$$E=mc^2$$", "Paragraph")).toEqual(["intro"])
+    expect(nodeText("intro\n$$E=mc^2$$", "MathBlock")).toEqual(["$$E=mc^2$$"])
+    expect(nodeText("intro\n$$\n\\int_0^1 x dx\n$$\noutro", "Paragraph")).toEqual(["intro", "outro"])
+    expect(nodeText("intro\n$$\n\\int_0^1 x dx\n$$\noutro", "MathBlock")).toEqual(["$$\n\\int_0^1 x dx\n$$"])
+    expect(nodeText("- item\n  $$x$$", "MathBlock")).toEqual(["$$x$$"])
+  })
+
   it("parses inline $math$", () => {
     expect(names("energy $E=mc^2$ here")).toContain("InlineMath")
   })

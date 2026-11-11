@@ -438,11 +438,11 @@ const gecko = /gecko\/(\d+)/i.test(nav.userAgent)
 // https://discuss.codemirror.net/t/firefox-153-ignores-transparent-selection-styling/9838
 const selectionBg = gecko && +(/Firefox\/(\d+)/.exec(nav.userAgent) || [0, 0])[1] == 153 ? "#ffffff01" : "transparent"
 const hideNativeSelection = Prec.highest(EditorView.theme({
-  ".cm-line": {
+  "& > .cm-scroller > .cm-content > .cm-line": {
     "& ::selection, &::selection": { backgroundColor: `${selectionBg} !important` },
     caretColor: "transparent !important",
   },
-  ".cm-content": {
+  "& > .cm-scroller > .cm-content": {
     caretColor: "transparent !important",
     "& :focus": {
       caretColor: "initial !important",

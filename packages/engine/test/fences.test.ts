@@ -90,4 +90,23 @@ describe("continueFence (Enter completes an unclosed fence)", () => {
     const doc = "```cpp\nint x"
     expect(apply(doc, doc.length).fired).toBe(false)
   })
+
+  it("completes an unclosed $$ math block on Enter and places caret on the content line", () => {
+    const r = apply("$$", 2)
+    expect(r.fired).toBe(true)
+    expect(r.doc).toBe("$$\n\n$$")
+    expect(r.caret).toBe(3)
+  })
+
+  it("completes an unclosed $$ math block inside a blockquote and repeats the quote prefix", () => {
+    const r = apply("> $$", 4)
+    expect(r.fired).toBe(true)
+    expect(r.doc).toBe("> $$\n> \n> $$")
+    expect(r.caret).toBe(r.doc.indexOf("\n") + 3)
+  })
+
+  it("leaves a single-line $$x+y$$ or $$x+y line alone on Enter", () => {
+    expect(apply("$$x+y$$", 7).fired).toBe(false)
+    expect(apply("$$x+y", 5).fired).toBe(false)
+  })
 })

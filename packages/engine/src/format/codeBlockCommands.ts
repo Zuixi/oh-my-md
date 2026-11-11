@@ -22,11 +22,11 @@ const UNSAFE_HOSTS = new Set([
 
 function paragraphRange(state: EditorState, pos: number): { from: number; to: number } {
   const line = state.doc.lineAt(pos)
-  let start = line.number
-  let end = line.number
-  while (start > 1 && state.doc.line(start - 1).text.trim() !== "") start -= 1
-  while (end < state.doc.lines && state.doc.line(end + 1).text.trim() !== "") end += 1
-  return { from: state.doc.line(start).from, to: state.doc.line(end).to }
+  const paragraph = intersectingNode(state, line.from, line.to, name => name === "Paragraph")
+  if (paragraph && paragraph.from <= line.from && line.to <= paragraph.to) {
+    return { from: paragraph.from, to: paragraph.to }
+  }
+  return { from: line.from, to: line.to }
 }
 
 function lineWithBreak(state: EditorState, lineNumber: number): { from: number; to: number } {

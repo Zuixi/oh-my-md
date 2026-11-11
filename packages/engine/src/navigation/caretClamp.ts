@@ -72,6 +72,12 @@ export const caretClampKeymap = Prec.high(keymap.of([
 export const caretClampHandlers = EditorView.domEventHandlers({
   mousedown(event, view) {
     if (event.button !== 0 || event.detail > 1) return false
+    if (
+      event.target instanceof Element
+      && event.target.closest(".cm-editor") !== view.dom
+    ) {
+      return false
+    }
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
     if (pos == null) return false
     const target = clampToContentStart(view.state, pos)
