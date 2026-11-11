@@ -11,6 +11,22 @@ export const FONT_SIZE_MAX = 32
 export const LINE_HEIGHT_MIN = 1.2
 export const LINE_HEIGHT_MAX = 2.4
 
+export type ExportScale = 1 | 2 | 3
+
+export const EXPORT_WIDTH_DEFAULT = 800
+export const EXPORT_WIDTH_MIN = 320
+export const EXPORT_WIDTH_MAX = 1920
+
+export const EXPORT_WIDTH_PRESETS = [
+  { value: 640, labelKey: "settings.export.width.640" },
+  { value: EXPORT_WIDTH_DEFAULT, labelKey: "settings.export.width.800" },
+  { value: 1200, labelKey: "settings.export.width.1200" },
+  { value: EXPORT_WIDTH_MAX, labelKey: "settings.export.width.1920" },
+] as const
+
+/** The pixel-density multipliers the PNG exporter accepts. */
+export const EXPORT_SCALE_OPTIONS = [1, 2, 3] as const
+
 export const LINE_HEIGHT_PRESETS = [
   { value: 1.4, labelKey: "settings.lineHeight.compact" },
   { value: 1.6, labelKey: "settings.lineHeight.default" },
@@ -35,6 +51,10 @@ export interface UserSettings {
   /** Engine-owned auto pairing toggles; persisted as one nested settings field. */
   autoPair: AutoPairOptions
   locale: StoredLocale
+  /** CSS pixel width the PNG exporter renders at (see `EXPORT_WIDTH_MIN/MAX`). */
+  exportWidth: number
+  /** Pixel-density multiplier applied to `exportWidth` (1x/2x/3x). */
+  exportScale: ExportScale
   /**
    * Persisted opt-in for logging at all. Default `false`: a fresh install
    * writes no log file until the user turns logging on (Rust reads the key out
@@ -64,6 +84,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 避免 desktop 侧再维护一份必须与引擎一致的字面量。
   autoPair: { ...DEFAULT_AUTO_PAIR },
   locale: "auto",
+  // A 4K/Retina-safe PNG: 800 CSS px at 2x yields 1600 px wide.
+  exportWidth: EXPORT_WIDTH_DEFAULT,
+  exportScale: 2,
   loggingEnabled: false,
   loggingGeneration: 0,
   verboseLogging: false,
@@ -111,6 +134,17 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
   const locale: StoredLocale =
     raw.locale === "auto" || raw.locale === "en" || raw.locale === "zh" ? raw.locale : "auto"
 
+  const exportWidth = typeof raw.exportWidth === "number" && Number.isFinite(raw.exportWidth)
+    ? Math.max(EXPORT_WIDTH_MIN, Math.min(EXPORT_WIDTH_MAX, Math.round(raw.exportWidth)))
+    : EXPORT_WIDTH_DEFAULT
+
+  // Only the three density steps the native exporter understands; anything else
+  // (hand-edited JSON, older builds) falls back to the Retina-safe default.
+  const exportScale: ExportScale =
+    raw.exportScale === 1 || raw.exportScale === 2 || raw.exportScale === 3
+      ? raw.exportScale
+      : 2
+
   // Strictly `=== true`: the value can arrive from hand-edited JSON or an older
   // build, and Rust's `as_bool()` rejects the string "true" the same way. A
   // truthy coercion here would let TS and Rust disagree about the same file.
@@ -131,6 +165,8 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     spellcheck,
     autoPair,
     locale,
+    exportWidth,
+    exportScale,
     loggingEnabled,
     loggingGeneration,
     verboseLogging,

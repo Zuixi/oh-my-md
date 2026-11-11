@@ -5,6 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog"
 import { toast } from "react-toastify"
 import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
+import { notifyExportProgress } from "./exportProgressToast"
 import { parseRecents } from "./recents"
 import {
   LOG_FRONTEND_COMMAND,
@@ -182,12 +183,27 @@ export type PrepareUpdateRestartResult =
   | { readonly kind: "ready" }
   | { readonly kind: "timedOut" }
 
+export interface ExportWarning {
+  code: string
+  detail?: string | null
+}
+
 export interface DesktopServices {
   pickOpenPath: () => Promise<string | null>
   pickSavePath: () => Promise<string | null>
   pickFolder?: () => Promise<string | null>
-  pickExportPath?: (format?: "html" | "png" | "pdf") => Promise<string | null>
-  exportPreview?: (html: string, path: string, format: "pdf" | "png") => Promise<string | null>
+  pickExportPath?: (
+    format?: "html" | "png" | "pdf",
+    sourcePath?: string | null,
+  ) => Promise<string | null>
+  exportPreview?: (
+    html: string,
+    path: string,
+    format: "pdf" | "png",
+    scale: number,
+    width: number,
+    requestId: string,
+  ) => Promise<ExportWarning | null>
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
   readDocumentVersion: (path: string) => Promise<ExpectedDocumentVersion>
@@ -271,6 +287,12 @@ export interface DesktopServices {
   reportError: (message: string) => void
   /** Fire-and-forget success feedback (toast-backed in production; optional so tests/browser builds may omit it). */
   notifySuccess?: (message: string) => void
+  /** Non-fatal export warning; the artifact was already written successfully. */
+  notifyWarning?: (message: string) => void
+  /** Shows a blocking progress toast with Cancel; the stop function is idempotent. */
+  notifyProgress?: (message: string, onCancel: () => void) => () => void
+  /** Cancels a native render identified by the request id passed to exportPreview. */
+  cancelExport?: (requestId: string) => Promise<void>
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   listenDragDrop?: (handler: (paths: string[]) => void) => () => void
@@ -342,8 +364,8 @@ export const defaultServices: DesktopServices = {
   pickOpenPath: () => pickPath("file", [...MARKDOWN_EXTENSIONS]),
   pickSavePath: () => pickPath("save", ["md"]),
   pickFolder: () => pickPath("folder", []),
-  pickExportPath: async (format = "html") => {
-    const path = await save(exportSaveOptions(format))
+  pickExportPath: async (format = "html", sourcePath) => {
+    const path = await save(exportSaveOptions(format, sourcePath))
     return typeof path === "string" ? path : null
   },
   pickCssPath: () => pickPath("file", ["css"]),
@@ -390,8 +412,11 @@ export const defaultServices: DesktopServices = {
   deletePath: async path => {
     await invoke("delete_path", { path })
   },
-  exportPreview: async (html, path, format) => {
-    return await invoke<string | null>("export_preview", { html, path, format })
+  exportPreview: async (html, path, format, scale, width, requestId) => {
+    return await invoke<ExportWarning | null>("export_preview", { html, path, format, scale, width, requestId })
+  },
+  cancelExport: async requestId => {
+    await invoke("cancel_export", { requestId })
   },
   loadRecents: () => {
     try {
@@ -564,6 +589,8 @@ export const defaultServices: DesktopServices = {
     toast.error(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS })
   },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
+  notifyWarning: message => { toast.warning(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
+  notifyProgress: notifyExportProgress,
   listenMenu: handler => {
     const pending = listen<string>(
       "menu-command",

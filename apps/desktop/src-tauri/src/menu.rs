@@ -553,9 +553,12 @@ fn recents_submenu<R: Runtime, M: Manager<R>>(
 }
 
 fn export_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
-    SubmenuBuilder::new(app, l.export)
-        .item(&item(app, "export-html", l.export_html, None)?)
-        .item(&item(app, "export-pdf", l.export_pdf, None)?)
+    let mut builder =
+        SubmenuBuilder::new(app, l.export).item(&item(app, "export-html", l.export_html, None)?);
+    if cfg!(target_os = "macos") {
+        builder = builder.item(&item(app, "export-pdf", l.export_pdf, None)?);
+    }
+    builder
         .item(&item(app, "export-image", l.export_image, None)?)
         .build()
 }

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest"
 import {
   cssFamily,
   DEFAULT_SETTINGS,
+  EXPORT_WIDTH_DEFAULT,
+  EXPORT_WIDTH_MAX,
+  EXPORT_WIDTH_MIN,
   familyFromCssValue,
   parseSettings,
   loggingGenerationAfterChange,
@@ -28,6 +31,9 @@ describe("settings model", () => {
       spellcheck: false,
       autoPair: { brackets: true, quotes: true, markdownSyntax: true },
       locale: "auto",
+      // Retina-safe PNG export: 800 CSS px at 2x = 1600 px wide.
+      exportWidth: 800,
+      exportScale: 2,
       // Opt-in: a fresh install writes no log file.
       loggingEnabled: false,
       loggingGeneration: 0,
@@ -85,6 +91,8 @@ describe("settings model", () => {
       spellcheck: true,
       autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
+      exportWidth: 1200,
+      exportScale: 3,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: true,
@@ -101,6 +109,8 @@ describe("settings model", () => {
       spellcheck: true,
       autoPair: { brackets: false, quotes: true, markdownSyntax: false },
       locale: "auto",
+      exportWidth: 1200,
+      exportScale: 3,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: true,
@@ -144,6 +154,43 @@ describe("settings model", () => {
   it("parseSettings tolerates missing locale", () => {
     const s = parseSettings(JSON.stringify({ theme: "dark" }))
     expect(s.locale).toBe("auto")
+  })
+})
+
+// PNG export size: the width is the CSS pixel width of the rendered preview,
+// the scale is the pixel-density multiplier, so the exported bitmap is
+// width × scale device pixels wide. Defaults must stay Retina-safe (1600 px).
+describe("export image settings", () => {
+  it("defaults to 800 CSS px wide at 2x scale", () => {
+    expect(DEFAULT_SETTINGS.exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+    expect(DEFAULT_SETTINGS.exportScale).toBe(2)
+  })
+
+  it("clamps and rounds the export width", () => {
+    expect(sanitizeSettings({ exportWidth: 100 }).exportWidth).toBe(EXPORT_WIDTH_MIN)
+    expect(sanitizeSettings({ exportWidth: 9999 }).exportWidth).toBe(EXPORT_WIDTH_MAX)
+    expect(sanitizeSettings({ exportWidth: 800.6 }).exportWidth).toBe(801)
+  })
+
+  it("falls back to the default width for absent or non-finite values", () => {
+    expect(sanitizeSettings({}).exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+    expect(sanitizeSettings({ exportWidth: NaN }).exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+    expect(sanitizeSettings({ exportWidth: Infinity }).exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+    expect(sanitizeSettings({ exportWidth: "800" as never }).exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+  })
+
+  it("accepts only 1x, 2x or 3x scale", () => {
+    expect(sanitizeSettings({ exportScale: 1 }).exportScale).toBe(1)
+    expect(sanitizeSettings({ exportScale: 3 }).exportScale).toBe(3)
+    for (const value of [0, 4, 1.5, "2", null, undefined]) {
+      expect(sanitizeSettings({ exportScale: value } as never).exportScale).toBe(2)
+    }
+  })
+
+  it("gives settings.json written before the fields existed the defaults", () => {
+    const parsed = parseSettings(JSON.stringify({ theme: "dark" }))
+    expect(parsed.exportWidth).toBe(EXPORT_WIDTH_DEFAULT)
+    expect(parsed.exportScale).toBe(2)
   })
 })
 
