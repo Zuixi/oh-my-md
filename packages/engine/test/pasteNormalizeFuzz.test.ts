@@ -173,6 +173,7 @@ type Problem = string
 const INLINE_KEYS: Readonly<Record<string, readonly string[]>> = {
   text: ["type", "value"],
   code: ["type", "value"],
+  mathInline: ["type", "value"],
   hardBreak: ["type"],
   link: ["type", "href", "title", "children"],
   image: ["type", "alt", "title", "source"],
@@ -192,6 +193,7 @@ const BLOCK_KEYS: Readonly<Record<string, readonly string[]>> = {
   blockquote: ["type", "children"],
   list: ["type", "ordered", "start", "items"],
   codeBlock: ["type", "language", "value"],
+  mathBlock: ["type", "value"],
   table: ["type", "table"],
   horizontalRule: ["type"],
 }
@@ -233,6 +235,7 @@ function auditInline(node: PasteInline, path: string, problems: Problem[]): void
     case "text":
       return
     case "code":
+    case "mathInline":
       return
     case "hardBreak":
       return
@@ -262,6 +265,7 @@ function auditBlocks(blocks: readonly PasteBlock[], path: string, problems: Prob
       case "horizontalRule":
         break
       case "codeBlock":
+      case "mathBlock":
         break
       case "paragraph":
       case "heading":
@@ -336,6 +340,7 @@ function structuralStrings(result: PreparedSmartPaste): string[] {
     switch (node.type) {
       case "text":
       case "code":
+      case "mathInline":
       case "hardBreak":
         return
       case "link":
@@ -356,6 +361,7 @@ function structuralStrings(result: PreparedSmartPaste): string[] {
     for (const block of list) {
       switch (block.type) {
         case "horizontalRule":
+        case "mathBlock":
           break
         case "codeBlock":
           add(block.language)

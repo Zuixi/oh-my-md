@@ -248,6 +248,7 @@ function scanDocument(document: PasteDocument): PasteScan {
           visitRows(block.table.rows)
           break
         case "codeBlock":
+        case "mathBlock":
         case "horizontalRule":
           break
       }
@@ -345,6 +346,7 @@ const SAMPLE_INLINES: readonly PasteInline[] = [
   { type: "subscript", children: [{ type: "text", value: "2" }] },
   { type: "superscript", children: [{ type: "text", value: "3" }] },
   { type: "code", value: "a_b" },
+  { type: "mathInline", value: "x^2" },
   { type: "link", href: "https://example.com/docs", title: null, children: [{ type: "text", value: "docs" }] },
   { type: "image", alt: "chart", title: "quarterly", source: { kind: "url", value: "https://example.com/chart.png" } },
   { type: "image", alt: "spark", title: null, source: { kind: "embedded", key: "asset-inline-png", mime: "image/png", base64: "iVBORw0KGgo=" } },
@@ -373,6 +375,7 @@ const SAMPLE_BLOCKS: readonly PasteBlock[] = [
     ],
   },
   { type: "codeBlock", language: "ts", value: "const x: number = 1\n" },
+  { type: "mathBlock", value: "E = mc^2" },
   { type: "table", table: SAMPLE_TABLE },
   { type: "horizontalRule" },
 ]
@@ -413,6 +416,7 @@ const INLINE_TYPES: Record<PasteInline["type"], true> = {
   subscript: true,
   superscript: true,
   code: true,
+  mathInline: true,
   link: true,
   image: true,
   hardBreak: true,
@@ -424,6 +428,7 @@ const BLOCK_TYPES: Record<PasteBlock["type"], true> = {
   blockquote: true,
   list: true,
   codeBlock: true,
+  mathBlock: true,
   table: true,
   horizontalRule: true,
 }
@@ -448,7 +453,7 @@ describe("paste ast immutability", () => {
     const paragraph = blocks[1]
     if (paragraph.type !== "paragraph") throw new Error("sample paragraph missing")
     const inlines = paragraph.children
-    const link = inlines[10]
+    const link = inlines[11]
     if (link.type !== "link") throw new Error("sample link missing")
 
     expect(Reflect.set(FROZEN_PREPARED, "policy", "literalFallback")).toBe(false)

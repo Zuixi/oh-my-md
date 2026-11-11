@@ -44,6 +44,7 @@ type Wrapper = Extract<PasteInline, { readonly children: readonly PasteInline[] 
 type ImageNode = Extract<PasteInline, { readonly type: "image" }>
 type ListBlock = Extract<PasteBlock, { readonly type: "list" }>
 type CodeBlock = Extract<PasteBlock, { readonly type: "codeBlock" }>
+type MathBlock = Extract<PasteBlock, { readonly type: "mathBlock" }>
 
 export function serializePasteDocument(
   document: PasteDocument,
@@ -90,6 +91,8 @@ function blockText(block: PasteBlock, ctx: Ctx): string {
       return listText(block, ctx)
     case "codeBlock":
       return fencedCode(block)
+    case "mathBlock":
+      return fencedMath(block, ctx)
     case "table":
       return tableText(block.table, ctx)
     case "horizontalRule":
@@ -110,11 +113,20 @@ function listText(block: ListBlock, ctx: Ctx): string {
     if (block.ordered) index++
     const task = taskPrefix(item)
     const indent = " ".repeat(marker.length + task.length)
-    const content = blocks(item.children, ctx)
+    const content = listItemContent(item.children, ctx)
     const head = marker + task
     lines.push(content === "" ? head.trimEnd() : head + indentRest(content, indent))
   }
   return lines.join("\n")
+}
+
+function listItemContent(children: readonly PasteBlock[], ctx: Ctx): string {
+  const lowered = children.map(child =>
+    child.type === "mathBlock"
+      ? { type: "paragraph" as const, children: [{ type: "mathInline" as const, value: child.value }] }
+      : child,
+  )
+  return blocks(lowered, ctx)
 }
 
 function taskPrefix(item: PasteListItem): string {
@@ -146,6 +158,13 @@ function fencedCode(block: CodeBlock): string {
   const info = /^[A-Za-z0-9_+#.-]+$/.test(block.language) ? block.language : ""
   const body = block.value.endsWith("\n") ? block.value : `${block.value}\n`
   return `${fence}${info}\n${body}${fence}`
+}
+
+function fencedMath(block: MathBlock, ctx: Ctx): string {
+  const body = block.value.trim()
+  if (body === "") return ""
+  if (ctx.mode === "strict") return text(body, "paragraph", ctx)
+  return `$$\n${body}\n$$`
 }
 
 // ------------------------------------------------------------------ tables
@@ -219,6 +238,9 @@ function inlinesEncodable(nodes: readonly PasteInline[]): boolean {
         // 行内代码里偶数反斜杠 run 后的管道无法被 GFM 行切分屏蔽。
         if (encodeCellCode(node.value) === null) return false
         break
+      case "mathInline":
+        if (node.value.includes("|") || node.value.includes("\n")) return false
+        break
       case "text":
       case "image":
       case "hardBreak":
@@ -248,6 +270,7 @@ function blockVisibleText(block: PasteBlock): string {
     case "list":
       return block.items.map(item => visibleText(item.children)).filter(text => text !== "").join(" ")
     case "codeBlock":
+    case "mathBlock":
       return block.value
     case "table":
       return block.table.rows.map(row => row.cells.map(cell => visibleText(cell.blocks)).join(" ")).join(" ")
@@ -262,6 +285,7 @@ function inlineVisibleText(nodes: readonly PasteInline[]): string {
     switch (node.type) {
       case "text": out += node.value; break
       case "code": out += node.value; break
+      case "mathInline": out += node.value; break
       case "image": out += node.alt; break
       case "hardBreak": out += " "; break
       case "link": out += inlineVisibleText(node.children); break
@@ -311,6 +335,11 @@ function inlines(nodes: readonly PasteInline[], context: PasteTextContext, ctx: 
       atLineStart = false
       continue
     }
+    if (node.type === "mathInline") {
+      out += inlineMathSpan(node.value, ctx)
+      atLineStart = false
+      continue
+    }
     if (node.type === "image") {
       out += imageText(node, ctx)
       atLineStart = false
@@ -357,6 +386,31 @@ function codeSpan(value: string): string {
   const fence = "`".repeat(longestRun(value, "`") + 1)
   const pad = value.startsWith("`") || value.endsWith("`") ? " " : ""
   return fence + pad + value + pad + fence
+}
+
+function inlineMathSpan(value: string, ctx: Ctx): string {
+  const trimmed = value.replace(/\r\n|\r|\n/g, " ").trim()
+  if (trimmed === "" || ctx.mode === "strict") {
+    return text(trimmed, "paragraph", ctx)
+  }
+  const safe = escapeUnescapedDollars(trimmed)
+  return `$${safe}$`
+}
+
+function escapeUnescapedDollars(value: string): string {
+  let out = ""
+  let backslashes = 0
+  for (const char of value) {
+    if (char === "\\") {
+      out += char
+      backslashes += 1
+      continue
+    }
+    if (char === "$" && backslashes % 2 === 0) out += "\\"
+    out += char
+    backslashes = 0
+  }
+  return out
 }
 
 /**
@@ -441,7 +495,11 @@ function boundaryOf(list: readonly PasteBlock[], allowComplexTable: boolean): Pa
   ) {
     return { start: "block", end: "htmlBlock" }
   }
-  const opaque = last.type === "codeBlock" || last.type === "table" || last.type === "horizontalRule"
+  const opaque =
+    last.type === "codeBlock" ||
+    last.type === "mathBlock" ||
+    last.type === "table" ||
+    last.type === "horizontalRule"
   return { start: "block", end: opaque ? "opaque" : "block" }
 }
 

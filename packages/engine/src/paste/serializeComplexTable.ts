@@ -173,7 +173,8 @@ function serializeCellBlock(block: PasteBlock, state: LoweringState): string {
       }
       return items.join("<br>")
     }
-    case "codeBlock": {
+    case "codeBlock":
+    case "mathBlock": {
       const lines = block.value.replace(/\r\n|\r/g, "\n").split("\n")
       return lines.map(line => `<code>${escapeHtmlText(line)}</code>`).join("<br>")
     }
@@ -214,6 +215,7 @@ function serializeInlines(nodes: readonly PasteInline[], state: LoweringState): 
         out += "<br>"
         break
       case "code":
+      case "mathInline":
         out += `<code>${escapeHtmlText(node.value.replace(/\r\n|\r|\n/g, " "))}</code>`
         break
       case "link": {

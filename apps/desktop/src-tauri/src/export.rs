@@ -35,9 +35,12 @@ pub const EXPORT_MIN_SCALE: u32 = 1;
 pub const EXPORT_MAX_SCALE: u32 = 3;
 /// Single PNG side ceiling used by PNG/WebP consumers and GPU capture paths.
 pub const EXPORT_MAX_DEVICE_DIMENSION: u32 = 16_383;
-/// RGBA bitmap budget per image (~128 MiB). Larger docs are clamped with a
-/// warning instead of silently allocating a multi-hundred-MB bitmap.
-pub const EXPORT_MAX_DEVICE_AREA: u64 = 32_000_000;
+/// Maximum device height for long-document PNG exports (~65,535 px, matching
+/// typical browser/OS image decoder ceilings while allowing 30+ screen-tall notes).
+pub const EXPORT_MAX_DEVICE_HEIGHT: u32 = 65_535;
+/// RGBA bitmap budget per image (~512 MiB). Larger docs are clamped with a
+/// warning instead of allocating an unbounded multi-GB bitmap.
+pub const EXPORT_MAX_DEVICE_AREA: u64 = 128_000_000;
 pub const EXPORT_MIN_HEIGHT_CSS: f64 = 600.0;
 #[cfg(target_os = "macos")]
 pub const EXPORT_TIMEOUT_SECS: u64 = 20;
@@ -111,7 +114,7 @@ impl ExportSpec {
     /// Largest CSS height that keeps both the per-side dimension and the RGBA
     /// area budget within limits at this scale.
     pub fn max_height_css(self) -> f64 {
-        let by_dimension = f64::from(EXPORT_MAX_DEVICE_DIMENSION) / self.scale;
+        let by_dimension = f64::from(EXPORT_MAX_DEVICE_HEIGHT) / self.scale;
         let by_area = EXPORT_MAX_DEVICE_AREA as f64 / (f64::from(self.device_width()) * self.scale);
         by_dimension.min(by_area)
     }
@@ -130,7 +133,7 @@ impl ExportSpec {
             EXPORT_MIN_HEIGHT_CSS
         };
         let max = if format == ExportFormat::Pdf {
-            f64::from(EXPORT_MAX_DEVICE_DIMENSION)
+            f64::from(EXPORT_MAX_DEVICE_HEIGHT)
         } else {
             self.max_height_css()
         }
@@ -288,9 +291,10 @@ pub async fn export_preview(
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn measure_export_script(min_height: f64, max_height: f64) -> String {
     format!(
-        "(function(){{var r=document.documentElement,b=document.body;\
-         var h=Math.max(r?r.scrollHeight:0,b?b.scrollHeight:0,{min});\
-         return Math.min(h,{max});}})()",
+        "(function(){{var h=Number(window.__omdExportHeight||0);\
+         if(!(h>0)){{var r=document.documentElement,b=document.body;\
+         h=Math.max(r?r.scrollHeight:0,b?b.scrollHeight:0);}}\
+         return Math.min(Math.max(h,{min}),{max});}})()",
         min = min_height,
         max = max_height,
     )
@@ -406,7 +410,7 @@ mod tests {
         let spec = ExportSpec::new(1920, 3).unwrap();
         assert_eq!(spec.device_width(), 5760);
         assert!(spec.max_height_css() >= EXPORT_MIN_HEIGHT_CSS);
-        assert!(spec.max_height_css() * spec.scale <= EXPORT_MAX_DEVICE_DIMENSION as f64);
+        assert!(spec.max_height_css() * spec.scale <= EXPORT_MAX_DEVICE_HEIGHT as f64);
         let area = f64::from(spec.device_width()) * spec.max_height_css() * spec.scale;
         assert!(area <= EXPORT_MAX_DEVICE_AREA as f64 + 1.0);
     }

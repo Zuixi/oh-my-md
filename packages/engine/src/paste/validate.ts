@@ -314,6 +314,7 @@ function blockKind(block: PasteBlock): string {
     case "blockquote": return "Blockquote"
     case "list": return block.ordered ? "OrderedList" : "BulletList"
     case "codeBlock": return "FencedCode"
+    case "mathBlock": return "MathBlock"
     case "table":
       return block.table.requiresComplexHtml && canSerializeComplexTable(block.table)
         ? "HTMLBlock"
@@ -335,6 +336,7 @@ function inlineCounts(blocks: readonly PasteBlock[]): Map<string, number> {
       switch (node.type) {
         case "text": break
         case "code": bump("InlineCode"); break
+        case "mathInline": bump("InlineMath"); break
         case "image": bump("Image"); break
         case "hardBreak": bump("HardBreak"); break
         case "link": bump("Link"); visitInlines(node.children); break
@@ -361,6 +363,7 @@ function inlineCounts(blocks: readonly PasteBlock[]): Map<string, number> {
           for (const item of block.items) visitBlocks(item.children)
           break
         case "codeBlock":
+        case "mathBlock":
         case "table":
         case "horizontalRule":
           break

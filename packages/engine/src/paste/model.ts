@@ -10,6 +10,7 @@ export type PasteInline =
   | { readonly type: "text"; readonly value: string }
   | { readonly type: "strong" | "emphasis" | "strike" | "highlight" | "underline" | "kbd" | "subscript" | "superscript"; readonly children: readonly PasteInline[] }
   | { readonly type: "code"; readonly value: string }
+  | { readonly type: "mathInline"; readonly value: string }
   | { readonly type: "link"; readonly href: string; readonly title: string | null; readonly children: readonly PasteInline[] }
   | { readonly type: "image"; readonly alt: string; readonly title: string | null; readonly source: PasteImageSource }
   | { readonly type: "hardBreak" }
@@ -25,6 +26,7 @@ export type PasteBlock =
   | { readonly type: "blockquote"; readonly children: readonly PasteBlock[] }
   | { readonly type: "list"; readonly ordered: boolean; readonly start: number | null; readonly items: readonly PasteListItem[] }
   | { readonly type: "codeBlock"; readonly language: string; readonly value: string }
+  | { readonly type: "mathBlock"; readonly value: string }
   | { readonly type: "table"; readonly table: PasteTable }
   | { readonly type: "horizontalRule" }
 

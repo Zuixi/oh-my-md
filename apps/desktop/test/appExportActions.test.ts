@@ -233,13 +233,14 @@ it("threads customCss into exportRichHtml options", async () => {
     expect(services.reportError).toHaveBeenCalledWith(`${t("error.export.failed")}: boom`)
   })
 
-  it("stops progress when the save dialog is cancelled", async () => {
+  it("does not start progress or render HTML when the save dialog is cancelled", async () => {
     const { services, order, stop } = trackedServices({
       pickExportPath: vi.fn().mockResolvedValue(null),
     })
     await exportCurrent(services, makeView(), "html")
-    expect(stop).toHaveBeenCalledOnce()
-    expect(order).toEqual([`progress:${t("export.progress")}`, "stop-progress"])
+    expect(stop).not.toHaveBeenCalled()
+    expect(order).toEqual([])
+    expect(vi.mocked(exportRichHtml)).not.toHaveBeenCalled()
     expect(services.writeFile).not.toHaveBeenCalled()
   })
 
@@ -334,6 +335,7 @@ it("threads customCss into exportRichHtml options", async () => {
     }))
     let requestCancel!: () => void
     const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
       notifyProgress: vi.fn((_message: string, onCancel: () => void) => {
         requestCancel = onCancel
         return vi.fn()
@@ -342,27 +344,26 @@ it("threads customCss into exportRichHtml options", async () => {
     })
     const onNotice = vi.fn()
     const running = exportCurrent(services, makeView(), "png", {}, undefined, onNotice)
+    await vi.waitFor(() => expect(services.notifyProgress).toHaveBeenCalled())
     requestCancel()
+    await vi.waitFor(() => expect(releaseHtml).toBeTypeOf("function"))
     releaseHtml()
     await running
-    expect(services.pickExportPath).not.toHaveBeenCalled()
     expect(services.exportPreview).not.toHaveBeenCalled()
     expect(services.cancelExport).not.toHaveBeenCalled()
     expect(onNotice).toHaveBeenCalledWith(t("export.cancelled"))
   })
 
-  it("stops before opening the save dialog when cancelled while preparing", async () => {
-    let requestCancel!: () => void
+  it("stops before rendering HTML when cancelled right as progress starts", async () => {
     const services = makeServices({
       notifyProgress: vi.fn((_message: string, onCancel: () => void) => {
-        requestCancel = onCancel
+        onCancel()
         return vi.fn()
       }),
     })
-    const running = exportCurrent(services, makeView(), "html")
-    requestCancel()
-    await running
-    expect(services.pickExportPath).not.toHaveBeenCalled()
+    await exportCurrent(services, makeView(), "html")
+    expect(vi.mocked(exportRichHtml)).not.toHaveBeenCalled()
+    expect(services.writeFile).not.toHaveBeenCalled()
     expect(services.reportError).not.toHaveBeenCalled()
   })
 

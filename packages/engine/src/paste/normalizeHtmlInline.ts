@@ -120,7 +120,7 @@ function trimEdge(inlines: readonly PasteInline[], edge: "start" | "end"): Paste
       list.splice(index, 1)
       continue
     }
-    if (node.type === "code" || node.type === "image") return list
+    if (node.type === "code" || node.type === "mathInline" || node.type === "image") return list
     const children = trimEdge(node.children, edge)
     const rebuilt = children.length > 0 ? withChildren(node, children) : null
     if (!rebuilt) {

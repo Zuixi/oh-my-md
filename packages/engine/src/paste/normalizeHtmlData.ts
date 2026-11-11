@@ -70,6 +70,303 @@ export function languageOf(el: Element): string {
   return ""
 }
 
+// --- 数学公式节点提取与 $$ 块切分 --------------------------------------------
+
+export interface ExtractedMath {
+  readonly display: boolean
+  readonly value: string
+}
+
+const MATH_ATTRS = ["data-latex", "data-tex", "data-math", "data-formula", "tex"] as const
+const TEX_ENCODINGS = new Set(["application/x-tex", "text/x-tex", "tex", "latex"])
+
+function hasClassToken(el: Element, target: string): boolean {
+  for (const token of (el.getAttribute("class") ?? "").split(DECORATION_TOKENS)) {
+    if (token.toLowerCase() === target) return true
+  }
+  return false
+}
+
+function readTexAnnotation(root: Element): string | null {
+  const annotations = root.getElementsByTagName("annotation")
+  for (let i = 0; i < annotations.length; i++) {
+    const ann = annotations[i]
+    const enc = (ann.getAttribute("encoding") ?? "").trim().toLowerCase()
+    if (TEX_ENCODINGS.has(enc) || enc.includes("tex")) {
+      const tex = (ann.textContent ?? "").trim()
+      if (tex !== "") return tex
+    }
+  }
+  return null
+}
+
+function stripOuterMathDelimiters(raw: string, display: boolean): { readonly display: boolean; readonly value: string } {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 4) {
+    return { display: true, value: trimmed.slice(2, -2).trim() }
+  }
+  if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]") && trimmed.length > 4) {
+    return { display: true, value: trimmed.slice(2, -2).trim() }
+  }
+  if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)") && trimmed.length > 4) {
+    return { display, value: trimmed.slice(2, -2).trim() }
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length > 2 && !trimmed.startsWith("$$")) {
+    return { display, value: trimmed.slice(1, -1).trim() }
+  }
+  return { display, value: trimmed }
+}
+
+function isDisplayMathElement(el: Element, tag: string): boolean {
+  const displayAttr = (el.getAttribute("display") ?? "").trim().toLowerCase()
+  if (displayAttr === "true" || displayAttr === "block") return true
+  if ((el.getAttribute("type") ?? "").trim().toLowerCase() === "display") return true
+  if (hasClassToken(el, "katex-display") || hasClassToken(el, "math-display") || hasClassToken(el, "math-block")) {
+    return true
+  }
+  if (tag !== "math") {
+    const mathChild = el.getElementsByTagName("math")[0]
+    if (mathChild) {
+      const childDisplay = (mathChild.getAttribute("display") ?? "").trim().toLowerCase()
+      if (childDisplay === "block" || childDisplay === "true") return true
+    }
+  }
+  return false
+}
+
+/**
+ * 识别网页已渲染的 MathJax / KaTeX / MathML 节点，直接提取原始 LaTeX 源码，
+ * 避免遍历视觉 DOM 产生重复文本或无空格乱码。
+ */
+export function extractMathElement(el: Element): ExtractedMath | null {
+  const tag = el.tagName.toLowerCase()
+  if (tag === "script") {
+    const type = (el.getAttribute("type") ?? "").trim().toLowerCase()
+    if (!type.startsWith("math/tex")) return null
+    const value = (el.textContent ?? "").trim()
+    if (value === "") return null
+    return stripOuterMathDelimiters(value, type.includes("mode=display"))
+  }
+
+  if (tag === "img") {
+    const isWikiMath =
+      hasClassToken(el, "mwe-math-fallback-image-inline") ||
+      hasClassToken(el, "mwe-math-fallback-image-display") ||
+      hasClassToken(el, "tex")
+    if (isWikiMath) {
+      const alt = (el.getAttribute("alt") ?? "").trim()
+      if (alt !== "") {
+        return stripOuterMathDelimiters(alt, hasClassToken(el, "mwe-math-fallback-image-display"))
+      }
+    }
+  }
+
+  const isMathContainer =
+    tag === "mjx-container" ||
+    tag === "math-renderer" ||
+    tag === "math" ||
+    hasClassToken(el, "mwe-math-element") ||
+    hasClassToken(el, "katex-display") ||
+    hasClassToken(el, "katex") ||
+    hasClassToken(el, "mathjax") ||
+    hasClassToken(el, "math-inline") ||
+    hasClassToken(el, "math-display") ||
+    hasClassToken(el, "math-block")
+
+  const display = isDisplayMathElement(el, tag)
+  for (const attr of MATH_ATTRS) {
+    const val = el.getAttribute(attr)
+    if (val !== null && val.trim() !== "") {
+      return stripOuterMathDelimiters(val, display)
+    }
+  }
+  if (!isMathContainer) return null
+
+  const annotated = readTexAnnotation(el)
+  if (annotated !== null) return stripOuterMathDelimiters(annotated, display)
+
+  if (hasClassToken(el, "mwe-math-element")) {
+    const img = el.getElementsByTagName("img")[0]
+    if (img) {
+      const alt = (img.getAttribute("alt") ?? "").trim()
+      if (alt !== "") {
+        const imgDisplay = display || hasClassToken(img, "mwe-math-fallback-image-display")
+        return stripOuterMathDelimiters(alt, imgDisplay)
+      }
+    }
+  }
+
+  if (tag === "math-renderer") {
+    const scripts = el.getElementsByTagName("script")
+    for (let i = 0; i < scripts.length; i++) {
+      const type = (scripts[i].getAttribute("type") ?? "").trim().toLowerCase()
+      if (type.startsWith("math/tex")) {
+        const tex = (scripts[i].textContent ?? "").trim()
+        if (tex !== "") return stripOuterMathDelimiters(tex, display || type.includes("mode=display"))
+      }
+    }
+  }
+  return null
+}
+
+const CODE_FENCE_OPEN = /^(`{3,}|~{3,})([A-Za-z0-9_+#.-]*)[ \t]*$/
+
+function parseCodeFenceOpen(raw: string): { readonly marker: string; readonly language: string } | null {
+  const match = CODE_FENCE_OPEN.exec(raw.trim())
+  if (!match) return null
+  return { marker: match[1], language: match[2].toLowerCase() }
+}
+
+function isCodeFenceClose(raw: string, marker: string): boolean {
+  const trimmed = raw.trim()
+  return trimmed.length >= marker.length && trimmed === marker[0].repeat(trimmed.length)
+}
+
+/**
+ * 将段落内由 `<br>`（hardBreak）分隔的物理行中的配对 `$$ ... $$` 或 ` ``` ... ``` `
+ * 切分为独立 `mathBlock` / `codeBlock`，使从网页或聊天复制的原始块级语法能直接渲染。
+ */
+export function splitParagraphDisplayMath(children: readonly PasteInline[]): PasteBlock[] {
+  const lines: PasteInline[][] = [[]]
+  for (const node of children) {
+    if (node.type === "hardBreak") lines.push([])
+    else lines[lines.length - 1].push(node)
+  }
+  if (lines.length < 3) return [{ type: "paragraph", children }]
+
+  const isPlainTextLine = (line: readonly PasteInline[]): boolean =>
+    line.every(node => node.type === "text")
+  const lineTextOf = (line: readonly PasteInline[]): string =>
+    line.map(node => (node.type === "text" ? node.value : "")).join("")
+  const isMathFenceLine = (line: readonly PasteInline[]): boolean =>
+    line.length === 1 && line[0].type === "text" && line[0].value.trim() === "$$"
+
+  const blocks: PasteBlock[] = []
+  let paraRun: PasteInline[] = []
+  const flushPara = (): void => {
+    if (paraRun.length > 0) {
+      blocks.push({ type: "paragraph", children: paraRun })
+      paraRun = []
+    }
+  }
+  const pushParaLine = (line: readonly PasteInline[]): void => {
+    if (line.length === 0) return
+    if (paraRun.length > 0) paraRun.push({ type: "hardBreak" })
+    paraRun.push(...line)
+  }
+
+  for (let i = 0; i < lines.length;) {
+    if (isMathFenceLine(lines[i])) {
+      let close = -1
+      for (let j = i + 1; j < lines.length; j++) {
+        if (isMathFenceLine(lines[j])) { close = j; break }
+        if (!isPlainTextLine(lines[j])) break
+      }
+      if (close > i + 1) {
+        const value = lines.slice(i + 1, close).map(lineTextOf).join("\n").trim()
+        if (value !== "") {
+          flushPara()
+          blocks.push({ type: "mathBlock", value })
+          i = close + 1
+          continue
+        }
+      }
+    }
+    const line = lines[i]
+    if (line.length === 1 && line[0].type === "text") {
+      const open = parseCodeFenceOpen(line[0].value)
+      if (open) {
+        let close = -1
+        for (let j = i + 1; j < lines.length; j++) {
+          const next = lines[j]
+          if (next.length === 1 && next[0].type === "text" && isCodeFenceClose(next[0].value, open.marker)) {
+            close = j
+            break
+          }
+          if (!isPlainTextLine(next)) break
+        }
+        if (close > i + 1) {
+          const value = lines.slice(i + 1, close).map(lineTextOf).join("\n")
+          if (value.trim() !== "") {
+            flushPara()
+            blocks.push({ type: "codeBlock", language: open.language, value })
+            i = close + 1
+            continue
+          }
+        }
+      }
+    }
+    pushParaLine(lines[i])
+    i += 1
+  }
+  flushPara()
+  return blocks.length > 0 ? blocks : [{ type: "paragraph", children }]
+}
+
+/**
+ * 合并跨 `<p>` / `<div>` 块级容器被拆成独立段落的配对 `$$ ... $$` 或 ` ``` ... ``` `。
+ */
+export function mergeAdjacentFencedBlocks(blocks: readonly PasteBlock[]): PasteBlock[] {
+  if (blocks.length < 3) return [...blocks]
+  const plainParagraphLines = (block: PasteBlock): string[] | null => {
+    if (block.type !== "paragraph" || block.children.length === 0) return null
+    const lines: string[] = [""]
+    for (const node of block.children) {
+      if (node.type === "hardBreak") lines.push("")
+      else if (node.type === "text") lines[lines.length - 1] += node.value
+      else return null
+    }
+    return lines
+  }
+
+  const out: PasteBlock[] = []
+  for (let i = 0; i < blocks.length;) {
+    const firstLines = plainParagraphLines(blocks[i])
+    if (firstLines && firstLines.length === 1 && firstLines[0].trim() === "$$") {
+      let close = -1
+      const bodyLines: string[] = []
+      for (let j = i + 1; j < blocks.length; j++) {
+        const lines = plainParagraphLines(blocks[j])
+        if (!lines) break
+        if (lines.length === 1 && lines[0].trim() === "$$") { close = j; break }
+        bodyLines.push(...lines)
+      }
+      if (close > i + 1) {
+        const value = bodyLines.join("\n").trim()
+        if (value !== "") {
+          out.push({ type: "mathBlock", value })
+          i = close + 1
+          continue
+        }
+      }
+    }
+    if (firstLines && firstLines.length === 1) {
+      const open = parseCodeFenceOpen(firstLines[0])
+      if (open) {
+        let close = -1
+        const bodyLines: string[] = []
+        for (let j = i + 1; j < blocks.length; j++) {
+          const lines = plainParagraphLines(blocks[j])
+          if (!lines) break
+          if (lines.length === 1 && isCodeFenceClose(lines[0], open.marker)) { close = j; break }
+          bodyLines.push(...lines)
+        }
+        if (close > i + 1) {
+          const value = bodyLines.join("\n")
+          if (value.trim() !== "") {
+            out.push({ type: "codeBlock", language: open.language, value })
+            i = close + 1
+            continue
+          }
+        }
+      }
+    }
+    out.push(blocks[i])
+    i += 1
+  }
+  return out
+}
+
 // --- 表格元数据与复杂度 -----------------------------------------------------
 
 export interface CellMeta {

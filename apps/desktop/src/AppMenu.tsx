@@ -89,8 +89,8 @@ export function AppMenu(props: {
     )
 
   const run = (id: string): void => {
-    props.onCommand(id)
     close()
+    props.onCommand(id)
   }
 
   const topButton = (index: number): HTMLButtonElement | null =>

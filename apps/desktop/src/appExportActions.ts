@@ -85,7 +85,27 @@ export async function exportCurrent(
   }
   const cancelled = (): boolean => controller.signal.aborted
   try {
+    if (kind !== "html" && !services.exportPreview) {
+      throw new Error(t("error.export.desktopOnly"))
+    }
+    const format = kind === "html" ? "html" : kind === "pdf" ? "pdf" : "png"
+    // Open the native Save dialog first so clicking "Export Image / PDF / HTML"
+    // responds instantaneously instead of freezing the UI while rendering
+    // syntax trees, KaTeX fonts, Shiki grammars, and local images.
+    const path = await requestExportPath(services, format, renderOptions.sourcePath)
+    if (cancelled()) {
+      announceCancelled()
+      return
+    }
+    if (!path) return
     stopProgress = services.notifyProgress?.(t("export.progress"), cancel)
+    // Yield a macrotask after mounting the progress toast so the browser paints
+    // the closed menu and progress indicator before CPU-heavy HTML generation.
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    if (cancelled()) {
+      announceCancelled()
+      return
+    }
     const wantsRemoteWarning = kind === "pdf" || kind === "png"
     let sawRemoteImage = false
     const resolvedOptions = typeof exportOptions === "function"
@@ -108,47 +128,30 @@ export async function exportCurrent(
     // table-cell images warn too; a regex over the raw document missed both.
     if (sawRemoteImage) onNotice?.(t("export.remoteImageWarning"))
     if (kind === "html") {
-      const path = await requestExportPath(services, "html", renderOptions.sourcePath)
-      if (cancelled()) {
-        announceCancelled()
-        return
-      }
-      if (path) {
-        await services.writeFile(path, html)
-        finishProgress()
-        services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
-      }
-      return
-    }
-    if (!services.exportPreview) {
-      throw new Error(t("error.export.desktopOnly"))
-    }
-    const format = kind === "pdf" ? "pdf" : "png"
-    const path = await requestExportPath(services, format, renderOptions.sourcePath)
-    if (cancelled()) {
-      announceCancelled()
-      return
-    }
-    if (path) {
-      nativeStarted = true
-      const warning = await services.exportPreview(
-        html,
-        path,
-        format,
-        renderOptions.scale,
-        renderOptions.width,
-        requestId,
-      )
+      await services.writeFile(path, html)
       finishProgress()
-      if (warning) {
-        // The file was written successfully; a warning must not look like a
-        // failed export. Fall back to the error channel only for test doubles
-        // and browser builds that omit the warning toast.
-        const reportWarning = services.notifyWarning ?? services.reportError
-        reportWarning(warningMessage(warning))
-      } else {
-        services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
-      }
+      services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
+      return
+    }
+    nativeStarted = true
+    const previewFormat = kind === "pdf" ? "pdf" : "png"
+    const warning = await services.exportPreview!(
+      html,
+      path,
+      previewFormat,
+      renderOptions.scale,
+      renderOptions.width,
+      requestId,
+    )
+    finishProgress()
+    if (warning) {
+      // The file was written successfully; a warning must not look like a
+      // failed export. Fall back to the error channel only for test doubles
+      // and browser builds that omit the warning toast.
+      const reportWarning = services.notifyWarning ?? services.reportError
+      reportWarning(warningMessage(warning))
+    } else {
+      services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
     }
   } catch (error) {
     if (cancelRequested || controller.signal.aborted) {

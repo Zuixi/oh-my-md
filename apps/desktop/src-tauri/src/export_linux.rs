@@ -100,14 +100,15 @@ fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<V
     } else {
         1.0
     };
-    let zoom = spec.scale / gdk_scale;
+    let eff_scale = effective_capture_scale(spec, probe);
+    let zoom = eff_scale / gdk_scale;
     let logical_width = spec.width_css * zoom;
     let logical_height = probe.height_css * zoom;
     window
         .set_size(LogicalSize::new(logical_width, logical_height))
         .map_err(|error| error.to_string())?;
 
-    let expected_width = spec.device_width();
+    let expected_width = expected_device_width(spec, probe);
     let expected_height = expected_device_height(spec, probe);
     with_view(window, CAPTURE_TIMEOUT, move |view, tx| {
         view.set_zoom_level(zoom);
@@ -115,8 +116,24 @@ fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<V
     })
 }
 
+/// Keep the Cairo/WebKitGTK snapshot surface inside `EXPORT_MAX_DEVICE_DIMENSION`
+/// (16,383 device px) by smoothly adapting the device scale on ultra-tall notes.
+fn effective_capture_scale(spec: &ExportSpec, probe: &Probe) -> f64 {
+    let height = probe.height_css.max(1.0);
+    let max_dim = f64::from(crate::export::EXPORT_MAX_DEVICE_DIMENSION);
+    (max_dim / height).min(spec.scale).max(0.25)
+}
+
+fn expected_device_width(spec: &ExportSpec, probe: &Probe) -> u32 {
+    (spec.width_css * effective_capture_scale(spec, probe))
+        .round()
+        .max(1.0) as u32
+}
+
 fn expected_device_height(spec: &ExportSpec, probe: &Probe) -> u32 {
-    (probe.height_css * spec.scale).round().max(1.0) as u32
+    (probe.height_css * effective_capture_scale(spec, probe))
+        .round()
+        .max(1.0) as u32
 }
 
 /// Starts the two-animation-frame relayout handshake and, once it has

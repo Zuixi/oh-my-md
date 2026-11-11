@@ -214,6 +214,57 @@ describe("planSmartPaste: structured candidate", () => {
       { kind: "unsupportedTable", count: 1 },
     ])
   })
+
+  it("produces a clean MathBlock and inline math when pasting issue #53 web HTML", () => {
+    const html = [
+      "<p>Problem. Display math written right after a text line does not render:</p>",
+      "<p>The energy is:<br>$$<br>E = mc^2<br>$$<br>MathBlock has no endLeaf rule.</p>",
+      '<p>Fix. MathBlock.endLeaf ends the paragraph on a line starting with <mjx-container class="MathJax" jax="CHTML"><mjx-assistive-mml><math><semantics><annotation encoding="application/x-tex">, except when the paragraph already has an unclosed</annotation></semantics></math></mjx-assistive-mml><mjx-math>,exceptwhentheparagraphalreadyhasanunclosed</mjx-math></mjx-container> (text $$ … $$ more).</p>',
+    ].join("")
+    const plainText = [
+      "Problem. Display math written right after a text line does not render:",
+      "",
+      "The energy is:",
+      "$$",
+      "E = mc^2",
+      "$$",
+      "MathBlock has no endLeaf rule.",
+    ].join("\n")
+    const prepared = plain(html, plainText)
+    const state = makeState("")
+    let plan: SmartPastePlan | undefined
+    expect(parsesOf(() => { plan = planSmartPaste(prepared, state, { from: 0, to: 0 }) })).toBe(1)
+    expect(plan?.kind).toBe("markdown")
+    expect(plan?.text).toContain("The energy is:\n\n$$\nE = mc^2\n$$\n\nMathBlock has no endLeaf rule.")
+    expect(plan?.text).not.toContain("\\$$")
+    expect(plan?.text).not.toContain("The energy is:\\")
+    expect(plan?.text).toContain("$, except when the paragraph already has an unclosed$")
+    expect(plan?.text).not.toContain(",exceptwhentheparagraphalreadyhasanunclosed")
+    expect(topLevelKinds(plan!.text)).toEqual([
+      "Paragraph",
+      "Paragraph",
+      "MathBlock",
+      "Paragraph",
+      "Paragraph",
+    ])
+  })
+
+  it("handles mathInline containing unescaped $ and mathBlock inside blockquote/list without strict fallback", () => {
+    const inlineWithDollar = plain('<p><span class="katex" data-tex="\\text{cost } $5">cost $5</span></p>', "cost $5")
+    const inlinePlan = planSmartPaste(inlineWithDollar, makeState(""), { from: 0, to: 0 })
+    expect(inlinePlan.diagnostics).toEqual([])
+    expect(inlinePlan.text).toBe("$\\text{cost } \\$5$")
+
+    const blockInQuote = plain("<blockquote><p>$$<br>a + b<br>$$</p></blockquote>", "$$ \na + b\n$$")
+    const quotePlan = planSmartPaste(blockInQuote, makeState(""), { from: 0, to: 0 })
+    expect(quotePlan.diagnostics).toEqual([])
+    expect(quotePlan.text).toBe("> $$\n> a + b\n> $$")
+
+    const blockInList = plain("<ul><li>$$<br>x = 1<br>$$</li></ul>", "x = 1")
+    const listPlan = planSmartPaste(blockInList, makeState(""), { from: 0, to: 0 })
+    expect(listPlan.diagnostics).toEqual([])
+    expect(listPlan.text).toBe("- $x = 1$")
+  })
 })
 
 describe("planSmartPaste: strict fallback", () => {

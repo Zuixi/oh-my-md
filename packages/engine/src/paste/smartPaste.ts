@@ -295,7 +295,7 @@ function lowerBlocks(
       }
       case "list": {
         const items = block.items.map(item => {
-          const children = lowerBlocks(item.children, resolveAsset, allowComplexTable)
+          const children = lowerListItemBlocks(lowerBlocks(item.children, resolveAsset, allowComplexTable))
           return children === item.children ? item : { ...item, children }
         })
         changed ||= items.some((item, index) => item !== block.items[index])
@@ -319,6 +319,15 @@ function lowerBlocks(
     }
   }
   return changed ? out : blocks
+}
+
+function lowerListItemBlocks(blocks: readonly PasteBlock[]): readonly PasteBlock[] {
+  if (!blocks.some(block => block.type === "mathBlock")) return blocks
+  return blocks.map(block =>
+    block.type === "mathBlock"
+      ? { type: "paragraph", children: [{ type: "mathInline", value: block.value }] }
+      : block,
+  )
 }
 
 function lowerRows(
@@ -358,7 +367,7 @@ function lowerInlines(nodes: readonly PasteInline[], resolveAsset: ResolveAsset)
       out.push(children === node.children ? node : { ...node, children })
       continue
     }
-    if (node.type === "text" || node.type === "code" || node.type === "hardBreak") {
+    if (node.type === "text" || node.type === "code" || node.type === "mathInline" || node.type === "hardBreak") {
       out.push(node)
       continue
     }

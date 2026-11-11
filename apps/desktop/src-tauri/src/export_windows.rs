@@ -83,7 +83,7 @@ fn probe(window: &WebviewWindow) -> Result<Option<Probe>, String> {
 
 fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<Vec<u8>, String> {
     let params = capture_params(spec, probe);
-    let expected_width = spec.device_width();
+    let expected_width = expected_device_width(spec, probe);
     let expected_height = expected_device_height(spec, probe);
     let raw: String = with_core(window, CAPTURE_TIMEOUT, move |core, tx| {
         let handler =
@@ -105,11 +105,30 @@ fn clip_height_css(probe: &Probe) -> f64 {
     probe.height_css.round()
 }
 
+/// Chromium's single GPU surface ceiling is `EXPORT_MAX_DEVICE_DIMENSION`
+/// (16,383 device px). When a long note at 2x/3x exceeds that height, step
+/// down the capture scale smoothly so the full document renders in one PNG
+/// instead of being clipped by the GPU texture limit and rejected as truncated.
+fn effective_capture_scale(spec: &ExportSpec, probe: &Probe) -> f64 {
+    let height = clip_height_css(probe).max(1.0);
+    let max_dim = f64::from(crate::export::EXPORT_MAX_DEVICE_DIMENSION);
+    (max_dim / height).min(spec.scale).max(0.25)
+}
+
+fn expected_device_width(spec: &ExportSpec, probe: &Probe) -> u32 {
+    (spec.width_css.round() * effective_capture_scale(spec, probe))
+        .round()
+        .max(1.0) as u32
+}
+
 fn expected_device_height(spec: &ExportSpec, probe: &Probe) -> u32 {
-    (clip_height_css(probe) * spec.scale).round().max(1.0) as u32
+    (clip_height_css(probe) * effective_capture_scale(spec, probe))
+        .round()
+        .max(1.0) as u32
 }
 
 fn capture_params(spec: &ExportSpec, probe: &Probe) -> String {
+    let scale = effective_capture_scale(spec, probe);
     serde_json::json!({
         "format": "png",
         "captureBeyondViewport": true,
@@ -119,7 +138,7 @@ fn capture_params(spec: &ExportSpec, probe: &Probe) -> String {
             "y": 0,
             "width": spec.width_css.round(),
             "height": clip_height_css(probe),
-            "scale": spec.scale,
+            "scale": scale,
         }
     })
     .to_string()

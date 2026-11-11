@@ -14,6 +14,7 @@ import { parseCell } from "../src/parse/cell"
 
 const text = (value: string): PasteInline => ({ type: "text", value })
 const code = (value: string): PasteInline => ({ type: "code", value })
+const mathInline = (value: string): PasteInline => ({ type: "mathInline", value })
 const strong = (...children: PasteInline[]): PasteInline => ({ type: "strong", children })
 const emphasis = (...children: PasteInline[]): PasteInline => ({ type: "emphasis", children })
 const strike = (...children: PasteInline[]): PasteInline => ({ type: "strike", children })
@@ -88,6 +89,7 @@ describe("inline serialization", () => {
     ["superscript", [text("x"), superscript(text("2"))], "x^2^"],
     ["nested emphasis", [strong(emphasis(text("both")))], "***both***"],
     ["code", [code("x = 1")], "`x = 1`"],
+    ["mathInline", [mathInline("x^2 + y^2")], "$x^2 + y^2$"],
     ["code with backticks", [code("a`b")], "``a`b``"],
     ["code edged backtick", [code("`a")], "`` `a ``"],
     ["hard break", [text("a"), hardBreak, text("b")], "a\\\nb"],
@@ -220,6 +222,10 @@ describe("block serialization", () => {
 
   it("serializes a horizontal rule", () => {
     expect(markdown(doc({ type: "horizontalRule" }))).toBe("---")
+  })
+
+  it("serializes a mathBlock as a multi-line $$ fence", () => {
+    expect(markdown(doc({ type: "mathBlock", value: "E = mc^2" }))).toBe("$$\nE = mc^2\n$$")
   })
 
   it("separates blocks with a blank line", () => {

@@ -177,7 +177,9 @@ fn start(
     let window = make_window(mtm, spec);
     let webview = make_webview(mtm, spec);
     window.setContentView(Some(webview.as_super()));
-    window.orderFront(None);
+    // Order the offscreen backing store into the window server without stealing
+    // active/first-responder status from the main editor window or menubar.
+    window.orderBack(None);
     let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx, cancel);
     // Park (and arm the cleanup deadline) before navigation can report anything,
     // so every completion path finds a live `LIVE_EXPORTS` entry to remove.

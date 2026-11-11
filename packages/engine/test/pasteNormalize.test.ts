@@ -22,11 +22,17 @@ function wrap(type: Wrapper, ...children: PasteInline[]): PasteInline {
 function code(value: string): PasteInline {
   return { type: "code", value }
 }
+function mathInline(value: string): PasteInline {
+  return { type: "mathInline", value }
+}
 function hardBreak(): PasteInline {
   return { type: "hardBreak" }
 }
 function paragraph(...children: PasteInline[]): PasteBlock {
   return { type: "paragraph", children }
+}
+function mathBlock(value: string): PasteBlock {
+  return { type: "mathBlock", value }
 }
 function heading(level: 1 | 2 | 3 | 4 | 5 | 6, ...children: PasteInline[]): PasteBlock {
   return { type: "heading", level, children }
@@ -593,10 +599,6 @@ describe("normalizeHtmlPaste — deterministic and bounded", () => {
 })
 
 describe("preparePlainTextFallback", () => {
-  afterEach(() => {
-    delete (globalThis as { DOMParser?: unknown }).DOMParser
-  })
-
   it("builds literal paragraphs and hard breaks without a DOM", () => {
     const original = globalThis.DOMParser
     ;(globalThis as { DOMParser?: unknown }).DOMParser = class {
@@ -642,3 +644,74 @@ describe("preparePlainTextFallback", () => {
     })
   })
 })
+
+describe("normalizeHtmlPaste — math elements and $$ display fences", () => {
+  it("splits paired $$...$$ lines separated by <br> inside a paragraph into a mathBlock", () => {
+    const html = "<p>The energy is:<br>$$<br>E = mc^2<br>$$<br>MathBlock has no endLeaf rule.</p>"
+    expect(paste(html)).toEqual(
+      semantic([
+        paragraph(text("The energy is:")),
+        mathBlock("E = mc^2"),
+        paragraph(text("MathBlock has no endLeaf rule.")),
+      ]),
+    )
+  })
+
+  it("extracts inline and display KaTeX / MathML annotation elements without visual duplicate noise", () => {
+    const inlineHtml = '<p>Inline <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x^2 + y^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">x2+y2</span></span> end</p>'
+    expect(paste(inlineHtml)).toEqual(
+      semantic([paragraph(text("Inline "), mathInline("x^2 + y^2"), text(" end"))]),
+    )
+
+    const blockHtml = '<div class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><semantics><mrow><mi>E</mi></mrow><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">E=mc2</span></span></div>'
+    expect(paste(blockHtml)).toEqual(semantic([mathBlock("E = mc^2")]))
+  })
+
+  it("extracts MathJax mjx-container and math-renderer elements", () => {
+    const mjxInline = '<p>Start <mjx-container class="MathJax" jax="CHTML" data-latex="\\alpha + \\beta"><mjx-math><mjx-mi>α</mjx-mi></mjx-math></mjx-container> end</p>'
+    expect(paste(mjxInline)).toEqual(
+      semantic([paragraph(text("Start "), mathInline("\\alpha + \\beta"), text(" end"))]),
+    )
+
+    const mjxBlock = '<mjx-container class="MathJax" jax="CHTML" display="true"><mjx-assistive-mml><math display="block"><semantics><annotation encoding="application/x-tex">\\int_0^1 x\\,dx</annotation></semantics></math></mjx-assistive-mml></mjx-container>'
+    expect(paste(mjxBlock)).toEqual(semantic([mathBlock("\\int_0^1 x\\,dx")]))
+  })
+
+  it("merges paired $$...$$ fences across separate <p> or <div> blocks", () => {
+    const html = "<div>The energy is:</div><div>$$</div><div>E = mc^2</div><div>$$</div><div>After math.</div>"
+    expect(paste(html)).toEqual(
+      semantic([
+        paragraph(text("The energy is:")),
+        mathBlock("E = mc^2"),
+        paragraph(text("After math.")),
+      ]),
+    )
+  })
+
+  it("splits paired ``` or ~~~ fenced code blocks separated by <br> inside a paragraph", () => {
+    const html = "<p>Example:<br>```ts<br>const x = 1<br>```<br>Done.</p>"
+    expect(paste(html)).toEqual(
+      semantic([
+        paragraph(text("Example:")),
+        codeBlock("const x = 1", "ts"),
+        paragraph(text("Done.")),
+      ]),
+    )
+  })
+
+  it("merges paired ``` fenced code blocks across separate <p> or <div> blocks", () => {
+    const html = "<p>```python</p><p>print(1)</p><p>```</p>"
+    expect(paste(html)).toEqual(semantic([codeBlock("print(1)", "python")]))
+  })
+
+  it("extracts Wikipedia / MediaWiki math fallback images as mathInline or mathBlock", () => {
+    const wikiInline = '<p>Mass <img class="mwe-math-fallback-image-inline" alt="{\\displaystyle E=mc^{2}}" src="https://wikimedia.org/api/rest_v1/media/math/render/svg/123"> here</p>'
+    expect(paste(wikiInline)).toEqual(
+      semantic([paragraph(text("Mass "), mathInline("{\\displaystyle E=mc^{2}}"), text(" here"))]),
+    )
+
+    const wikiDisplay = '<dl><dd><span class="mwe-math-element"><img class="mwe-math-fallback-image-display" alt="{\\displaystyle \\int f(x)\\,dx}" src="https://wikimedia.org/api/rest_v1/media/math/render/svg/456"></span></dd></dl>'
+    expect(paste(wikiDisplay)).toEqual(semantic([mathBlock("{\\displaystyle \\int f(x)\\,dx}")]))
+  })
+})
+

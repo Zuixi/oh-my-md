@@ -609,9 +609,25 @@ const EXPORT_READY_SCRIPT = `<script>(async () => {
   }
   const timeout = new Promise(resolve => setTimeout(() => { incomplete = true; resolve() }, 4500))
   await Promise.race([Promise.all(waits), timeout])
+  const b = document.body
+  let contentBottom = 0
+  if (b) {
+    const bodyRect = b.getBoundingClientRect()
+    const style = getComputedStyle(b)
+    const padBottom = parseFloat(style.paddingBottom) || 0
+    for (let el = b.lastElementChild; el; el = el.previousElementSibling) {
+      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue
+      const r = el.getBoundingClientRect()
+      if (r.height > 0 || r.bottom > bodyRect.top) {
+        contentBottom = Math.ceil(r.bottom - bodyRect.top + padBottom)
+        break
+      }
+    }
+  }
+  const scrollH = Math.max(document.documentElement?.scrollHeight ?? 0, b?.scrollHeight ?? 0)
   window.__omdExportIncomplete = incomplete
   window.__omdExportReady = true
-  window.__omdExportHeight = Math.max(document.documentElement?.scrollHeight ?? 0, document.body?.scrollHeight ?? 0)
+  window.__omdExportHeight = contentBottom > 0 ? Math.max(contentBottom, Math.min(scrollH, contentBottom + 64)) : scrollH
 })()</script>`
 
 /** Prevent user CSS from closing the style element and injecting markup. */

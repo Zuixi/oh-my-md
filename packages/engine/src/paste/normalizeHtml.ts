@@ -23,9 +23,9 @@ import {
   readStyleFacts, TRAILING_SPACE, wrapperKinds, type WrapperType,
 } from "./normalizeHtmlInline"
 import {
-  collectDiagnostics, isSingleImageDocument, isUnavailableImageSrc, languageOf, leadingCheckbox,
-  orderedStart, parseEmbeddedImage, preparePlainTextFallback, readCellMeta, tableRequiresComplexHtml,
-  type CellMeta,
+  collectDiagnostics, extractMathElement, isSingleImageDocument, isUnavailableImageSrc, languageOf,
+  leadingCheckbox, mergeAdjacentFencedBlocks, orderedStart, parseEmbeddedImage, preparePlainTextFallback,
+  readCellMeta, splitParagraphDisplayMath, tableRequiresComplexHtml, type CellMeta,
 } from "./normalizeHtmlData"
 import { normalizePasteUrl } from "./urlPolicy"
 
@@ -120,7 +120,14 @@ function flushRun(frame: Frame | undefined): void {
   if (!frame || !isRunContainer(frame) || frame.run.length === 0) return
   const children = buildRun(frame.run)
   frame.run = []
-  if (children.length > 0) frame.items.push({ type: "paragraph", children })
+  if (children.length === 0) return
+  if (frame.kind === "cell") {
+    frame.items.push({ type: "paragraph", children })
+    return
+  }
+  for (const block of splitParagraphDisplayMath(children)) {
+    frame.items.push(block)
+  }
 }
 
 function nearestFrame<K extends Frame["kind"]>(writer: Writer, kind: K): Extract<Frame, { kind: K }> | null {
@@ -249,20 +256,26 @@ function closeFrame(writer: Writer, frame: Frame): void {
       if (children.length > 0) appendBlock(parent, { type: "heading", level: frame.level, children })
       return
     }
-    case "container":
+    case "container": {
       flushRun(frame)
-      if (frame.role === "root") return
-      if (frame.role === "blockquote") {
-        if (frame.items.length > 0) appendBlock(parent, { type: "blockquote", children: frame.items })
+      const merged = mergeAdjacentFencedBlocks(frame.items)
+      if (frame.role === "root") {
+        frame.items = merged
         return
       }
-      for (const block of frame.items) appendBlock(parent, block)
+      if (frame.role === "blockquote") {
+        if (merged.length > 0) appendBlock(parent, { type: "blockquote", children: merged })
+        return
+      }
+      for (const block of merged) appendBlock(parent, block)
       return
+    }
     case "li": {
       flushRun(frame)
+      const merged = mergeAdjacentFencedBlocks(frame.items)
       const listFrame = nearestFrame(writer, "list")
-      if (listFrame) listFrame.items.push({ checked: frame.checked, children: frame.items })
-      else for (const block of frame.items) appendBlock(parent, block)
+      if (listFrame) listFrame.items.push({ checked: frame.checked, children: merged })
+      else for (const block of merged) appendBlock(parent, block)
       return
     }
     case "cell": {
@@ -370,6 +383,13 @@ function openImage(writer: Writer, el: Element): void {
 function enterElement(writer: Writer, el: Element, depth: number): void {
   if (writer.consumed.has(el)) return
   const tag = el.tagName.toLowerCase()
+  const math = extractMathElement(el)
+  if (math !== null) {
+    countSubtree(writer, el)
+    if (math.display) pushStandaloneBlock(writer, { type: "mathBlock", value: math.value })
+    else pushInlineNode(writer, { type: "mathInline", value: math.value })
+    return
+  }
   if (SKIP_SUBTREE.has(tag)) {
     countSubtree(writer, el)
     return
@@ -441,6 +461,8 @@ function run(writer: Writer, body: Element): void {
   }
   while (writer.frames.length > 1) closeFrame(writer, topFrame(writer) as Frame)
   flushRun(writer.frames[0])
+  const root = writer.frames[0] as Extract<Frame, { kind: "container" }>
+  root.items = mergeAdjacentFencedBlocks(root.items)
 }
 
 // --- 公共 API ---------------------------------------------------------
