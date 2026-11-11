@@ -87,6 +87,7 @@
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
+- **High-DPI export must self-contain images/KaTeX and scale at capture** — `asset:` URLs and `prefers-color-scheme` do not survive offscreen renderers; never upscale 1x bitmaps. See [gotchas-desktop](./gotchas-desktop.md).
 
 - **Right-click paste on macOS deletes extra lines** — dispatch from a saved `posAtCoords` position, and register the desktop paste handler before engine rich paste so HTML-bearing clipboards cannot bypass it.
 - **Dispatching changes without a selection leaves the caret before the insert** — always set an explicit anchor; never `replaceSelection` on async paths.

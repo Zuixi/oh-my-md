@@ -35,7 +35,12 @@ import {
   VERBOSE_LOGGING_SETTINGS_KEY,
 } from "../src/constants"
 import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
-import { DEFAULT_SETTINGS } from "../src/settings"
+import {
+  DEFAULT_SETTINGS,
+  EXPORT_SCALE_OPTIONS,
+  EXPORT_WIDTH_MAX,
+  EXPORT_WIDTH_MIN,
+} from "../src/settings"
 
 /**
  * Drift guard for constants that must agree across the TS and Rust sides of
@@ -51,6 +56,7 @@ const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspac
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
 const LOGGING_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging.rs"), "utf8")
 const LOG_FIELDS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging/fields.rs"), "utf8")
+const EXPORT_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
   .replace(/\r\n/g, "\n")
 
@@ -78,6 +84,18 @@ function rustConstStringList(source: string, name: string): string[] {
 }
 
 describe("cross-layer constants (TS ↔ Rust)", () => {
+  it("export width limits match export.rs", () => {
+    expect(EXPORT_WIDTH_MIN).toBe(rustConstNumber(EXPORT_RS, "EXPORT_MIN_WIDTH_CSS"))
+    expect(EXPORT_WIDTH_MAX).toBe(rustConstNumber(EXPORT_RS, "EXPORT_MAX_WIDTH_CSS"))
+  })
+
+  it("export scale steps match export.rs", () => {
+    expect(EXPORT_SCALE_OPTIONS[0]).toBe(rustConstNumber(EXPORT_RS, "EXPORT_MIN_SCALE"))
+    expect(EXPORT_SCALE_OPTIONS[EXPORT_SCALE_OPTIONS.length - 1]).toBe(
+      rustConstNumber(EXPORT_RS, "EXPORT_MAX_SCALE"),
+    )
+  })
+
   it("image size cap matches paste_assets.rs MAX_IMAGE_BYTES", () => {
     expect(MAX_IMAGE_BYTES).toBe(rustConstNumber(PASTE_ASSETS_RS, "MAX_IMAGE_BYTES"))
   })

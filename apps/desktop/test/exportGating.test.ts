@@ -48,7 +48,7 @@ afterEach(() => {
 
 describe("macOS-only commands", () => {
   it("lists exactly the native-export commands", () => {
-    expect([...MACOS_ONLY_COMMANDS].sort()).toEqual(["export-image", "export-pdf"])
+    expect([...MACOS_ONLY_COMMANDS].sort()).toEqual(["export-pdf"])
   })
 })
 
@@ -65,7 +65,7 @@ describe("export command gating", () => {
     expect(screen.getByRole("button", { name: "Export Image" })).toBeTruthy()
   })
 
-  it("hides PDF and image export commands off macOS while keeping HTML export", () => {
+  it("hides PDF off macOS while keeping HTML and PNG export", () => {
     setUserAgent(WINDOWS_WEBVIEW2_UA)
     const harness = createAppHarness(editor)
     harness.renderApp()
@@ -74,7 +74,7 @@ describe("export command gating", () => {
 
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull()
-    expect(screen.queryByRole("button", { name: "Export Image" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Export Image" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Export HTML" })).toBeTruthy()
   })
 })

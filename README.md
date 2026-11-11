@@ -53,7 +53,7 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 
 **Export**
 - **HTML export works on macOS, Windows, and Linux.**
-- **PDF and PNG export are currently macOS-only.** All formats preserve formulas, highlighted code, tables, and diagrams from the live preview.
+- **PDF export is currently macOS-only; PNG export works on macOS, Windows, and Linux.** PNG width and 1x/2x/3x quality are configurable in Settings. All formats preserve formulas, highlighted code, tables, and diagrams from the live preview.
 
 **Appearance**
 - Light and dark themes with matching code themes, plus custom CSS
