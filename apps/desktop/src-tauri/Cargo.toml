@@ -41,7 +41,7 @@ base64 = "0.23.1"
 blake3 = "1"
 dirs = "6"
 tempfile = "3.27.0"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "macros"] }
 thiserror = "2"
 # ignore 0.4.33+/globset 0.4.20+ require rustc 1.88; pinned for the 1.87 toolchain.
 ignore = "=0.4.22"

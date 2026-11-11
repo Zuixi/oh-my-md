@@ -77,12 +77,13 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
         .to_str()
         .ok_or_else(|| format!("invalid smoke target path: {}", target.display()))?;
     super::export_preview(
-        app,
+        app.clone(),
         html,
         target_text.to_owned(),
         "png".to_owned(),
         scale,
         width_css,
+        format!("smoke-{}", std::process::id()),
     )
     .await?;
     let bytes =
@@ -95,11 +96,66 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
             SMOKE_HEIGHT_CSS * scale
         ));
     }
+    verify_cancel(&app, scale, width_css).await?;
     Ok(format!(
         "EXPORT_SMOKE_OK width={width} height={height} scale={scale} path={}",
         target.display()
     ))
 }
+
+/// Cancels a render whose page never signals ready. This exercises the real
+/// cancel command, token registration, platform poll, and window cleanup on
+/// every CI platform instead of trusting the button wiring alone.
+async fn verify_cancel(app: &tauri::AppHandle, scale: u32, width_css: u32) -> Result<(), String> {
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let request_id = format!("cancel-{nonce}");
+    let out = std::env::temp_dir().join(format!("omd-export-cancel-{nonce}.png"));
+    let target = super::validate_export(
+        out.to_str()
+            .ok_or_else(|| format!("invalid cancel smoke path: {}", out.display()))?,
+        ExportFormat::Png,
+        CANCEL_PROBE_HTML,
+    )?;
+    let target_text = target
+        .to_str()
+        .ok_or_else(|| format!("invalid cancel target path: {}", target.display()))?
+        .to_owned();
+    let task = tauri::async_runtime::spawn(super::export_preview(
+        app.clone(),
+        CANCEL_PROBE_HTML.to_owned(),
+        target_text.clone(),
+        "png".to_owned(),
+        scale,
+        width_css,
+        request_id.clone(),
+    ));
+    // Let the command register its token and build the offscreen window.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let cancelled_at = Instant::now();
+    super::cancel_export(app.clone(), request_id).await;
+    let result = task
+        .await
+        .map_err(|error| format!("cancel task failed: {error}"))?;
+    if !matches!(&result, Err(error) if error.contains("export cancelled")) {
+        return Err(format!("cancel did not abort the export: {result:?}"));
+    }
+    let elapsed = cancelled_at.elapsed();
+    if elapsed > Duration::from_secs(8) {
+        return Err(format!("cancel took {elapsed:?}"));
+    }
+    let _ = std::fs::remove_file(&target);
+    eprintln!("[export-smoke] cancel ok in {elapsed:?}");
+    Ok(())
+}
+
+const CANCEL_PROBE_HTML: &str = "<!doctype html><html><head><meta charset=\"utf-8\">\
+<style>html,body{margin:0;padding:0;width:100%;height:600px;background:#fff}</style>\
+</head><body>cancel probe never signals ready</body></html>";
 
 fn smoke_html() -> String {
     format!(

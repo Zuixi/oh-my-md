@@ -18,7 +18,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
-
 const MAX_EXPORT_PNG_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ENCODED_EXPORT_PNG_BYTES: usize = MAX_EXPORT_PNG_BYTES.div_ceil(3) * 4;
 const MAX_RECENT_FILES: usize = 10;
@@ -1046,6 +1045,7 @@ pub fn run() {
             app_lifecycle::restart_app,
             menu::set_menu_locale,
             export::export_preview,
+            export::cancel_export,
             fonts::list_system_fonts
         ])
         .manage(paste_assets::PasteAssetState::default())

@@ -5,6 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog"
 import { toast } from "react-toastify"
 import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
+import { notifyExportProgress } from "./exportProgressToast"
 import { parseRecents } from "./recents"
 import {
   LOG_FRONTEND_COMMAND,
@@ -201,6 +202,7 @@ export interface DesktopServices {
     format: "pdf" | "png",
     scale: number,
     width: number,
+    requestId: string,
   ) => Promise<ExportWarning | null>
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
@@ -287,8 +289,10 @@ export interface DesktopServices {
   notifySuccess?: (message: string) => void
   /** Non-fatal export warning; the artifact was already written successfully. */
   notifyWarning?: (message: string) => void
-  /** Shows a blocking progress toast; the returned stop function is idempotent. */
-  notifyProgress?: (message: string) => () => void
+  /** Shows a blocking progress toast with Cancel; the stop function is idempotent. */
+  notifyProgress?: (message: string, onCancel: () => void) => () => void
+  /** Cancels a native render identified by the request id passed to exportPreview. */
+  cancelExport?: (requestId: string) => Promise<void>
   listenMenu?: (handler: (id: string) => void) => () => void
   listenOpenFile?: (handler: (path: string) => void) => () => void
   listenDragDrop?: (handler: (paths: string[]) => void) => () => void
@@ -408,8 +412,11 @@ export const defaultServices: DesktopServices = {
   deletePath: async path => {
     await invoke("delete_path", { path })
   },
-  exportPreview: async (html, path, format, scale, width) => {
-    return await invoke<ExportWarning | null>("export_preview", { html, path, format, scale, width })
+  exportPreview: async (html, path, format, scale, width, requestId) => {
+    return await invoke<ExportWarning | null>("export_preview", { html, path, format, scale, width, requestId })
+  },
+  cancelExport: async requestId => {
+    await invoke("cancel_export", { requestId })
   },
   loadRecents: () => {
     try {
@@ -583,19 +590,7 @@ export const defaultServices: DesktopServices = {
   },
   notifySuccess: message => { toast.success(message, { autoClose: SUCCESS_TOAST_AUTO_CLOSE_MS }) },
   notifyWarning: message => { toast.warning(message, { autoClose: ERROR_TOAST_AUTO_CLOSE_MS }) },
-  notifyProgress: message => {
-    const id = toast.loading(message, {
-      autoClose: false,
-      closeOnClick: false,
-      draggable: false,
-    })
-    let dismissed = false
-    return () => {
-      if (dismissed) return
-      dismissed = true
-      toast.dismiss(id)
-    }
-  },
+  notifyProgress: notifyExportProgress,
   listenMenu: handler => {
     const pending = listen<string>(
       "menu-command",

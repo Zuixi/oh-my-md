@@ -67,6 +67,8 @@ export const zh: Record<string, string> = {
   "cmd.label.export-image": "导出图片",
   "export.remoteImageWarning": "导出 PDF/PNG 可能缺少远程图片（未内嵌网络图片）",
   "export.progress": "正在准备导出…",
+  "export.cancel": "取消",
+  "export.cancelled": "已取消导出。",
   "export.busy": "已有导出正在进行。",
   "cmd.label.clear-recents": "清除最近",
   "cmd.label.check-updates": "检查更新…",

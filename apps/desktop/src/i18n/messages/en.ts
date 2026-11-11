@@ -67,6 +67,8 @@ export const en: Record<string, string> = {
   "cmd.label.export-image": "Export Image",
   "export.remoteImageWarning": "Exporting PDF/PNG may miss remote images (network images are not embedded)",
   "export.progress": "Preparing export…",
+  "export.cancel": "Cancel",
+  "export.cancelled": "Export cancelled.",
   "export.busy": "An export is already in progress.",
   "cmd.label.clear-recents": "Clear Recents",
   "cmd.label.check-updates": "Check for Updates…",

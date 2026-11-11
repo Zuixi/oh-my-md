@@ -10,7 +10,7 @@ use crate::export::{
     ExportFormat, ExportSpec, ExportWarning, Probe, RenderOutput, EXPORT_READY_TIMEOUT_MS,
 };
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::http::{header, Response, StatusCode};
@@ -175,9 +175,13 @@ pub(crate) async fn render_with_window(
     format: ExportFormat,
     probe_page: ProbeFn,
     capture: CaptureFn,
+    cancel: Arc<AtomicBool>,
 ) -> Result<RenderOutput, String> {
     if format != ExportFormat::Png {
         return Err("PDF export is only available on macOS".into());
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Err(super::export_cancel::EXPORT_CANCELLED.into());
     }
 
     let token = token();
@@ -199,6 +203,11 @@ pub(crate) async fn render_with_window(
     // has returned; give the webview a moment to register before the first
     // `with_webview` dispatch (a message sent before registration is dropped).
     tokio::time::sleep(Duration::from_millis(250)).await;
+    if cancel.load(Ordering::SeqCst) {
+        let _ = window.close();
+        app.state::<ExportProtocolState>().remove(&token);
+        return Err(super::export_cancel::EXPORT_CANCELLED.into());
+    }
     #[cfg(feature = "export-smoke")]
     eprintln!(
         "[export-smoke] after delay windows={:?} url={:?} visible={:?} size={:?}",
@@ -216,6 +225,10 @@ pub(crate) async fn render_with_window(
     let deadline = tokio::time::Instant::now() + Duration::from_millis(EXPORT_READY_TIMEOUT_MS);
     let mut last_error = None;
     let measured = loop {
+        if cancel.load(Ordering::SeqCst) {
+            cleanup(&window);
+            return Err(super::export_cancel::EXPORT_CANCELLED.into());
+        }
         match probe_page(&window) {
             Ok(Some(probe)) => break probe,
             Ok(None) => {}
@@ -242,23 +255,41 @@ pub(crate) async fn render_with_window(
     let window_for_capture = window.clone();
     let capture_spec = spec;
     let capture_probe = measured.clone();
-    let bytes = match tauri::async_runtime::spawn_blocking(move || {
+    let capture_task = tauri::async_runtime::spawn_blocking(move || {
         capture(&window_for_capture, &capture_spec, &capture_probe)
-    })
-    .await
-    {
-        Ok(Ok(bytes)) => bytes,
-        Ok(Err(error)) => {
+    });
+    tokio::pin!(capture_task);
+    let bytes = tokio::select! {
+        result = &mut capture_task => match result {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(error)) => {
+                cleanup(&window);
+                return Err(error);
+            }
+            Err(error) => {
+                cleanup(&window);
+                return Err(error.to_string());
+            }
+        },
+        () = wait_for_cancel(cancel.clone()) => {
+            // Closing the window aborts the platform capture; the detached
+            // blocking task observes a closed/dead webview and exits.
             cleanup(&window);
-            return Err(error);
-        }
-        Err(error) => {
-            cleanup(&window);
-            return Err(error.to_string());
+            return Err(super::export_cancel::EXPORT_CANCELLED.into());
         }
     };
+    if cancel.load(Ordering::SeqCst) {
+        cleanup(&window);
+        return Err(super::export_cancel::EXPORT_CANCELLED.into());
+    }
 
     cleanup(&window);
     let warning = clamp_warning.or_else(|| partial_warning(&measured));
     Ok(RenderOutput { bytes, warning })
+}
+
+async fn wait_for_cancel(cancel: Arc<AtomicBool>) {
+    while !cancel.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }

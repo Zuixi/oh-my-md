@@ -124,6 +124,7 @@ describe("exportCurrent", () => {
       "png",
       3,
       1920,
+      expect.any(String),
     )
     expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
       expect.anything(),
@@ -192,7 +193,10 @@ it("threads customCss into exportRichHtml options", async () => {
       return "<!doctype html><html><body>rich</body></html>"
     })
     await exportCurrent(services, makeView(), "html")
-    expect(services.notifyProgress).toHaveBeenCalledWith(t("export.progress"))
+    expect(services.notifyProgress).toHaveBeenCalledWith(
+      t("export.progress"),
+      expect.any(Function),
+    )
     expect(stop).toHaveBeenCalledOnce()
     expect(order).toEqual([
       `progress:${t("export.progress")}`,
@@ -297,6 +301,69 @@ it("threads customCss into exportRichHtml options", async () => {
     const services = makeServices()
     await exportCurrent(services, makeView(), "html", {}, undefined, undefined, renderOptions(null))
     expect(services.pickExportPath).toHaveBeenCalledWith("html")
+  })
+
+  it("cancels a native render without reporting an error", async () => {
+    let rejectPreview!: (error: Error) => void
+    const preview = new Promise<null>((_resolve, reject) => { rejectPreview = reject })
+    let requestCancel!: () => void
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.png"),
+      notifyProgress: vi.fn((_message: string, onCancel: () => void) => {
+        requestCancel = onCancel
+        return vi.fn()
+      }),
+      exportPreview: vi.fn(() => preview),
+      cancelExport: vi.fn().mockResolvedValue(undefined),
+    })
+    const onNotice = vi.fn()
+    const running = exportCurrent(services, makeView(), "png", {}, undefined, onNotice)
+    await vi.waitFor(() => expect(services.exportPreview).toHaveBeenCalled())
+    requestCancel()
+    expect(services.cancelExport).toHaveBeenCalledWith(expect.any(String))
+    rejectPreview(new Error("export cancelled"))
+    await running
+    expect(services.reportError).not.toHaveBeenCalled()
+    expect(onNotice).toHaveBeenCalledWith(t("export.cancelled"))
+  })
+
+  it("cancels during preparation without touching the native backend", async () => {
+    let releaseHtml!: () => void
+    vi.mocked(exportRichHtml).mockImplementationOnce(() => new Promise(resolve => {
+      releaseHtml = () => resolve("<!doctype html><html><body>rich</body></html>")
+    }))
+    let requestCancel!: () => void
+    const services = makeServices({
+      notifyProgress: vi.fn((_message: string, onCancel: () => void) => {
+        requestCancel = onCancel
+        return vi.fn()
+      }),
+      cancelExport: vi.fn().mockResolvedValue(undefined),
+    })
+    const onNotice = vi.fn()
+    const running = exportCurrent(services, makeView(), "png", {}, undefined, onNotice)
+    requestCancel()
+    releaseHtml()
+    await running
+    expect(services.pickExportPath).not.toHaveBeenCalled()
+    expect(services.exportPreview).not.toHaveBeenCalled()
+    expect(services.cancelExport).not.toHaveBeenCalled()
+    expect(onNotice).toHaveBeenCalledWith(t("export.cancelled"))
+  })
+
+  it("stops before opening the save dialog when cancelled while preparing", async () => {
+    let requestCancel!: () => void
+    const services = makeServices({
+      notifyProgress: vi.fn((_message: string, onCancel: () => void) => {
+        requestCancel = onCancel
+        return vi.fn()
+      }),
+    })
+    const running = exportCurrent(services, makeView(), "html")
+    requestCancel()
+    await running
+    expect(services.pickExportPath).not.toHaveBeenCalled()
+    expect(services.reportError).not.toHaveBeenCalled()
   })
 
   it("reports a localized message for each tagged image failure", async () => {

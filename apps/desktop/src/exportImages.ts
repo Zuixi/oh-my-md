@@ -19,6 +19,7 @@ export type ExportImageErrorCode =
   | "too-large"
   | "total-too-large"
   | "timeout"
+  | "cancelled"
 
 /**
  * A tagged image failure the export pipeline can turn into an actionable,
@@ -52,6 +53,8 @@ function imageErrorDetail(code: ExportImageErrorCode, src: string): string {
       return `the document's images are too large to embed in one export: ${src}`
     case "timeout":
       return `timed out reading image: ${src}`
+    case "cancelled":
+      return `image export cancelled: ${src}`
   }
 }
 
@@ -89,7 +92,10 @@ function blobToDataUrl(blob: Blob, src: string): Promise<string> {
  * Every failure is an `ExportImageError`: an unsaved draft with relative
  * images fails loudly instead of exporting broken relative paths.
  */
-export function makeExportImageResolver(getDocPath: () => string | null) {
+export function makeExportImageResolver(
+  getDocPath: () => string | null,
+  signal?: AbortSignal,
+) {
   const cache = new Map<string, Promise<string>>()
   let totalBytes = 0
 
@@ -105,7 +111,10 @@ export function makeExportImageResolver(getDocPath: () => string | null) {
     if (cached) return cached
 
     const pending = (async () => {
+      if (signal?.aborted) throw new ExportImageError("cancelled", src)
       const controller = new AbortController()
+      const abortFromCaller = (): void => controller.abort()
+      signal?.addEventListener("abort", abortFromCaller, { once: true })
       const timer = setTimeout(
         () => controller.abort(),
         EXPORT_IMAGE_FETCH_TIMEOUT_MS,
@@ -120,12 +129,18 @@ export function makeExportImageResolver(getDocPath: () => string | null) {
       } catch (error) {
         if (error instanceof ExportImageError) throw error
         throw new ExportImageError(
-          controller.signal.aborted ? "timeout" : "read-failed",
+          signal?.aborted
+            ? "cancelled"
+            : controller.signal.aborted
+              ? "timeout"
+              : "read-failed",
           src,
         )
       } finally {
         clearTimeout(timer)
+        signal?.removeEventListener("abort", abortFromCaller)
       }
+      if (signal?.aborted) throw new ExportImageError("cancelled", src)
       if (!blob.type.startsWith("image/")) {
         throw new ExportImageError("not-image", src)
       }

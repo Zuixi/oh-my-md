@@ -126,6 +126,39 @@ describe("makeExportImageResolver", () => {
     await expect(resolve("assets/missing.png")).rejects.toThrow(/failed to read image/)
   })
 
+  it("rejects immediately when the export signal is already aborted", async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+    const controller = new AbortController()
+    controller.abort()
+    const resolve = makeExportImageResolver(() => "/docs/note.md", controller.signal)
+    await expect(resolve("assets/pic.png")).rejects.toMatchObject({
+      code: "cancelled",
+      src: "assets/pic.png",
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("propagates a caller cancel while the read is in flight", async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))
+        }),
+      ),
+    )
+    const resolve = makeExportImageResolver(() => "/docs/note.md", controller.signal)
+    const pending = resolve("assets/pic.png")
+    const assertion = expect(pending).rejects.toMatchObject({
+      code: "cancelled",
+      src: "assets/pic.png",
+    })
+    controller.abort()
+    await assertion
+  })
+
   it("times out a hung image read instead of holding the export forever", async () => {
     vi.useFakeTimers()
     try {

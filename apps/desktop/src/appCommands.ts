@@ -182,7 +182,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
           services,
           viewRef.current,
           kind,
-          { resolveImageSrc: makeExportImageResolver(() => docPath) },
+          signal => ({ resolveImageSrc: makeExportImageResolver(() => docPath, signal) }),
           customCss,
           showTransientStatus,
           renderOptions,

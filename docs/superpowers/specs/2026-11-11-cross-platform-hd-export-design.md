@@ -35,7 +35,8 @@ Windows 共享 WebView2 user-data 目录，所有 webview 必须使用与主窗�
 
 ## 失败与并发
 
-- 前端同一时刻只允许一个导出；进度 toast 在整个准备/渲染期间保持，结束或失败后关闭。
+- 前端同一时刻只允许一个导出；进度 toast 带“取消”按钮，在整个准备/渲染期间保持，结束/取消/失败后关闭。
+- 取消分两段：准备阶段通过 `AbortSignal` 中止图片读取；原生阶段用 `requestId` 调用 `cancel_export`，各平台在 50 ms 轮询/关闭离屏窗口，命令在写入前再检查一次取消标志。
 - 保存对话框默认建议文档同目录、同 stem 的文件（`note.md → note.png`）；未保存草稿使用 `export.<format>`。
 - 未保存文档中的相对图片无法解析时直接报错，提示先保存，避免产出缺图的“成功”文件。
 - 本地图片读取失败、非图片、单图/总量超限、读取超时使用带 `src` 的结构化错误，前端本地化展示。每次图片读取有 15 s 超时，避免网络盘挂起时永久占用导出单飞锁。
@@ -46,6 +47,6 @@ Windows 共享 WebView2 user-data 目录，所有 webview 必须使用与主窗�
 
 ## 验证
 
-- CI 三平台冒烟：同一 `export-smoke` 二进制调用真实的 `export_preview` 命令体（路径校验、原子写入、平台后端）并输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`；Linux 在 Xvfb + dbus 下运行。
-- 单元测试：尺寸/夹取、Windows CDP 参数与 PNG 解码、Linux 缩放数学、路径/格式校验、HTML 体积、图片读取超时/解码失败告警、自定义 CSS 转义、TS↔Rust 导出限制漂移、WebView2 参数漂移。
+- CI 三平台冒烟：同一 `export-smoke` 二进制调用真实的 `export_preview` 命令体（路径校验、原子写入、平台后端），并在页面永不 ready 的探针上执行真实 `cancel_export`，要求 8 s 内返回 `export cancelled`；正常导出输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`。Linux 在 Xvfb + dbus 下运行。
+- 单元测试：尺寸/夹取、Windows CDP 参数与 PNG 解码、Linux 缩放数学、路径/格式校验、HTML 体积、图片读取超时/解码失败告警、取消按钮/取消令牌、自定义 CSS 转义、TS↔Rust 导出限制漂移、WebView2 参数漂移。
 - 人工：`docs/manual-qa.md` 的高清 PNG 清单，重点看 1 CSS px 线条在 2x/3x 下的像素宽度、长文档截断告警、三平台菜单与错误提示。

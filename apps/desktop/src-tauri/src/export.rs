@@ -1,4 +1,5 @@
 use serde::Serialize;
+use tauri::Manager;
 
 #[path = "app_context.rs"]
 pub(crate) mod app_context;
@@ -10,6 +11,9 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(any(windows, target_os = "linux"))]
 #[path = "export_host.rs"]
 pub(crate) mod export_host;
+
+#[path = "export_cancel.rs"]
+mod export_cancel;
 
 // Windows shares one WebView2 user-data directory across windows, so every
 // webview must be created with the same browser arguments. The main window sets
@@ -205,6 +209,7 @@ pub(crate) fn builder_with_export_protocol() -> tauri::Builder<tauri::Wry> {
 }
 
 pub(crate) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    let builder = builder.manage(self::export_cancel::ExportCancelState::default());
     #[cfg(any(windows, target_os = "linux"))]
     {
         builder
@@ -230,6 +235,24 @@ pub(crate) mod platform;
 pub(crate) mod platform;
 
 #[tauri::command]
+pub async fn cancel_export(app: tauri::AppHandle, request_id: String) {
+    let state = app.state::<self::export_cancel::ExportCancelState>();
+    if state.cancel(&request_id) {
+        return;
+    }
+    // The user can click Cancel while the frontend is still dispatching
+    // `export_preview`. If that command never reaches us, drop the pre-created
+    // entry rather than leaking it; an active export finishes far sooner than
+    // this grace period.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        app.state::<self::export_cancel::ExportCancelState>()
+            .remove(&request_id);
+    });
+}
+
+#[tauri::command]
 pub async fn export_preview(
     app: tauri::AppHandle,
     html: String,
@@ -237,12 +260,24 @@ pub async fn export_preview(
     format: String,
     scale: u32,
     width: u32,
+    request_id: String,
 ) -> Result<Option<ExportWarning>, String> {
     let fmt = ExportFormat::parse(&format)?;
     let spec = ExportSpec::new(width, scale)?;
     let target = validate_export(&path, fmt, &html)?;
     let styled = styled_export_html(&html);
-    let output = platform::render(app, styled, spec, fmt).await?;
+    let state = app.state::<self::export_cancel::ExportCancelState>();
+    let cancel = state.token(&request_id);
+    if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        state.remove(&request_id);
+        return Err(self::export_cancel::EXPORT_CANCELLED.into());
+    }
+    let result = platform::render(app.clone(), styled, spec, fmt, cancel.clone()).await;
+    state.remove(&request_id);
+    let output = result?;
+    if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(self::export_cancel::EXPORT_CANCELLED.into());
+    }
     crate::atomic_write(&target, &output.bytes)?;
     // Boundary: the export artifact reached the disk. The path is logged
     // through the structured field so the diagnostics redactor can find it.

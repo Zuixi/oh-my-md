@@ -20,7 +20,8 @@ use objc2_web_kit::{
 };
 use std::cell::RefCell;
 use std::os::raw::c_void;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
@@ -29,6 +30,9 @@ const OFFSCREEN_Y: f64 = -20_000.0;
 /// How long to wait for `window.__omdExportReady` before exporting anyway.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const READY_POLL_MS: u64 = 100;
+/// Cancel is cooperative and checked on the main queue; 50 ms keeps the
+/// offscreen window from lingering perceptibly after the user clicks Cancel.
+const CANCEL_POLL_MS: u64 = 50;
 /// Error reported by every timeout path so the caller sees one stable message.
 const EXPORT_TIMEOUT_MESSAGE: &str = "export timed out";
 /// One-shot deadline after which a parked offscreen export is closed and
@@ -80,6 +84,7 @@ struct ExportIvars {
     format: ExportFormat,
     spec: ExportSpec,
     tx: RefCell<Option<mpsc::Sender<Result<RenderOutput, String>>>>,
+    cancel: Arc<AtomicBool>,
 }
 
 define_class!(
@@ -132,9 +137,10 @@ pub(crate) async fn render(
     html: String,
     spec: ExportSpec,
     format: ExportFormat,
+    cancel: Arc<AtomicBool>,
 ) -> Result<RenderOutput, String> {
     let (tx, rx) = mpsc::channel();
-    app.run_on_main_thread(move || begin(html, spec, format, tx))
+    app.run_on_main_thread(move || begin(html, spec, format, tx, cancel))
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         rx.recv_timeout(EXPORT_CHANNEL_BACKSTOP)
@@ -149,9 +155,10 @@ fn begin(
     spec: ExportSpec,
     format: ExportFormat,
     tx: mpsc::Sender<Result<RenderOutput, String>>,
+    cancel: Arc<AtomicBool>,
 ) {
     let fail = tx.clone();
-    if let Err(error) = start(html, spec, format, tx) {
+    if let Err(error) = start(html, spec, format, tx, cancel) {
         let _ = fail.send(Err(error));
     }
 }
@@ -161,13 +168,17 @@ fn start(
     spec: ExportSpec,
     format: ExportFormat,
     tx: mpsc::Sender<Result<RenderOutput, String>>,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(super::export_cancel::EXPORT_CANCELLED.into());
+    }
     let mtm = MainThreadMarker::new().ok_or("export must run on the main thread")?;
     let window = make_window(mtm, spec);
     let webview = make_webview(mtm, spec);
     window.setContentView(Some(webview.as_super()));
     window.orderFront(None);
-    let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx);
+    let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx, cancel);
     // Park (and arm the cleanup deadline) before navigation can report anything,
     // so every completion path finds a live `LIVE_EXPORTS` entry to remove.
     park(delegate.clone());
@@ -211,6 +222,7 @@ impl ExportDelegate {
         format: ExportFormat,
         spec: ExportSpec,
         tx: mpsc::Sender<Result<RenderOutput, String>>,
+        cancel: Arc<AtomicBool>,
     ) -> Retained<Self> {
         let this = mtm.alloc::<Self>().set_ivars(ExportIvars {
             window: RefCell::new(Some(window)),
@@ -218,6 +230,7 @@ impl ExportDelegate {
             format,
             spec,
             tx: RefCell::new(Some(tx)),
+            cancel,
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -226,10 +239,17 @@ impl ExportDelegate {
     /// already taken its sender, so a late timer must not send, close or unpark
     /// a second time.
     fn fail_if_pending(&self, message: &str) {
-        let pending = self.ivars().tx.borrow().is_some();
-        if pending {
+        if self.is_pending() {
             self.complete(Err(message.to_string()));
         }
+    }
+
+    fn is_pending(&self) -> bool {
+        self.ivars().tx.borrow().is_some()
+    }
+
+    fn cancel_requested(&self) -> bool {
+        self.ivars().cancel.load(Ordering::SeqCst)
     }
 
     fn complete(&self, result: Result<RenderOutput, String>) {
@@ -262,8 +282,32 @@ fn take_pending<T>(slot: &RefCell<Option<T>>) -> Option<T> {
 /// completion can safely drop the `LIVE_EXPORTS` entry first.
 fn park(delegate: Retained<ExportDelegate>) {
     LIVE_EXPORTS.with(|live| live.borrow_mut().push(delegate.clone()));
+    let cancel_delegate = delegate.clone();
     let context = Box::into_raw(Box::new(TimeoutState { delegate })) as *mut c_void;
     dispatch_after(EXPORT_CLEANUP_MS, context, timeout_trampoline);
+    schedule_cancel_poll(cancel_delegate);
+}
+
+struct CancelPollState {
+    delegate: Retained<ExportDelegate>,
+}
+
+unsafe extern "C" fn cancel_trampoline(context: *mut c_void) {
+    let state = unsafe { Box::from_raw(context as *mut CancelPollState) };
+    if state.delegate.cancel_requested() {
+        state
+            .delegate
+            .fail_if_pending(super::export_cancel::EXPORT_CANCELLED);
+        return;
+    }
+    if state.delegate.is_pending() {
+        schedule_cancel_poll(state.delegate);
+    }
+}
+
+fn schedule_cancel_poll(delegate: Retained<ExportDelegate>) {
+    let context = Box::into_raw(Box::new(CancelPollState { delegate })) as *mut c_void;
+    dispatch_after(CANCEL_POLL_MS, context, cancel_trampoline);
 }
 
 fn unpark(delegate: &ExportDelegate) {

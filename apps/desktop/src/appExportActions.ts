@@ -15,6 +15,16 @@ export interface ExportRenderOptions {
 
 const DEFAULT_RENDER_OPTIONS: ExportRenderOptions = { width: 800, scale: 2, theme: "light" }
 
+export type ExportOptionsSource =
+  | ExportRichHtmlOptions
+  | ((signal: AbortSignal) => ExportRichHtmlOptions)
+
+let requestCounter = 0
+function nextRequestId(): string {
+  const random = globalThis.crypto?.randomUUID?.()
+  return random ?? `export-${Date.now()}-${++requestCounter}`
+}
+
 /**
  * One export at a time per webview: a native PNG/PDF render can take seconds,
  * and a second trigger would race the same capture surface. Module scope is
@@ -36,7 +46,7 @@ export async function exportCurrent(
   services: DesktopServices,
   view: EditorView | null,
   kind: "html" | "pdf" | "png",
-  exportOptions: ExportRichHtmlOptions = {},
+  exportOptions: ExportOptionsSource = {},
   customCss?: string,
   onNotice?: (message: string) => void,
   renderOptions: ExportRenderOptions = DEFAULT_RENDER_OPTIONS,
@@ -49,6 +59,10 @@ export async function exportCurrent(
     return
   }
   exportInFlight = true
+  const requestId = nextRequestId()
+  const controller = new AbortController()
+  let nativeStarted = false
+  let cancelRequested = false
   let stopProgress: (() => void) | undefined
   let progressStopped = false
   /** Stop the loading toast before any terminal toast so the two do not race. */
@@ -57,12 +71,28 @@ export async function exportCurrent(
     progressStopped = true
     stopProgress?.()
   }
+  const cancel = (): void => {
+    if (cancelRequested) return
+    cancelRequested = true
+    controller.abort()
+    // Only native rendering has backend state to cancel; preparation is
+    // interrupted through the abort signal passed to the image resolver.
+    if (nativeStarted) void services.cancelExport?.(requestId).catch(() => {})
+  }
+  const announceCancelled = (): void => {
+    finishProgress()
+    onNotice?.(t("export.cancelled"))
+  }
+  const cancelled = (): boolean => controller.signal.aborted
   try {
-    stopProgress = services.notifyProgress?.(t("export.progress"))
+    stopProgress = services.notifyProgress?.(t("export.progress"), cancel)
     const wantsRemoteWarning = kind === "pdf" || kind === "png"
     let sawRemoteImage = false
+    const resolvedOptions = typeof exportOptions === "function"
+      ? exportOptions(controller.signal)
+      : exportOptions
     const html = await exportRichHtml(view.state, {
-      ...exportOptions,
+      ...resolvedOptions,
       customCss,
       theme: renderOptions.theme,
       fullWidth: kind !== "html",
@@ -70,11 +100,19 @@ export async function exportCurrent(
         ? () => { sawRemoteImage = true }
         : undefined,
     })
+    if (cancelled()) {
+      announceCancelled()
+      return
+    }
     // The engine reports remote images while rendering, so reference-style and
     // table-cell images warn too; a regex over the raw document missed both.
     if (sawRemoteImage) onNotice?.(t("export.remoteImageWarning"))
     if (kind === "html") {
       const path = await requestExportPath(services, "html", renderOptions.sourcePath)
+      if (cancelled()) {
+        announceCancelled()
+        return
+      }
       if (path) {
         await services.writeFile(path, html)
         finishProgress()
@@ -87,13 +125,19 @@ export async function exportCurrent(
     }
     const format = kind === "pdf" ? "pdf" : "png"
     const path = await requestExportPath(services, format, renderOptions.sourcePath)
+    if (cancelled()) {
+      announceCancelled()
+      return
+    }
     if (path) {
+      nativeStarted = true
       const warning = await services.exportPreview(
         html,
         path,
         format,
         renderOptions.scale,
         renderOptions.width,
+        requestId,
       )
       finishProgress()
       if (warning) {
@@ -107,6 +151,10 @@ export async function exportCurrent(
       }
     }
   } catch (error) {
+    if (cancelRequested || controller.signal.aborted) {
+      announceCancelled()
+      return
+    }
     finishProgress()
     services.reportError(exportFailureMessage(error))
   } finally {
