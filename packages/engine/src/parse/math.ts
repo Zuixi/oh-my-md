@@ -1,4 +1,4 @@
-import type { MarkdownConfig } from "@lezer/markdown"
+import type { MarkdownConfig, MarkdownParser } from "@lezer/markdown"
 import { CHAR_BACKSLASH, CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
 import { isEscaped } from "./scan"
 
@@ -15,8 +15,8 @@ export const Math: MarkdownConfig = {
     before: "FencedCode",   // $$ 行没有其他主人，尽早接管
     // Not when the paragraph already has an unclosed `$$` ("text $$\nx\n$$ more"):
     // that line closes the run, and opening a block there would swallow to EOF.
-    endLeaf(_cx, line, leaf) {
-      return line.text.slice(line.pos).startsWith("$$") && !hasOpenDisplayDollars(leaf.content)
+    endLeaf(cx, line, leaf) {
+      return line.text.slice(line.pos).startsWith("$$") && !hasOpenDisplayDollars(cx.parser, leaf.content)
     },
     parse(cx, line) {
       const rest = line.text.slice(line.pos)
@@ -72,10 +72,26 @@ export const Math: MarkdownConfig = {
   }],
 }
 
-/** True when `text` has an unclosed `$$` (backslash escapes skip the next character). */
-function hasOpenDisplayDollars(text: string): boolean {
+/**
+ * True when `text` has an unclosed `$$`. Backslash escapes skip the next
+ * character, and `$$` inside a code span does not count: the parser decides
+ * where code spans are (a span may cross lines or sit inside emphasis), so
+ * `` `$$` `` followed by a `$$` line still opens the block.
+ */
+function hasOpenDisplayDollars(parser: MarkdownParser, text: string): boolean {
+  if (!text.includes("$$")) return false
+  const code: { from: number; to: number }[] = []
+  parser.parse(text).iterate({
+    enter: node => {
+      if (node.name !== "InlineCode") return
+      code.push({ from: node.from, to: node.to })
+      return false
+    },
+  })
   let open = false
   for (let i = 0; i < text.length; i++) {
+    const span = code.find(range => i >= range.from && i < range.to)
+    if (span) { i = span.to - 1; continue }
     const c = text.charCodeAt(i)
     if (c == CHAR_BACKSLASH) { i++; continue }
     if (c == CHAR_DOLLAR && text.charCodeAt(i + 1) == CHAR_DOLLAR) {

@@ -42,6 +42,11 @@ describe("math parsing", () => {
     const doc = "text $$\nx\n$$ more\n\nnext\n\n# heading"
     expect(nodeText(doc, "MathBlock")).toEqual([])
     expect(nodeText(doc, "Paragraph")).toEqual(["text $$\nx\n$$ more", "next"])
+    // `$$` with nothing after it yet is still an open run.
+    expect(nodeText("text $$\n$$ more\n\nnext\n\n# heading", "MathBlock")).toEqual([])
+    // `$$` inside a code span (also within emphasis) does not open a run.
+    expect(nodeText("price `$$` code\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
+    expect(nodeText("*see `$$`*\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
     // An escaped `\$$` does not open a run.
     expect(nodeText("cost \\$$\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
   })
