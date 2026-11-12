@@ -1,5 +1,5 @@
 import type { MarkdownConfig } from "@lezer/markdown"
-import { CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
+import { CHAR_BACKSLASH, CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
 import { isEscaped } from "./scan"
 
 // ponytail: 只支持 $$...$$ 与 $...$（不支持 \[...\] / \(...\)）；未闭合的 $$
@@ -13,8 +13,10 @@ export const Math: MarkdownConfig = {
   parseBlock: [{
     name: "MathBlock",
     before: "FencedCode",   // $$ 行没有其他主人，尽早接管
-    endLeaf(_cx, line) {
-      return line.text.slice(line.pos).startsWith("$$")
+    // Not when the paragraph already has an unclosed `$$` ("text $$\nx\n$$ more"):
+    // that line closes the run, and opening a block there would swallow to EOF.
+    endLeaf(_cx, line, leaf) {
+      return line.text.slice(line.pos).startsWith("$$") && !hasOpenDisplayDollars(leaf.content)
     },
     parse(cx, line) {
       const rest = line.text.slice(line.pos)
@@ -68,4 +70,18 @@ export const Math: MarkdownConfig = {
       ]))
     },
   }],
+}
+
+/** True when `text` has an unclosed `$$` (backslash escapes skip the next character). */
+function hasOpenDisplayDollars(text: string): boolean {
+  let open = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c == CHAR_BACKSLASH) { i++; continue }
+    if (c == CHAR_DOLLAR && text.charCodeAt(i + 1) == CHAR_DOLLAR) {
+      open = !open
+      i++
+    }
+  }
+  return open
 }

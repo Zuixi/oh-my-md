@@ -38,6 +38,14 @@ describe("math parsing", () => {
     expect(nodeText("- item\n  $$x$$", "MathBlock")).toEqual(["$$x$$"])
   })
 
+  it("does not interrupt on a line that closes a paragraph's open $$", () => {
+    const doc = "text $$\nx\n$$ more\n\nnext\n\n# heading"
+    expect(nodeText(doc, "MathBlock")).toEqual([])
+    expect(nodeText(doc, "Paragraph")).toEqual(["text $$\nx\n$$ more", "next"])
+    // An escaped `\$$` does not open a run.
+    expect(nodeText("cost \\$$\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
+  })
+
   it("parses inline $math$", () => {
     expect(names("energy $E=mc^2$ here")).toContain("InlineMath")
   })
