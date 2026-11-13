@@ -337,7 +337,7 @@ export const en: Record<string, string> = {
   "confirm.restore": "Restore unsaved draft {label}?",
   "confirm.externalChange": "File changed on disk. Reload?",
   "confirm.exportDiagnostics": "Export a diagnostics bundle? It contains the app version, OS and log level, any log files (none if logging is off, in which case there are no logs to include), environment details, your settings, and the session restore state — never document content. File paths in log path fields are collapsed to their final file name.",
-  "error.export.desktopOnly": "PDF export is only available on the macOS desktop app",
+  "error.export.desktopOnly": "PDF and image export require a supported desktop app",
   "error.openFailed": "Open failed",
   "error.folderListingFailed": "Folder listing failed",
   "error.workspaceFolderMissing": "Last workspace folder is no longer available; started a new draft",

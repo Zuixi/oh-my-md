@@ -1,4 +1,4 @@
-//! Shared offscreen-window host for the Windows and Linux PNG exporters.
+//! Shared offscreen-window host for the Windows and Linux exporters.
 //!
 //! The engine emits one self-contained HTML document; this module serves it
 //! through a single-use custom protocol, waits for the page's ready flag, then
@@ -177,9 +177,6 @@ pub(crate) async fn render_with_window(
     capture: CaptureFn,
     cancel: Arc<AtomicBool>,
 ) -> Result<RenderOutput, String> {
-    if format != ExportFormat::Png {
-        return Err("PDF export is only available on macOS".into());
-    }
     if cancel.load(Ordering::SeqCst) {
         return Err(super::export_cancel::EXPORT_CANCELLED.into());
     }
@@ -241,15 +238,18 @@ pub(crate) async fn render_with_window(
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
 
-    let (height_css, clamp_warning) =
-        spec.clamp_height_css_for(measured.height_css, ExportFormat::Png);
-    if height_css < crate::export::EXPORT_MIN_HEIGHT_CSS {
-        cleanup(&window);
-        return Err("export page reported a zero height".into());
-    }
-    let measured = Probe {
-        height_css,
-        incomplete: measured.incomplete,
+    // Paginated printing consumes the document directly and has no bitmap height limit.
+    let (measured, clamp_warning) = if format == ExportFormat::Png {
+        let (height_css, warning) = spec.clamp_height_css_for(measured.height_css, format);
+        (
+            Probe {
+                height_css,
+                ..measured
+            },
+            warning,
+        )
+    } else {
+        (measured, None)
     };
 
     let window_for_capture = window.clone();

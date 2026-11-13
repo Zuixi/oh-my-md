@@ -1,8 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { AppMenu, type AppMenuViewState } from "../src/AppMenu"
-import { MACOS_ONLY_COMMANDS, MENU_TO_COMMAND } from "../src/commands"
-import { APP_MENU_TREE } from "../src/menuTree"
 
 function withUserAgent(userAgent: string, run: () => void): void {
   const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
@@ -76,15 +74,6 @@ describe("AppMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Help" }))
     fireEvent.click(screen.getByRole("menuitem", { name: /^about/i }))
     expect(onCommand).toHaveBeenCalledWith("about")
-  })
-
-  it("hides macOS-only export entries on windows", () => {
-    withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0", () => {
-      renderMenu()
-      fireEvent.click(screen.getByRole("button", { name: "File" }))
-      expect(screen.queryByRole("menuitem", { name: /export pdf/i })).toBeNull()
-      expect(screen.getByRole("menuitem", { name: /export html/i })).toBeTruthy()
-    })
   })
 
   it("lists recent files via recent: ids", () => {
@@ -162,15 +151,5 @@ describe("AppMenu", () => {
     expect(screen.getByRole("menu")).toBeTruthy()
     fireEvent.click(file)
     expect(screen.queryByRole("menu")).toBeNull()
-  })
-
-  it("keeps macOSOnly entry flags aligned with MACOS_ONLY_COMMANDS", () => {
-    for (const section of APP_MENU_TREE) {
-      for (const entry of section.entries) {
-        if (entry.macOSOnly === true) {
-          expect(MACOS_ONLY_COMMANDS.has(MENU_TO_COMMAND[entry.id] ?? entry.id)).toBe(true)
-        }
-      }
-    }
   })
 })
