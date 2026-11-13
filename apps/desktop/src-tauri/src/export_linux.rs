@@ -53,7 +53,7 @@ pub(crate) async fn render(
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<RenderOutput, String> {
     if format != ExportFormat::Png {
-        return Err("PDF export is only available on macOS".into());
+        return Err("PDF export is only available on macOS and Windows".into());
     }
     export_host::render_with_window(app, html, spec, format, probe, capture, cancel).await
 }

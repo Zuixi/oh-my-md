@@ -29,6 +29,10 @@ export function isLinux(): boolean {
   return currentPlatform() === "linux"
 }
 
+export function supportsPdfExport(): boolean {
+  return !isLinux()
+}
+
 /**
  * Heuristic for the client-side duplicate-name precheck: Windows and default
  * macOS volumes compare names case-insensitively, Linux does not. Only a UX

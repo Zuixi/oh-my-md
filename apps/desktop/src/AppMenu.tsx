@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Check } from "lucide-react"
-import { MACOS_ONLY_COMMANDS, MENU_TO_COMMAND } from "./commands"
+import { commandAvailable, MENU_TO_COMMAND } from "./commands"
 import { useT } from "./i18n"
 import { APP_MENU_TREE, type MenuEntry, type MenuSection } from "./menuTree"
 import { isMacOS } from "./platform"
@@ -80,13 +80,8 @@ export function AppMenu(props: {
     return t(`cmd.label.${MENU_TO_COMMAND[id] ?? id}`)
   }
 
-  const visible = (id: string): boolean =>
-    !(MACOS_ONLY_COMMANDS.has(MENU_TO_COMMAND[id] ?? id) && !isMacOS())
-
   const visibleEntries = (section: MenuSection): readonly MenuEntry[] =>
-    section.entries.filter(
-      entry => !(entry.macOSOnly === true && !isMacOS()) && visible(entry.id),
-    )
+    section.entries.filter(({ id }) => commandAvailable(MENU_TO_COMMAND[id] ?? id))
 
   const run = (id: string): void => {
     close()

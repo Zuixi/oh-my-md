@@ -1,6 +1,6 @@
 # oh-my-md
 
-> **What is this?** A cross-platform, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host. macOS, Windows (NSIS/MSI), and Linux (AppImage/deb/rpm) are first-class targets; platform branches go only through `apps/desktop/src/platform.ts` (TS, unknown → macOS) or `cfg!(target_os = …)` (Rust). Native PDF/PNG export (`export_preview`) is the single deliberate macOS-only feature.
+> **What is this?** A cross-platform, open-source desktop Markdown editor built around CodeMirror 6 live preview and a Tauri 2 host. macOS, Windows (NSIS/MSI), and Linux (AppImage/deb/rpm) are first-class targets; platform branches go only through `apps/desktop/src/platform.ts` (TS, unknown → macOS) or `cfg!(target_os = …)` (Rust). Native PDF export supports macOS and Windows, and native PNG export supports all three platforms.
 >
 > **Progressive disclosure:** Read this file, every applicable ancestor `AGENTS.md`, then the nearest guide before editing. Rules accumulate; a deeper guide overrides only a conflicting local rule, not the rest of its parents. Follow explicit cross-directory links too: a `Scope` description does not extend filesystem inheritance. For tests, also read the guide governing the behavior under test.
 

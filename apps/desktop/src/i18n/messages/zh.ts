@@ -337,7 +337,7 @@ export const zh: Record<string, string> = {
   "confirm.restore": "恢复未保存草稿 {label}？",
   "confirm.externalChange": "文件已在磁盘上更改。重新加载？",
   "confirm.exportDiagnostics": "导出诊断信息包？其中包含应用版本、系统与日志级别、日志文件（若日志功能关闭，则不含日志）、环境信息、你的设置以及会话恢复状态，绝不含文档内容。日志路径字段中的文件路径会被折叠为最后的文件名。",
-  "error.export.desktopOnly": "PDF 导出目前仅在 macOS 桌面应用可用",
+  "error.export.desktopOnly": "PDF 和图片导出需要受支持的桌面应用",
   "error.openFailed": "打开失败",
   "error.folderListingFailed": "文件夹列出失败",
   "error.workspaceFolderMissing": "上次的工作区文件夹已不可用，已新建草稿",

@@ -62,6 +62,19 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     );
     let width_css = env_u32("OMD_EXPORT_SMOKE_WIDTH", DEFAULT_WIDTH_CSS)?;
     let scale = env_u32("OMD_EXPORT_SMOKE_SCALE", DEFAULT_SCALE)?;
+    #[cfg(windows)]
+    {
+        let pdf_only = std::env::args().any(|arg| arg == "--pdf-only");
+        let output = if pdf_only {
+            std::env::var_os("OMD_EXPORT_SMOKE_OUT").map(PathBuf::from)
+        } else {
+            None
+        };
+        verify_pdf(&app, width_css, output).await?;
+        if pdf_only {
+            return Ok("EXPORT_SMOKE_OK format=pdf".into());
+        }
+    }
     let out = std::env::var_os("OMD_EXPORT_SMOKE_OUT")
         .map_or_else(|| std::env::temp_dir().join(PNG_OUTPUT_NAME), PathBuf::from);
     let spec = ExportSpec::new(width_css, scale)?;
@@ -96,17 +109,64 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
             SMOKE_HEIGHT_CSS * scale
         ));
     }
-    verify_cancel(&app, scale, width_css).await?;
+    verify_cancel(&app, scale, width_css, ExportFormat::Png).await?;
     Ok(format!(
         "EXPORT_SMOKE_OK width={width} height={height} scale={scale} path={}",
         target.display()
     ))
 }
 
+#[cfg(windows)]
+async fn verify_pdf(
+    app: &tauri::AppHandle,
+    width_css: u32,
+    target: Option<PathBuf>,
+) -> Result<(), String> {
+    let output = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let target = target.unwrap_or_else(|| output.path().join("smoke.pdf"));
+    let target_text = target.to_str().ok_or("invalid PDF smoke target path")?;
+    let html = r#"<!doctype html><html><head><meta charset="utf-8">
+<style>@media print { .second { break-before: page } }</style></head><body>
+<table><tr><th>Quantity</th><th>Formula</th></tr>
+<tr><td>Square</td><td><math><msup><mi>x</mi><mn>2</mn></msup></math></td></tr></table>
+<p class="second">Second page</p>
+<script>window.__omdExportReady=true;window.__omdExportHeight=600;</script>
+</body></html>"#;
+    let warning = super::export_preview(
+        app.clone(),
+        html.into(),
+        target_text.into(),
+        "pdf".into(),
+        1,
+        width_css,
+        format!("smoke-pdf-{}", std::process::id()),
+    )
+    .await?;
+    let bytes = std::fs::read(target).map_err(|error| error.to_string())?;
+    // Chromium's page tree is plain PDF syntax. The page break must survive
+    // the print stylesheet, and the output must reach its end-of-file marker.
+    let contents = String::from_utf8_lossy(&bytes);
+    if warning.is_some()
+        || !bytes.starts_with(b"%PDF-")
+        || !contents.trim_end().ends_with("%%EOF")
+        || pdf_page_count(&bytes) != 2
+    {
+        return Err("WebView2 did not print a complete two-page PDF".into());
+    }
+    verify_cancel(app, 1, width_css, ExportFormat::Pdf).await?;
+    println!("EXPORT_PDF_SMOKE_OK pages=2");
+    Ok(())
+}
+
 /// Cancels a render whose page never signals ready. This exercises the real
 /// cancel command, token registration, platform poll, and window cleanup on
 /// every CI platform instead of trusting the button wiring alone.
-async fn verify_cancel(app: &tauri::AppHandle, scale: u32, width_css: u32) -> Result<(), String> {
+async fn verify_cancel(
+    app: &tauri::AppHandle,
+    scale: u32,
+    width_css: u32,
+    format: ExportFormat,
+) -> Result<(), String> {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     let nonce = SystemTime::now()
@@ -114,11 +174,12 @@ async fn verify_cancel(app: &tauri::AppHandle, scale: u32, width_css: u32) -> Re
         .map_err(|error| error.to_string())?
         .as_nanos();
     let request_id = format!("cancel-{nonce}");
-    let out = std::env::temp_dir().join(format!("omd-export-cancel-{nonce}.png"));
+    let extension = format.extension();
+    let out = std::env::temp_dir().join(format!("omd-export-cancel-{nonce}.{extension}"));
     let target = super::validate_export(
         out.to_str()
             .ok_or_else(|| format!("invalid cancel smoke path: {}", out.display()))?,
-        ExportFormat::Png,
+        format,
         CANCEL_PROBE_HTML,
     )?;
     let target_text = target
@@ -129,7 +190,7 @@ async fn verify_cancel(app: &tauri::AppHandle, scale: u32, width_css: u32) -> Re
         app.clone(),
         CANCEL_PROBE_HTML.to_owned(),
         target_text.clone(),
-        "png".to_owned(),
+        extension.to_owned(),
         scale,
         width_css,
         request_id.clone(),
@@ -148,8 +209,11 @@ async fn verify_cancel(app: &tauri::AppHandle, scale: u32, width_css: u32) -> Re
     if elapsed > Duration::from_secs(8) {
         return Err(format!("cancel took {elapsed:?}"));
     }
-    let _ = std::fs::remove_file(&target);
-    eprintln!("[export-smoke] cancel ok in {elapsed:?}");
+    if target.exists() {
+        let _ = std::fs::remove_file(&target);
+        return Err(format!("cancelled {extension} export wrote a file"));
+    }
+    eprintln!("[export-smoke] {extension} cancel ok in {elapsed:?}");
     Ok(())
 }
 
@@ -189,4 +253,31 @@ fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| "truncated IHDR")?);
     let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| "truncated IHDR")?);
     Ok((width, height))
+}
+
+/// Page objects (`/Type /Page`, not `/Pages`), with any whitespace PDF allows
+/// between the tokens, so a writer formatting change cannot fake a failure.
+#[cfg(any(windows, test))]
+fn pdf_page_count(bytes: &[u8]) -> usize {
+    static PAGE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
+    PAGE.get_or_init(|| regex::bytes::Regex::new(r"/Type\s*/Page(?:[^s\w]|$)").expect("page regex"))
+        .find_iter(bytes)
+        .count()
+}
+
+#[cfg(test)]
+mod pdf_page_tests {
+    use super::pdf_page_count;
+
+    #[test]
+    fn counts_page_objects_not_the_page_tree() {
+        let pdf = b"%PDF-1.4\n1 0 obj << /Type /Pages /Count 2 >>\n2 0 obj << /Type /Page\n/Parent 1 0 R >>\n3 0 obj <</Type/Page/Parent 1 0 R>>\n%%EOF";
+        assert_eq!(pdf_page_count(pdf), 2);
+        assert_eq!(
+            pdf_page_count(b"<< /Type /Page\r\n>> << /Type  /Page >>"),
+            2
+        );
+        assert_eq!(pdf_page_count(b"<< /Type /Pages >>"), 0);
+        assert_eq!(pdf_page_count(b"/Type /Page"), 1);
+    }
 }

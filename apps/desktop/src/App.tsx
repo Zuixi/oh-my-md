@@ -71,7 +71,7 @@ import {
 import { updateRestartReadiness } from "./updateRestartReadiness"
 import { createTauriUpdateAdapter, type UpdateAdapter } from "./updateAdapter"
 import { applyTheme, resolveTheme, type AppTheme } from "./theme"
-import { runMenuCommand, MACOS_ONLY_COMMANDS, type AppCommand } from "./commands"
+import { runMenuCommand, commandAvailable, type AppCommand } from "./commands"
 import { buildAppCommands } from "./appCommands"
 import { isMacOS, isWindows } from "./platform"
 import { matchesWindowShortcut, shortcutFor, WINDOW_SHORTCUTS } from "./shortcuts"
@@ -1466,7 +1466,7 @@ export default function App({
   // nothing. Filtering the single definition point covers the palette,
   // commandsRef, runMenuCommand, and the future native AppMenu alike.
   const commands: AppCommand[] = allCommands.filter(
-    command => isMacOS() || !MACOS_ONLY_COMMANDS.has(command.id),
+    command => commandAvailable(command.id),
   )
   const commandsRef = useRef(commands)
   commandsRef.current = commands

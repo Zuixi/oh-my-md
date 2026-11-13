@@ -188,7 +188,14 @@ pub fn validate_export(path: &str, format: ExportFormat, html: &str) -> Result<P
 /// so HTML, PDF and PNG share one document model.
 pub fn styled_export_html(html: &str) -> String {
     let style = format!("<style>{EXPORT_STYLE}</style>");
-    if let Some(index) = html.find("</head>") {
+    // First in <head> (after the charset declaration), so the document's own
+    // print rules (custom CSS) override the default margin.
+    if let Some(mut index) = html.find("<head>").map(|index| index + "<head>".len()) {
+        if html[index..].starts_with("<meta charset") {
+            if let Some(end) = html[index..].find('>') {
+                index += end + 1;
+            }
+        }
         let mut out = String::with_capacity(html.len() + style.len());
         out.push_str(&html[..index]);
         out.push_str(&style);
@@ -391,9 +398,25 @@ mod tests {
     fn styled_export_html_injects_print_stylesheet() {
         let html = "<!doctype html><html><head></head><body><h1>Hi</h1></body></html>";
         let styled = styled_export_html(html);
-        assert!(styled.contains("</style></head>"));
-        assert!(styled.contains("@page{margin:16mm}"));
+        assert!(styled.contains("<head><style>@page{margin:16mm}</style></head>"));
         assert!(styled.contains("<h1>Hi</h1>"));
+    }
+
+    #[test]
+    fn default_print_margin_follows_the_charset_declaration() {
+        let html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body></body></html>";
+        assert!(styled_export_html(html)
+            .contains("<head><meta charset=\"utf-8\"><style>@page{margin:16mm}</style><title>"));
+    }
+
+    #[test]
+    fn document_print_rules_override_the_default_margin() {
+        // Custom CSS arrives in the document head; the later @page wins.
+        let html = "<!doctype html><html><head><meta charset=\"utf-8\"><style>@page{margin:25mm}</style></head><body></body></html>";
+        let styled = styled_export_html(html);
+        assert!(
+            styled.find("@page{margin:16mm}").unwrap() < styled.find("@page{margin:25mm}").unwrap()
+        );
     }
 
     #[test]
