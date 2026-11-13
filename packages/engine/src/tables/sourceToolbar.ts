@@ -1,6 +1,19 @@
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
-import type { Text } from "@codemirror/state"
+import type { EditorState, Text } from "@codemirror/state"
 import { cellAt, tableStartAt } from "./navigate"
+import { tableSourceRevealed } from "./sourceReveal"
+import { isLivePreview } from "../modes/livePreview"
+
+/**
+ * Start of the table the floating toolbar serves, or null. In live preview a table is a
+ * rendered widget with its own toolbar unless it is revealed as source, so a selection that
+ * merely ends at a rendered table's edge must not float a second toolbar over its corner.
+ */
+function sourceTableStartAt(state: EditorState, head: number): number | null {
+  const from = tableStartAt(state, head)
+  if (from === null || !(state.field(isLivePreview, false) ?? false)) return from
+  return state.field(tableSourceRevealed, false)?.from === from ? from : null
+}
 import { TABLE_TOOL_BUTTONS, tableToolChanges, type TableToolAction } from "./tools"
 import type { TableData } from "./model"
 import { icon } from "../decorations/icons"
@@ -122,7 +135,7 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
         // 锚点会把浮层重新显示在一张已经不再聚焦的表格上。
         const from = anchor && anchor.doc === state.doc && anchor.head === state.selection.main.head
           ? anchor.from
-          : tableStartAt(state, state.selection.main.head)
+          : sourceTableStartAt(state, state.selection.main.head)
         if (from === null) return null
         try {
           // 构造/极端布局下视图可能尚未完成首次测量：拿不到坐标就按"暂不显示"处理。
@@ -165,7 +178,7 @@ export const tableSourceToolbar = ViewPlugin.fromClass(class {
     if (!update.docChanged && !update.selectionSet && !update.viewportChanged && !update.geometryChanged) return
     const head = update.state.selection.main.head
     // tableStartAt 只取 Table 节点起点，不构建 TableData：浮层定位只需要这个偏移。
-    const from = tableStartAt(update.state, head)
+    const from = sourceTableStartAt(update.state, head)
     if (from === null) {
       this.dom.hidden = true
       return
