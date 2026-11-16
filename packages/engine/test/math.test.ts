@@ -49,6 +49,11 @@ describe("math parsing", () => {
     expect(nodeText("*see `$$`*\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
     // An escaped `\$$` does not open a run.
     expect(nodeText("cost \\$$\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
+    // Nor does `$$` in a link title or URL, an autolink or an HTML tag attribute.
+    expect(nodeText('see [a](https://example.com "price $$") here\n$$\nx\n$$', "MathBlock")).toEqual(["$$\nx\n$$"])
+    expect(nodeText("see [a](https://example.com/$$) here\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
+    expect(nodeText("see <https://example.com/$$> here\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
+    expect(nodeText('see <span title="$$">a</span> here\n$$\nx\n$$', "MathBlock")).toEqual(["$$\nx\n$$"])
   })
 
   it("parses inline $math$", () => {

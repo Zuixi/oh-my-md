@@ -73,24 +73,32 @@ export const Math: MarkdownConfig = {
 }
 
 /**
+ * Inline nodes whose text is not paragraph text: a `$$` inside a code span, a
+ * link title or URL, an autolink or an HTML tag (`<span title="$$">`) opens no
+ * display math, so it must not count as an open run either.
+ */
+const NON_TEXT_INLINE = new Set(["InlineCode", "LinkTitle", "URL", "Autolink", "HTMLTag"])
+
+/**
  * True when `text` has an unclosed `$$`. Backslash escapes skip the next
- * character, and `$$` inside a code span does not count: the parser decides
- * where code spans are (a span may cross lines or sit inside emphasis), so
- * `` `$$` `` followed by a `$$` line still opens the block.
+ * character, and `$$` inside a non-text inline node (`NON_TEXT_INLINE`) does
+ * not count: the parser decides where those nodes are (a code span may cross
+ * lines or sit inside emphasis), so `` `$$` `` followed by a `$$` line still
+ * opens the block.
  */
 function hasOpenDisplayDollars(parser: MarkdownParser, text: string): boolean {
   if (!text.includes("$$")) return false
-  const code: { from: number; to: number }[] = []
+  const skipped: { from: number; to: number }[] = []
   parser.parse(text).iterate({
     enter: node => {
-      if (node.name !== "InlineCode") return
-      code.push({ from: node.from, to: node.to })
+      if (!NON_TEXT_INLINE.has(node.name)) return
+      skipped.push({ from: node.from, to: node.to })
       return false
     },
   })
   let open = false
   for (let i = 0; i < text.length; i++) {
-    const span = code.find(range => i >= range.from && i < range.to)
+    const span = skipped.find(range => i >= range.from && i < range.to)
     if (span) { i = span.to - 1; continue }
     const c = text.charCodeAt(i)
     if (c == CHAR_BACKSLASH) { i++; continue }
