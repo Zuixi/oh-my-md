@@ -31,9 +31,8 @@ export function isLinux(): boolean {
 
 /**
  * Every export format is meant to ship on all three platforms; Linux PDF is the
- * one gap left (no WebKitGTK print backend yet, see the Linux PDF tracking issue).
- * Return true here, and drop the Linux case in `exportGating.test.ts`, when that
- * backend lands.
+ * one gap left (no WebKitGTK print backend yet, see #62). Return true here, and
+ * drop the Linux case in `exportGating.test.ts`, when that backend lands.
  */
 export function supportsPdfExport(): boolean {
   return !isLinux()

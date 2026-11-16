@@ -70,7 +70,7 @@ export function isLinux(): boolean
 
 - macOS:`menu::install` / 全局 menubar 完全不变。
 - Win/Linux:`menu.rs` 的 `install` 与 `rebuild_from_state` 在 `!cfg!(target_os = "macos")` 时直接返回 —— 不装原生菜单(`app.set_menu` 在 Win/Linux 无处渲染);`set_recent_files` / `set_view_menu_state` / `set_menu_locale` 三个命令保持注册与签名(IPC 契约不变)，变为自然 no-op。
-- 前端：TopBar 在 `!isMacOS()` 时渲染 ☰ 按钮，弹出新的 `AppMenu.tsx` 下拉菜单。菜单树定义在新 `menuTree.ts`(id 复用 `MENU_TO_COMMAND` 的菜单 id 空间 + `recent:` 前缀，执行复用现有 `runMenuCommand`),条目标签复用现有 `cmd.label.*` i18n key,分区标签新增 `menu.file/edit/format/view` key。PDF/PNG 导出条目带 `macOSOnly` 标记,非 macOS 隐藏。
+- 前端：TopBar 在 `!isMacOS()` 时渲染 ☰ 按钮，弹出新的 `AppMenu.tsx` 下拉菜单。菜单树定义在新 `menuTree.ts`(id 复用 `MENU_TO_COMMAND` 的菜单 id 空间 + `recent:` 前缀，执行复用现有 `runMenuCommand`),条目标签复用现有 `cmd.label.*` i18n key,分区标签新增 `menu.file/edit/format/view` key。PDF/PNG 导出条目带 `macOSOnly` 标记,非 macOS 隐藏（**已废弃**：该标记已删除，导出改为按格式门控，见 D3 与 `2026-11-11-cross-platform-hd-export-design.md`）。
 - 漂移防线：扩展 `crossLayerMenu.test.ts` —— 断言 `menuTree.ts` 的 id 集合与从 `menu.rs` 解析出的 id 集合一致(两棵树一源化校验)。
 - 快捷键可用性:无原生菜单后，快捷键全部走现有 webview 路径(engine keymap `Mod-*` + `App.tsx` 的 `matchesWindowShortcut` 双修饰匹配)——已天然支持 Ctrl。
 - 否决的替代方案：Tauri window menu(Win/Linux 会插入窗口内原生菜单栏，改变布局且 GTK 行为不稳)；自绘标题栏(非目标)。
@@ -141,7 +141,7 @@ export function isLinux(): boolean
 | desktop | `currentPlatform()` 对 mac/win/linux/未知 UA 的判定 | Vitest(mock UA) |
 | desktop | `formatBinding` 三平台输出；palette 标签 mac 下与旧字符串逐字一致 | Vitest |
 | engine | `markdownShortcutBindings` 与 keymap/`display` parity | Vitest |
-| desktop | AppMenu 渲染分区/条目、`recent:` 派发、非 mac 隐藏 `macOSOnly` 条目、Escape 关闭 | Vitest(happy-dom) |
+| desktop | AppMenu 渲染分区/条目、`recent:` 派发、非 mac 隐藏 `macOSOnly` 条目（机制已删除，见 D3）、Escape 关闭 | Vitest(happy-dom) |
 | desktop | `menuTree` id 与 `menu.rs` 解析出的 id 集合一致(扩展现有 drift 测试) | Vitest |
 | desktop | 非 mac 平台下命令面板不含 export-pdf/export-image | Vitest |
 | Rust | 诊断包:注入临时 log dir → `os.txt` 存在、日志内容脱敏;`write_diagnostics_bundle` 新签名 | cargo test(三 OS CI) |
