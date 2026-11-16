@@ -3,9 +3,9 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 // The e2e harness pages are served by Vite from apps/desktop, so every bare import under
-// e2e/ must be a dependency of @omd/desktop itself: with a cold dependency-scan cache Vite
-// cannot resolve a package that is only hoisted from another workspace package.
-const desktop = join(__dirname, "..")
+// e2e/ must be a dependency of @omd/desktop itself. A warm Vite optimization cache can
+// hide a missing declaration by reusing its pre-bundled module; a cold cache cannot.
+const desktop = join(import.meta.dirname, "..")
 const manifest = (path: string) => JSON.parse(readFileSync(path, "utf8")) as {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
@@ -44,7 +44,7 @@ describe("e2e harness dependencies", () => {
   })
 
   it("keeps harness packages shared with @omd/engine on the engine's version range", () => {
-    // One CodeMirror copy: the harness and the engine must resolve the same version.
+    // Keep shared ranges in lockstep to reduce the risk of duplicate package instances.
     const deps = declared(join(desktop, "package.json"))
     const engine = declared(join(desktop, "..", "..", "packages", "engine", "package.json"))
     const drift = harnessImports()
