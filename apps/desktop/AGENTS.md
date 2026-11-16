@@ -81,4 +81,5 @@ PW_PORT=9431 pnpm --filter @omd/desktop test:e2e
 ```
 
 - Let Playwright start and stop Vite in the foreground (use a free `PW_PORT` per worktree; never run `pkill chrome`).
+- Every bare import in an e2e harness file (`e2e/**`) must be declared in `apps/desktop/package.json`, at the same version range as `packages/engine` when the engine also depends on it (one CodeMirror copy). Vite serves the harness from this package and only resolves hoisted packages while its dependency-scan cache is warm. `test/e2eHarnessDeps.test.ts` checks both; to reproduce a cold cache, delete `apps/desktop/node_modules/.vite` and rerun `test:e2e`.
 - For engine-owned behavior, also read the corresponding [engine guide](../../packages/engine/AGENTS.md) and run its checks. For IPC changes, follow [Rust verification](./src-tauri/AGENTS.md#verification) as well.
