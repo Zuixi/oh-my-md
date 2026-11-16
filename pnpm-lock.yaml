@@ -56,6 +56,9 @@ importers:
         specifier: ^11.1.0
         version: 11.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
+      '@codemirror/language':
+        specifier: ^6.10.0
+        version: 6.12.4
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
