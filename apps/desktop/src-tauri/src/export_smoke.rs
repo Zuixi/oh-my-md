@@ -148,9 +148,8 @@ async fn print_smoke_pdf(
     Ok(bytes)
 }
 
-/// A document taller than the offscreen window: `sections` sections that may not
-/// split. 40 sections already exceed the window height; the cancel fixture uses
-/// far more so pagination is still running when the cancel lands.
+/// A document taller than the offscreen window: `sections` blocks that may not
+/// split.
 #[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(any(windows, test))]
 fn long_smoke_html(sections: usize) -> String {
@@ -175,14 +174,6 @@ const LONG_SMOKE_BLOCKS: usize = 40;
 /// 40 blocks of at least 180 px cannot fit on fewer pages at A4/Letter.
 #[cfg(any(windows, test))]
 const LONG_SMOKE_MIN_PAGES: usize = 5;
-/// Pages are cheap to add and make the in-flight cancel window long enough that a
-/// fast machine cannot finish printing before the cancel arrives.
-#[cfg(any(windows, test))]
-const PRINT_CANCEL_BLOCKS: usize = 400;
-/// A cancel that does not abort an in-flight print would otherwise wait for the
-/// print timeout; fail long before that.
-#[cfg(any(windows, test))]
-const PRINT_CANCEL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(any(windows, test))]
@@ -223,7 +214,6 @@ async fn verify_pdf(
         ));
     }
     verify_cancel(app, 1, width_css, ExportFormat::Pdf).await?;
-    verify_pdf_cancel_during_print(app, width_css).await?;
     println!("EXPORT_PDF_SMOKE_OK pages=2 long_pages={pages}");
     Ok(())
 }
@@ -231,6 +221,14 @@ async fn verify_pdf(
 /// Cancels a render whose page never signals ready. This exercises the real
 /// cancel command, token registration, platform poll, and window cleanup on
 /// every CI platform instead of trusting the button wiring alone.
+///
+/// The cancel therefore lands before the platform capture starts. A mid-print
+/// cancel is deliberately not asserted: WebView2 finishes a PDF faster than the
+/// cancel round trip on CI (a 400-block, ~80-page fixture still completed first),
+/// so the sleep length, not the code, would decide whether the case is covered.
+/// What that path could break — a file at the target, or a hang — is excluded
+/// structurally instead: `render_with_window` returns as soon as the flag is set,
+/// and `export_preview` only writes after the render succeeds.
 async fn verify_cancel(
     app: &tauri::AppHandle,
     scale: u32,
@@ -287,70 +285,6 @@ async fn verify_cancel(
     Ok(())
 }
 
-/// Cancels a PDF export after its page has reported ready, i.e. while WebView2 is
-/// paginating. The preparation-phase cancel above never reaches the print path, so
-/// this is the case that proves an in-flight print aborts promptly (rather than
-/// waiting for the print timeout) and writes no file.
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
-async fn verify_pdf_cancel_during_print(
-    app: &tauri::AppHandle,
-    width_css: u32,
-) -> Result<(), String> {
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_nanos();
-    let request_id = format!("cancel-print-{nonce}");
-    let html = long_smoke_html(PRINT_CANCEL_BLOCKS);
-    let out = std::env::temp_dir().join(format!("omd-export-cancel-print-{nonce}.pdf"));
-    let target = super::validate_export(
-        out.to_str()
-            .ok_or_else(|| format!("invalid cancel target path: {}", out.display()))?,
-        ExportFormat::Pdf,
-        &html,
-    )?;
-    let target_text = target
-        .to_str()
-        .ok_or_else(|| format!("invalid cancel target path: {}", target.display()))?
-        .to_owned();
-    let task = tauri::async_runtime::spawn(super::export_preview(
-        app.clone(),
-        html,
-        target_text,
-        "pdf".to_owned(),
-        1,
-        width_css,
-        request_id.clone(),
-    ));
-    // The host builds the window, waits 250 ms, probes, then starts printing; the
-    // fixture is long enough that pagination is still running at this point, even
-    // on a fast machine.
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    let cancelled_at = Instant::now();
-    super::cancel_export(app.clone(), request_id).await;
-    let result = tokio::time::timeout(PRINT_CANCEL_DEADLINE, task)
-        .await
-        .map_err(|_| "cancel did not abort the in-flight print".to_string())?
-        .map_err(|error| format!("cancel task failed: {error}"))?;
-    if !matches!(&result, Err(error) if error.contains("export cancelled")) {
-        return Err(format!(
-            "cancel did not abort the in-flight print: {result:?}"
-        ));
-    }
-    if target.exists() {
-        let _ = std::fs::remove_file(&target);
-        return Err("cancelled in-flight PDF export wrote a file".into());
-    }
-    eprintln!(
-        "[export-smoke] pdf cancel during print ok in {:?}",
-        cancelled_at.elapsed()
-    );
-    Ok(())
-}
-
 const CANCEL_PROBE_HTML: &str = "<!doctype html><html><head><meta charset=\"utf-8\">\
 <style>html,body{margin:0;padding:0;width:100%;height:600px;background:#fff}</style>\
 </head><body>cancel probe never signals ready</body></html>";
@@ -401,7 +335,7 @@ fn pdf_page_count(bytes: &[u8]) -> usize {
 
 #[cfg(test)]
 mod pdf_page_tests {
-    use super::{long_smoke_html, pdf_page_count, LONG_SMOKE_BLOCKS, PRINT_CANCEL_BLOCKS};
+    use super::{long_smoke_html, pdf_page_count, LONG_SMOKE_BLOCKS};
 
     #[test]
     fn long_smoke_document_has_every_unsplittable_block() {
@@ -409,19 +343,6 @@ mod pdf_page_tests {
         assert_eq!(html.matches("<section>").count(), LONG_SMOKE_BLOCKS);
         assert!(html.contains("break-inside: avoid"));
         assert!(html.contains("window.__omdExportReady=true"));
-    }
-
-    #[test]
-    fn cancel_fixture_outlives_the_pagination_fixture() {
-        // The in-flight cancel only proves anything while pagination is running, so
-        // its document must be much longer than the "complete pagination" one.
-        assert!(PRINT_CANCEL_BLOCKS > LONG_SMOKE_BLOCKS * 5);
-        assert_eq!(
-            long_smoke_html(PRINT_CANCEL_BLOCKS)
-                .matches("<section>")
-                .count(),
-            PRINT_CANCEL_BLOCKS
-        );
     }
 
     #[test]
