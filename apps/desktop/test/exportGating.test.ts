@@ -72,6 +72,8 @@ describe("export command gating", () => {
     expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
   })
 
+  // Temporary: Linux has no PDF backend yet (`supportsPdfExport`). Delete this
+  // case when the Linux backend lands and every platform offers every format.
   it("hides PDF on Linux while keeping HTML and PNG export", () => {
     setUserAgent(LINUX_WEBKIT_UA)
     const harness = createAppHarness(editor)

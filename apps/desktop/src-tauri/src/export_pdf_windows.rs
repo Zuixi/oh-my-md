@@ -20,7 +20,7 @@ pub(super) fn print_pdf(window: &WebviewWindow) -> Result<Vec<u8>, String> {
     let target = directory.path().join("export.pdf");
     let path = HSTRING::from(target.as_os_str());
     let callback_directory = Arc::clone(&directory);
-    super::with_core(window, PRINT_TIMEOUT, move |core, tx| {
+    let printed = super::with_core(window, PRINT_TIMEOUT, move |core, tx| {
         let printer: ICoreWebView2_7 = core
             .cast()
             .map_err(|error| format!("WebView2 PDF printing is unavailable: {error}"))?;
@@ -47,7 +47,21 @@ pub(super) fn print_pdf(window: &WebviewWindow) -> Result<Vec<u8>, String> {
         }));
         unsafe { printer.PrintToPdf(PCWSTR(path.as_ptr()), &settings, &handler) }
             .map_err(|error| format!("could not start WebView2 PDF printing: {error}"))
-    })?;
+    });
+    if let Err(error) = printed {
+        if error == super::CALLBACK_TIMED_OUT {
+            // WebView2 may still hold the staged file, and `TempDir`'s drop fails
+            // silently on a locked file, leaving the document in %TEMP%. Close the
+            // window first so the print aborts, then remove what it wrote.
+            let _ = window.close();
+            if let Err(remove) = std::fs::remove_file(&target) {
+                if remove.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("could not remove the staged PDF after a print timeout: {remove}");
+                }
+            }
+        }
+        return Err(error);
+    }
     let bytes =
         std::fs::read(target).map_err(|error| format!("could not read printed PDF: {error}"))?;
     if !bytes.starts_with(b"%PDF-") {

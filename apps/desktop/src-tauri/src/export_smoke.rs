@@ -116,7 +116,66 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     ))
 }
 
-#[cfg(windows)]
+/// Prints `html` to PDF through the real export command and returns the bytes.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(any(windows, test))]
+async fn print_smoke_pdf(
+    app: &tauri::AppHandle,
+    html: String,
+    width_css: u32,
+    target: &std::path::Path,
+    name: &str,
+) -> Result<Vec<u8>, String> {
+    let target_text = target.to_str().ok_or("invalid PDF smoke target path")?;
+    let warning = super::export_preview(
+        app.clone(),
+        html,
+        target_text.into(),
+        "pdf".into(),
+        1,
+        width_css,
+        format!("smoke-{name}-{}", std::process::id()),
+    )
+    .await?;
+    let bytes = std::fs::read(target).map_err(|error| error.to_string())?;
+    // Chromium's page tree is plain PDF syntax; the output must reach its
+    // end-of-file marker.
+    let contents = String::from_utf8_lossy(&bytes);
+    if warning.is_some() || !bytes.starts_with(b"%PDF-") || !contents.trim_end().ends_with("%%EOF")
+    {
+        return Err(format!("WebView2 did not print a complete {name} PDF"));
+    }
+    Ok(bytes)
+}
+
+/// A document taller than the offscreen window: 40 blocks that may not split.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(any(windows, test))]
+fn long_smoke_html() -> String {
+    let blocks: String = (1..=LONG_SMOKE_BLOCKS)
+        .map(|n| {
+            format!(
+                "<section><h2>Block {n}</h2><p>{}</p></section>\n",
+                "Paragraph text that wraps. ".repeat(12)
+            )
+        })
+        .collect();
+    format!(
+        r#"<!doctype html><html><head><meta charset="utf-8">
+<style>section {{ break-inside: avoid; min-height: 180px }}</style></head><body>
+{blocks}<script>window.__omdExportReady=true;window.__omdExportHeight=600;</script>
+</body></html>"#
+    )
+}
+
+#[cfg(any(windows, test))]
+const LONG_SMOKE_BLOCKS: usize = 40;
+/// 40 blocks of at least 180 px cannot fit on fewer pages at A4/Letter.
+#[cfg(any(windows, test))]
+const LONG_SMOKE_MIN_PAGES: usize = 5;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(any(windows, test))]
 async fn verify_pdf(
     app: &tauri::AppHandle,
     width_css: u32,
@@ -124,7 +183,6 @@ async fn verify_pdf(
 ) -> Result<(), String> {
     let output = tempfile::tempdir().map_err(|error| error.to_string())?;
     let target = target.unwrap_or_else(|| output.path().join("smoke.pdf"));
-    let target_text = target.to_str().ok_or("invalid PDF smoke target path")?;
     let html = r#"<!doctype html><html><head><meta charset="utf-8">
 <style>@media print { .second { break-before: page } }</style></head><body>
 <table><tr><th>Quantity</th><th>Formula</th></tr>
@@ -132,29 +190,23 @@ async fn verify_pdf(
 <p class="second">Second page</p>
 <script>window.__omdExportReady=true;window.__omdExportHeight=600;</script>
 </body></html>"#;
-    let warning = super::export_preview(
-        app.clone(),
-        html.into(),
-        target_text.into(),
-        "pdf".into(),
-        1,
-        width_css,
-        format!("smoke-pdf-{}", std::process::id()),
-    )
-    .await?;
-    let bytes = std::fs::read(target).map_err(|error| error.to_string())?;
-    // Chromium's page tree is plain PDF syntax. The page break must survive
-    // the print stylesheet, and the output must reach its end-of-file marker.
-    let contents = String::from_utf8_lossy(&bytes);
-    if warning.is_some()
-        || !bytes.starts_with(b"%PDF-")
-        || !contents.trim_end().ends_with("%%EOF")
-        || pdf_page_count(&bytes) != 2
-    {
+    // The page break must survive the print stylesheet.
+    let bytes = print_smoke_pdf(app, html.into(), width_css, &target, "two-page").await?;
+    if pdf_page_count(&bytes) != 2 {
         return Err("WebView2 did not print a complete two-page PDF".into());
     }
+    // A tall document paginates completely instead of being cut at the
+    // offscreen window height.
+    let long_target = output.path().join("smoke-long.pdf");
+    let long = print_smoke_pdf(app, long_smoke_html(), width_css, &long_target, "long").await?;
+    let pages = pdf_page_count(&long);
+    if pages < LONG_SMOKE_MIN_PAGES {
+        return Err(format!(
+            "WebView2 printed a {LONG_SMOKE_BLOCKS}-block document on {pages} pages (expected at least {LONG_SMOKE_MIN_PAGES})"
+        ));
+    }
     verify_cancel(app, 1, width_css, ExportFormat::Pdf).await?;
-    println!("EXPORT_PDF_SMOKE_OK pages=2");
+    println!("EXPORT_PDF_SMOKE_OK pages=2 long_pages={pages}");
     Ok(())
 }
 
@@ -267,7 +319,15 @@ fn pdf_page_count(bytes: &[u8]) -> usize {
 
 #[cfg(test)]
 mod pdf_page_tests {
-    use super::pdf_page_count;
+    use super::{long_smoke_html, pdf_page_count, LONG_SMOKE_BLOCKS};
+
+    #[test]
+    fn long_smoke_document_has_every_unsplittable_block() {
+        let html = long_smoke_html();
+        assert_eq!(html.matches("<section>").count(), LONG_SMOKE_BLOCKS);
+        assert!(html.contains("break-inside: avoid"));
+        assert!(html.contains("window.__omdExportReady=true"));
+    }
 
     #[test]
     fn counts_page_objects_not_the_page_tree() {

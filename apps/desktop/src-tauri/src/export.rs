@@ -190,7 +190,7 @@ pub fn styled_export_html(html: &str) -> String {
     let style = format!("<style>{EXPORT_STYLE}</style>");
     // First in <head> (after the charset declaration), so the document's own
     // print rules (custom CSS) override the default margin.
-    if let Some(mut index) = html.find("<head>").map(|index| index + "<head>".len()) {
+    if let Some(mut index) = head_content_start(html) {
         if html[index..].starts_with("<meta charset") {
             if let Some(end) = html[index..].find('>') {
                 index += end + 1;
@@ -205,6 +205,23 @@ pub fn styled_export_html(html: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">{style}</head><body>{html}</body></html>"
     )
+}
+
+/// Byte offset just after the `<head …>` start tag (attributes allowed), or
+/// `None` without one. `<header>` is not a head tag.
+fn head_content_start(html: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = html[from..].find("<head") {
+        let after = from + found + "<head".len();
+        match html[after..].chars().next() {
+            Some('>') => return Some(after + 1),
+            Some(c) if c.is_ascii_whitespace() || c == '/' => {
+                return html[after..].find('>').map(|end| after + end + 1);
+            }
+            _ => from = after,
+        }
+    }
+    None
 }
 
 /// Register the single-use HTML protocol used by the Win/Linux offscreen host.
@@ -407,6 +424,18 @@ mod tests {
         let html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body></body></html>";
         assert!(styled_export_html(html)
             .contains("<head><meta charset=\"utf-8\"><style>@page{margin:16mm}</style><title>"));
+    }
+
+    #[test]
+    fn default_print_margin_goes_inside_a_head_with_attributes() {
+        let html = "<!doctype html><html><head data-x=\"1\"><meta charset=\"utf-8\"></head><body><header>h</header></body></html>";
+        assert!(styled_export_html(html).contains(
+            "<head data-x=\"1\"><meta charset=\"utf-8\"><style>@page{margin:16mm}</style></head>"
+        ));
+        // `<header>` alone is not a head: the document gets a wrapper.
+        let fragment = "<header>h</header>";
+        assert!(styled_export_html(fragment)
+            .starts_with("<!doctype html><html><head><meta charset=\"utf-8\"><style>"));
     }
 
     #[test]
