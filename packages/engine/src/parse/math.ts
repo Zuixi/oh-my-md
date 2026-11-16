@@ -1,5 +1,5 @@
-import type { MarkdownConfig } from "@lezer/markdown"
-import { CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
+import type { MarkdownConfig, MarkdownParser } from "@lezer/markdown"
+import { CHAR_BACKSLASH, CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
 import { isEscaped } from "./scan"
 
 // ponytail: 只支持 $$...$$ 与 $...$（不支持 \[...\] / \(...\)）；未闭合的 $$
@@ -13,8 +13,10 @@ export const Math: MarkdownConfig = {
   parseBlock: [{
     name: "MathBlock",
     before: "FencedCode",   // $$ 行没有其他主人，尽早接管
-    endLeaf(_cx, line) {
-      return line.text.slice(line.pos).startsWith("$$")
+    // Not when the paragraph already has an unclosed `$$` ("text $$\nx\n$$ more"):
+    // that line closes the run, and opening a block there would swallow to EOF.
+    endLeaf(cx, line, leaf) {
+      return line.text.slice(line.pos).startsWith("$$") && !hasOpenDisplayDollars(cx.parser, leaf.content)
     },
     parse(cx, line) {
       const rest = line.text.slice(line.pos)
@@ -68,4 +70,42 @@ export const Math: MarkdownConfig = {
       ]))
     },
   }],
+}
+
+/**
+ * Inline nodes whose text is not paragraph text: a `$$` inside a code span, a
+ * link title or URL, an autolink or an HTML tag (`<span title="$$">`) opens no
+ * display math, so it must not count as an open run either.
+ */
+const NON_TEXT_INLINE = new Set(["InlineCode", "LinkTitle", "URL", "Autolink", "HTMLTag"])
+
+/**
+ * True when `text` has an unclosed `$$`. Backslash escapes skip the next
+ * character, and `$$` inside a non-text inline node (`NON_TEXT_INLINE`) does
+ * not count: the parser decides where those nodes are (a code span may cross
+ * lines or sit inside emphasis), so `` `$$` `` followed by a `$$` line still
+ * opens the block.
+ */
+function hasOpenDisplayDollars(parser: MarkdownParser, text: string): boolean {
+  if (!text.includes("$$")) return false
+  const skipped: { from: number; to: number }[] = []
+  parser.parse(text).iterate({
+    enter: node => {
+      if (!NON_TEXT_INLINE.has(node.name)) return
+      skipped.push({ from: node.from, to: node.to })
+      return false
+    },
+  })
+  let open = false
+  for (let i = 0; i < text.length; i++) {
+    const span = skipped.find(range => i >= range.from && i < range.to)
+    if (span) { i = span.to - 1; continue }
+    const c = text.charCodeAt(i)
+    if (c == CHAR_BACKSLASH) { i++; continue }
+    if (c == CHAR_DOLLAR && text.charCodeAt(i + 1) == CHAR_DOLLAR) {
+      open = !open
+      i++
+    }
+  }
+  return open
 }
