@@ -3,7 +3,6 @@ export type ViewCheckKey = "source" | "sidebar" | "outline" | "typewriter" | "fo
 export interface MenuEntry {
   /** MENU_TO_COMMAND key, or "recents" for the Open Recent submenu. */
   id: string
-  macOSOnly?: boolean
   separatorAfter?: boolean
   /** Present on toggle entries: the AppMenuViewState key rendered as a ✓. */
   checkKey?: ViewCheckKey
@@ -41,7 +40,7 @@ export const APP_MENU_TREE: readonly MenuSection[] = [
       { id: "save-as", separatorAfter: true },
       { id: "version-history" },
       { id: "export-html" },
-      { id: "export-pdf", macOSOnly: true },
+      { id: "export-pdf" },
       { id: "export-image", separatorAfter: true },
       { id: "preferences" },
       { id: "quit" },

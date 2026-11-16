@@ -290,8 +290,9 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 含 KaTeX 的文档导出 HTML/PDF/PNG 时公式排版正确（KaTeX CSS 与 woff2 字体内嵌），不出现回退字体或散落的 span。
 - [ ] 暗色主题导出仍为暗色；自定义 CSS 的 `html[data-theme="dark"]` 规则生效。
 - [ ] 超长文档在单张图片高度上限处出现 "height-clamped" 警告并说明降低宽度/清晰度或导出 PDF；不静默截断。
-- [ ] Windows（WebView2）与 Linux（WebKitGTK）文件菜单均可导出 PNG；PDF 菜单仅 macOS 出现。Windows/Linux 导出的 PNG 宽度与设置一致，内容完整。
-- [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；PDF 仅 macOS。
+- [ ] Windows（WebView2）与 Linux（WebKitGTK）文件菜单均可导出 PNG。Windows/Linux 导出的 PNG 宽度与设置一致，内容完整。
+- [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；macOS 和 Windows 的文件菜单与命令面板提供 PDF。
+- [ ] Windows PDF：从文件菜单导出含 KaTeX 公式、表格及跨页正文的 Markdown，确认默认打印页边距、分页和末页完整，检查暗色主题背景。取消渲染时检查目标文件未变更，再次导出应成功。
 - [ ] 点击导出后立即出现带“取消”按钮的进度提示；点击取消后界面立即提示已取消、无错误 toast，离屏窗口关闭，后续导出仍可用。
 - [ ] 在准备阶段取消：不再打开保存对话框；在原生渲染阶段取消：不写入不完整文件，取消按钮在 8 秒内生效。
 - [ ] 完成/取消/失败后进度提示消失，且整个导出期间再次触发会提示已有导出进行中。
@@ -301,7 +302,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 含本地图片的文档在图片读取超时（模拟不可用网络盘）时 15 s 内报“读取图片超时”，进度提示关闭，后续导出仍可用。
 - [ ] 自定义 CSS 含字符串 `</style>` 时导出 HTML/PNG 不执行其中的脚本，且页面结构不被截断。
 - [ ] 导出失败（旧 WebView2/CDP 不可用、Linux 缩放能力不足）时出现可操作错误，不产出 1x 模糊图。
-- [ ] 自动化冒烟（CI 三个平台）：`cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke` 输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`；Linux 需在 Xvfb 下运行（CI 已配置）。
+- [ ] 自动化冒烟（CI 三个平台）：`cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke` 输出 `EXPORT_SMOKE_OK width=1600 height=1200 scale=2`；Windows 还输出 `EXPORT_PDF_SMOKE_OK pages=2`，可追加 `-- --pdf-only` 单独运行 PDF 检查；Linux 需在 Xvfb 下运行（CI 已配置）。
 
 ## 有序列表规范化确认（Source Fidelity）
 
@@ -354,7 +355,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 - [ ] 命令面板（⇧⌘P）快捷键标签抽查：Save 为 ⌘S、Ordered list 为 ⌥⌘7，与改动前逐字一致（mac 仍显示 ⌘⇧⌥ 字形，不出现 Ctrl/Alt 字样）
 - [ ] reveal 文案：文件树右键菜单与保存冲突横幅显示「Reveal in File Manager」（zh 界面为「在文件管理器中显示」），中英文均不再出现 Finder 字样
-- [ ] 命令面板与 File▸Export 菜单在 mac 上仍显示 Export PDF / Export Image（`MACOS_ONLY_COMMANDS` 过滤仅作用于非 mac 平台），导出流程可用
+- [ ] 命令面板与 File▸Export 菜单在 mac 与 Windows 上显示 Export PDF / Export Image，Linux 只隐藏 Export PDF（`supportsPdfExport`），导出流程可用
 - [ ] 菜单「导出诊断信息…」生成的 zip 含 `os.txt`（os_info 输出，替代旧 `uname.txt`），且仍不含任何文档正文
 - [ ] 菜单「打开日志目录」/「Open Log Folder」在 Finder 中打开真实日志目录（命令面板同名条目等价）
 - [ ] 设置▸日志：勾选「启用详细日志」后重启，`debug` 级记录出现；`OMD_LOG=warn` 启动时仍以 env 为准

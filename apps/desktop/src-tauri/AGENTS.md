@@ -7,7 +7,7 @@
 
 - Apply the root size policy, including inline tests. Extract command domains into focused modules instead of growing `lib.rs` or `workspace.rs`; keep `lib.rs` focused on setup and `tauri::generate_handler!`.
 - Move large inline test modules into sibling files (follow `src/documents/tests.rs`).
-- Use `cfg!(target_os = "macos")` for runtime checks and `#[cfg(target_os = "macos")]` to exclude platform-specific imports/items from compilation; combine conditions with `any(...)`, not `|`. Native PDF/PNG capture (`export_preview`) is the deliberate macOS-only export path (`export_native.rs`).
+- Use `cfg!(target_os = "macos")` for runtime checks and `#[cfg(target_os = "macos")]` to exclude platform-specific imports/items from compilation; combine conditions with `any(...)`, not `|`. `export_preview` routes to the platform backend. Windows PDF uses the shared offscreen host and `export_pdf_windows.rs`; keep the PNG height cap out of paginated PDF printing.
 
 ## IPC Contract & Concurrency Rules
 

@@ -1,4 +1,4 @@
-//! Windows PNG backend: WebView2 CDP screenshot at an explicit pixel scale.
+//! Windows export backend: WebView2 CDP screenshot and native PDF printing.
 //!
 //! CDP re-rasterizes the page at `clip.scale` instead of upscaling a 1x bitmap,
 //! which is what keeps text and vector math crisp on 4K/Retina displays. The
@@ -14,8 +14,13 @@ use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, ExecuteScriptCompletedHandler};
 use windows::core::HSTRING;
 
+#[path = "export_pdf_windows.rs"]
+mod pdf_windows;
+
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
+/// `with_core`'s error when WebView2 does not answer within the timeout.
+const CALLBACK_TIMED_OUT: &str = "webview callback timed out";
 
 pub(crate) async fn render(
     app: tauri::AppHandle,
@@ -24,9 +29,10 @@ pub(crate) async fn render(
     format: ExportFormat,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<RenderOutput, String> {
-    if format != ExportFormat::Png {
-        return Err("PDF export is only available on macOS".into());
-    }
+    let capture: export_host::CaptureFn = match format {
+        ExportFormat::Pdf => |window, _, _| pdf_windows::print_pdf(window),
+        ExportFormat::Png => capture_png,
+    };
     export_host::render_with_window(app, html, spec, format, probe, capture, cancel).await
 }
 
@@ -59,7 +65,7 @@ fn with_core<T: Send + 'static>(
         Err(RecvTimeoutError::Timeout) => {
             #[cfg(feature = "export-smoke")]
             eprintln!("[export-smoke] with_core timeout");
-            Err("webview callback timed out".to_string())
+            Err(CALLBACK_TIMED_OUT.to_string())
         }
         Err(RecvTimeoutError::Disconnected) => {
             #[cfg(feature = "export-smoke")]
@@ -81,7 +87,11 @@ fn probe(window: &WebviewWindow) -> Result<Option<Probe>, String> {
     super::export_host::parse_probe(&raw)
 }
 
-fn capture(window: &WebviewWindow, spec: &ExportSpec, probe: &Probe) -> Result<Vec<u8>, String> {
+fn capture_png(
+    window: &WebviewWindow,
+    spec: &ExportSpec,
+    probe: &Probe,
+) -> Result<Vec<u8>, String> {
     let params = capture_params(spec, probe);
     let expected_width = expected_device_width(spec, probe);
     let expected_height = expected_device_height(spec, probe);

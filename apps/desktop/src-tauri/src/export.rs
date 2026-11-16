@@ -188,7 +188,14 @@ pub fn validate_export(path: &str, format: ExportFormat, html: &str) -> Result<P
 /// so HTML, PDF and PNG share one document model.
 pub fn styled_export_html(html: &str) -> String {
     let style = format!("<style>{EXPORT_STYLE}</style>");
-    if let Some(index) = html.find("</head>") {
+    // First in <head> (after the charset declaration), so the document's own
+    // print rules (custom CSS) override the default margin.
+    if let Some(mut index) = head_content_start(html) {
+        if html[index..].starts_with("<meta charset") {
+            if let Some(end) = html[index..].find('>') {
+                index += end + 1;
+            }
+        }
         let mut out = String::with_capacity(html.len() + style.len());
         out.push_str(&html[..index]);
         out.push_str(&style);
@@ -198,6 +205,23 @@ pub fn styled_export_html(html: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">{style}</head><body>{html}</body></html>"
     )
+}
+
+/// Byte offset just after the `<head …>` start tag (attributes allowed), or
+/// `None` without one. `<header>` is not a head tag.
+fn head_content_start(html: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = html[from..].find("<head") {
+        let after = from + found + "<head".len();
+        match html[after..].chars().next() {
+            Some('>') => return Some(after + 1),
+            Some(c) if c.is_ascii_whitespace() || c == '/' => {
+                return html[after..].find('>').map(|end| after + end + 1);
+            }
+            _ => from = after,
+        }
+    }
+    None
 }
 
 /// Register the single-use HTML protocol used by the Win/Linux offscreen host.
@@ -391,9 +415,37 @@ mod tests {
     fn styled_export_html_injects_print_stylesheet() {
         let html = "<!doctype html><html><head></head><body><h1>Hi</h1></body></html>";
         let styled = styled_export_html(html);
-        assert!(styled.contains("</style></head>"));
-        assert!(styled.contains("@page{margin:16mm}"));
+        assert!(styled.contains("<head><style>@page{margin:16mm}</style></head>"));
         assert!(styled.contains("<h1>Hi</h1>"));
+    }
+
+    #[test]
+    fn default_print_margin_follows_the_charset_declaration() {
+        let html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body></body></html>";
+        assert!(styled_export_html(html)
+            .contains("<head><meta charset=\"utf-8\"><style>@page{margin:16mm}</style><title>"));
+    }
+
+    #[test]
+    fn default_print_margin_goes_inside_a_head_with_attributes() {
+        let html = "<!doctype html><html><head data-x=\"1\"><meta charset=\"utf-8\"></head><body><header>h</header></body></html>";
+        assert!(styled_export_html(html).contains(
+            "<head data-x=\"1\"><meta charset=\"utf-8\"><style>@page{margin:16mm}</style></head>"
+        ));
+        // `<header>` alone is not a head: the document gets a wrapper.
+        let fragment = "<header>h</header>";
+        assert!(styled_export_html(fragment)
+            .starts_with("<!doctype html><html><head><meta charset=\"utf-8\"><style>"));
+    }
+
+    #[test]
+    fn document_print_rules_override_the_default_margin() {
+        // Custom CSS arrives in the document head; the later @page wins.
+        let html = "<!doctype html><html><head><meta charset=\"utf-8\"><style>@page{margin:25mm}</style></head><body></body></html>";
+        let styled = styled_export_html(html);
+        assert!(
+            styled.find("@page{margin:16mm}").unwrap() < styled.find("@page{margin:25mm}").unwrap()
+        );
     }
 
     #[test]

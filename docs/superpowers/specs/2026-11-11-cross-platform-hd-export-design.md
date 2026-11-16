@@ -6,7 +6,7 @@
 
 ## 目标
 
-让 macOS、Windows、Linux 都把当前 Markdown 文档导出为**原生高分辨率 PNG**，而不是把 1x 截图放大。默认 800 CSS px × 2x = 1600 px 宽，支持 1x/2x/3x 与 640/800/1200/1920 CSS px 宽度。HTML/PDF 继续共用同一份自包含文档模型；PDF 仍仅 macOS。
+让 macOS、Windows、Linux 都把当前 Markdown 文档导出为**原生高分辨率 PNG**，而不是把 1x 截图放大。默认 800 CSS px × 2x = 1600 px 宽，支持 1x/2x/3x 与 640/800/1200/1920 CSS px 宽度。HTML/PDF 继续共用同一份自包含文档模型。PDF 的目标同样是三平台分页导出：Windows（WebView2 `PrintToPdf`）已实现；macOS 改走打印分页与 Linux 后端是跟踪中的后续工作，在此之前 Linux 不提供 PDF（`supportsPdfExport`）。
 
 ## 契约
 
