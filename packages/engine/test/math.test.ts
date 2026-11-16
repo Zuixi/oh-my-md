@@ -54,6 +54,11 @@ describe("math parsing", () => {
     expect(nodeText("see [a](https://example.com/$$) here\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
     expect(nodeText("see <https://example.com/$$> here\n$$\nx\n$$", "MathBlock")).toEqual(["$$\nx\n$$"])
     expect(nodeText('see <span title="$$">a</span> here\n$$\nx\n$$', "MathBlock")).toEqual(["$$\nx\n$$"])
+    // The review's examples render as on main: the block closes and `next` stays a paragraph.
+    expect(nodeText('[a](b "$$")\n$$\nx\n$$\nnext', "MathBlock")).toEqual(["$$\nx\n$$"])
+    expect(nodeText('[a](b "$$")\n$$\nx\n$$\nnext', "Paragraph")).toEqual(['[a](b "$$")', "next"])
+    expect(nodeText('text <span title="$$">x\n$$\ny\n$$\nnext', "MathBlock")).toEqual(["$$\ny\n$$"])
+    expect(nodeText('text <span title="$$">x\n$$\ny\n$$\nnext', "Paragraph")).toEqual(['text <span title="$$">x', "next"])
   })
 
   it("parses inline $math$", () => {
