@@ -1,18 +1,20 @@
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
 import type { EditorState, Text } from "@codemirror/state"
 import { cellAt, tableStartAt } from "./navigate"
-import { tableSourceRevealed } from "./sourceReveal"
+import { isTableShownAsSource, tableSourceRevealed } from "./sourceReveal"
 import { isLivePreview } from "../modes/livePreview"
 
 /**
- * Start of the table the floating toolbar serves, or null. In live preview a table is a
- * rendered widget with its own toolbar unless it is revealed as source, so a selection that
- * merely ends at a rendered table's edge must not float a second toolbar over its corner.
+ * Start of the table the floating toolbar serves, or null. In Live Preview it serves only a
+ * table currently projected as source (`isTableShownAsSource`, the rule `blocks.ts` renders
+ * by): whenever `.omd-table` is mounted the widget has its own toolbar, so a second one must
+ * not float over its corner. Global Source mode has no widget and keeps the toolbar.
  */
 function sourceTableStartAt(state: EditorState, head: number): number | null {
   const from = tableStartAt(state, head)
   if (from === null || !(state.field(isLivePreview, false) ?? false)) return from
-  return state.field(tableSourceRevealed, false)?.from === from ? from : null
+  const revealed = state.field(tableSourceRevealed, false)
+  return revealed?.from === from && isTableShownAsSource(state, revealed.from, revealed.to) ? from : null
 }
 import { TABLE_TOOL_BUTTONS, tableToolChanges, type TableToolAction } from "./tools"
 import type { TableData } from "./model"

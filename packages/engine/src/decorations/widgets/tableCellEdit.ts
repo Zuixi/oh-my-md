@@ -3,7 +3,7 @@ import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
 import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
 import { getTableEditSession } from "../../tables/directEdit"
 import { cellAt, type TableContext } from "../../tables/navigate"
-import { isRevealedTableRange } from "../../tables/sourceReveal"
+import { isTableShownAsSource } from "../../tables/sourceReveal"
 import { decodeHtmlEntity } from "../../parse/entities"
 import { resolveEmoji } from "../../parse/emoji"
 import { escapeParts } from "../../semantic/breaks"
@@ -490,7 +490,7 @@ function caretInsideUnrevealedTable(view: EditorView) {
   if (!hit) return null
   const { from, to } = hit.table
   if (selection.head <= from || selection.head > to) return null
-  if (isRevealedTableRange(state, from, to)) return null
+  if (isTableShownAsSource(state, from, to)) return null
   return hit
 }
 

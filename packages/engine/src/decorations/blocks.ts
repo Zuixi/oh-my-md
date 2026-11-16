@@ -7,7 +7,7 @@ import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
 import { createComplexTableWidget } from "./widgets/complexTable"
 import { tableDataFromNode } from "../tables/model"
-import { isRevealedTableRange } from "../tables/sourceReveal"
+import { isTableShownAsSource } from "../tables/sourceReveal"
 import { imageResolver } from "./widgets/image"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
@@ -427,10 +427,7 @@ export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpe
     case "Table": {
       // 光标停在表内仍保持渲染。只有字段记下的那张表，且选区落在其上时才卸成源码行。
       // 源码态必须跳过子树：否则 inlineRules 会在单元格里折叠 `**` 并加粗。
-      const sel = state.selection.main
-      const anchoredInTable = sel.anchor >= node.from && sel.anchor <= node.to
-      if (isRevealedTableRange(state, node.from, node.to)
-        && (blockSelected(state, node.from, node.to) || anchoredInTable)) {
+      if (isTableShownAsSource(state, node.from, node.to)) {
         styleTableSource(node, state, out)
         return true
       }
