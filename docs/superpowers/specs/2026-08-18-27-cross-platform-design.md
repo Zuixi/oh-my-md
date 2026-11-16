@@ -1,7 +1,7 @@
 # 27 Cross-Platform Support(Windows / Linux)
 
 **日期：** 2026-08-18  
-**状态：** 待用户审核；PNG 导出门控已被 `2026-11-11-cross-platform-hd-export-design.md` 取代（三平台均支持 PNG；PDF 仍仅 macOS）
+**状态：** 导出部分已被取代 —— 以 `2026-11-11-cross-platform-hd-export-design.md` 为准（三平台导出 HTML/PNG；PDF 目标为三平台，Windows 已实现，Linux 待实现）。下文 D3 的 macOS-only 门控仅作历史记录
 **路线图：** `docs/superpowers/specs/2026-08-13-00-product-roadmap-design.md`  
 **父设计：** `docs/superpowers/specs/2026-08-10-oh-my-md-design.md`  
 **关联：** `docs/superpowers/specs/2026-08-16-13-release-engineering-design.md`(其非目标「不做 Windows/Linux 打包」由本规格接手)、`docs/competitors/marktext/cross-platform.md`(本地竞品分析)
@@ -78,6 +78,8 @@ export function isLinux(): boolean
 > **2026-08-19 修订（用户实测反馈）**：原 ☰ 单面板把四个分区堆进一个下拉，Windows 上观感是"一个巨型文件菜单装了所有东西"，与主流桌面产品（VS Code/Typora/记事本的横向菜单栏）不符。应用内菜单升级为**横向菜单栏**：TopBar 上方一行顶级菜单（文件/编辑/格式/视图/帮助），每个顶级菜单弹出独立下拉，悬停切换、方向键导航、Escape/外点关闭。同时补齐内容对齐 macOS：编辑菜单增加 撤销/重做/剪切/复制/粘贴/全选；视图勾选项显示 ✓；新增帮助菜单（检查更新/导出诊断/关于，关于版本走新增 Rust `app_version` 命令）；文件菜单尾部增加 设置…/退出（退出走新增 Rust `quit_app` 命令；`undo/redo/select-all` 用 `@codemirror/commands`，剪贴板三项 best-effort 走 `navigator.clipboard`，编辑器内 Ctrl+C/X/V 仍为主路径）。`menuTree.ts` 仍是应用内菜单单一来源；Tauri window menu 依旧否决。
 
 ### D3 导出门控
+
+> **已被取代：** macOS-only 过滤（`MACOS_ONLY_COMMANDS`、菜单的 `macOSOnly` 标记）已删除，导出命令改为按格式门控（`supportsPdfExport`），见 `2026-11-11-cross-platform-hd-export-design.md`。以下为原设计。
 
 - `export_preview`(`export.rs`)的 macOS 分支与错误兜底不变(后端是唯一事实)。
 - 前端在 `!isMacOS()` 时从命令面板与 AppMenu 隐藏 `export-pdf` / `export-image`(HTML 导出保留);过滤作用于命令数组的唯一定义点,palette、`runMenuCommand`、AppMenu 一并继承。既有 `error.export.desktopOnly` 文案改为 macOS 语义(该错误实际只在非 macOS 桌面触发,不新增死键)。

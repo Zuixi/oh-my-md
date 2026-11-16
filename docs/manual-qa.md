@@ -355,7 +355,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 - [ ] 命令面板（⇧⌘P）快捷键标签抽查：Save 为 ⌘S、Ordered list 为 ⌥⌘7，与改动前逐字一致（mac 仍显示 ⌘⇧⌥ 字形，不出现 Ctrl/Alt 字样）
 - [ ] reveal 文案：文件树右键菜单与保存冲突横幅显示「Reveal in File Manager」（zh 界面为「在文件管理器中显示」），中英文均不再出现 Finder 字样
-- [ ] 命令面板与 File▸Export 菜单在 mac 上仍显示 Export PDF / Export Image（`MACOS_ONLY_COMMANDS` 过滤仅作用于非 mac 平台），导出流程可用
+- [ ] 命令面板与 File▸Export 菜单在 mac 与 Windows 上显示 Export PDF / Export Image，Linux 只隐藏 Export PDF（`supportsPdfExport`），导出流程可用
 - [ ] 菜单「导出诊断信息…」生成的 zip 含 `os.txt`（os_info 输出，替代旧 `uname.txt`），且仍不含任何文档正文
 - [ ] 菜单「打开日志目录」/「Open Log Folder」在 Finder 中打开真实日志目录（命令面板同名条目等价）
 - [ ] 设置▸日志：勾选「启用详细日志」后重启，`debug` 级记录出现；`OMD_LOG=warn` 启动时仍以 env 为准
