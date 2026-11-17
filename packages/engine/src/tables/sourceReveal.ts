@@ -41,6 +41,23 @@ export function isRevealedTableRange(state: EditorState, from: number, to: numbe
   return range != null && range.from === from && range.to === to
 }
 
+/**
+ * True while the table at `from..to` is projected as Markdown source in Live Preview: it is
+ * the revealed table and the selection still reaches into it (partly selected, or anchored
+ * inside). A selection that covers the whole table from outside renders the widget again even
+ * though the reveal is kept. `blocks.ts` (source lines vs `TableWidget`) and the floating
+ * source toolbar both decide with this, so the toolbar never floats over a mounted widget.
+ * Global Source mode has no widget; callers check it before asking.
+ */
+export function isTableShownAsSource(state: EditorState, from: number, to: number): boolean {
+  if (!isRevealedTableRange(state, from, to)) return false
+  const { anchor, from: selFrom, to: selTo } = state.selection.main
+  // `blockWidget.ts::blockSelected`, inlined: importing it here closes an import cycle
+  // through the table widgets (`tableShownAsSource.test.ts` keeps the two in step).
+  const partlySelected = selFrom <= to && selTo >= from && !(selFrom <= from && selTo >= to)
+  return partlySelected || (anchor >= from && anchor <= to)
+}
+
 function revealedTableAtHead(state: EditorState): RevealedTable | null {
   const head = state.selection.main.head
   const node = tableNodeAt(state, head)

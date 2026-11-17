@@ -6,7 +6,7 @@
 ## Three-State Model & Subtree Skipping
 
 - **Three states (Live Preview):** No cell session and no explicit source → `TableWidget` projection; `TableEditSession` on one cell → widget stays mounted with `.omd-table-caret` in that cell (IME anchor input, edits via `directEdit.ts`); `tableSourceRevealed` for this table with selection overlapping → `styleTableSource` (`line:omd-table-src*` classes), widget unmounted.
-- **Explicit source only:** `styleTableSource` runs only when `isRevealedTableRange(state, node.from, node.to)` and `blockSelected`. Cell clicks do not reveal source; the block `</>` button dispatches `revealTableSource` (and closes any cell session).
+- **Explicit source only:** `styleTableSource` runs only when `isTableShownAsSource(state, node.from, node.to)`: the revealed table, with the selection partly over it or anchored inside (a full cover from outside renders the widget again). The floating source toolbar uses the same predicate in Live Preview, so it is visible only while the table is projected as source (never with `.omd-table` mounted); global Source mode keeps it whenever the head is in a table. Cell clicks do not reveal source; the block `</>` button dispatches `revealTableSource` (and closes any cell session).
 - **Skip subtree in source state:** `blocks.ts` `case "Table"` **must `return true`** after calling `styleTableSource` so `inlineRules` does not fold `**` or links inside raw source cells (`test/tableSourceDecorations.test.ts`).
 - **Cell session default on:** `editorExtensions()` mounts direct-edit session unless `experimentalTableDirectEdit: false`. The visible cell is projected by `tableCellEdit.ts`; the input is not a second document or history.
 

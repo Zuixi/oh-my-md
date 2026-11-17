@@ -6,6 +6,7 @@
 import "../src/styles.css"
 import { undo } from "@codemirror/commands"
 import { createEditor } from "../src/Editor"
+import { setLivePreview } from "@omd/engine"
 // Spike-only: the retained controller count lives in the engine's internal table
 // widget module, never in the supported barrel (see the plan's Task 5).
 import { activeTableInputControllerCountForTest } from "@omd/engine/src/decorations/widgets/table"
@@ -114,6 +115,7 @@ declare global {
     __harnessErrors: string[]
     __docChangeCount: number
     __docText: () => string
+    __setLivePreview: (on: boolean) => void
     __startSearchSpike?: (revision: number) => SearchSpikeHandle
     __searchSpike?: SearchSpikeHandle
     __searchSpikeFixtures?: SearchSpikeFixtures
@@ -140,6 +142,7 @@ document.body.replaceChildren(host)
 window.__harnessErrors = []
 window.__docChangeCount = 0
 window.__docText = () => window.__view.state.doc.toString()
+window.__setLivePreview = on => { window.__view.dispatch(setLivePreview(on)) }
 window.__view = createEditor(host, {
   doc: params.get("doc") ?? "",
   tabId: 1,
