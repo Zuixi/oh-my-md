@@ -65,6 +65,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSColor",
     "NSGraphics",
     "NSImage",
+    "NSPrintInfo",
+    "NSPrintOperation",
     "NSResponder",
     "NSView",
     "NSWindow",
@@ -81,6 +83,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSGeometry",
     "NSObject",
     "NSString",
+    "NSURL",
     "NSValue",
     "objc2-core-foundation",
 ] }
@@ -97,6 +100,7 @@ objc2-web-kit = { version = "0.3", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+gtk = "0.18"
 cairo-rs = { version = "0.18", features = ["png"] }
 javascriptcore-rs = "1.1"
 

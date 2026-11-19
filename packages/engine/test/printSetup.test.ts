@@ -75,4 +75,13 @@ describe("print setup", () => {
     expect(isExplicitPageBreakHtml('<hr class="pagebreak" />')).toBe(true)
     expect(isExplicitPageBreakHtml('<div class="page-break" onclick="alert(1)"></div>')).toBe(false)
   })
+
+  it("emits overflow:visible and respects printBackgrounds toggle", () => {
+    const withBg = renderPrintCss({ ...DEFAULT_PRINT_SETUP, printBackgrounds: true })
+    const noBg = renderPrintCss({ ...DEFAULT_PRINT_SETUP, printBackgrounds: false })
+    expect(withBg).toContain("overflow:visible")
+    expect(withBg).toContain("print-color-adjust:exact")
+    expect(noBg).not.toContain("print-color-adjust:exact")
+    expect(withBg).not.toContain("pre{white-space:pre-wrap;overflow-wrap:break-word;overflow:visible;break-inside:avoid")
+  })
 })

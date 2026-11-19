@@ -11,7 +11,6 @@ import {
   type UserSettings,
 } from "./settings"
 import { useT } from "./i18n"
-import { pdfPageSetupPlatformNoteKey } from "./platform"
 
 interface ExportSettingsSectionProps {
   settings: UserSettings
@@ -95,7 +94,6 @@ function MarginNumberInput({ id, value, onCommit }: MarginNumberInputProps) {
 
 export function ExportSettingsSection({ settings, onUpdate }: ExportSettingsSectionProps) {
   const t = useT()
-  const platformNoteKey = pdfPageSetupPlatformNoteKey()
 
   return (
     <div className="settings-section">
@@ -143,7 +141,6 @@ export function ExportSettingsSection({ settings, onUpdate }: ExportSettingsSect
       </p>
 
       <h4 className="settings-subheading">{t("settings.export.group.pdf")}</h4>
-      {platformNoteKey && <p className="settings-note">{t(platformNoteKey)}</p>}
 
       <div className="settings-row">
         <label htmlFor="setting-export-paper" className="settings-label">

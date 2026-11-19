@@ -310,7 +310,11 @@ describe("print contract (engine ↔ export_page.rs)", () => {
     expect(css.startsWith(
       `@page{size:${width}mm ${height}mm;margin:${margin}mm ${margin}mm ${margin}mm ${margin}mm}`,
     )).toBe(true)
-    expect(css.endsWith(RULES)).toBe(true)
+    expect(css).toContain(RULES)
+    expect(css).toContain("print-color-adjust:exact")
+    const noBgCss = renderPrintCss({ ...DEFAULT_PRINT_SETUP, printBackgrounds: false })
+    expect(noBgCss.endsWith(RULES)).toBe(true)
+    expect(noBgCss).not.toContain("print-color-adjust:exact")
     expect(RULES).toContain(".page-break,.pagebreak{break-after:page")
   })
 

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 const MM_PER_INCH: f64 = 25.4;
-#[cfg(any(test, all(windows, feature = "export-smoke")))]
+#[cfg(any(test, feature = "export-smoke"))]
 const POINTS_PER_INCH: f64 = 72.0;
 
 const PRINT_CONTRACT_JSON: &str =
@@ -47,6 +47,7 @@ pub struct PageSetup {
     pub margin_right: i32,
     pub margin_bottom: i32,
     pub margin_left: i32,
+    #[allow(dead_code)]
     pub print_backgrounds: bool,
     pub header_footer: bool,
     pub header_title: String,
@@ -63,6 +64,7 @@ pub struct PageSetupDto {
     pub margin_right_mm: f64,
     pub margin_bottom_mm: f64,
     pub margin_left_mm: f64,
+    #[allow(dead_code)]
     pub print_backgrounds: bool,
     pub header_footer: bool,
     #[serde(default)]
@@ -79,6 +81,7 @@ pub struct NativePage {
     pub margin_right_in: f64,
     pub margin_bottom_in: f64,
     pub margin_left_in: f64,
+    #[allow(dead_code)]
     pub print_backgrounds: bool,
     pub header_footer: bool,
 }
@@ -295,7 +298,14 @@ fn heading_break_css(mode: HeadingBreak) -> &'static str {
     }
 }
 
-/// `@page{size:{w}mm {h}mm;margin:{top}mm {right}mm {bottom}mm {left}mm}`
+fn background_css(print_backgrounds: bool) -> &'static str {
+    if print_backgrounds {
+        "@media print{html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}"
+    } else {
+        ""
+    }
+}
+
 pub fn render_print_css(setup: &PageSetup) -> String {
     let (width, height) = oriented_tenths(setup);
     let page = format!(
@@ -308,8 +318,9 @@ pub fn render_print_css(setup: &PageSetup) -> String {
         format_tenth_mm(setup.margin_left),
     );
     let rules = PRINT_RULES.trim_end_matches(['\r', '\n']);
+    let backgrounds = background_css(setup.print_backgrounds);
     let heading_break = heading_break_css(setup.heading_page_break);
-    format!("{page}{rules}{heading_break}")
+    format!("{page}{rules}{backgrounds}{heading_break}")
 }
 
 pub fn native_page(setup: &PageSetup) -> NativePage {
@@ -327,8 +338,7 @@ pub fn native_page(setup: &PageSetup) -> NativePage {
     }
 }
 
-/// Expected PDF MediaBox for the oriented page, in points.
-#[cfg(any(test, all(windows, feature = "export-smoke")))]
+#[cfg(any(test, feature = "export-smoke"))]
 pub fn media_box_points(setup: &PageSetup) -> (f64, f64) {
     let (width, height) = oriented_tenths(setup);
     (
@@ -337,7 +347,7 @@ pub fn media_box_points(setup: &PageSetup) -> (f64, f64) {
     )
 }
 
-#[cfg(any(test, all(windows, feature = "export-smoke")))]
+#[cfg(any(test, feature = "export-smoke"))]
 pub fn pdf_media_box(bytes: &[u8]) -> Option<(f64, f64)> {
     let text = String::from_utf8_lossy(bytes);
     static BOX: OnceLock<regex::Regex> = OnceLock::new();

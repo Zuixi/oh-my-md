@@ -1,7 +1,7 @@
 import contractJson from "./printContract.json"
 
 /** Kept identical to `printRules.css`, which the Rust backend includes. */
-const PRINT_RULES_CSS = "@media print{html,body{max-width:none;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}p,li{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{break-after:avoid;page-break-after:avoid;break-inside:avoid;page-break-inside:avoid}thead{display:table-header-group}pre{white-space:pre-wrap;overflow-wrap:break-word;overflow:visible;break-inside:avoid;page-break-inside:avoid}tr,figure,img,svg,blockquote,.katex-display,math[display=\"block\"]{break-inside:avoid;page-break-inside:avoid}img,svg{max-width:100%;height:auto}.page-break,.pagebreak{break-after:page;page-break-after:always;height:0;margin:0;padding:0;border:0}}"
+const PRINT_RULES_CSS = "@media print{html,body{max-width:none;margin:0;padding:0;overflow:visible}p,li{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{break-after:avoid;page-break-after:avoid;break-inside:avoid;page-break-inside:avoid}thead{display:table-header-group}pre{white-space:pre-wrap;overflow-wrap:break-word;overflow:visible}tr,figure,img,svg,.katex-display,math[display=\"block\"]{break-inside:avoid;page-break-inside:avoid}img,svg{max-width:100%;height:auto}.page-break,.pagebreak{break-after:page;page-break-after:always;height:0;margin:0;padding:0;border:0}}"
 
 /**
  * Page contract shared with the Rust print backends
@@ -157,17 +157,19 @@ function headingBreakCss(mode: HeadingPageBreak): string {
   return ""
 }
 
-/**
- * `@page` uses the final page box. Static break/background rules come from
- * `printRules.css`, which Rust includes unchanged.
- */
+function backgroundCss(printBackgrounds: boolean): string {
+  return printBackgrounds
+    ? "@media print{html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}"
+    : ""
+}
+
 export function renderPrintCss(setup: PrintSetup): string {
   const box = pageBoxTenthMm(setup)
   const page =
     `@page{size:${formatTenthMm(box.widthTenthMm)}mm ${formatTenthMm(box.heightTenthMm)}mm;` +
     `margin:${formatMm(setup.marginTopMm)}mm ${formatMm(setup.marginRightMm)}mm ` +
     `${formatMm(setup.marginBottomMm)}mm ${formatMm(setup.marginLeftMm)}mm}`
-  return `${page}${PRINT_RULES_CSS}${headingBreakCss(setup.headingPageBreak)}`
+  return `${page}${PRINT_RULES_CSS}${backgroundCss(setup.printBackgrounds)}${headingBreakCss(setup.headingPageBreak)}`
 }
 
 /** Normalized marker. The break rule lives in `printRules.css`, not inline. */

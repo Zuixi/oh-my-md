@@ -18,7 +18,7 @@ describe("html export", () => {
   it("projects headings, emphasis, and lists without rewriting the source", () => {
     const doc = "# Hello\n\nThis is **bold** and `code`.\n\n- one\n- two\n"
     const html = exportHtml(makeState(doc))
-    expect(html).toContain("<h1>Hello</h1>")
+    expect(html).toContain('<h1 id="hello">Hello</h1>')
     expect(html).toContain("<strong>bold</strong>")
     expect(html).toContain("<code>code</code>")
     expect(html).toContain("<li>")
@@ -223,7 +223,7 @@ describe("html export", () => {
 
   it("drops leading source whitespace so the first heading is the first body child", () => {
     const html = exportHtml(makeState("\n\n# Title\n\nAfter\n"))
-    expect(html).toContain("<body><h1>Title</h1>")
+    expect(html).toContain('<body><h1 id="title">Title</h1>')
     expect(html).toContain("<p>After</p>")
   })
 
@@ -266,5 +266,51 @@ describe("rich html export", () => {
   it("omits customCss style block when not provided", async () => {
     const html = await exportRichHtml(makeState("# Hi\n"))
     expect(html).not.toContain("<style></style>")
+  })
+
+  it("renders heading ids, task checkboxes, emoji, footnotes, and strips front matter", async () => {
+    const doc = [
+      "---",
+      "title: Hidden",
+      "---",
+      "",
+      "# Section",
+      "",
+      "## Section",
+      "",
+      "- [x] Done",
+      "- [ ] Todo",
+      "",
+      "Hi :smile:[^1]",
+      "",
+      "[^1]: Footnote body",
+    ].join("\n")
+    for (const html of [exportHtml(makeState(doc)), await exportRichHtml(makeState(doc))]) {
+      expect(html).not.toContain("title: Hidden")
+      expect(html).toContain('<h1 id="section">Section</h1>')
+      expect(html).toContain('<h2 id="section-1">Section</h2>')
+      expect(html).toContain('type="checkbox" class="omd-task-checkbox" disabled checked')
+      expect(html).toContain('type="checkbox" class="omd-task-checkbox" disabled>')
+      expect(html).toContain("😄")
+      expect(html).toContain('href="#fn-1"')
+      expect(html).toContain('id="fn-1"')
+      expect(html).toContain("Footnote body")
+    }
+  })
+
+  it("exports full content and bottom references when live syntaxTree is partial", async () => {
+    const { EditorState } = await import("@codemirror/state")
+    const { syntaxTree } = await import("@codemirror/language")
+    const { markdownLanguageSupport } = await import("../src/parse/markdown")
+    const filler = Array.from({ length: 1800 }, (_, i) => `Paragraph ${i} with enough text to exceed initial parse window.`).join("\n\n")
+    const doc = `${filler}\n\n# Tail Heading\n\nSee [end][tail-ref].\n\n[tail-ref]: https://tail.example\n`
+    const state = EditorState.create({ doc, extensions: [markdownLanguageSupport()] })
+    const liveBefore = syntaxTree(state).length
+    expect(liveBefore).toBeLessThan(state.doc.length)
+
+    const html = await exportRichHtml(state)
+    expect(html).toContain('<h1 id="tail-heading">Tail Heading</h1>')
+    expect(html).toContain('<a href="https://tail.example">end</a>')
+    expect(syntaxTree(state).length).toBe(liveBefore)
   })
 })

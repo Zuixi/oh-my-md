@@ -1,4 +1,3 @@
-import { syntaxTree } from "@codemirror/language"
 import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
 import { parseCell, type CellNode } from "../parse/cell"
@@ -8,12 +7,22 @@ import {
   type ComplexTableInline,
   type ComplexTableModel,
 } from "../parse/complexTable"
+import { resolveEmoji } from "../parse/emoji"
 import { decodeHtmlEntity } from "../parse/entities"
+import { parseFenceInfo } from "../fenceInfo"
 import { linkParts, type LinkParts } from "../semantic/link"
 import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
-import { snapshotReferenceContext, type MarkdownReferenceContext } from "../semantic/references"
 import { createMathHtmlCache } from "./mathHtmlCache"
+import {
+  footnoteIdFromDef,
+  footnoteIdFromRef,
+  footnoteSlug,
+  headingPlainText,
+  prepareExportDocument,
+  taskCheckboxHtml,
+  type ExportContext,
+} from "./exportDoc"
 import { tableDataFromNode, type TableAlignment, type TableRowData } from "../tables/model"
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
@@ -29,7 +38,7 @@ import {
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
   "UnderlineMark", "KbdMark", "CodeMark", "CodeInfo", "LinkMark", "QuoteMark",
-  "ListMark", "TaskMarker", "TableDelimiter", "RiseMark",
+  "ListMark", "TableDelimiter", "RiseMark", "FootnoteMark",
 ])
 
 function escapeHtml(text: string): string {
@@ -43,7 +52,7 @@ function escapeHtml(text: string): string {
 function children(
   node: SyntaxNode,
   state: EditorState,
-  ctx: MarkdownReferenceContext,
+  ctx: ExportContext,
   from = node.from,
   to = node.to,
 ): string {
@@ -58,9 +67,15 @@ function children(
   return html
 }
 
-function inline(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceContext): string {
+function inline(node: SyntaxNode, state: EditorState, ctx: ExportContext): string {
   if (!node.firstChild) return escapeHtml(state.doc.sliceString(node.from, node.to))
   return children(node, state, ctx)
+}
+
+function headingTag(level: number, node: SyntaxNode, state: EditorState, ctx: ExportContext, inner: string): string {
+  const id = ctx.nextHeadingId(headingPlainText(node, state))
+  const attr = id ? ` id="${escapeHtml(id)}"` : ""
+  return `<h${level}${attr}>${inner.trim()}</h${level}>`
 }
 
 // 可选 title 属性：null 时不输出，非 null 时同样走 escapeHtml。
@@ -160,10 +175,8 @@ function alignAttr(align: TableAlignment | undefined): string {
   return align ? ` align="${align}"` : ""
 }
 
-// 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致；
-// 单元格外的引用定义由导出级的同一份 snapshot context 解析。
-function cellSourceHtml(source: string, ctx: MarkdownReferenceContext): string {
-  return cellChildrenHtml(parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference }))
+function cellSourceHtml(source: string, ctx: ExportContext): string {
+  return cellChildrenHtml(parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.refs.resolveReference }))
 }
 
 // rich 版的同一份 CellNode 投影：语义与同步导出一致，只有两处不同 —— cell 数学
@@ -208,11 +221,10 @@ async function richCellNodesHtml(
   return html
 }
 
-// 链接可见文本：autolink 取语义层给的文本，普通链接渲染 label 区间内的格式化内容。
 function labelHtml(
   node: SyntaxNode,
   state: EditorState,
-  ctx: MarkdownReferenceContext,
+  ctx: ExportContext,
   parts: LinkParts,
 ): string {
   if (parts.kind === "autolink") return escapeHtml(parts.text)
@@ -310,18 +322,19 @@ function collectInlineImageSrcs(nodes: readonly ComplexTableInline[], out: strin
   }
 }
 
-function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceContext): string {
+function render(node: SyntaxNode, state: EditorState, ctx: ExportContext): string {
   if (SKIP.has(node.name)) return ""
   switch (node.name) {
     case "Document": return children(node, state, ctx)
+    case "FrontMatter": return ""
     case "ATXHeading1":
-    case "SetextHeading1": return `<h1>${inline(node, state, ctx).trim()}</h1>`
+    case "SetextHeading1": return headingTag(1, node, state, ctx, inline(node, state, ctx))
     case "ATXHeading2":
-    case "SetextHeading2": return `<h2>${inline(node, state, ctx).trim()}</h2>`
-    case "ATXHeading3": return `<h3>${inline(node, state, ctx).trim()}</h3>`
-    case "ATXHeading4": return `<h4>${inline(node, state, ctx).trim()}</h4>`
-    case "ATXHeading5": return `<h5>${inline(node, state, ctx).trim()}</h5>`
-    case "ATXHeading6": return `<h6>${inline(node, state, ctx).trim()}</h6>`
+    case "SetextHeading2": return headingTag(2, node, state, ctx, inline(node, state, ctx))
+    case "ATXHeading3": return headingTag(3, node, state, ctx, inline(node, state, ctx))
+    case "ATXHeading4": return headingTag(4, node, state, ctx, inline(node, state, ctx))
+    case "ATXHeading5": return headingTag(5, node, state, ctx, inline(node, state, ctx))
+    case "ATXHeading6": return headingTag(6, node, state, ctx, inline(node, state, ctx))
     case "Paragraph": return `<p>${inline(node, state, ctx)}</p>`
     case "Emphasis": return `<em>${inline(node, state, ctx)}</em>`
     case "StrongEmphasis": return `<strong>${inline(node, state, ctx)}</strong>`
@@ -331,10 +344,27 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
     case "Kbd": return `<kbd>${inline(node, state, ctx)}</kbd>`
     case "Subscript": return `<sub>${inline(node, state, ctx)}</sub>`
     case "Superscript": return `<sup>${inline(node, state, ctx)}</sup>`
+    case "TaskMarker": return taskCheckboxHtml(state.doc.sliceString(node.from, node.to))
+    case "Emoji": {
+      const raw = state.doc.sliceString(node.from, node.to)
+      return escapeHtml(resolveEmoji(raw.slice(1, -1)) ?? raw)
+    }
+    case "FootnoteReference": {
+      const id = footnoteIdFromRef(state.doc.sliceString(node.from, node.to))
+      if (!id) return escapeHtml(state.doc.sliceString(node.from, node.to))
+      const slug = footnoteSlug(id)
+      return `<sup class="omd-fn-ref"><a href="#fn-${slug}" id="fnref-${slug}">${escapeHtml(id)}</a></sup>`
+    }
+    case "FootnoteDefinition": {
+      const id = footnoteIdFromDef(node, state)
+      if (!id) return escapeHtml(state.doc.sliceString(node.from, node.to))
+      const slug = footnoteSlug(id)
+      return `<section class="omd-fn-def" id="fn-${slug}"><span class="omd-fn-label">${escapeHtml(id)}.</span> ${children(node, state, ctx).trim()}</section>`
+    }
     case "InlineCode": return `<code>${escapeHtml(state.doc.sliceString(node.from, node.to).replace(/^`+|`+$/g, ""))}</code>`
     case "Link":
     case "Autolink": {
-      const parts = linkParts(node, ctx)
+      const parts = linkParts(node, ctx.refs)
       if (!parts) return escapeHtml(state.doc.sliceString(node.from, node.to))
       return anchorHtml(parts.href, parts.title, labelHtml(node, state, ctx, parts))
     }
@@ -346,7 +376,7 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
       return escapeHtml(raw)
     }
     case "Image": {
-      const parts = imageParts(node, ctx)
+      const parts = imageParts(node, ctx.refs)
       if (!parts) return escapeHtml(state.doc.sliceString(node.from, node.to))
       return imageHtml(parts.src, parts.alt, parts.title)
     }
@@ -413,8 +443,8 @@ function exportTitleHtml(setup?: PrintSetup): string {
 }
 
 export function exportHtml(state: EditorState, print?: PrintSetup): string {
-  const ctx = snapshotReferenceContext(state)
-  const body = exportDocumentBody(render(syntaxTree(state).topNode, state, ctx))
+  const ctx = prepareExportDocument(state)
+  const body = exportDocumentBody(render(ctx.topNode, state, ctx))
   return `<!doctype html><html><head><meta charset="utf-8"><title>${exportTitleHtml(print)}</title><style>${EXPORT_BODY_CSS}</style>${printStyleTag(print)}</head><body>${body}</body></html>`
 }
 
@@ -473,27 +503,31 @@ async function renderMermaidHtml(src: string, theme: "light" | "dark"): Promise<
   }
 }
 
-async function renderCodeHtml(src: string, lang: string): Promise<string> {
+async function renderCodeHtml(src: string, lang: string, title = ""): Promise<string> {
   const { resolveCodeLanguage, getHighlighterForExport } = await import("./shikiExport")
   const canonical = resolveCodeLanguage(lang)
-  if (!canonical) return `<pre><code>${escapeHtml(src)}</code></pre>`
-  try {
-    const hl = await getHighlighterForExport(canonical)
-    return hl.codeToHtml(src, {
-      lang: canonical,
-      themes: { light: "github-light", dark: "github-dark" },
-      defaultColor: "light",
-    })
-  } catch {
-    return `<pre><code>${escapeHtml(src)}</code></pre>`
+  let pre = `<pre><code>${escapeHtml(src)}</code></pre>`
+  if (canonical) {
+    try {
+      const hl = await getHighlighterForExport(canonical)
+      pre = hl.codeToHtml(src, {
+        lang: canonical,
+        themes: { light: "github-light", dark: "github-dark" },
+        defaultColor: "light",
+      })
+    } catch {
+      pre = `<pre><code>${escapeHtml(src)}</code></pre>`
+    }
   }
+  if (!title) return pre
+  return `<div class="omd-code-block"><div class="omd-code-title">${escapeHtml(title)}</div>${pre}</div>`
 }
 
 async function richChildren(
   node: SyntaxNode,
   state: EditorState,
   opts: ExportRichHtmlOptions,
-  ctx: MarkdownReferenceContext,
+  ctx: ExportContext,
   from = node.from,
   to = node.to,
 ): Promise<string> {
@@ -513,7 +547,7 @@ async function richLabelHtml(
   node: SyntaxNode,
   state: EditorState,
   opts: ExportRichHtmlOptions,
-  ctx: MarkdownReferenceContext,
+  ctx: ExportContext,
   parts: LinkParts,
 ): Promise<string> {
   if (parts.kind === "autolink") return escapeHtml(parts.text)
@@ -524,10 +558,11 @@ function renderRich(
   node: SyntaxNode,
   state: EditorState,
   opts: ExportRichHtmlOptions,
-  ctx: MarkdownReferenceContext,
+  ctx: ExportContext,
 ): string | Promise<string> {
   if (SKIP.has(node.name)) return ""
   switch (node.name) {
+    case "FrontMatter": return ""
     case "InlineMath": {
       const tex = state.doc.sliceString(node.from, node.to).replace(/^\$|\$$/g, "")
       return renderMathHtml(tex.trim(), false)
@@ -540,18 +575,18 @@ function renderRich(
     case "CodeBlock": {
       const codeText = fencedText(node, state) || state.doc.sliceString(node.from, node.to)
       const infoNode = node.getChild("CodeInfo")
-      const lang = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to).trim() : ""
+      const { lang, title } = parseFenceInfo(infoNode ? state.doc.sliceString(infoNode.from, infoNode.to) : "")
       if (lang.toLowerCase() === "mermaid") return renderMermaidHtml(codeText, opts.theme ?? "light")
-      return renderCodeHtml(codeText, lang)
+      return renderCodeHtml(codeText, lang, title)
     }
     case "Image": {
-      const parts = imageParts(node, ctx)
+      const parts = imageParts(node, ctx.refs)
       if (!parts) return escapeHtml(state.doc.sliceString(node.from, node.to))
       return richImageSrc(parts.src, opts).then(src => imageHtml(src, parts.alt, parts.title))
     }
     case "Link":
     case "Autolink": {
-      const parts = linkParts(node, ctx)
+      const parts = linkParts(node, ctx.refs)
       if (!parts) return escapeHtml(state.doc.sliceString(node.from, node.to))
       return richLabelHtml(node, state, opts, ctx, parts).then(label =>
         anchorHtml(parts.href, parts.title, label))
@@ -563,7 +598,7 @@ function renderRich(
         const row = async (cells: string[], tag: "th" | "td") => {
           let html = "<tr>"
           for (const [i, source] of cells.entries()) {
-            const nodes = parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.resolveReference })
+            const nodes = parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.refs.resolveReference })
             html += `<${tag}${alignAttr(grid.aligns[i])}>${await richCellNodesHtml(nodes, opts)}</${tag}>`
           }
           return `${html}</tr>`
@@ -580,15 +615,22 @@ function renderRich(
       if (model) return renderComplexTableHtmlWithImages(model, opts)
       return escapeHtml(raw)
     }
-    // Structural containers: richly render their children.
+    case "FootnoteDefinition": {
+      const id = footnoteIdFromDef(node, state)
+      if (!id) return escapeHtml(state.doc.sliceString(node.from, node.to))
+      const slug = footnoteSlug(id)
+      return richChildren(node, state, opts, ctx).then(
+        s => `<section class="omd-fn-def" id="fn-${slug}"><span class="omd-fn-label">${escapeHtml(id)}.</span> ${s.trim()}</section>`,
+      )
+    }
     case "ATXHeading1":
-    case "SetextHeading1": return richChildren(node, state, opts, ctx).then(s => `<h1>${s.trim()}</h1>`)
+    case "SetextHeading1": return richChildren(node, state, opts, ctx).then(s => headingTag(1, node, state, ctx, s))
     case "ATXHeading2":
-    case "SetextHeading2": return richChildren(node, state, opts, ctx).then(s => `<h2>${s.trim()}</h2>`)
-    case "ATXHeading3": return richChildren(node, state, opts, ctx).then(s => `<h3>${s.trim()}</h3>`)
-    case "ATXHeading4": return richChildren(node, state, opts, ctx).then(s => `<h4>${s.trim()}</h4>`)
-    case "ATXHeading5": return richChildren(node, state, opts, ctx).then(s => `<h5>${s.trim()}</h5>`)
-    case "ATXHeading6": return richChildren(node, state, opts, ctx).then(s => `<h6>${s.trim()}</h6>`)
+    case "SetextHeading2": return richChildren(node, state, opts, ctx).then(s => headingTag(2, node, state, ctx, s))
+    case "ATXHeading3": return richChildren(node, state, opts, ctx).then(s => headingTag(3, node, state, ctx, s))
+    case "ATXHeading4": return richChildren(node, state, opts, ctx).then(s => headingTag(4, node, state, ctx, s))
+    case "ATXHeading5": return richChildren(node, state, opts, ctx).then(s => headingTag(5, node, state, ctx, s))
+    case "ATXHeading6": return richChildren(node, state, opts, ctx).then(s => headingTag(6, node, state, ctx, s))
     case "Paragraph": return richChildren(node, state, opts, ctx).then(s => `<p>${s}</p>`)
     case "Emphasis": return richChildren(node, state, opts, ctx).then(s => `<em>${s}</em>`)
     case "StrongEmphasis": return richChildren(node, state, opts, ctx).then(s => `<strong>${s}</strong>`)
@@ -670,9 +712,9 @@ export async function exportRichHtml(
   options: ExportRichHtmlOptions = {},
 ): Promise<string> {
   const theme = options.theme ?? "light"
-  const ctx = snapshotReferenceContext(state)
+  const ctx = prepareExportDocument(state)
   const [renderedBody, katexCss] = await Promise.all([
-    renderRich(syntaxTree(state).topNode, state, options, ctx),
+    renderRich(ctx.topNode, state, options, ctx),
     loadKatexExportCss(),
   ])
   const body = exportDocumentBody(renderedBody)

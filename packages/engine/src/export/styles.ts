@@ -72,4 +72,12 @@ th, td {
 }
 img { max-width: 100%; height: auto; }
 ul, ol { padding-left: 1.6em; margin: 0 0 1em; }
-hr { border: none; border-top: 1px solid #d0d7de; margin: 2em 0; }`
+hr { border: none; border-top: 1px solid #d0d7de; margin: 2em 0; }
+.omd-task-checkbox { margin: 0 0.4em 0 -1.2em; vertical-align: middle; }
+.omd-code-block { margin: 0 0 1em; }
+.omd-code-block pre { margin-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.omd-code-title { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 0.8em; color: #57606a; background: #e8ecef; padding: 4px 12px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
+html[data-omd-theme="dark"] .omd-code-title { color: #8b949e; background: #21262d; }
+.omd-fn-ref a { text-decoration: none; }
+.omd-fn-def { font-size: 0.9em; margin: 0.5em 0; padding-left: 1.4em; text-indent: -1.4em; }
+.omd-fn-label { font-weight: 600; margin-right: 0.3em; }`

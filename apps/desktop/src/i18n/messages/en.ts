@@ -290,8 +290,6 @@ export const en: Record<string, string> = {
   "settings.section.export": "Export",
   "settings.export.group.image": "Image (PNG)",
   "settings.export.group.pdf": "PDF & Print",
-  "settings.export.note.macosPdfPending": "macOS PDF export currently outputs a single continuous page; these page settings apply to HTML print styles until paginated PDF lands.",
-  "settings.export.note.linuxPdfPending": "PDF export is not available on Linux yet; these page settings currently apply to HTML print styles.",
   "settings.label.exportWidth": "Export Width",
   "settings.label.exportScale": "Quality",
   "settings.export.width.640": "640 px",

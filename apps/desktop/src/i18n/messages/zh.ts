@@ -290,8 +290,6 @@ export const zh: Record<string, string> = {
   "settings.section.export": "导出",
   "settings.export.group.image": "图片（PNG）",
   "settings.export.group.pdf": "PDF 与打印",
-  "settings.export.note.macosPdfPending": "macOS 当前仍导出单页连续 PDF；在分页打印支持落地前，以下页面设置仅作用于 HTML 打印样式。",
-  "settings.export.note.linuxPdfPending": "Linux 暂未提供 PDF 导出；以下页面设置当前作用于 HTML 打印样式。",
   "settings.label.exportWidth": "导出宽度",
   "settings.label.exportScale": "图片质量",
   "settings.export.width.640": "640 px",

@@ -168,6 +168,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/xdg"
           chmod 700 "$RUNNER_TEMP/xdg"
           XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg" WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 2560x1600x24" dbus-run-session -- cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke 2>&1 | tee smoke.log
+          grep -q "EXPORT_PDF_SMOKE_OK" smoke.log
           grep -q "EXPORT_SMOKE_OK width=1600 height=1200 scale=2" smoke.log
       - name: Export smoke (Windows / macOS)
         if: runner.os != 'Linux'
@@ -175,6 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --features export-smoke --bin export-smoke 2>&1 | tee smoke.log
+          grep -q "EXPORT_PDF_SMOKE_OK" smoke.log
           grep -q "EXPORT_SMOKE_OK width=1600 height=1200 scale=2" smoke.log
 
   bench:

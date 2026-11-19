@@ -376,8 +376,14 @@ describe("exportRichHtml", () => {
 
   it("drops leading source whitespace so the first heading is the first body child", async () => {
     const html = await exportRichHtml(makeState("\n\n# Title\n\nAfter\n"))
-    expect(html).toContain("<body><h1>Title</h1>")
+    expect(html).toContain('<body><h1 id="title">Title</h1>')
     expect(html).toContain("<p>After</p>")
+  })
+
+  it("highlights fenced code blocks that carry a title", async () => {
+    const html = await exportRichHtml(makeState("```ts app.ts\nconst n: number = 1\n```"))
+    expect(html).toContain('<div class="omd-code-title">app.ts</div>')
+    expect(html).toContain("--shiki-dark")
   })
 
   it("places print styles after base typography and before customCss and sets title", async () => {

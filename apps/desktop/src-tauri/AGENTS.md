@@ -7,7 +7,7 @@
 
 - Apply the root size policy, including inline tests. Extract command domains into focused modules instead of growing `lib.rs` or `workspace.rs`; keep `lib.rs` focused on setup and `tauri::generate_handler!`.
 - Move large inline test modules into sibling files (follow `src/documents/tests.rs`).
-- Use `cfg!(target_os = "macos")` for runtime checks and `#[cfg(target_os = "macos")]` to exclude platform-specific imports/items from compilation; combine conditions with `any(...)`, not `|`. `export_preview` routes to the platform backend. `export_page.rs` reads the shared PDF page contract from `packages/engine/src/export/printContract.json` and `printRules.css` (default A4 portrait, 16 mm margins, optional Letter, orientation, print backgrounds, header/footer off). CSS `@page` uses the final page box; WebView2 gets the portrait paper plus an orientation flag. Windows PDF uses `export_pdf_windows.rs` and keeps the PNG height cap out of paginated PDF printing.
+- Use `cfg!(target_os = "macos")` for runtime checks and `#[cfg(target_os = "macos")]` to exclude platform-specific imports/items from compilation; combine conditions with `any(...)`, not `|`. `export_preview` routes to the platform backend. `export_page.rs` reads the shared PDF page contract from `packages/engine/src/export/printContract.json` and `printRules.css` (default A4 portrait, 16 mm margins, optional Letter, orientation, print backgrounds, header/footer off). CSS `@page` uses the final page box; native print backends (`export_pdf_macos.rs`, `export_pdf_windows.rs`, `export_pdf_linux.rs`) receive portrait paper dimensions plus an orientation flag and keep the PNG height cap out of paginated PDF printing.
 
 ## IPC Contract & Concurrency Rules
 
