@@ -138,6 +138,7 @@ pub(crate) async fn render(
     spec: ExportSpec,
     format: ExportFormat,
     cancel: Arc<AtomicBool>,
+    _page: super::export_page::PageSetup,
 ) -> Result<RenderOutput, String> {
     let (tx, rx) = mpsc::channel();
     app.run_on_main_thread(move || begin(html, spec, format, tx, cancel))

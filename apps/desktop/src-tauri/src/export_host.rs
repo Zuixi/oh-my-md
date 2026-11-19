@@ -76,7 +76,8 @@ pub fn serve<R: Runtime>(
 }
 
 pub(crate) type ProbeFn = fn(&WebviewWindow) -> Result<Option<Probe>, String>;
-pub(crate) type CaptureFn = fn(&WebviewWindow, &ExportSpec, &Probe) -> Result<Vec<u8>, String>;
+pub(crate) type CaptureFn =
+    Box<dyn Fn(&WebviewWindow, &ExportSpec, &Probe) -> Result<Vec<u8>, String> + Send>;
 
 fn token() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);

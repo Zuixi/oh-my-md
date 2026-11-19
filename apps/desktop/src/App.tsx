@@ -113,7 +113,7 @@ import { useWorkspaceSearch } from "./useWorkspaceSearch"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import { SettingsModal } from "./SettingsModal"
 import {
-  DEFAULT_SETTINGS,
+  DEFAULT_SETTINGS, pageSetupFromSettings,
   sameAutoPair,
   type UserSettings,
 } from "./settings"
@@ -1454,7 +1454,7 @@ export default function App({
     setOutlineOpen,
     setTypewriter,
     setAboutOpen,
-    customCss, exportOptions: () => ({ width: settingsRef.current.exportWidth, scale: settingsRef.current.exportScale, theme: resolveTheme(theme) }),
+    customCss, exportOptions: () => ({ width: settingsRef.current.exportWidth, scale: settingsRef.current.exportScale, theme: resolveTheme(theme), page: pageSetupFromSettings(settingsRef.current) }),
     showTransientStatus,
     updateCoordinatorRef,
     pasteOptions,

@@ -35,6 +35,17 @@ export const SAFE_MODE_LINES = 50000
 export { collectOutline, outlineCurrentIndex, type OutlineItem } from "./outline"
 export { codeHighlightStyle } from "./highlight/codeHighlight"
 export { exportHtml, exportRichHtml, type ExportRichHtmlOptions } from "./export/html"
+export {
+  DEFAULT_PRINT_SETUP,
+  MARGIN_MAX_MM,
+  MARGIN_MIN_MM,
+  renderPrintCss,
+  sanitizePrintSetup,
+  type HeadingPageBreak,
+  type PageOrientation,
+  type PaperName,
+  type PrintSetup,
+} from "./export/printSetup"
 export { EXPORT_BODY_CSS } from "./export/styles"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {

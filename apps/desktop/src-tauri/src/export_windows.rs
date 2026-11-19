@@ -28,10 +28,11 @@ pub(crate) async fn render(
     spec: ExportSpec,
     format: ExportFormat,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    page: crate::export::export_page::PageSetup,
 ) -> Result<RenderOutput, String> {
     let capture: export_host::CaptureFn = match format {
-        ExportFormat::Pdf => |window, _, _| pdf_windows::print_pdf(window),
-        ExportFormat::Png => capture_png,
+        ExportFormat::Pdf => Box::new(move |window, _, _| pdf_windows::print_pdf(window, &page)),
+        ExportFormat::Png => Box::new(capture_png),
     };
     export_host::render_with_window(app, html, spec, format, probe, capture, cancel).await
 }

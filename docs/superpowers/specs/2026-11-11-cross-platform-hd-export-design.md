@@ -10,9 +10,9 @@
 
 ## 契约
 
-- **单一文档模型**：`@omd/engine` 的 `exportRichHtml` 生成自包含 HTML（KaTeX CSS/woff2、Shiki、Mermaid、图片 data URL、显式主题）。Rust 只追加打印页边距，不重新解析 Markdown。
+- **单一文档模型**：`@omd/engine` 的 `exportRichHtml` 生成自包含 HTML（KaTeX CSS/woff2、Shiki、Mermaid、图片 data URL、显式主题，并放行归一化 `.page-break` / Typora `page-break-after: always` 分页标记，同时把文档标题写入 `<title>`）。纸张、方向、四边距、可选标题前分页（`headingPageBreak`：`none`/`h1`/`h1-h2`）和页眉开关来自 `printContract.json`（默认 A4 纵向、四边 16 mm、关闭标题自动分页；另支持 Letter）。engine 把同一份 `@page` 与 `@media print` 规则插在基础排版 `EXPORT_BODY_CSS` 之后、用户 Custom CSS 之前（确保重置 `body` 边距与 `pre` 溢出，同时让用户规则胜出）；Rust `export_page.rs` 读同一 JSON/CSS：CSS 用最终页面尺寸，WebView2 用纵向纸张加方向标志（与 Electron 的 `pageSize` + `landscape` 相同）。页眉页脚默认关闭；打开后只在原生 PDF 印文档标题（Windows 附带打印日期）和页码，不印文件路径。PDF 仍强制 `light` 主题。用户 Custom CSS 写在默认规则之后，可以覆盖 `@page`。
 - **像素定义**：输出宽 = `width_css × scale`，高 = `measured_height_css × scale`。禁止先 1x 截图再放大。
-- **IPC**：`export_preview(html, path, format, scale, width) -> ExportWarning|null`。前端负责路径选择、图片内联、进度/错误提示；Rust 负责校验路径、渲染、原子写入和告警。
+- **IPC**：`export_preview(html, path, format, scale, width, requestId, page) -> ExportWarning|null`。`page` 与引擎同一份页面设置（纸张、方向、`headingPageBreak`、四边距、背景、页眉开关和标题）。前端负责路径选择、图片内联、进度/错误提示；Rust 负责校验路径与 `page`、渲染、原子写入和告警。
 - **告警不是失败**：`height-clamped`（受单边 16383 px 或 32M 像素面积预算限制）与 `partial-render`（字体/图片未在页面时限内完成）会写入文件并返回告警；前端以可操作文案展示。
 - **失败不落盘**：渲染、格式校验或尺寸校验失败时不写目标文件；绝不输出 1x 模糊图冒充高清图。
 

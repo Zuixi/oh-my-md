@@ -1,0 +1,14 @@
+{
+  "papers": {
+    "a4": { "widthTenthMm": 2100, "heightTenthMm": 2970 },
+    "letter": { "widthTenthMm": 2159, "heightTenthMm": 2794 }
+  },
+  "defaultPaper": "a4",
+  "defaultOrientation": "portrait",
+  "defaultHeadingBreak": "none",
+  "defaultMarginsTenthMm": { "top": 160, "right": 160, "bottom": 160, "left": 160 },
+  "marginMinTenthMm": 0,
+  "marginMaxTenthMm": 500,
+  "printBackgrounds": true,
+  "headerFooter": false
+}

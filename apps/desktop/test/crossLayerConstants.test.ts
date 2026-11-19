@@ -276,3 +276,57 @@ describe("user-facing URLs", () => {
     expect(existsSync(resolve(process.cwd(), "../../docs/guides/troubleshooting.md"))).toBe(true)
   })
 })
+
+// Paper numbers live in one JSON file. The engine formats `@page` from it and
+// Rust includes the same file; the format string below is the lock between them.
+describe("print contract (engine ↔ export_page.rs)", () => {
+  const CONTRACT = JSON.parse(readFileSync(
+    resolve(process.cwd(), "../../packages/engine/src/export/printContract.json"),
+    "utf8",
+  )) as {
+    papers: { a4: { widthTenthMm: number; heightTenthMm: number } }
+    defaultHeadingBreak: string
+    defaultMarginsTenthMm: { top: number; right: number; bottom: number; left: number }
+  }
+  const RULES = readFileSync(
+    resolve(process.cwd(), "../../packages/engine/src/export/printRules.css"),
+    "utf8",
+  ).replace(/\r\n/g, "\n").replace(/\n+$/, "")
+  const EXPORT_PAGE_RS = readFileSync(
+    resolve(process.cwd(), "src-tauri/src/export_page.rs"),
+    "utf8",
+  )
+  const PRINT_SETUP_TS = readFileSync(
+    resolve(process.cwd(), "../../packages/engine/src/export/printSetup.ts"),
+    "utf8",
+  )
+
+  it("formats the default page from the shared JSON and the shared rules", async () => {
+    const { renderPrintCss, DEFAULT_PRINT_SETUP } = await import("@omd/engine")
+    const width = CONTRACT.papers.a4.widthTenthMm / 10
+    const height = CONTRACT.papers.a4.heightTenthMm / 10
+    const margin = CONTRACT.defaultMarginsTenthMm.top / 10
+    const css = renderPrintCss(DEFAULT_PRINT_SETUP)
+    expect(css.startsWith(
+      `@page{size:${width}mm ${height}mm;margin:${margin}mm ${margin}mm ${margin}mm ${margin}mm}`,
+    )).toBe(true)
+    expect(css.endsWith(RULES)).toBe(true)
+    expect(RULES).toContain(".page-break,.pagebreak{break-after:page")
+  })
+
+  it("points Rust at the same JSON, CSS, and @page template", () => {
+    expect(CONTRACT.defaultHeadingBreak).toBe("none")
+    expect(EXPORT_PAGE_RS).toContain("printContract.json")
+    expect(EXPORT_PAGE_RS).toContain("printRules.css")
+    expect(EXPORT_PAGE_RS).toContain(
+      "@page{{size:{}mm {}mm;margin:{}mm {}mm {}mm {}mm}}",
+    )
+    expect(EXPORT_PAGE_RS).toContain(
+      "@media print{body>h1:not(:first-child){break-before:page;page-break-before:always}}",
+    )
+    expect(PRINT_SETUP_TS).toContain(
+      "@media print{body>h1:not(:first-child){break-before:page;page-break-before:always}}",
+    )
+    expect(PRINT_SETUP_TS).toContain('PAGE_BREAK_HTML = \'<div class="page-break"></div>\'')
+  })
+})

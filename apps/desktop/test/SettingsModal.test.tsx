@@ -213,6 +213,7 @@ describe("SettingsModal", () => {
   it("resets to defaults when clicking Reset", () => {
     const onSave = vi.fn()
     const customSettings: UserSettings = {
+      ...DEFAULT_SETTINGS,
       theme: "dark",
       fontSize: 22,
       fontFamily: "Courier",
@@ -220,13 +221,9 @@ describe("SettingsModal", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
-      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
-      locale: "auto",
       exportWidth: 1200,
       exportScale: 3,
       loggingEnabled: true,
-      loggingGeneration: 0,
-      verboseLogging: false,
     }
 
     render(
@@ -245,6 +242,7 @@ describe("SettingsModal", () => {
   it("calls onSave with the chosen locale when language select changes", () => {
     const onSave = vi.fn()
     const customSettings: UserSettings = {
+      ...DEFAULT_SETTINGS,
       theme: "dark",
       fontSize: 22,
       fontFamily: "Courier",
@@ -252,13 +250,9 @@ describe("SettingsModal", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
-      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
-      locale: "auto",
       exportWidth: 1200,
       exportScale: 3,
       loggingEnabled: true,
-      loggingGeneration: 0,
-      verboseLogging: false,
     }
 
     render(
@@ -444,6 +438,117 @@ describe("export settings", () => {
     expect(onSave).toHaveBeenLastCalledWith(
       expect.objectContaining({ exportWidth: 1920, exportScale: 3 }),
     )
+  })
+
+  it("groups PNG vs PDF settings and saves paper, orientation, heading break, and header/footer", () => {
+    const onSave = vi.fn()
+    render(
+      <SettingsModal
+        isOpen={true}
+        settings={DEFAULT_SETTINGS}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole("heading", { name: "Image (PNG)" })).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "PDF & Print" })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText("Paper"), { target: { value: "letter" } })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportPaper: "letter" }))
+
+    fireEvent.change(screen.getByLabelText("Orientation"), { target: { value: "landscape" } })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportOrientation: "landscape" }))
+
+    fireEvent.change(screen.getByLabelText("Heading page breaks"), { target: { value: "h1-h2" } })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportHeadingPageBreak: "h1-h2" }))
+
+    fireEvent.click(screen.getByLabelText("Header and page number"))
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportHeaderFooter: true }))
+  })
+
+  it("buffers margin input drafts while editing and clamps/restores on blur", () => {
+    const onSave = vi.fn()
+    function MarginHarness() {
+      const [settings, setSettings] = useState(DEFAULT_SETTINGS)
+      return (
+        <SettingsModal
+          isOpen={true}
+          settings={settings}
+          onSave={next => {
+            onSave(next)
+            setSettings(next)
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    }
+    render(<MarginHarness />)
+
+    const top = screen.getByLabelText("Top margin") as HTMLInputElement
+    expect(top.value).toBe("16")
+
+    // Clearing the field keeps an empty draft without snapping to 0.
+    fireEvent.change(top, { target: { value: "" } })
+    expect(top.value).toBe("")
+    expect(onSave).not.toHaveBeenCalled()
+
+    // Blurring an empty draft restores the previous committed margin.
+    fireEvent.blur(top)
+    expect(top.value).toBe("16")
+    expect(onSave).not.toHaveBeenCalled()
+
+    // Decimal in-progress input ("12.") is preserved, then committed once complete.
+    fireEvent.change(top, { target: { value: "12." } })
+    expect(top.value).toBe("12.")
+    expect(onSave).not.toHaveBeenCalled()
+
+    fireEvent.change(top, { target: { value: "12.5" } })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportMarginTopMm: 12.5 }))
+
+    // Out-of-range drafts commit clamped on blur.
+    fireEvent.change(top, { target: { value: "200" } })
+    expect(top.value).toBe("200")
+    fireEvent.blur(top)
+    expect(top.value).toBe("50")
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportMarginTopMm: 50 }))
+  })
+
+  describe("PDF platform notes", () => {
+    const originalDesc = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
+    const stubUserAgent = (value: string) => {
+      Object.defineProperty(window.navigator, "userAgent", { value, configurable: true })
+    }
+
+    afterEach(() => {
+      if (originalDesc) {
+        Object.defineProperty(window.navigator, "userAgent", originalDesc)
+      } else {
+        delete (window.navigator as { userAgent?: string }).userAgent
+      }
+    })
+
+    it("hides pending PDF notes on Windows and explains current scope on macOS and Linux", () => {
+      stubUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+      const { unmount } = render(
+        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
+      )
+      expect(screen.queryByText(/single continuous page/i)).toBeNull()
+      expect(screen.queryByText(/not available on Linux/i)).toBeNull()
+      unmount()
+
+      stubUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
+      const mac = render(
+        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
+      )
+      expect(screen.getByText(/single continuous page/i)).toBeTruthy()
+      mac.unmount()
+
+      stubUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+      render(
+        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
+      )
+      expect(screen.getByText(/not available on Linux/i)).toBeTruthy()
+    })
   })
 })
 

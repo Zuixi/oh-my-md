@@ -51,11 +51,12 @@ pub(crate) async fn render(
     spec: ExportSpec,
     format: ExportFormat,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _page: crate::export::export_page::PageSetup,
 ) -> Result<RenderOutput, String> {
     if format != ExportFormat::Png {
         return Err("PDF export is not implemented for this platform".into());
     }
-    export_host::render_with_window(app, html, spec, format, probe, capture, cancel).await
+    export_host::render_with_window(app, html, spec, format, probe, Box::new(capture), cancel).await
 }
 
 fn with_view<T: Send + 'static>(

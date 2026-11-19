@@ -197,6 +197,55 @@ describe("html export", () => {
     expect(html).toContain("<td><strong>Cell</strong></td>")
     expect(html).toContain("&lt;div&gt;arbitrary html&lt;/div&gt;")
   })
+
+  it("normalizes explicit page-break markers and escapes unsafe HTML", () => {
+    const doc = [
+      "Before",
+      "",
+      '<div class="page-break"></div>',
+      "",
+      '<hr class="pagebreak" />',
+      "",
+      '<div style="page-break-after: always;"></div>',
+      "",
+      '<div style="page-break-after: always; color: red"></div>',
+      "",
+      '<p style="break-after: page"></p>',
+      "",
+      '<div class="page-break" onclick="alert(1)"></div>',
+      "",
+      "After",
+    ].join("\n")
+    const html = exportHtml(makeState(doc))
+    expect(html.match(/<div class="page-break"><\/div>/g)).toHaveLength(5)
+    expect(html).toContain("&lt;div class=&quot;page-break&quot; onclick=&quot;alert(1)&quot;&gt;&lt;/div&gt;")
+  })
+
+  it("drops leading source whitespace so the first heading is the first body child", () => {
+    const html = exportHtml(makeState("\n\n# Title\n\nAfter\n"))
+    expect(html).toContain("<body><h1>Title</h1>")
+    expect(html).toContain("<p>After</p>")
+  })
+
+  it("embeds the shared print contract after typography CSS", () => {
+    const html = exportHtml(makeState("# Hi\n"))
+    const page = html.indexOf("@page{size:210mm 297mm;margin:16mm 16mm 16mm 16mm}")
+    const body = html.indexOf(`<style>${EXPORT_BODY_CSS}</style>`)
+    expect(body).toBeGreaterThan(0)
+    expect(page).toBeGreaterThan(body)
+    expect(html).toContain(".page-break,.pagebreak{break-after:page")
+  })
+
+  it("uses escaped print headerTitle for document title and falls back to oh-my-md", async () => {
+    const { DEFAULT_PRINT_SETUP } = await import("../src/export/printSetup")
+    const defaultHtml = exportHtml(makeState("# Hi\n"))
+    expect(defaultHtml).toContain("<title>oh-my-md</title>")
+    const titledHtml = exportHtml(makeState("# Hi\n"), {
+      ...DEFAULT_PRINT_SETUP,
+      headerTitle: "Q4 <Report> & Notes",
+    })
+    expect(titledHtml).toContain("<title>Q4 &lt;Report&gt; &amp; Notes</title>")
+  })
 })
 
 describe("rich html export", () => {

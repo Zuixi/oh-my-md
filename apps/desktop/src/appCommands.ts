@@ -6,6 +6,7 @@ import {
 import type { Dispatch, RefObject, SetStateAction } from "react"
 import { exportDiagnostics, openLogFolder } from "./appDiagnosticsActions"
 import { exportCurrent, loadCustomCss, type ExportRenderOptions } from "./appExportActions"
+import { documentTitle } from "./exportPolicy"
 import { pastePlainText } from "./pastePlainText"
 import { pasteFromSystemClipboard, type ClipboardPasteOptions } from "./clipboardPaste"
 import { systemClipboardReader } from "./clipboardPayload"
@@ -177,7 +178,14 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
       run: () => {
         const tab = tabById(workspaceRef.current.activeId)
         const docPath = tab ? sessionPath(tab) : null
-        const renderOptions = { ...exportOptions(), sourcePath: docPath }
+        const base = exportOptions()
+        const renderOptions = {
+          ...base,
+          sourcePath: docPath,
+          page: base.page
+            ? { ...base.page, headerTitle: documentTitle(docPath) }
+            : base.page,
+        }
         void exportCurrent(
           services,
           viewRef.current,
