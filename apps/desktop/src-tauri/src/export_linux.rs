@@ -23,8 +23,12 @@ use tauri::{LogicalSize, WebviewWindow};
 use webkit2gtk::glib::ControlFlow;
 use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
 
+#[path = "export_pdf_linux.rs"]
+mod pdf_linux;
+
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(20);
+const CALLBACK_TIMED_OUT: &str = "webview callback timed out";
 /// Clears a flag and sets it again from the second of two nested animation frame
 /// callbacks. The second frame is the first point at which WebKitGTK has
 /// committed a layout for the zoom level applied just before this script runs,
@@ -51,12 +55,13 @@ pub(crate) async fn render(
     spec: ExportSpec,
     format: ExportFormat,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    _page: crate::export::export_page::PageSetup,
+    page: crate::export::export_page::PageSetup,
 ) -> Result<RenderOutput, String> {
-    if format != ExportFormat::Png {
-        return Err("PDF export is not implemented for this platform".into());
-    }
-    export_host::render_with_window(app, html, spec, format, probe, Box::new(capture), cancel).await
+    let capture: export_host::CaptureFn = match format {
+        ExportFormat::Pdf => Box::new(move |window, _, _| pdf_linux::print_pdf(window, &page)),
+        ExportFormat::Png => Box::new(capture),
+    };
+    export_host::render_with_window(app, html, spec, format, probe, capture, cancel).await
 }
 
 fn with_view<T: Send + 'static>(
@@ -72,7 +77,7 @@ fn with_view<T: Send + 'static>(
         })
         .map_err(|error| error.to_string())?;
     rx.recv_timeout(timeout)
-        .map_err(|_| "webview callback timed out".to_string())?
+        .map_err(|_| CALLBACK_TIMED_OUT.to_string())?
 }
 
 fn probe(window: &WebviewWindow) -> Result<Option<Probe>, String> {

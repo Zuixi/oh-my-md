@@ -527,27 +527,20 @@ describe("export settings", () => {
       }
     })
 
-    it("hides pending PDF notes on Windows and explains current scope on macOS and Linux", () => {
-      stubUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-      const { unmount } = render(
-        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
-      )
-      expect(screen.queryByText(/single continuous page/i)).toBeNull()
-      expect(screen.queryByText(/not available on Linux/i)).toBeNull()
-      unmount()
-
-      stubUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
-      const mac = render(
-        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
-      )
-      expect(screen.getByText(/single continuous page/i)).toBeTruthy()
-      mac.unmount()
-
-      stubUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
-      render(
-        <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
-      )
-      expect(screen.getByText(/not available on Linux/i)).toBeTruthy()
+    it("shows no pending PDF platform notes on Windows, macOS, or Linux", () => {
+      for (const ua of [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+      ]) {
+        stubUserAgent(ua)
+        const { unmount } = render(
+          <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
+        )
+        expect(screen.queryByText(/single continuous page/i)).toBeNull()
+        expect(screen.queryByText(/not available on Linux/i)).toBeNull()
+        unmount()
+      }
     })
   })
 })

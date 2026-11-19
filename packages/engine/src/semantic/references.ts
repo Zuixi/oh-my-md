@@ -349,14 +349,17 @@ export function snapshotReferenceContext(state: EditorState): MarkdownReferenceC
 
 let fragmentParser: Parser | null = null
 
-/**
- * Context for a standalone Markdown fragment (tests, pasted snippets): parsed
- * with the same Lezer Markdown configuration and bounded to the fragment.
- */
+export function referenceContextForTree(
+  tree: Tree,
+  extent: number,
+  slice: SliceFn,
+): MarkdownReferenceContext {
+  const defs = collectDefinitions(tree, { from: 0, to: extent }, slice)
+  return { sliceString: slice, resolveReference: makeResolver(buildTargets(defs)) }
+}
+
 export function stringReferenceContext(source: string): MarkdownReferenceContext {
   fragmentParser ??= markdownLanguageSupport().language.parser
   const tree = fragmentParser.parse(source)
-  const slice: SliceFn = (from, to) => source.slice(from, to)
-  const defs = collectDefinitions(tree, { from: 0, to: source.length }, slice)
-  return { sliceString: slice, resolveReference: makeResolver(buildTargets(defs)) }
+  return referenceContextForTree(tree, source.length, (from, to) => source.slice(from, to))
 }

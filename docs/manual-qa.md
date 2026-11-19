@@ -355,7 +355,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 - [ ] 命令面板（⇧⌘P）快捷键标签抽查：Save 为 ⌘S、Ordered list 为 ⌥⌘7，与改动前逐字一致（mac 仍显示 ⌘⇧⌥ 字形，不出现 Ctrl/Alt 字样）
 - [ ] reveal 文案：文件树右键菜单与保存冲突横幅显示「Reveal in File Manager」（zh 界面为「在文件管理器中显示」），中英文均不再出现 Finder 字样
-- [ ] 命令面板与 File▸Export 菜单在 mac 与 Windows 上显示 Export PDF / Export Image，Linux 只隐藏 Export PDF（`supportsPdfExport`），导出流程可用
+- [ ] 命令面板与 File▸Export 菜单在 macOS / Windows / Linux 均显示 Export HTML / Export PDF / Export Image，三平台 PDF 均走原生分页导出，导出流程可用
 - [ ] 菜单「导出诊断信息…」生成的 zip 含 `os.txt`（os_info 输出，替代旧 `uname.txt`），且仍不含任何文档正文
 - [ ] 菜单「打开日志目录」/「Open Log Folder」在 Finder 中打开真实日志目录（命令面板同名条目等价）
 - [ ] 设置▸日志：勾选「启用详细日志」后重启，`debug` 级记录出现；`OMD_LOG=warn` 启动时仍以 env 为准
@@ -372,7 +372,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] 文件树：reveal（在文件管理器中显示）、删除进回收站（freedesktop Trash）、新建/重命名。
 - [ ] 右键粘贴图片（裁决 D11：WebKitGTK 下右键是否异常移动光标；异常则维持 workaround，正常则把门控收窄为 `isMacOS()`）。
 - [ ] 拖拽 .md 到窗口打开；CJK 中文字体渲染（PingFang 缺失时回落 Noto/YaHei 正常）。
-- [ ] 外部修改文件 → watcher 提示；HTML 导出；PDF/PNG 入口不可见。
+- [ ] 外部修改文件 → watcher 提示；HTML / PDF（分页）/ PNG 导出均可用。
 - [ ] Export Diagnostics 产出含 `os.txt` 与日志。
 
 ## Windows（P2）

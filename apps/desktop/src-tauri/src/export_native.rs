@@ -18,7 +18,7 @@ use objc2_foundation::{
 use objc2_web_kit::{
     WKNavigation, WKNavigationDelegate, WKPDFConfiguration, WKWebView, WKWebViewConfiguration,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -51,6 +51,9 @@ const EXPORT_CHANNEL_BACKSTOP: Duration =
 #[path = "export_native_dispatch.rs"]
 mod dispatch;
 
+#[path = "export_pdf_macos.rs"]
+mod pdf_macos;
+
 use dispatch::dispatch_after;
 
 struct PollState {
@@ -81,8 +84,10 @@ unsafe extern "C" fn timeout_trampoline(context: *mut c_void) {
 struct ExportIvars {
     window: RefCell<Option<Retained<NSWindow>>>,
     webview: RefCell<Option<Retained<WKWebView>>>,
+    printing: Cell<bool>,
     format: ExportFormat,
     spec: ExportSpec,
+    page: super::export_page::PageSetup,
     tx: RefCell<Option<mpsc::Sender<Result<RenderOutput, String>>>>,
     cancel: Arc<AtomicBool>,
 }
@@ -138,13 +143,18 @@ pub(crate) async fn render(
     spec: ExportSpec,
     format: ExportFormat,
     cancel: Arc<AtomicBool>,
-    _page: super::export_page::PageSetup,
+    page: super::export_page::PageSetup,
 ) -> Result<RenderOutput, String> {
+    let backstop = if format == ExportFormat::Pdf {
+        Duration::from_secs(pdf_macos::PRINT_TIMEOUT_SECS + EXPORT_BACKSTOP_GRACE_SECS)
+    } else {
+        EXPORT_CHANNEL_BACKSTOP
+    };
     let (tx, rx) = mpsc::channel();
-    app.run_on_main_thread(move || begin(html, spec, format, tx, cancel))
+    app.run_on_main_thread(move || begin(html, spec, format, page, tx, cancel))
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        rx.recv_timeout(EXPORT_CHANNEL_BACKSTOP)
+        rx.recv_timeout(backstop)
             .map_err(|_| EXPORT_TIMEOUT_MESSAGE.to_string())
     })
     .await
@@ -155,11 +165,12 @@ fn begin(
     html: String,
     spec: ExportSpec,
     format: ExportFormat,
+    page: super::export_page::PageSetup,
     tx: mpsc::Sender<Result<RenderOutput, String>>,
     cancel: Arc<AtomicBool>,
 ) {
     let fail = tx.clone();
-    if let Err(error) = start(html, spec, format, tx, cancel) {
+    if let Err(error) = start(html, spec, format, page, tx, cancel) {
         let _ = fail.send(Err(error));
     }
 }
@@ -168,6 +179,7 @@ fn start(
     html: String,
     spec: ExportSpec,
     format: ExportFormat,
+    page: super::export_page::PageSetup,
     tx: mpsc::Sender<Result<RenderOutput, String>>,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -175,22 +187,28 @@ fn start(
         return Err(super::export_cancel::EXPORT_CANCELLED.into());
     }
     let mtm = MainThreadMarker::new().ok_or("export must run on the main thread")?;
-    let window = make_window(mtm, spec);
+    let style = if format == ExportFormat::Pdf {
+        NSWindowStyleMask::Titled
+    } else {
+        NSWindowStyleMask::Borderless
+    };
+    let window = make_window(mtm, spec, style);
     let webview = make_webview(mtm, spec);
     window.setContentView(Some(webview.as_super()));
-    // Order the offscreen backing store into the window server without stealing
-    // active/first-responder status from the main editor window or menubar.
     window.orderBack(None);
-    let delegate = ExportDelegate::create(mtm, window, webview.clone(), format, spec, tx, cancel);
-    // Park (and arm the cleanup deadline) before navigation can report anything,
-    // so every completion path finds a live `LIVE_EXPORTS` entry to remove.
-    park(delegate.clone());
+    let delegate =
+        ExportDelegate::create(mtm, window, webview.clone(), format, spec, page, tx, cancel);
+    park(delegate.clone(), format);
     unsafe { webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
     unsafe { webview.loadHTMLString_baseURL(&NSString::from_str(&html), None) };
     Ok(())
 }
 
-fn make_window(mtm: MainThreadMarker, spec: ExportSpec) -> Retained<NSWindow> {
+fn make_window(
+    mtm: MainThreadMarker,
+    spec: ExportSpec,
+    style: NSWindowStyleMask,
+) -> Retained<NSWindow> {
     let rect = CGRect::new(
         CGPoint::new(OFFSCREEN_X, OFFSCREEN_Y),
         CGSize::new(spec.width_css, EXPORT_MIN_HEIGHT_CSS),
@@ -199,7 +217,7 @@ fn make_window(mtm: MainThreadMarker, spec: ExportSpec) -> Retained<NSWindow> {
         NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),
             rect,
-            NSWindowStyleMask::Borderless,
+            style,
             NSBackingStoreType::Buffered,
             false,
         )
@@ -218,51 +236,57 @@ fn make_webview(mtm: MainThreadMarker, spec: ExportSpec) -> Retained<WKWebView> 
 }
 
 impl ExportDelegate {
+    #[allow(clippy::too_many_arguments)]
     fn create(
         mtm: MainThreadMarker,
         window: Retained<NSWindow>,
         webview: Retained<WKWebView>,
         format: ExportFormat,
         spec: ExportSpec,
+        page: super::export_page::PageSetup,
         tx: mpsc::Sender<Result<RenderOutput, String>>,
         cancel: Arc<AtomicBool>,
     ) -> Retained<Self> {
         let this = mtm.alloc::<Self>().set_ivars(ExportIvars {
             window: RefCell::new(Some(window)),
             webview: RefCell::new(Some(webview)),
+            printing: Cell::new(false),
             format,
             spec,
+            page,
             tx: RefCell::new(Some(tx)),
             cancel,
         });
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Completion for the scheduled cleanup deadline. A finished export has
-    /// already taken its sender, so a late timer must not send, close or unpark
-    /// a second time.
+    pub(super) fn window_clone(&self) -> Option<Retained<NSWindow>> {
+        self.ivars().window.borrow().clone()
+    }
+
+    pub(super) fn page_setup(&self) -> &super::export_page::PageSetup {
+        &self.ivars().page
+    }
+
+    pub(super) fn set_printing(&self, printing: bool) {
+        self.ivars().printing.set(printing);
+    }
+
     fn fail_if_pending(&self, message: &str) {
         if self.is_pending() {
             self.complete(Err(message.to_string()));
         }
     }
 
-    fn is_pending(&self) -> bool {
+    pub(super) fn is_pending(&self) -> bool {
         self.ivars().tx.borrow().is_some()
     }
 
-    fn cancel_requested(&self) -> bool {
+    pub(super) fn cancel_requested(&self) -> bool {
         self.ivars().cancel.load(Ordering::SeqCst)
     }
 
-    fn complete(&self, result: Result<RenderOutput, String>) {
-        // The sender is the one-shot latch: only the first completion may send,
-        // detach the webview, close the window and unpark. Every later path
-        // (scheduled timeout, in-flight poll block, duplicate navigation error)
-        // is a no-op.
-        let Some(tx) = take_pending(&self.ivars().tx) else {
-            return;
-        };
+    fn teardown(&self) {
         if let Some(webview) = self.ivars().webview.borrow_mut().take() {
             unsafe { webview.setNavigationDelegate(None) };
         }
@@ -270,24 +294,42 @@ impl ExportDelegate {
             window.close();
         }
         unpark(self);
+    }
+
+    pub(super) fn finish_print(&self, result: Result<RenderOutput, String>) {
+        self.ivars().printing.set(false);
+        let tx = take_pending(&self.ivars().tx);
+        self.teardown();
+        if let Some(tx) = tx {
+            let _ = tx.send(result);
+        }
+    }
+
+    pub(super) fn complete(&self, result: Result<RenderOutput, String>) {
+        let Some(tx) = take_pending(&self.ivars().tx) else {
+            return;
+        };
+        if !self.ivars().printing.get() {
+            self.teardown();
+        }
         let _ = tx.send(result);
     }
 }
 
-/// Takes the one-shot completion sender; `None` means another path already
-/// completed this export, which makes every later completion a no-op.
 fn take_pending<T>(slot: &RefCell<Option<T>>) -> Option<T> {
     slot.borrow_mut().take()
 }
 
-/// Registers the delegate as live and arms the cleanup deadline. The dispatch
-/// keeps its own reference to the delegate until the timer fires, so a normal
-/// completion can safely drop the `LIVE_EXPORTS` entry first.
-fn park(delegate: Retained<ExportDelegate>) {
+fn park(delegate: Retained<ExportDelegate>, format: ExportFormat) {
     LIVE_EXPORTS.with(|live| live.borrow_mut().push(delegate.clone()));
     let cancel_delegate = delegate.clone();
+    let cleanup_ms = if format == ExportFormat::Pdf {
+        pdf_macos::PRINT_TIMEOUT_SECS * 1_000
+    } else {
+        EXPORT_CLEANUP_MS
+    };
     let context = Box::into_raw(Box::new(TimeoutState { delegate })) as *mut c_void;
-    dispatch_after(EXPORT_CLEANUP_MS, context, timeout_trampoline);
+    dispatch_after(cleanup_ms, context, timeout_trampoline);
     schedule_cancel_poll(cancel_delegate);
 }
 
@@ -321,9 +363,15 @@ fn unpark(delegate: &ExportDelegate) {
 }
 
 fn poll_ready(state: PollState) {
+    if !state.delegate.is_pending() {
+        return;
+    }
     let script = NSString::from_str("window.__omdExportReady === true");
     let eval_view = state.webview.clone();
     let block = RcBlock::new(move |value: *mut AnyObject, _error: *mut NSError| {
+        if !state.delegate.is_pending() {
+            return;
+        }
         let ready = js_bool(value);
         if ready {
             after_ready(state.delegate.clone(), state.webview.clone(), None);
@@ -357,6 +405,10 @@ fn after_ready(
     webview: Retained<WKWebView>,
     partial: Option<ExportWarning>,
 ) {
+    if delegate.ivars().format == ExportFormat::Pdf {
+        pdf_macos::print_pdf(delegate, webview, partial);
+        return;
+    }
     let spec = delegate.ivars().spec;
     let script = NSString::from_str(&super::measure_export_script(
         EXPORT_MIN_HEIGHT_CSS,
@@ -369,14 +421,14 @@ fn after_ready(
             return;
         }
         let measured = js_number(value).unwrap_or(EXPORT_MIN_HEIGHT_CSS);
-        let (height, clamp_warning) = spec.clamp_height_css_for(measured, delegate.ivars().format);
+        let (height, clamp_warning) = spec.clamp_height_css_for(measured, ExportFormat::Png);
         let warning = clamp_warning.or_else(|| partial.clone());
-        resize_and_capture(delegate.clone(), webview.clone(), height, warning);
+        resize_and_capture_png(delegate.clone(), webview.clone(), height, warning);
     });
     unsafe { eval_view.evaluateJavaScript_completionHandler(&script, Some(&block)) };
 }
 
-fn resize_and_capture(
+fn resize_and_capture_png(
     delegate: Retained<ExportDelegate>,
     webview: Retained<WKWebView>,
     height: f64,
@@ -391,26 +443,7 @@ fn resize_and_capture(
         );
     }
     webview.setFrame(CGRect::new(CGPoint::ZERO, size));
-    match delegate.ivars().format {
-        ExportFormat::Pdf => capture_pdf(delegate, webview, warning),
-        ExportFormat::Png => capture_png(delegate, webview, warning),
-    }
-}
-
-fn capture_pdf(
-    delegate: Retained<ExportDelegate>,
-    webview: Retained<WKWebView>,
-    warning: Option<ExportWarning>,
-) {
-    let config = unsafe { WKPDFConfiguration::new(main_thread()) };
-    unsafe { config.setRect(webview.bounds()) };
-    let block = RcBlock::new(move |data: *mut NSData, error: *mut NSError| {
-        delegate.complete(pdf_bytes(data, error).map(|bytes| RenderOutput {
-            bytes,
-            warning: warning.clone(),
-        }));
-    });
-    unsafe { webview.createPDFWithConfiguration_completionHandler(Some(&config), &block) };
+    capture_png(delegate, webview, warning);
 }
 
 fn capture_png(

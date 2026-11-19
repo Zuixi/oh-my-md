@@ -72,20 +72,18 @@ describe("export command gating", () => {
     expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
   })
 
-  // Temporary: Linux has no PDF backend yet (`supportsPdfExport`). Delete this
-  // case when the Linux backend lands and every platform offers every format.
-  it("hides PDF on Linux while keeping HTML and PNG export", () => {
+  it("offers PDF, HTML, and PNG export on Linux", () => {
     setUserAgent(LINUX_WEBKIT_UA)
     const harness = createAppHarness(editor)
     harness.renderApp()
 
     fireEvent.click(screen.getByRole("button", { name: "File" }))
-    expect(screen.queryByRole("menuitem", { name: "Export PDF" })).toBeNull()
+    expect(screen.getByRole("menuitem", { name: "Export PDF" })).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "File" }))
     fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true })
 
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Export Image" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Export HTML" })).toBeTruthy()
   })

@@ -1,5 +1,3 @@
-import { supportsPdfExport } from "./platform"
-
 export interface AppCommand {
   id: string
   label: string
@@ -77,8 +75,8 @@ export const MENU_TO_COMMAND: Readonly<Record<string, string>> = {
   search: "search",
 }
 
-export function commandAvailable(id: string): boolean {
-  return id !== "export-pdf" || supportsPdfExport()
+export function commandAvailable(_id: string): boolean {
+  return true
 }
 
 export function runMenuCommand(

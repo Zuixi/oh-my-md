@@ -62,7 +62,6 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     );
     let width_css = env_u32("OMD_EXPORT_SMOKE_WIDTH", DEFAULT_WIDTH_CSS)?;
     let scale = env_u32("OMD_EXPORT_SMOKE_SCALE", DEFAULT_SCALE)?;
-    #[cfg(windows)]
     {
         let pdf_only = std::env::args().any(|arg| arg == "--pdf-only");
         let output = if pdf_only {
@@ -117,15 +116,13 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     ))
 }
 
-/// Prints `html` to PDF through the real export command and returns the bytes.
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
 async fn print_smoke_pdf(
     app: &tauri::AppHandle,
     html: String,
     width_css: u32,
     target: &std::path::Path,
     name: &str,
+    page: super::export_page::PageSetupDto,
 ) -> Result<Vec<u8>, String> {
     let target_text = target.to_str().ok_or("invalid PDF smoke target path")?;
     let warning = super::export_preview(
@@ -136,24 +133,18 @@ async fn print_smoke_pdf(
         1,
         width_css,
         format!("smoke-{name}-{}", std::process::id()),
-        super::export_page::PageSetup::default_dto(),
+        page,
     )
     .await?;
     let bytes = std::fs::read(target).map_err(|error| error.to_string())?;
-    // Chromium's page tree is plain PDF syntax; the output must reach its
-    // end-of-file marker.
     let contents = String::from_utf8_lossy(&bytes);
     if warning.is_some() || !bytes.starts_with(b"%PDF-") || !contents.trim_end().ends_with("%%EOF")
     {
-        return Err(format!("WebView2 did not print a complete {name} PDF"));
+        return Err(format!("backend did not print a complete {name} PDF"));
     }
     Ok(bytes)
 }
 
-/// A document taller than the offscreen window: `sections` blocks that may not
-/// split.
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
 fn long_smoke_html(sections: usize) -> String {
     let blocks: String = (1..=sections)
         .map(|n| {
@@ -171,14 +162,9 @@ fn long_smoke_html(sections: usize) -> String {
     )
 }
 
-#[cfg(any(windows, test))]
 const LONG_SMOKE_BLOCKS: usize = 40;
-/// 40 blocks of at least 180 px cannot fit on fewer pages at A4/Letter.
-#[cfg(any(windows, test))]
 const LONG_SMOKE_MIN_PAGES: usize = 5;
 
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
 async fn verify_pdf(
     app: &tauri::AppHandle,
     width_css: u32,
@@ -193,14 +179,41 @@ async fn verify_pdf(
 <p class="second">Second page</p>
 <script>window.__omdExportReady=true;window.__omdExportHeight=600;</script>
 </body></html>"#;
-    // The page break must survive the print stylesheet.
-    let bytes = print_smoke_pdf(app, html.into(), width_css, &target, "two-page").await?;
-    if pdf_page_count(&bytes) != 2 {
-        return Err("WebView2 did not print a complete two-page PDF".into());
+    let default_page = super::export_page::PageSetup::contract_default();
+    let bytes = print_smoke_pdf(
+        app,
+        html.into(),
+        width_css,
+        &target,
+        "two-page",
+        super::export_page::PageSetup::default_dto(),
+    )
+    .await?;
+    let two_pages = pdf_page_count(&bytes);
+    if two_pages != 2 {
+        return Err(format!("expected 2-page PDF, got {two_pages} pages"));
     }
-    assert_contract_media_box(&bytes)?;
-    // A tall document paginates completely instead of being cut at the
-    // offscreen window height.
+    assert_media_box(&bytes, &default_page)?;
+
+    let mut landscape_dto = super::export_page::PageSetup::default_dto();
+    landscape_dto.orientation = "landscape".into();
+    let landscape_page =
+        super::export_page::PageSetup::from_dto(super::export_page::PageSetupDto {
+            orientation: "landscape".into(),
+            ..super::export_page::PageSetup::default_dto()
+        })?;
+    let landscape_target = output.path().join("smoke-landscape.pdf");
+    let landscape_bytes = print_smoke_pdf(
+        app,
+        html.into(),
+        width_css,
+        &landscape_target,
+        "landscape",
+        landscape_dto,
+    )
+    .await?;
+    assert_media_box(&landscape_bytes, &landscape_page)?;
+
     let long_target = output.path().join("smoke-long.pdf");
     let long = print_smoke_pdf(
         app,
@@ -208,15 +221,16 @@ async fn verify_pdf(
         width_css,
         &long_target,
         "long",
+        super::export_page::PageSetup::default_dto(),
     )
     .await?;
     let pages = pdf_page_count(&long);
     if pages < LONG_SMOKE_MIN_PAGES {
         return Err(format!(
-            "WebView2 printed a {LONG_SMOKE_BLOCKS}-block document on {pages} pages (expected at least {LONG_SMOKE_MIN_PAGES})"
+            "printed a {LONG_SMOKE_BLOCKS}-block document on {pages} pages (expected at least {LONG_SMOKE_MIN_PAGES})"
         ));
     }
-    assert_contract_media_box(&long)?;
+    assert_media_box(&long, &default_page)?;
     verify_cancel(app, 1, width_css, ExportFormat::Pdf).await?;
     println!("EXPORT_PDF_SMOKE_OK pages=2 long_pages={pages}");
     Ok(())
@@ -328,26 +342,17 @@ fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     Ok((width, height))
 }
 
-/// The contract is A4 only when the PDF's MediaBox matches it. Page count
-/// alone still passes for US Letter.
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
-fn assert_contract_media_box(bytes: &[u8]) -> Result<(), String> {
+fn assert_media_box(bytes: &[u8], page: &super::export_page::PageSetup) -> Result<(), String> {
     let (width, height) = super::export_page::pdf_media_box(bytes).ok_or("PDF has no MediaBox")?;
-    let (expect_w, expect_h) =
-        super::export_page::media_box_points(&super::export_page::PageSetup::contract_default());
+    let (expect_w, expect_h) = super::export_page::media_box_points(page);
     if (width - expect_w).abs() > 1.0 || (height - expect_h).abs() > 1.0 {
         return Err(format!(
-            "expected A4 MediaBox {expect_w:.2} x {expect_h:.2} pt, got {width} x {height}"
+            "expected MediaBox {expect_w:.2} x {expect_h:.2} pt, got {width} x {height}"
         ));
     }
     Ok(())
 }
 
-/// Page objects (`/Type /Page`, not `/Pages`), with any whitespace PDF allows
-/// between the tokens, so a writer formatting change cannot fake a failure.
-#[cfg_attr(not(windows), allow(dead_code))]
-#[cfg(any(windows, test))]
 fn pdf_page_count(bytes: &[u8]) -> usize {
     static PAGE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
     PAGE.get_or_init(|| regex::bytes::Regex::new(r"/Type\s*/Page(?:[^s\w]|$)").expect("page regex"))

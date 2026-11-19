@@ -30,29 +30,6 @@ export function isLinux(): boolean {
 }
 
 /**
- * Every export format is meant to ship on all three platforms; Linux PDF is the
- * one gap left (no WebKitGTK print backend yet, see #62). Return true here, and
- * drop the Linux case in `exportGating.test.ts`, when that backend lands.
- */
-export function supportsPdfExport(): boolean {
-  return !isLinux()
-}
-
-/**
- * Native PDF export consumes the shared page contract on Windows today; macOS
- * (#61) still uses single-page `createPDF` and Linux (#62) has no PDF backend
- * yet. Settings uses this to explain where paper/margins currently apply.
- */
-export function pdfPageSetupPlatformNoteKey():
-  | "settings.export.note.macosPdfPending"
-  | "settings.export.note.linuxPdfPending"
-  | null {
-  if (isLinux()) return "settings.export.note.linuxPdfPending"
-  if (isMacOS()) return "settings.export.note.macosPdfPending"
-  return null
-}
-
-/**
  * Heuristic for the client-side duplicate-name precheck: Windows and default
  * macOS volumes compare names case-insensitively, Linux does not. Only a UX
  * hint — the native create/rename commands stay authoritative.
