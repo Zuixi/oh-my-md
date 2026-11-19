@@ -1,8 +1,9 @@
-import { exportRichHtml, type ExportRichHtmlOptions } from "@omd/engine"
+import { DEFAULT_PRINT_SETUP, exportRichHtml, type ExportRichHtmlOptions, type PrintSetup } from "@omd/engine"
 import type { EditorView } from "@codemirror/view"
 import { errorMessage, type DesktopServices, type ExportWarning } from "./desktopServices"
 import { ExportImageError } from "./exportImages"
 import { t } from "./i18n"
+import { documentTitle, resolveExportTheme } from "./exportPolicy"
 import { baseName } from "./workspace"
 
 export interface ExportRenderOptions {
@@ -11,6 +12,8 @@ export interface ExportRenderOptions {
   theme: "light" | "dark"
   /** Saved document path; the save dialog suggests a sibling file from it. */
   sourcePath?: string | null
+  /** Paper, margins and header/footer. Omitted calls use the shared default. */
+  page?: PrintSetup
 }
 
 const DEFAULT_RENDER_OPTIONS: ExportRenderOptions = { width: 800, scale: 2, theme: "light" }
@@ -111,10 +114,16 @@ export async function exportCurrent(
     const resolvedOptions = typeof exportOptions === "function"
       ? exportOptions(controller.signal)
       : exportOptions
+    const exportTheme = resolveExportTheme(kind, renderOptions.theme)
+    const page: PrintSetup = {
+      ...(renderOptions.page ?? DEFAULT_PRINT_SETUP),
+      headerTitle: renderOptions.page?.headerTitle || documentTitle(renderOptions.sourcePath),
+    }
     const html = await exportRichHtml(view.state, {
       ...resolvedOptions,
       customCss,
-      theme: renderOptions.theme,
+      theme: exportTheme,
+      print: page,
       fullWidth: kind !== "html",
       onRemoteImage: wantsRemoteWarning
         ? () => { sawRemoteImage = true }
@@ -142,6 +151,7 @@ export async function exportCurrent(
       renderOptions.scale,
       renderOptions.width,
       requestId,
+      page,
     )
     finishProgress()
     if (warning) {

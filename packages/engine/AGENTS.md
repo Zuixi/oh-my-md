@@ -33,7 +33,7 @@ packages/engine/
 │   ├── format/                  # Editing commands + keymaps (see src/format/AGENTS.md)
 │   ├── tables/                  # Lezer-range table model + edits (see src/tables/AGENTS.md)
 │   ├── paste/                   # Semantic clipboard importer (prepareSmartPaste, planSmartPaste, serializeComplexTable, blockBoundaries)
-│   ├── export/                  # html.ts (sync exportHtml + async exportRichHtml), styles.ts, shikiExport.ts, mathHtmlCache.ts
+│   ├── export/                  # html.ts (sync exportHtml + async exportRichHtml), styles.ts, printSetup.ts, printContract.json, printRules.css, shikiExport.ts, mathHtmlCache.ts
 │   ├── shiki/ · highlight/      # Lazy single-flight Shiki highlighter + code syntax highlighting
 │   └── cache/boundedLru.ts      # Bounded LRU cache
 └── test/                        # Vitest suite + fixtures/
@@ -41,7 +41,7 @@ packages/engine/
 
 ## Public Surface & Domain Rules
 
-1. **Expose host APIs only through `src/index.ts`:** Desktop code must consume `editorExtensions(options)` and exported pure helpers (`collectOutline`, `exportHtml`, `exportRichHtml`, `prepareSmartPaste`, `planSmartPaste`, `preparePlainTextFallback`, `normalizeBlockPaste`, semantic accessors/reference contexts, link/footnote nav, table range edits, ordered-list normalization commands) — never reach into internal engine submodules or re-parse Markdown.
+1. **Expose host APIs only through `src/index.ts`:** Desktop code must consume `editorExtensions(options)` and exported pure helpers (`collectOutline`, `exportHtml`, `exportRichHtml`, `DEFAULT_PRINT_SETUP`, `renderPrintCss`, `sanitizePrintSetup`, `prepareSmartPaste`, `planSmartPaste`, `preparePlainTextFallback`, `normalizeBlockPaste`, semantic accessors/reference contexts, link/footnote nav, table range edits, ordered-list normalization commands) — never reach into internal engine submodules or re-parse Markdown.
 2. **Pure command helpers:** Table edit helpers return range changes and formatting specs return `TransactionSpec | null`. Ordered-list accept/reject helpers return discriminated results: check `kind` before consuming `.transaction`; `stale` has no transaction. These helpers never dispatch.
 3. **Host-injected capabilities:** Resolve image URLs via `EngineOptions.resolveImageSrc` and localized fallback strings via `EngineOptions.imageBrokenLabel` (never import desktop i18n or Tauri APIs).
 4. **No stock completion/pairing:** Only the `:`-only `emojiCompletion` and `format/autoPair.ts` are permitted; never enable stock `closeBrackets`, `indentOnInput`, or generic `autocompletion`.

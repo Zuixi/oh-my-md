@@ -1,5 +1,17 @@
-import { DEFAULT_AUTO_PAIR, type AutoPairOptions } from "@omd/engine"
+import {
+  DEFAULT_AUTO_PAIR,
+  DEFAULT_PRINT_SETUP,
+  MARGIN_MAX_MM,
+  MARGIN_MIN_MM,
+  sanitizePrintSetup,
+  type AutoPairOptions,
+  type HeadingPageBreak,
+  type PageOrientation,
+  type PaperName,
+} from "@omd/engine"
 import type { StoredLocale } from "./i18n"
+
+export { pageSetupFromSettings } from "./exportPolicy"
 
 export type AppTheme = "system" | "light" | "dark"
 export type DefaultEditorMode = "live" | "source"
@@ -12,6 +24,15 @@ export const LINE_HEIGHT_MIN = 1.2
 export const LINE_HEIGHT_MAX = 2.4
 
 export type ExportScale = 1 | 2 | 3
+export type ExportPaper = PaperName
+export type ExportOrientation = PageOrientation
+export type ExportHeadingPageBreak = HeadingPageBreak
+
+export const EXPORT_PAPERS = ["a4", "letter"] as const
+export const EXPORT_ORIENTATIONS = ["portrait", "landscape"] as const
+export const EXPORT_HEADING_BREAKS = ["none", "h1", "h1-h2"] as const
+export const EXPORT_MARGIN_MIN_MM = MARGIN_MIN_MM
+export const EXPORT_MARGIN_MAX_MM = MARGIN_MAX_MM
 
 export const EXPORT_WIDTH_DEFAULT = 800
 export const EXPORT_WIDTH_MIN = 320
@@ -55,6 +76,16 @@ export interface UserSettings {
   exportWidth: number
   /** Pixel-density multiplier applied to `exportWidth` (1x/2x/3x). */
   exportScale: ExportScale
+  /** PDF/HTML print paper. PNG export ignores this. */
+  exportPaper: ExportPaper
+  exportOrientation: ExportOrientation
+  exportHeadingPageBreak: ExportHeadingPageBreak
+  exportMarginTopMm: number
+  exportMarginRightMm: number
+  exportMarginBottomMm: number
+  exportMarginLeftMm: number
+  /** Native PDF header (document title) and footer (page number). Off by default. */
+  exportHeaderFooter: boolean
   /**
    * Persisted opt-in for logging at all. Default `false`: a fresh install
    * writes no log file until the user turns logging on (Rust reads the key out
@@ -87,6 +118,14 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // A 4K/Retina-safe PNG: 800 CSS px at 2x yields 1600 px wide.
   exportWidth: EXPORT_WIDTH_DEFAULT,
   exportScale: 2,
+  exportPaper: DEFAULT_PRINT_SETUP.paper,
+  exportOrientation: DEFAULT_PRINT_SETUP.orientation,
+  exportHeadingPageBreak: DEFAULT_PRINT_SETUP.headingPageBreak,
+  exportMarginTopMm: DEFAULT_PRINT_SETUP.marginTopMm,
+  exportMarginRightMm: DEFAULT_PRINT_SETUP.marginRightMm,
+  exportMarginBottomMm: DEFAULT_PRINT_SETUP.marginBottomMm,
+  exportMarginLeftMm: DEFAULT_PRINT_SETUP.marginLeftMm,
+  exportHeaderFooter: DEFAULT_PRINT_SETUP.headerFooter,
   loggingEnabled: false,
   loggingGeneration: 0,
   verboseLogging: false,
@@ -145,6 +184,18 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
       ? raw.exportScale
       : 2
 
+  const print = sanitizePrintSetup({
+    paper: raw.exportPaper,
+    orientation: raw.exportOrientation,
+    headingPageBreak: raw.exportHeadingPageBreak,
+    marginTopMm: raw.exportMarginTopMm,
+    marginRightMm: raw.exportMarginRightMm,
+    marginBottomMm: raw.exportMarginBottomMm,
+    marginLeftMm: raw.exportMarginLeftMm,
+    headerFooter: raw.exportHeaderFooter === true,
+    printBackgrounds: DEFAULT_PRINT_SETUP.printBackgrounds,
+  })
+
   // Strictly `=== true`: the value can arrive from hand-edited JSON or an older
   // build, and Rust's `as_bool()` rejects the string "true" the same way. A
   // truthy coercion here would let TS and Rust disagree about the same file.
@@ -167,6 +218,14 @@ export function sanitizeSettings(raw: Partial<UserSettings> | null | undefined):
     locale,
     exportWidth,
     exportScale,
+    exportPaper: print.paper,
+    exportOrientation: print.orientation,
+    exportHeadingPageBreak: print.headingPageBreak,
+    exportMarginTopMm: print.marginTopMm,
+    exportMarginRightMm: print.marginRightMm,
+    exportMarginBottomMm: print.marginBottomMm,
+    exportMarginLeftMm: print.marginLeftMm,
+    exportHeaderFooter: print.headerFooter,
     loggingEnabled,
     loggingGeneration,
     verboseLogging,

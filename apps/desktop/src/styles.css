@@ -1790,6 +1790,15 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   letter-spacing: 0.5px;
   color: var(--omd-muted);
 }
+.settings-subheading {
+  margin: 12px 0 4px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--omd-fg);
+}
+.settings-section h3 + .settings-subheading {
+  margin-top: 2px;
+}
 .settings-row {
   display: flex;
   align-items: center;

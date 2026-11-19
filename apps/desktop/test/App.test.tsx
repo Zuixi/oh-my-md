@@ -1122,7 +1122,7 @@ describe("App product shell", () => {
     act(() => send?.("export-image"))
     await waitFor(() => {
       expect(harness.services.pickExportPath).toHaveBeenCalledWith("png")
-      expect(harness.services.exportPreview).toHaveBeenCalledWith("<!doctype html><html>exported</html>", "/tmp/out.png", "png", 2, 800, expect.any(String))
+      expect(harness.services.exportPreview).toHaveBeenCalledWith("<!doctype html><html>exported</html>", "/tmp/out.png", "png", 2, 800, expect.any(String), expect.objectContaining({ paper: "a4" }))
     })
   })
 
@@ -1140,7 +1140,7 @@ describe("App product shell", () => {
     act(() => send?.("export-pdf"))
     await waitFor(() => {
       expect(harness.services.pickExportPath).toHaveBeenCalledWith("pdf")
-      expect(harness.services.exportPreview).toHaveBeenCalledWith("<!doctype html><html>exported</html>", "/tmp/out.pdf", "pdf", 2, 800, expect.any(String))
+      expect(harness.services.exportPreview).toHaveBeenCalledWith("<!doctype html><html>exported</html>", "/tmp/out.pdf", "pdf", 2, 800, expect.any(String), expect.objectContaining({ paper: "a4" }))
     })
   })
 

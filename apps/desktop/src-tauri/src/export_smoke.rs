@@ -97,6 +97,7 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
         scale,
         width_css,
         format!("smoke-{}", std::process::id()),
+        super::export_page::PageSetup::default_dto(),
     )
     .await?;
     let bytes =
@@ -135,6 +136,7 @@ async fn print_smoke_pdf(
         1,
         width_css,
         format!("smoke-{name}-{}", std::process::id()),
+        super::export_page::PageSetup::default_dto(),
     )
     .await?;
     let bytes = std::fs::read(target).map_err(|error| error.to_string())?;
@@ -196,6 +198,7 @@ async fn verify_pdf(
     if pdf_page_count(&bytes) != 2 {
         return Err("WebView2 did not print a complete two-page PDF".into());
     }
+    assert_contract_media_box(&bytes)?;
     // A tall document paginates completely instead of being cut at the
     // offscreen window height.
     let long_target = output.path().join("smoke-long.pdf");
@@ -213,6 +216,7 @@ async fn verify_pdf(
             "WebView2 printed a {LONG_SMOKE_BLOCKS}-block document on {pages} pages (expected at least {LONG_SMOKE_MIN_PAGES})"
         ));
     }
+    assert_contract_media_box(&long)?;
     verify_cancel(app, 1, width_css, ExportFormat::Pdf).await?;
     println!("EXPORT_PDF_SMOKE_OK pages=2 long_pages={pages}");
     Ok(())
@@ -262,6 +266,7 @@ async fn verify_cancel(
         scale,
         width_css,
         request_id.clone(),
+        super::export_page::PageSetup::default_dto(),
     ));
     // Let the command register its token and build the offscreen window.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -323,8 +328,25 @@ fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     Ok((width, height))
 }
 
+/// The contract is A4 only when the PDF's MediaBox matches it. Page count
+/// alone still passes for US Letter.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(any(windows, test))]
+fn assert_contract_media_box(bytes: &[u8]) -> Result<(), String> {
+    let (width, height) = super::export_page::pdf_media_box(bytes).ok_or("PDF has no MediaBox")?;
+    let (expect_w, expect_h) =
+        super::export_page::media_box_points(&super::export_page::PageSetup::contract_default());
+    if (width - expect_w).abs() > 1.0 || (height - expect_h).abs() > 1.0 {
+        return Err(format!(
+            "expected A4 MediaBox {expect_w:.2} x {expect_h:.2} pt, got {width} x {height}"
+        ));
+    }
+    Ok(())
+}
+
 /// Page objects (`/Type /Page`, not `/Pages`), with any whitespace PDF allows
 /// between the tokens, so a writer formatting change cannot fake a failure.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(any(windows, test))]
 fn pdf_page_count(bytes: &[u8]) -> usize {
     static PAGE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();

@@ -62,6 +62,7 @@ describe("App Settings & Session Restore integration", () => {
   it("loads user settings on startup and applies theme and CSS custom properties", async () => {
     const harness = createAppHarness(editor)
     const customSettings: UserSettings = {
+      ...DEFAULT_SETTINGS,
       theme: "dark",
       fontSize: 18,
       lineHeight: 1.8,
@@ -69,13 +70,7 @@ describe("App Settings & Session Restore integration", () => {
       tabSize: 4,
       defaultMode: "source",
       spellcheck: true,
-      autoPair: { brackets: true, quotes: true, markdownSyntax: true },
-      locale: "auto",
-      exportWidth: 800,
-      exportScale: 2,
       loggingEnabled: true,
-      loggingGeneration: 0,
-      verboseLogging: false,
     }
 
     vi.mocked(harness.services.getSettings!).mockResolvedValue(customSettings)

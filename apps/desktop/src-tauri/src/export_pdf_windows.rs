@@ -1,9 +1,13 @@
 //! WebView2 prints the prepared HTML using its print stylesheet and page rules.
 
+use crate::export::export_page::{self, PageSetup};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::WebviewWindow;
-use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Environment6, ICoreWebView2_7};
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    ICoreWebView2Environment6, ICoreWebView2_7, COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE,
+    COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+};
 use webview2_com::PrintToPdfCompletedHandler;
 use windows::core::{Interface, HSTRING, PCWSTR};
 
@@ -11,7 +15,9 @@ use windows::core::{Interface, HSTRING, PCWSTR};
 // paginate; the user can cancel at any time (closing the window aborts).
 const PRINT_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub(super) fn print_pdf(window: &WebviewWindow) -> Result<Vec<u8>, String> {
+pub(super) fn print_pdf(window: &WebviewWindow, page: &PageSetup) -> Result<Vec<u8>, String> {
+    let native = export_page::native_page(page);
+    let header_title = page.header_title.clone();
     // PrintToPdf writes directly to its path. Stage privately so a cancelled
     // or failed render never writes to the user-selected destination.
     let directory = Arc::new(
@@ -27,8 +33,26 @@ pub(super) fn print_pdf(window: &WebviewWindow) -> Result<Vec<u8>, String> {
         let settings = (|| unsafe {
             let environment: ICoreWebView2Environment6 = printer.Environment()?.cast()?;
             let settings = environment.CreatePrintSettings()?;
-            settings.SetShouldPrintBackgrounds(true)?;
-            settings.SetShouldPrintHeaderAndFooter(false)?;
+            let orientation = if native.landscape {
+                COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE
+            } else {
+                COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT
+            };
+            settings.SetOrientation(orientation)?;
+            settings.SetPageWidth(native.width_in)?;
+            settings.SetPageHeight(native.height_in)?;
+            settings.SetMarginTop(native.margin_top_in)?;
+            settings.SetMarginBottom(native.margin_bottom_in)?;
+            settings.SetMarginLeft(native.margin_left_in)?;
+            settings.SetMarginRight(native.margin_right_in)?;
+            settings.SetShouldPrintBackgrounds(native.print_backgrounds)?;
+            settings.SetShouldPrintHeaderAndFooter(native.header_footer)?;
+            if native.header_footer {
+                // Empty FooterUri keeps the local path out of the PDF. WebView2
+                // still prints the page number; HeaderTitle is the document name.
+                settings.SetHeaderTitle(&HSTRING::from(header_title.as_str()))?;
+                settings.SetFooterUri(&HSTRING::new())?;
+            }
             Ok::<_, windows::core::Error>(settings)
         })()
         .map_err(|error| format!("could not configure WebView2 PDF printing: {error}"))?;

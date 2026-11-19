@@ -21,6 +21,7 @@ import { parseSettings, type UserSettings } from "./settings"
 import { parseSessionState, type SavedSessionState } from "./sessionRestore"
 import type { TreeEntry } from "./FileTree"
 import type { SearchHit } from "./SearchPanel"
+import type { PrintSetup } from "@omd/engine"
 import { t } from "./i18n"
 import { isWindows } from "./platform"
 import { baseName, parentDir, plainPath, rebaseToDir } from "./workspace"
@@ -203,6 +204,7 @@ export interface DesktopServices {
     scale: number,
     width: number,
     requestId: string,
+    page: PrintSetup,
   ) => Promise<ExportWarning | null>
   pickCssPath?: () => Promise<string | null>
   readDocument: (path: string) => Promise<DiskSnapshot>
@@ -412,8 +414,10 @@ export const defaultServices: DesktopServices = {
   deletePath: async path => {
     await invoke("delete_path", { path })
   },
-  exportPreview: async (html, path, format, scale, width, requestId) => {
-    return await invoke<ExportWarning | null>("export_preview", { html, path, format, scale, width, requestId })
+  exportPreview: async (html, path, format, scale, width, requestId, page) => {
+    return await invoke<ExportWarning | null>("export_preview", {
+      html, path, format, scale, width, requestId, page,
+    })
   },
   cancelExport: async requestId => {
     await invoke("cancel_export", { requestId })

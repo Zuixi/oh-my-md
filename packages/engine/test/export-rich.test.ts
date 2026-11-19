@@ -359,4 +359,41 @@ describe("exportRichHtml", () => {
     expect(html).toContain("window.__omdExportHeight")
     expect(html).toContain("window.__omdExportReady = true")
   })
+
+  it("normalizes explicit page-break markers in rich export", async () => {
+    const doc = [
+      "Page 1",
+      "",
+      '<div style="page-break-after: always;"></div>',
+      "",
+      '<div class="page-break"></div>',
+      "",
+      "Page 3",
+    ].join("\n")
+    const html = await exportRichHtml(makeState(doc))
+    expect(html.match(/<div class="page-break"><\/div>/g)).toHaveLength(2)
+  })
+
+  it("drops leading source whitespace so the first heading is the first body child", async () => {
+    const html = await exportRichHtml(makeState("\n\n# Title\n\nAfter\n"))
+    expect(html).toContain("<body><h1>Title</h1>")
+    expect(html).toContain("<p>After</p>")
+  })
+
+  it("places print styles after base typography and before customCss and sets title", async () => {
+    const { DEFAULT_PRINT_SETUP } = await import("../src/export/printSetup")
+    const { EXPORT_BODY_CSS } = await import("../src/export/styles")
+    const custom = "@page{margin:25mm}"
+    const html = await exportRichHtml(makeState("# Hi"), {
+      customCss: custom,
+      print: { ...DEFAULT_PRINT_SETUP, headerTitle: "Spec & Notes" },
+    })
+    const bodyPos = html.indexOf(`<style>${EXPORT_BODY_CSS}</style>`)
+    const printPos = html.indexOf("@page{size:210mm 297mm")
+    const customPos = html.indexOf(`<style>${custom}</style>`)
+    expect(bodyPos).toBeGreaterThan(0)
+    expect(printPos).toBeGreaterThan(bodyPos)
+    expect(customPos).toBeGreaterThan(printPos)
+    expect(html).toContain("<title>Spec &amp; Notes</title>")
+  })
 })

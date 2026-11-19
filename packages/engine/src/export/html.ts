@@ -18,6 +18,13 @@ import { tableDataFromNode, type TableAlignment, type TableRowData } from "../ta
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
 import { mathTexOf } from "../semantic/math"
+import {
+  DEFAULT_PRINT_SETUP,
+  isExplicitPageBreakHtml,
+  PAGE_BREAK_HTML,
+  renderPrintCss,
+  type PrintSetup,
+} from "./printSetup"
 
 const SKIP = new Set([
   "HeaderMark", "EmphasisMark", "StrikethroughMark", "HighlightMark",
@@ -335,6 +342,7 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
       const raw = state.doc.sliceString(node.from, node.to)
       if (/^<a\b[^>]*\bid\s*=\s*(['"])[^'"]+\1[^>]*>$/i.test(raw) || /^<\/a\s*>$/i.test(raw))
         return raw
+      if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       return escapeHtml(raw)
     }
     case "Image": {
@@ -372,6 +380,7 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
     }
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
+      if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       const model = parseComplexTableBlock(raw)
       if (model) return renderComplexTableHtml(model)
       return escapeHtml(raw)
@@ -385,10 +394,28 @@ function render(node: SyntaxNode, state: EditorState, ctx: MarkdownReferenceCont
   }
 }
 
-export function exportHtml(state: EditorState): string {
+function printStyleTag(setup?: PrintSetup): string {
+  return `<style>${renderPrintCss(setup ?? DEFAULT_PRINT_SETUP)}</style>`
+}
+
+/**
+ * Source gaps before the first block are text nodes. They make that heading
+ * `:not(:first-child)`, so an opt-in heading break inserts a blank first page.
+ * Whitespace inside the first block stays put.
+ */
+function exportDocumentBody(body: string): string {
+  return body.trimStart()
+}
+
+function exportTitleHtml(setup?: PrintSetup): string {
+  const title = setup?.headerTitle?.trim()
+  return escapeHtml(title || "oh-my-md")
+}
+
+export function exportHtml(state: EditorState, print?: PrintSetup): string {
   const ctx = snapshotReferenceContext(state)
-  const body = render(syntaxTree(state).topNode, state, ctx)
-  return `<!doctype html><html><head><meta charset="utf-8"><title>oh-my-md</title><style>${EXPORT_BODY_CSS}</style></head><body>${body}</body></html>`
+  const body = exportDocumentBody(render(syntaxTree(state).topNode, state, ctx))
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${exportTitleHtml(print)}</title><style>${EXPORT_BODY_CSS}</style>${printStyleTag(print)}</head><body>${body}</body></html>`
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +425,8 @@ export function exportHtml(state: EditorState): string {
 export interface ExportRichHtmlOptions {
   /** Local image resolver; may return a promise (e.g. to read the file first). */
   resolveImageSrc?: (src: string) => string | Promise<string>
+  /** Page setup embedded after base typography and before custom CSS. Defaults to the shared contract. */
+  print?: PrintSetup
   /** Explicit export theme; drives the data-omd-theme/data-theme root attributes. */
   theme?: "light" | "dark"
   /** Use the full render width instead of the 720px reading column (native screenshots). */
@@ -546,6 +575,7 @@ function renderRich(
     }
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
+      if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       const model = parseComplexTableBlock(raw)
       if (model) return renderComplexTableHtmlWithImages(model, opts)
       return escapeHtml(raw)
@@ -641,18 +671,23 @@ export async function exportRichHtml(
 ): Promise<string> {
   const theme = options.theme ?? "light"
   const ctx = snapshotReferenceContext(state)
-  const [body, katexCss] = await Promise.all([
+  const [renderedBody, katexCss] = await Promise.all([
     renderRich(syntaxTree(state).topNode, state, options, ctx),
     loadKatexExportCss(),
   ])
+  const body = exportDocumentBody(renderedBody)
   // KaTeX first so both the base typography and user CSS can override it.
+  // `@media print` adds zero CSS specificity, so `printStyle` must follow
+  // `baseStyle`/`widthStyle` to reset body padding/max-width while preceding
+  // `customStyle` so user `@page` and print rules win.
   const katexStyle = katexCss ? `<style>${katexCss}</style>` : ""
   const baseStyle = `<style>${EXPORT_BODY_CSS}</style>`
-  const customStyle = options.customCss
-    ? `<style>${escapeStyleText(options.customCss)}</style>`
-    : ""
   const widthStyle = options.fullWidth
     ? "<style>html,body{max-width:none;overflow-x:hidden}</style>"
     : ""
-  return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8"><title>oh-my-md</title>${katexStyle}${baseStyle}${widthStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${EXPORT_READY_SCRIPT}</body></html>`
+  const printStyle = printStyleTag(options.print)
+  const customStyle = options.customCss
+    ? `<style>${escapeStyleText(options.customCss)}</style>`
+    : ""
+  return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8"><title>${exportTitleHtml(options.print)}</title>${katexStyle}${baseStyle}${widthStyle}${printStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${EXPORT_READY_SCRIPT}</body></html>`
 }

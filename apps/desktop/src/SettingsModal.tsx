@@ -2,21 +2,19 @@ import { useEffect, useRef, useState } from "react"
 import { X } from "lucide-react"
 import {
   DEFAULT_SETTINGS,
-  EXPORT_SCALE_OPTIONS,
-  EXPORT_WIDTH_PRESETS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   LINE_HEIGHT_PRESETS,
   sanitizeSettings,
   type AppTheme,
   type DefaultEditorMode,
-  type ExportScale,
   type TabSize,
   type UserSettings,
 } from "./settings"
 import { localeOptions, useT, type StoredLocale } from "./i18n"
 import type { LogStateView } from "./logging"
 import { ISSUES_URL, TROUBLESHOOTING_URL } from "./constants"
+import { ExportSettingsSection } from "./ExportSettingsSection"
 import { FontFamilyPicker } from "./FontFamilyPicker"
 
 export interface SettingsModalProps {
@@ -338,49 +336,7 @@ export function SettingsModal(props: SettingsModalProps) {
           </div>
 
           {/* Export Section */}
-          <div className="settings-section">
-            <h3 className="settings-section-title">{t("settings.section.export")}</h3>
-
-            <div className="settings-row">
-              <label htmlFor="setting-export-width" className="settings-label">
-                {t("settings.label.exportWidth")}
-              </label>
-              <select
-                id="setting-export-width"
-                className="settings-select"
-                value={settings.exportWidth}
-                onChange={e => update({ exportWidth: Number(e.target.value) })}
-              >
-                {EXPORT_WIDTH_PRESETS.map(preset => (
-                  <option key={preset.value} value={preset.value}>
-                    {t(preset.labelKey)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="settings-row">
-              <label htmlFor="setting-export-scale" className="settings-label">
-                {t("settings.label.exportScale")}
-              </label>
-              <select
-                id="setting-export-scale"
-                className="settings-select"
-                value={settings.exportScale}
-                onChange={e => update({ exportScale: Number(e.target.value) as ExportScale })}
-              >
-                {EXPORT_SCALE_OPTIONS.map(scale => (
-                  <option key={scale} value={scale}>
-                    {t(`settings.export.scale.${scale}`)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <p className="settings-note">
-              {t("settings.export.pixelWidth", { width: settings.exportWidth * settings.exportScale })}
-            </p>
-          </div>
+          <ExportSettingsSection settings={settings} onUpdate={update} />
 
           {/* Logging Section */}
           <div className="settings-section">

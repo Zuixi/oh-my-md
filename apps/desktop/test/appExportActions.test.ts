@@ -125,10 +125,40 @@ describe("exportCurrent", () => {
       3,
       1920,
       expect.any(String),
+      expect.objectContaining({
+        paper: "a4",
+        orientation: "portrait",
+        headingPageBreak: "none",
+        headerFooter: false,
+      }),
     )
     expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ theme: "dark", fullWidth: true }),
+    )
+  })
+
+  it("forces light theme for PDF export even when the editor is in dark mode", async () => {
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue("/out/doc.pdf"),
+    })
+    await exportCurrent(services, makeView(), "pdf", {}, undefined, undefined, {
+      width: 800,
+      scale: 2,
+      theme: "dark",
+    })
+    expect(vi.mocked(exportRichHtml)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        theme: "light",
+        fullWidth: true,
+        print: expect.objectContaining({
+          paper: "a4",
+          headingPageBreak: "none",
+          marginTopMm: 16,
+          headerFooter: false,
+        }),
+      }),
     )
   })
 

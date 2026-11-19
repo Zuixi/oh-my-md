@@ -34,6 +34,14 @@ describe("settings model", () => {
       // Retina-safe PNG export: 800 CSS px at 2x = 1600 px wide.
       exportWidth: 800,
       exportScale: 2,
+      exportPaper: "a4",
+      exportOrientation: "portrait",
+      exportHeadingPageBreak: "none",
+      exportMarginTopMm: 16,
+      exportMarginRightMm: 16,
+      exportMarginBottomMm: 16,
+      exportMarginLeftMm: 16,
+      exportHeaderFooter: false,
       // Opt-in: a fresh install writes no log file.
       loggingEnabled: false,
       loggingGeneration: 0,
@@ -67,6 +75,27 @@ describe("settings model", () => {
     expect(sanitized.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily)
   })
 
+  it("keeps PDF page defaults, clamps margins, and validates heading page breaks", () => {
+    expect(sanitizeSettings({}).exportPaper).toBe("a4")
+    expect(sanitizeSettings({}).exportHeadingPageBreak).toBe("none")
+    expect(sanitizeSettings({
+      exportPaper: "letter",
+      exportOrientation: "landscape",
+      exportHeadingPageBreak: "h1-h2",
+    })).toMatchObject({
+      exportPaper: "letter",
+      exportOrientation: "landscape",
+      exportHeadingPageBreak: "h1-h2",
+      exportMarginTopMm: 16,
+    })
+    expect(sanitizeSettings({ exportHeadingPageBreak: "h1" }).exportHeadingPageBreak).toBe("h1")
+    expect(sanitizeSettings({ exportHeadingPageBreak: "h3" as never }).exportHeadingPageBreak).toBe("none")
+    expect(sanitizeSettings({ exportMarginTopMm: 200 }).exportMarginTopMm).toBe(50)
+    expect(sanitizeSettings({ exportMarginTopMm: -4 }).exportMarginTopMm).toBe(0)
+    expect(sanitizeSettings({ exportHeaderFooter: "yes" as never }).exportHeaderFooter).toBe(false)
+    expect(sanitizeSettings({ exportHeaderFooter: true }).exportHeaderFooter).toBe(true)
+  })
+
   // The persisted flag is a boolean, but it arrives from JSON a user or an older
   // build can hand-edit, so only a real `true` may win. `"true"` is a string
   // that Rust's `as_bool()` also refuses, which keeps both sides agreeing.
@@ -93,6 +122,14 @@ describe("settings model", () => {
       locale: "auto",
       exportWidth: 1200,
       exportScale: 3,
+      exportPaper: "a4",
+      exportOrientation: "portrait",
+      exportHeadingPageBreak: "none",
+      exportMarginTopMm: 16,
+      exportMarginRightMm: 16,
+      exportMarginBottomMm: 16,
+      exportMarginLeftMm: 16,
+      exportHeaderFooter: false,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: true,
@@ -111,6 +148,14 @@ describe("settings model", () => {
       locale: "auto",
       exportWidth: 1200,
       exportScale: 3,
+      exportPaper: "a4",
+      exportOrientation: "portrait",
+      exportHeadingPageBreak: "none",
+      exportMarginTopMm: 16,
+      exportMarginRightMm: 16,
+      exportMarginBottomMm: 16,
+      exportMarginLeftMm: 16,
+      exportHeaderFooter: false,
       loggingEnabled: true,
       loggingGeneration: 0,
       verboseLogging: true,
