@@ -11,7 +11,7 @@ Read the applicable subdomain guides for source changes and the tests exercising
 | --- | --- | --- |
 | `src/decorations/**` | [`src/decorations/AGENTS.md`](./src/decorations/AGENTS.md) | `StateField` progressive/windowed build, `atomicRanges`, Route A folding, `BlockWidget` 5 contracts |
 | `src/format/**` | [`src/format/AGENTS.md`](./src/format/AGENTS.md) | `Prec.highest` Enter/Tab/Backspace chain, `blockPrefixOf`, `autoPair`, shortcut derivation |
-| `src/tables/**` | [`src/tables/AGENTS.md`](./src/tables/AGENTS.md) | Two-state table model, Lezer-range edits, hover/source toolbars, `parseCell` |
+| `src/tables/**` | [`src/tables/AGENTS.md`](./src/tables/AGENTS.md) | Three-state table model (rendered / in-cell / source), Lezer-range edits, hover/source toolbars, `parseCell` |
 | `src/parse/**` | [`src/parse/AGENTS.md`](./src/parse/AGENTS.md) | Lezer extensions, `chars.ts`, `isEscaped`/`skipInlineCode`, `inVerbatim`, no full-tree parses |
 
 ## Local Structure

@@ -76,7 +76,7 @@ pnpm verify                                                        # full test +
 - **Target <= 500 physical lines; hard limit 800.** Count comments, blank lines, and tests, including inline Rust tests. The gate covers TS/JS, Rust, and Python; generated or vendored names are not automatic exemptions. Never compress formatting or delete useful explanations to evade it.
 - **Legacy oversized files may only shrink.** `scripts/module-size-baseline.json` records existing caps; the gate also compares against the base revision so reductions cannot be reclaimed. Never add or increase a legacy allowance. Remove entries when files are deleted or reach the hard limit.
 - Split by cohesive responsibility and state ownership, not arbitrary line counts. A module should have one explainable purpose and a narrow interface; avoid pass-through wrappers, catch-all `utils`, or abstractions for hypothetical reuse.
-- Put new behavior outside growth-frozen hotspots (`App.tsx`, Rust `lib.rs`/`workspace.rs`, engine `decorations/widgets/table.ts`/`blocks.ts`); keep only thin wiring there. Move large Rust inline tests into sibling test modules.
+- Put new behavior outside growth-frozen hotspots (`App.tsx`, Rust `lib.rs`/`workspace.rs`, and other files in `scripts/module-size-baseline.json`) and keep engine dispatchers (`decorations/widgets/table.ts`, `decorations/blocks.ts`) thin. Move large Rust inline tests into sibling test modules.
 - Reuse existing helpers before adding logic. Keep one owner for each state; derive projections instead of synchronizing duplicate mutable facts. Keep parsers/edit plans pure where possible and put dispatch, IO, and notifications at explicit execution boundaries.
 
 ### Numbers, Units & Shared Contracts

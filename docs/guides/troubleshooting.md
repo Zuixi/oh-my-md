@@ -1,5 +1,7 @@
 # 日志与故障排查
 
+> [English](./troubleshooting-en.md) · 简体中文
+
 oh-my-md 把诊断信息写进一个本地日志文件和一个可导出的诊断信息包。这份指南面向使用者：日志在哪、怎么开详细日志、怎么把诊断包发给维护者，以及日志里那几行 `session *` 是什么意思。实现细节见 `docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md`。
 
 ## 日志默认关闭

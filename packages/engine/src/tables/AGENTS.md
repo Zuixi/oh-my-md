@@ -27,7 +27,7 @@
 
 - **Single cell parser (`parse/cell.ts::parseCell`):** Both `TableWidget` (`renderTableCellContent`) and HTML exports (`exportHtml` / `exportRichHtml`) must consume the shared cell model — never regex-parse cells or bypass `parseCell` in rich export.
 - **Navigation (`navigate.ts`, `format/tableKeymap.ts`):** `tableAt`, `cellAt`, `nextCell`, `cellBelow` are read-only tree queries (`null` when tree is unavailable; never advance parsing). `Enter` on the final row (or at `Table.to`) exits the table via `exitTableSpec`; only `Tab` on the final cell appends a row. Never add a redundant `isComposing` guard in `tableKeymap` (CodeMirror already filters composition keydowns).
-- **Future complex HTML tables:** Dedicated complex-table modules are not implemented. If an approved task introduces `rowspan`/`colspan` editing, design a separate model/widget rather than silently extending the GFM range-edit contract; future plans are not current requirements.
+- **Complex HTML tables (`rowspan`/`colspan`):** Handled separately from GFM `Table` range edits by the closed `HTMLBlock` contract (`parse/complexTable.ts`, `paste/serializeComplexTable.ts`, `decorations/widgets/complexTable.ts`; see [engine invariants](../../AGENTS.md#semantic-projection--smart-paste-invariants)). Do not mix `HTMLBlock` complex tables into the GFM `Table` range-edit model.
 
 ## Related Guides & Verification
 

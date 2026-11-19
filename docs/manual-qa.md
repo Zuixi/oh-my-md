@@ -283,7 +283,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 
 ### 高清导出与页面设置（2026-11，macOS / Windows / Linux）
 
-- [ ] Settings → Export 明确分为「图片（PNG）」与「PDF 与打印」两组：宽度（640/800/1200/1920 CSS px）与清晰度（1x/2x/3x）下方紧邻显示最终像素宽度；PDF 组提供纸张（A4/Letter）、方向、四边距（mm 输入框支持删空/小数编辑，失焦时回退或钳位到 0–50 mm）、标题自动分页（关闭/H1/H1 与 H2）及页眉页码开关；macOS/Linux 会诚实提示当前 PDF 页面设置的作用范围。
+- [ ] Settings → Export 明确分为「图片（PNG）」与「PDF 与打印」两组：宽度（640/800/1200/1920 CSS px）与清晰度（1x/2x/3x）下方紧邻显示最终像素宽度；PDF 组提供纸张（A4/Letter）、方向、四边距（mm 输入框支持删空/小数编辑，失焦时回退或钳位到 0–50 mm）、标题自动分页（关闭/H1/H1 与 H2）及页眉页码开关；macOS、Windows、Linux 三平台均使用同一 PDF 页面契约分页导出。
 - [ ] macOS：`800×2` 导出 PNG 为 1600 px 宽；`1920×2` 为 3840 px（4K）；`800×3` 为 2400 px。三种倍率下文字、公式、Mermaid、Shiki 代码边缘清晰，无 1x 放大后的糊边。
 - [ ] 1 CSS px 黑色竖线在 2x 导出中占恰好 2 个设备像素、3x 中占 3 个设备像素（macOS 已验证：2x→2 px，3x→3 px，4K 宽度→3840 px）。
 - [ ] 含本地图片的文档导出 PNG/PDF 后图片存在且清晰；导出的 HTML 在浏览器离线打开时图片仍显示（本地图已内嵌为 data URL），且 `<title>` 显示文档标题而非固定的 `oh-my-md`。
@@ -291,7 +291,7 @@ M1 交付物：一个能 Cmd+O 打开 .md → Live Preview 编辑 → Cmd+S 保�
 - [ ] 暗色主题导出 HTML/PNG 仍为暗色，自定义 CSS 的 `html[data-theme="dark"]` 规则生效；导出 PDF 强制使用浅色主题以保证打印可读性。
 - [ ] 超长文档在单张图片高度上限处出现 "height-clamped" 警告并说明降低宽度/清晰度或导出 PDF；不静默截断。
 - [ ] Windows（WebView2）与 Linux（WebKitGTK）文件菜单均可导出 PNG。Windows/Linux 导出的 PNG 宽度与设置一致，内容完整。
-- [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；macOS 和 Windows 的文件菜单与命令面板提供 PDF。
+- [ ] 同一文档在三个平台导出：HTML 内容一致；PNG 宽度/结构一致（字体由系统渲染，允许字形差异）；macOS、Windows 和 Linux 的文件菜单与命令面板均提供 HTML、PDF、PNG 三种导出。
 - [ ] Windows PDF：从文件菜单导出含 KaTeX 公式、表格、`<div style="page-break-after: always;"></div>` 分页标记及跨页正文的 Markdown，确认 A4 默认页边距（无额外 24 px `body` 内边距）、横向/Letter 纸张、标题自动分页及页眉页码开关（打开时不印本地路径）生效；取消渲染时目标文件未变更，再次导出成功。
 - [ ] 点击导出后立即出现带“取消”按钮的进度提示；点击取消后界面立即提示已取消、无错误 toast，离屏窗口关闭，后续导出仍可用。
 - [ ] 在准备阶段取消：不再打开保存对话框；在原生渲染阶段取消：不写入不完整文件，取消按钮在 8 秒内生效。

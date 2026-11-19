@@ -3,60 +3,81 @@
 
 # oh-my-md — Fast Open-Source Markdown Editor
 
-**A free Markdown editor with true live preview, built to stay fast on documents with hundreds of thousands of lines.**
+**A free, local-first, source-faithful Markdown editor with true live preview — built with Tauri 2 & CodeMirror 6 to stay fast even on 750k-line documents.**
 
-[**Download the latest release →**](https://github.com/Zuixi/oh-my-md/releases/latest)
+[**Download the latest release →**](https://github.com/Zuixi/oh-my-md/releases/latest) · [Features](#features) · [Performance](#performance) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation) · [Roadmap](#roadmap)
 
 [English](./README.md) · [简体中文](./README-zh.md)
 
 [![CI](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml/badge.svg)](https://github.com/Zuixi/oh-my-md/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Zuixi/oh-my-md)](https://github.com/Zuixi/oh-my-md/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Zuixi/oh-my-md/total)](https://github.com/Zuixi/oh-my-md/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20·%20Windows%20·%20Linux-black)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
 </div>
 
-![oh-my-md: dark theme with file tree and outline, live preview rendering KaTeX math and an inline Mermaid diagram](docs/images/hero.png)
+![oh-my-md live demo: real-time Markdown folding, instant ⌘E live⇄source toggle, Typora-style in-cell table editing, and live KaTeX math popup](docs/images/demo.gif)
 
-<!-- TODO(demo-gif): record a 10–15 s demo GIF — ⌘E live⇄source toggle plus typing — save it as docs/images/demo.gif, then uncomment the line below.
-![demo: toggle live preview and source mode with ⌘E](docs/images/demo.gif)
--->
+<table>
+  <tr>
+    <td align="center"><strong>Dark Theme (Default)</strong></td>
+    <td align="center"><strong>Light Theme</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/hero-dark.png" alt="oh-my-md dark theme with file tree, outline, table, KaTeX math, and Mermaid diagram" /></td>
+    <td><img src="docs/images/hero-light.png" alt="oh-my-md light theme with file tree, outline, table, KaTeX math, and Mermaid diagram" /></td>
+  </tr>
+</table>
 
 ## Why oh-my-md?
 
-Typora proved that a Markdown editor can feel like a modern word processor — then it went closed-source and paid. MarkText kept the faith but hasn't shipped a release since 2022. **oh-my-md is a fresh attempt: free, Apache-2.0, wrapped in a lightweight Tauri shell, with an editing engine designed from day one for very large documents.**
+Typora proved that a Markdown editor can feel like a modern word processor — then went closed-source and paid. MarkText kept the faith but hasn't shipped a release since 2022. And today, anyone can spin up a prototype Markdown editor in a weekend — until a real 50,000-line file, a complex table, a CJK IME, or an external edit exposes every crack.
+
+**oh-my-md is built for the hard 5% that makes a daily-driver editor trustworthy:** free, Apache-2.0, wrapped in a lightweight Tauri 2 shell, and engineered from day one for source fidelity, data safety, and very large documents.
+
+- **Pure source fidelity (clean Git diffs)** — Live preview is a projection over your raw `.md` bytes, not a rich-text AST that silently reformats lists, escapes, or tables on save. Even in-cell table edits apply byte-minimal syntax-range patches.
+- **Data-safe by architecture** — Rust double-compare atomic saving, external-change & symlink conflict detection, multi-draft crash recovery, per-window session restore, and local version snapshots.
+- **Proven large-document speed** — Viewport-windowed live rendering, streaming open, and zero O(doc) hot-path work: **2 ms p95 typing on 20 MB / 750k lines**, verifiable with the built-in benchmark.
+- **The hard UX edges, actually solved** — Typora-style in-cell table editing, tight selection geometry (exact Markdown copy across rendered blocks), Smart Paste from Notion/Word/web (including `rowspan`/`colspan` tables), live KaTeX popup editing, and first-class CJK IME handling.
+- **Print-grade export on every OS** — Self-contained HTML, **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
 
 |  | oh-my-md | Typora | MarkText |
 | --- | --- | --- | --- |
 | Open source | ✅ Apache-2.0 | ❌ | ✅ MIT |
 | Price | Free | $14.99 | Free |
 | Live preview, no split pane | ✅ | ✅ | ✅ |
-| Responsive on 100k+ lines¹ | ✅ measured | — | — |
-| Export | HTML · PDF · PNG | HTML · PDF · DOCX … | HTML · PDF |
-| App shell | Tauri 2 | Electron | Electron |
+| Source-faithful (no AST rewrite) | ✅ raw Markdown projection | — | — |
+| Responsive on 100k+ lines¹ | ✅ measured (`bench`) | — | — |
+| Export (macOS · Windows · Linux) | HTML · paginated PDF · 3x PNG | HTML · PDF · DOCX … | HTML · PDF |
+| App shell | Tauri 2 (native WebView, ~7 MB Win installer) | Electron | Electron |
 | Platforms | macOS · Windows · Linux | macOS · Windows · Linux | macOS · Windows · Linux |
 
-¹ "—" means no published figures, not a judgment on those editors.
+¹ "—" means no published figures or different architecture, not a judgment on those editors.
 
 ## Features
 
-**Writing**
-- **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to a plain source mode any time
-- **Full CommonMark + GFM** — tables, task lists, footnotes, strikethrough
-- **Rich blocks** — KaTeX math, Mermaid diagrams, Shiki code highlighting, `==highlights==`, `:gemoji:`
-- **Typewriter & Focus modes**, with careful IME handling for CJK input
+**Writing & Live Preview**
+- **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to plain source mode in under 1 ms without touching your bytes
+- **Full CommonMark + GFM** — tables, task lists, footnotes (click to jump/return), strikethrough, `==highlights==`, `<mark>`, `<u>`, `:gemoji:` completion
+- **Typora-style tables & Smart Paste** — click directly into rendered table cells to edit with byte-minimal range patches, or paste rich HTML from browsers/Notion/Feishu/Word (including complex `rowspan`/`colspan` tables)
+- **Rich blocks** — live **KaTeX math** with an inline CodeMirror LaTeX popup editor, **Mermaid diagrams**, and **Shiki** syntax highlighting
+- **Writing polish** — configurable auto-pairing (brackets, quotes, Markdown), Typewriter & Focus modes, and first-class **CJK IME** & underscore flanking (`__粗体__`) support
 
-**Files & workspace**
-- Single-file centered — double-click any `.md` to open it; mount a folder workspace for a file tree, folder search, outline panel, and tabs
-- Paste, drag, or pick images — they are stored in a local `assets/` folder beside your file
-- Conflict-safe saving, external-change detection, crash and session recovery
+**Files, Workspace & Data Safety**
+- **Single-file first, workspace ready** — double-click any `.md` to open immediately; open a folder for a virtualized file tree, inline create/rename, Quick Open (`⌘P`), regex Find/Replace (`⌘F` / `⌘H`), folder search (`⇧⌘F`), outline panel, and tabs
+- **Local images** — paste, drag-and-drop, or pick images into a local `assets/` folder beside your document
+- **Never lose a draft** — conflict-safe atomic saving, external-change detection, multi-draft crash recovery, per-window session restore, and local version snapshots
+- **Privacy & opt-in diagnostics** — no account, no telemetry; diagnostic logging is off by default and exports redacted support bundles when needed (see [Troubleshooting](./docs/guides/troubleshooting-en.md) and [SECURITY.md](./SECURITY.md))
 
-**Export**
-- **HTML export works on macOS, Windows, and Linux.**
-- **PDF export is currently macOS-only; PNG export works on macOS, Windows, and Linux.** PNG width and 1x/2x/3x quality are configurable in Settings. All formats preserve formulas, highlighted code, tables, and diagrams from the live preview.
+**Export (macOS · Windows · Linux)**
+- **HTML, paginated native PDF, and PNG** all ship on macOS, Windows, and Linux — preserving KaTeX formulas, Shiki code highlighting, tables (including complex HTML tables), and Mermaid diagrams from live preview
+- **PDF page setup** — configurable A4/Letter paper size, portrait/landscape orientation, custom margins, heading page breaks, and optional headers/page numbers
+- **High-DPI PNG** — configurable width (640–1920 CSS px) and 1x/2x/3x scale in Settings
 
-**Appearance**
-- Light and dark themes with matching code themes, plus custom CSS
+**Appearance & Localization**
+- Light, Dark, and System themes (matching native window chrome and code themes), plus English and 简体中文 UI
 - Custom CSS themes the editor through public tokens — override `--omd-bg`, `--omd-fg`, `--omd-link`, `--omd-cursor`, `--omd-selection-bg`, `--omd-selection-bg-unfocused`, or the `--omd-syn-*` syntax palette on `html[data-theme="dark"|"light"]`
 
 ## Performance
@@ -91,7 +112,7 @@ Figures come from the built-in advisory benchmark on an M-series machine — run
 
 ### Unsigned package warning
 
-The first release is **not code-signed**. Download only from this repository's GitHub Releases page and, when possible, verify the published `SHA256SUMS.txt`. Never disable Gatekeeper or SmartScreen globally.
+Current releases are **not code-signed**. Download only from this repository's GitHub Releases page and, when possible, verify the published `SHA256SUMS.txt`. Never disable Gatekeeper or SmartScreen globally.
 
 **macOS (Gatekeeper):** open the `.dmg`, drag oh-my-md to Applications, then try to open it. If macOS blocks it, open **System Settings → Privacy & Security**, verify the blocked app is oh-my-md, and choose **Open Anyway**. Alternatively, Control-click the app in Finder and choose **Open**. Do not use commands that globally disable Gatekeeper.
 
@@ -145,7 +166,15 @@ Create a native package for the current host with `pnpm --filter @omd/desktop ta
 
 ## Keyboard shortcuts
 
-Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and every command is reachable from the command palette (`⇧⌘P`) — nothing to memorize. See the [full shortcut reference](./docs/guides/keyboard-shortcuts.md). Windows and Linux use the corresponding Ctrl-based shortcuts.
+Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and every command is reachable from the command palette (`⇧⌘P`) — nothing to memorize. See the [full shortcut reference](./docs/guides/keyboard-shortcuts-en.md). Windows and Linux use the corresponding Ctrl-based shortcuts.
+
+## Documentation
+
+- [Keyboard Shortcuts Guide](./docs/guides/keyboard-shortcuts-en.md) ([简体中文](./docs/guides/keyboard-shortcuts.md))
+- [Logging & Troubleshooting](./docs/guides/troubleshooting-en.md) ([简体中文](./docs/guides/troubleshooting.md))
+- [Windows Installer Policy (NSIS / MSI)](./docs/guides/windows-installer.md)
+- [Security & Privacy Policy](./SECURITY.md)
+- [Contributing Guide](./CONTRIBUTING.md) & [Architecture / Agent Guides (`AGENTS.md`)](./AGENTS.md)
 
 ## Roadmap
 

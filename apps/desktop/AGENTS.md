@@ -14,7 +14,7 @@ apps/desktop/
 │   ├── fileTreeActions.ts       # File-tree operations bridge (host-injected; cross-render refs via host)
 │   ├── documentOpen.ts          # Open coordinator: tiers, streaming read, request token (own state)
 │   ├── appSessionInit.ts        # One-shot startup flows (settings load, shard restore, draft prompt)
-│   ├── appCommands.ts           # buildAppCommands(ctx): the 51-entry command table as data
+│   ├── appCommands.ts           # buildAppCommands(ctx): command table as data
 │   ├── main.tsx                 # React mount + ErrorBoundary + single react-toastify container
 │   ├── Editor.ts                # CM6 host assembly, engine options, link activation, status reporter
 │   ├── tightSelection.ts        # Vendored tight selection drawing (never re-add stock drawSelection)
@@ -39,7 +39,7 @@ apps/desktop/
 
 ## Frontend & Module Boundaries
 
-1. **Keep `App.tsx` thin (growth-frozen):** Put state machines, coordinators, and IO workflows in dedicated modules (`*Coordinator.ts`, `*Runner.ts`, `pasteController.ts`); apply the root size policy rather than adding orchestration to the shell.
+1. **Keep `App.tsx` thin (growth-frozen):** Put state machines, coordinators, and IO workflows in dedicated modules (`*Coordinator.ts`, `*Runner.ts`, `clipboardPaste.ts`, `documentOpen.ts`, `fileTreeActions.ts`); apply the root size policy rather than adding orchestration to the shell.
 2. **Hot-path performance (`documentMaterializer.ts`, `editorStatusStore.ts`):** `EditorDocumentUpdate` never carries a full document string. Pull `view.state.doc.toString()` on the 250ms trailing materializer cadence and flush before save/close/delete. Route cursor/mode updates through `editorStatusStore` (`sameEditorStatus` deduplicated).
 3. **Feedback & i18n:** Route user notifications through `services.reportError` / `services.notifySuccess` (never call `window.alert` directly; rate-limit per-change recovery errors in `recoveryWriter.ts`). Keep i18n in desktop (`useT` / `t`) and pass localized labels to the engine via `EngineOptions`.
 4. **Multi-window safety:** Scope window-targeted Tauri listeners (`menu-command`, `open-file`, `session-flush`) with `listenTarget()` (`AnyLabel`) in `desktopServices.ts`. Gate `restoreDrafts()` on `windowScope.isMainWindow()`, while `restoreSavedSession()` runs per window shard.

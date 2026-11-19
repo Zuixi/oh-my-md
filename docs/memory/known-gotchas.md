@@ -26,7 +26,7 @@
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
 - **Underscore emphasis next to CJK is not CommonMark** — `parse/cjkUnderscore.ts` exists for a reason; do not remove it to "simplify".
 - **Horizontal rules are block widgets when unselected** — keep `HorizontalRule` in `SELECTION_BLOCKS`.
-- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; the rendered table has no in-cell editor (two states only), and a per-cell `mousedown` intercept is the bug — the wrap handler owns the flip into cell-exact source.
+- **Table cells are a single-line Markdown mini-document** — only `parse/cell.ts` parses cells; never a second inline parser; Live Preview uses the three-state model (rendered / in-cell `TableEditSession` via `tableCellEdit.ts` / explicit `</>` source), and cell clicks open a cell session rather than flipping to raw source.
 - **Table edits are Lezer-range-based, validated at dispatch** — no whole-table serialize/parse revival; rendered-toolbar targets come from hover and must pass `applyTableToolAt`'s live-doc check; no in-cell `<input>` overlay may return; real-`EditorView` tests are mandatory.
 - **A focused table must skip its subtree** — after emitting `line:omd-table-src*` the `Table` branch must `return true`, or `inlineRules` folds `**` inside cells and source mode renders "half a preview".
 - **Table Tab must not fall through to indentation when the tree is unresolved** — 树未覆盖光标时 `tableAt` 返回 null，放行 Tab 会让 `indentMore` 把空白写进表格行首；按行首形状吞键，Enter 不套这条兜底。
@@ -58,10 +58,6 @@
 - **Inline formatting composition must respect node ownership** — underline markers are asymmetric (`<u>` / `</u>`), and formatting added around `InlineCode` must wrap the whole resolved node rather than enter its literal content.
 - **Wrap commands must keep the caret inside** — a collapsed caret at a word or paragraph end needs an explicit post-wrap selection before the closing marker/fence. Right-biased mapping puts it after the closing insertion, so the next shortcut stacks another wrapper instead of toggling it off.
 - **The complete-tree trap** — production code must never `forceParsing`/`ensureSyntaxTree` to `doc.length` (`crossLayerNoFullTree.test.ts` guards it).
-- **`syntaxTree().length` is not contiguous parse coverage** — lazy nested languages can leave fragment holes; commands without local semantic proof must gate on `syntaxTreeAvailable`. Inline toggles use a resolved local container/node plus a revocable repeat plan, so an unrelated earlier hole cannot break consecutive shortcuts. Toggles remain semantic, all-or-nothing, one transaction, and one isolated undo step; never append raw marker pairs.
-- **Bold/italic stacking is semantic, not raw delimiter append** — a delimiter-merge guard must still allow the missing opposite emphasis around a proved whole node (`**text**` + italic → `***text***`); same-kind presses toggle off and never create `****text****`.
-- **Inline formatting composition must respect node ownership** — underline markers are asymmetric (`<u>` / `</u>`), and formatting added around `InlineCode` must wrap the whole resolved node rather than enter its literal content.
-- **Wrap commands must keep the caret inside** — a collapsed caret at a word or paragraph end needs an explicit post-wrap selection before the closing marker/fence. Right-biased mapping puts it after the closing insertion, so the next shortcut stacks another wrapper instead of toggling it off.
 - **Decorations are seeded and windowed** — never assume a decoration exists outside the viewport window; `drainPendingLiveBuild` is test-only.
 - **Multi-line link constructs leave a dangling empty preview row** — cosmetic, accepted.
 - **Link/Image/cell semantics are one shared projection** — `semantic/{link,image,inlineText}.ts` is the only node interpretation; Preview, sync export, rich export, and `parseCell` must consume it, never re-derive a destination/alt from `getChild("URL")`.
@@ -95,14 +91,14 @@
 - **Relative image source and filesystem path are different concerns** — resolve through the `resolveImageSrc` host callback only.
 - **Image paste is a two-step consistency operation** — bytes are written before the Markdown reference is inserted; operations are serialized per view.
 - **Window listeners can capture stale React state** — keep handlers behind refs.
-- **Tab identity and document identity are different** — stable `EditorSession.id`, incrementing `documentId`; export goes through an offscreen WKWebView, never iframe print or `html-to-image`.
+- **Tab identity and document identity are different** — stable `EditorSession.id`, incrementing `documentId`; native export goes through each platform's offscreen WebView (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), never iframe print or `html-to-image`.
 - **Dirty state needs a saved-content baseline** — compare text against the last saved snapshot; a one-way boolean breaks on undo.
 - **Cross-layer constants must stay in sync (TS ↔ Rust)** — named constants on both sides plus the drift test.
 - **Shortcut sources: menu, window, keymap, palette** — change a binding in one entry point; never `PredefinedMenuItem` for window actions.
 - **Statusbar word count is debounced** — wait out 250 ms (or fake timers) before asserting.
 - **CodeMirror `readOnly` is advisory** — every dispatch site guards `state.readOnly` itself.
 - **Editing hot path owns zero O(doc) work** — no doc string on the update path; materialize on the trailing cadence.
-- **Open-path scale policy has one entry point** — `resetTabDocument` and `ensureViews`; budget/windowing globals follow the active tab only.
+- **Open-path scale policy has one entry point** — `resetTabDocument` and `ensureViews`; per-view `performancePolicy` facet is authoritative for every tab (never mutate process-global `setBlockRenderBudget` / `setSafeModeRendering`).
 - **Path identity normalizes separators and `\\?\` prefixes — for Windows forms only** — use `samePath`/`pathWithinDir`/`baseName`; keep the raw form in tree keys (native `parentDir`), rebase canonicalized create/rename results (`plainPath` + `rebaseToDir`; reuse only an *exactly spelled* parent, else rebuild from the caller's dir — also fixes macOS/Linux symlinks), and never treat POSIX backslash as a separator or feed a normalized dir into `childrenByPath`/`expanded`.
 - **`revealItemInDir` fails on forward-slash Windows paths** — `\\?\C:\…` + UI `/` separators → `//?/C:/…`, which the plugin cannot simplify and the Shell cannot parse; restore `\` at the call site.
 - **Bounded waits on the save queue** — `awaitWithTimeout`; the save chain keeps running after a timeout.
@@ -185,7 +181,7 @@ sessions.
 
 `tauri signer generate` already writes a single-line Base64 private key. Do not Base64 it again. More subtly, Tauri's strict decoder rejects any whitespace after the final `=` padding: a valid 348-byte key ends with `==` at offsets 346–347, but a trailing space/CRLF makes the error misleadingly point at offset 346 (`Invalid symbol 61`). Release jobs therefore pass the repository secret only to `scripts/prepare-updater-key.mjs`, which trims surrounding whitespace, validates/canonicalizes the Base64, writes a mode-0600 runner-temp key file, and exports that file path as `TAURI_SIGNING_PRIVATE_KEY`. The workflow runs a small signer probe before the multi-minute package build. Never print the secret while debugging.
 
-`bundle.createUpdaterArtifacts: true` is not enough by itself: the build must include an updater-enabled target. On macOS, `--bundles dmg` creates only the DMG and emits `no updater-enabled targets were built`; use `--bundles app,dmg` so Tauri creates `.app.tar.gz` and `.app.tar.gz.sig`. Windows uses `nsis,msi` (`wix` is a config section, not a CLI bundle name); Linux uses `deb,appimage`.
+`bundle.createUpdaterArtifacts: true` is not enough by itself: the build must include an updater-enabled target. On macOS, `--bundles dmg` creates only the DMG and emits `no updater-enabled targets were built`; use `--bundles app,dmg` so Tauri creates `.app.tar.gz` and `.app.tar.gz.sig`. Windows release builds use `--bundles nsis` (MSI is self-build only via `--bundles msi`; `wix` is a config section, not a CLI bundle name); Linux uses `deb,appimage`.
 
 Release jobs compile Rust with `RUSTFLAGS=-D warnings`, so platform-only helpers need matching `cfg` gates instead of tolerated dead code. The frontend equivalent is not to suppress Vite warnings: CodeMirror's HTML/Markdown dependency chain already loads CSS/HTML/JavaScript language packages, so `parse/codeLanguages.ts` imports those three statically and only lazily imports languages that can actually split into separate chunks.
 
