@@ -108,6 +108,7 @@ import {
 import { CommandPalette } from "./CommandPalette"
 import { QuickOpenModal } from "./QuickOpenModal"
 import { VersionHistoryModal } from "./VersionHistoryModal"
+import { MediaLightbox, useMediaLightbox } from "./MediaLightbox"
 import { SearchPanel } from "./SearchPanel"
 import { useWorkspaceSearch } from "./useWorkspaceSearch"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
@@ -233,6 +234,7 @@ export default function App({
   const saveStateRef = useRef<SaveStateByTab>({ [session.id]: initialSaveState() })
   const [saveStateByTab, setSaveStateByTab] = useState<SaveStateByTab>(saveStateRef.current)
   const [conflictFocusToken, setConflictFocusToken] = useState(0)
+  const lightbox = useMediaLightbox(workspace.activeId, session.documentId)
   const saveFileRef = useRef<
     (tabId: number, trigger: SaveTrigger, mode?: SaveMode | boolean) => Promise<void>
   >(async () => {})
@@ -579,6 +581,12 @@ export default function App({
     // HUGE 只读档：readOnly 挡编辑；渐进渲染（视口优先装饰 + idle 排空）落地后，
     // 大文档开箱即 Live 不再冻结，无需强制源码模式或裁剪语言扩展。
     const readOnly = documentScaleRegistry.isReadOnly(tabId)
+    // Stale tab/document/view identities must not publish active UI state:
+    // a background tab's view keeps firing updates while hidden.
+    const isActiveBinding = () => {
+      const tab = tabById(tabId)
+      return Boolean(tab && tab.documentId === documentId && workspaceRef.current.activeId === tabId)
+    }
     return {
       // Task 10：流式打开带 Text 时直传（免整串切行）；否则回退字符串路径。
       doc: docText ?? contents,
@@ -586,21 +594,8 @@ export default function App({
       documentId,
       ...pasteOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
-      onModeChange: isLive => {
-        const tab = tabById(tabId)
-        if (!tab || tab.documentId !== documentId) return
-        if (workspaceRef.current.activeId !== tabId) return
-        setSourceMode(!isLive)
-      },
-      // Stale tab/document/view identities must not publish active status:
-      // a background tab's view keeps firing selection/mode updates while
-      // hidden, and only the currently active binding may reach the store.
-      onStatusChange: status => {
-        const tab = tabById(tabId)
-        if (!tab || tab.documentId !== documentId) return
-        if (workspaceRef.current.activeId !== tabId) return
-        editorStatusStore.publish(status)
-      },
+      onModeChange: isLive => { if (isActiveBinding()) setSourceMode(!isLive) },
+      onStatusChange: status => { if (isActiveBinding()) editorStatusStore.publish(status) },
       onOpenExternalHref: href => { void services.openExternal?.(href) },
       onOpenMarkdownHref: href => {
         const current = sessionPath(sessionRef.current)
@@ -615,6 +610,7 @@ export default function App({
       autoPair: settingsRef.current.autoPair,
       readOnly,
       performancePolicy: documentScaleRegistry.performancePolicy(tabId),
+      onInspectMedia: target => { if (isActiveBinding()) lightbox.open(target) },
     }
   }
 
@@ -1944,6 +1940,7 @@ export default function App({
         services={services}
         onClose={() => setAboutOpen(false)}
       />
+      <MediaLightbox target={lightbox.target} onClose={lightbox.close} />
     </div>
   )
 }

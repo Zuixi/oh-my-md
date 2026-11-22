@@ -172,6 +172,8 @@ function renderInline(
       img.alt = node.alt
       if (node.title !== null) img.title = node.title
       img.className = "omd-image"
+      img.decoding = "async"
+      img.dataset.omdSrc = node.src
       img.onerror = () => {
         img.replaceWith(
           Object.assign(document.createElement("span"), {
