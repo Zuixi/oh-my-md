@@ -55,6 +55,11 @@ export class BoundedLru<K, V> {
     this.trim()
   }
 
+  clear(): void {
+    this.values.clear()
+    this.size = 0
+  }
+
   private trim(): void {
     while (this.values.size > this.options.maxEntries || this.size > this.options.maxSize) {
       const oldest = this.values.entries().next().value

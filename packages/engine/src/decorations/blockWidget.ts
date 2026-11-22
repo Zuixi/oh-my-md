@@ -6,6 +6,7 @@ import {
 import { blockWidgetRange, registerBlockWidget, unregisterBlockWidget } from "./blockSelectionOverlay"
 import { measureBlockWidget } from "./widgetMeasure"
 import { icon } from "./icons"
+import { isInspectPointerEvent, mediaInspectHandler, trackInspectClick } from "./mediaInspect"
 
 export interface BlockEmbed {
   quoteDepth: number
@@ -84,7 +85,12 @@ export abstract class BlockWidget extends WidgetType {
   }
 
   protected abstract get cssClass(): string
-  protected renderPlaceholder(_el: HTMLElement): void {}
+  /**
+   * Synchronous placeholder installed before CM's first layout measure.
+   * Return `true` when the widget has already painted its final DOM synchronously
+   * (e.g. LRU cache hit) so `BlockWidget` skips the async `renderInto` + `measureBlockWidget` cycle.
+   */
+  protected renderPlaceholder(_el: HTMLElement): boolean | void {}
   protected abstract renderInto(el: HTMLElement): void | Promise<void>
   protected clickPos(view: EditorView, _event: MouseEvent, wrap: HTMLElement): number {
     const range = blockWidgetRange(this, view, wrap)
@@ -97,7 +103,7 @@ export abstract class BlockWidget extends WidgetType {
   protected nativePointerInteraction(_event: MouseEvent): boolean { return false }
   /** 编辑按钮（以及不走单元格会话的 wrap 点击）随选区一起派发的 effects。 */
   protected editButtonEffects(): readonly StateEffect<unknown>[] { return [] }
-  private moveCaretIntoSource(view: EditorView, event: MouseEvent, wrap: HTMLElement): void {
+  protected moveCaretIntoSource(view: EditorView, event: MouseEvent, wrap: HTMLElement): void {
     const pos = this.clickPos(view, event, wrap)
     view.dispatch({
       selection: { anchor: pos },
@@ -127,6 +133,40 @@ export abstract class BlockWidget extends WidgetType {
     wrap.title = this.enterSourceOnClick() ? "Click to edit source" : ""
     wrap.addEventListener("mousedown", e => {
       if (e.button !== 0) return
+      if (
+        e.target instanceof HTMLImageElement
+        && e.target.classList.contains("omd-image")
+        && isInspectPointerEvent(e)
+      ) {
+        const handler = view.state?.facet(mediaInspectHandler) ?? null
+        if (handler) {
+          e.preventDefault()
+          e.stopPropagation()
+          const img = e.target
+          trackInspectClick(e, () => {
+            if (!img.isConnected || !wrap.isConnected || !view.dom?.isConnected) return
+            handler({
+              kind: "image",
+              src: img.dataset.omdSrc || img.getAttribute("src") || "",
+              resolvedSrc: img.src,
+              alt: img.alt,
+              title: img.title || null,
+              editSource: view.state.readOnly ? undefined : () => {
+                if (!wrap.isConnected || !view.dom?.isConnected) return
+                const range = blockWidgetRange(this, view, wrap)
+                const pos = range?.from ?? view.posAtDOM(wrap)
+                view.dispatch({
+                  selection: { anchor: pos },
+                  effects: this.editButtonEffects(),
+                  scrollIntoView: true,
+                })
+                view.focus()
+              },
+            })
+          })
+          return
+        }
+      }
       if (this.nativePointerInteraction(e)) return
       if (this.enterSourceOnClick() && !this.shouldEnterSource(e)) {
         // 误触点（边框/padding/工具栏空隙）：既不进源码，也不把事件交给 CM。
@@ -168,7 +208,11 @@ export abstract class BlockWidget extends WidgetType {
     body.className = "omd-block-body"
     wrap.appendChild(body)
     this.activateDom(wrap)
-    this.renderPlaceholder(body)
+    const renderedSynchronously = this.renderPlaceholder(body) === true
+    if (renderedSynchronously) {
+      registerBlockWidget(this, wrap)
+      return wrap
+    }
 
     const start = () => Promise.resolve()
       .then(() => this.renderInto(body))
