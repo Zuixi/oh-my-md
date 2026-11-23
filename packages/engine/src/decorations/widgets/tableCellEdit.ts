@@ -1,5 +1,6 @@
 import type { SyntaxNode } from "@lezer/common"
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
+import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
 import { getTableEditSession } from "../../tables/directEdit"
 import { cellAt, type TableContext } from "../../tables/navigate"
@@ -486,12 +487,17 @@ function caretInsideUnrevealedTable(view: EditorView) {
   if (state.readOnly) return null
   const selection = state.selection.main
   if (!selection.empty || getTableEditSession(state)) return null
-  const hit = cellAt(state, selection.head)
-  if (!hit) return null
-  const { from, to } = hit.table
-  if (selection.head <= from || selection.head > to) return null
-  if (isTableShownAsSource(state, from, to)) return null
-  return hit
+  // Cheap `Table` node probe before `cellAt`, which builds `TableData` (one
+  // `sliceString` per cell) on every keystroke: a caret outside any table, on the
+  // table's start boundary or in a source-revealed table is decidable from the node.
+  // `side = -1` also catches the `head === Table.to` end boundary that `side = 1`
+  // skips, which the checks below treat as inside the table.
+  if (!syntaxTreeAvailable(state, Math.min(selection.head + 1, state.doc.length))) return null
+  let table: SyntaxNode | null = syntaxTree(state).resolveInner(selection.head, -1)
+  while (table && table.name !== "Table") table = table.parent
+  if (!table || selection.head <= table.from || selection.head > table.to) return null
+  if (isTableShownAsSource(state, table.from, table.to)) return null
+  return cellAt(state, selection.head)
 }
 
 /** Next frame after an in-table caret closed the session: reopen with the click opener and park on `table.from`. */

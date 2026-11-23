@@ -19,6 +19,7 @@ import {
 } from "@omd/engine"
 import { imagePasteHandler } from "./imagePaste"
 import { clipboardPasteExtension } from "./clipboardPaste"
+import { clipboardCopyExtension } from "./clipboardCopy"
 import { pasteBookmarkExtension } from "./pasteBookmark"
 import { pastePlainText } from "./pastePlainText"
 import { typewriterExtension } from "./typewriter"
@@ -225,6 +226,7 @@ function createEditorState(
       highlightActiveLine(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       pasteBookmarkExtension,
+      clipboardCopyExtension(),
       clipboardPasteExtension({
         getTabId: options.getTabId ?? (() => options.tabId),
         getDocPath: options.getDocPath,

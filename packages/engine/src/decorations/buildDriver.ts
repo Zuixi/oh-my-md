@@ -37,7 +37,9 @@ import { outsideAllRegions } from "./ranges"
 
 // 单次 idle 回调的墙钟工作预算（ms）。每片构建成本随内容密度波动，按墙钟切片比
 // 按片数切片更能守住帧节奏；预算内至少构建一片，保证驱动总有进度。
-export const LIVE_BUILD_SLICE_MS = 24
+// 8 ms keeps a slice inside both a 120 Hz (8.3 ms) and a 60 Hz (16.6 ms) frame
+// budget; the first-block/chunk policy, not this budget, guarantees progress.
+export const LIVE_BUILD_SLICE_MS = 8
 
 // requestIdleCallback 的超时兜底：主线程持续繁忙时也保证最低调度频率。
 export const LIVE_IDLE_TIMEOUT_MS = 200
@@ -104,10 +106,36 @@ export function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): 
   return clipped
 }
 
-// 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
-// 裁剪门槛用：specs 按 from 有序，但多段窗口存在间隙，O(1) 首尾包络检查会漏掉
-// 间隙内的装饰，这里按装饰逐个精确判定（安全模式下 specs 以窗口为界，代价有界）。
 // Predicate lives in `./ranges` so the field's keep/filter uses the same one.
+//
+// The prune gate used to run `outsideAllRegions` per spec (an O(specs) scan on
+// every keystroke / cursor move). `specs` is `compareDecoSpecs`-sorted (position
+// first) and `pruneWindow` is `mergeRanges` output (ascending, disjoint, and
+// non-adjacent), which buys two O(1) decisions. Both are exact — every other case
+// falls back to the per-spec scan, so the signal matches
+// `specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))`:
+//   1. A spec ending before the first region (or starting after the last one) is
+//      outside no matter how many regions sit in between.
+//   2. For a single region (the steady state: one viewport) the position order also
+//      disproves the rest — `specs[0].from >= W.from` means every `to >= from >=
+//      W.from` (nothing entirely before), and `specs[last].from <= W.to` bounds the
+//      whole list's `from` (nothing entirely after). With several regions the gaps
+//      inside `[first.from, last.to]` still hide outside specs, so those fall back.
+function anySpecOutsideWindow(
+  specs: readonly ClosedRange[],
+  pruneWindow: readonly ClosedRange[],
+): boolean {
+  // No window at all: `outsideAllRegions` against zero regions is true for every spec.
+  if (pruneWindow.length === 0) return specs.length > 0
+  if (specs.length === 0) return false
+  const first = specs[0]
+  const last = specs[specs.length - 1]
+  const windowFrom = pruneWindow[0].from
+  const windowTo = pruneWindow[pruneWindow.length - 1].to
+  if (first.to < windowFrom || last.from > windowTo) return true
+  if (pruneWindow.length === 1 && first.from >= windowFrom && last.from <= windowTo) return false
+  return specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))
+}
 
 // 点到闭区间集的最小距离（点在区间内为 0，否则为到最近端点的间隔）。
 function pointDistance(pos: number, regions: ClosedRange[]): number {
@@ -294,8 +322,8 @@ class LiveBuildDriver {
   // 窗口外装饰的归还信号」。pending 为空也照走 —— 排空后滚到远处时，已建装饰
   // 全在窗口外，裁剪是唯一的窗口维护动作。裁剪窗口比构建窗口多
   // LIVE_PRUNE_MARGIN_CHARS（迟滞）：恰好建在窗口边缘的装饰不会因视口小幅往返
-  // 在「构建 ↔ 裁剪」间抖动。裁剪门槛逐装饰精确判定（见 outsideAllRegions），
-  // 无活时不 dispatch（避免每帧空交易）。
+  // 在「构建 ↔ 裁剪」间抖动。裁剪门槛先走 O(1) 位置序判定，其余回退到逐装饰
+  // 精确扫描（见 anySpecOutsideWindow）；无活时不 dispatch（避免每帧空交易）。
   private windowedFirstPass(live: LiveDeco) {
     // 先挂 idle 调度再 dispatch（与非窗口化路径同构）：scheduleIdleSlice 自门槛，
     // 构建窗口内无待建 pending 时不挂。
@@ -305,7 +333,7 @@ class LiveBuildDriver {
     for (const chunk of chunks) effects.push(liveBuildChunk.of(chunk))
     const pruneWindow = expandedRegions(
       this.view, this.windowChars() + this.pruneMarginChars())
-    if (live.specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))) {
+    if (anySpecOutsideWindow(live.specs, pruneWindow)) {
       effects.push(livePruneOutside.of(pruneWindow))
     }
     if (effects.length > 0) {

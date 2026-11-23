@@ -14,6 +14,7 @@ import {
   type ClipboardPayload,
   type SystemClipboardReader,
 } from "./clipboardPayload"
+import { isInternalMarkdownCopyHtml } from "./clipboardCopy"
 import type { ImagePasteOptions } from "./imagePaste"
 import { fileToPasteAsset, nativePasteAssetStore } from "./pasteAssets"
 import { runPasteJob, type PasteJobOptions, type PasteJobTarget } from "./pasteJob"
@@ -64,7 +65,7 @@ export function clipboardPasteExtension(options: ClipboardPasteOptions): Extensi
         }
         const transfer = event.clipboardData
         if (!transfer) return false
-        const payload = payloadFromDataTransfer(transfer)
+        const payload = withoutInternalHtml(payloadFromDataTransfer(transfer))
         const savedTarget = contextMenuTarget
         contextMenuTarget = null
         if (savedTarget) view.dispatch({ selection: { anchor: savedTarget.from, head: savedTarget.to } })
@@ -103,13 +104,16 @@ function runClipboardPayload(
 
 async function applyPayload(
   view: EditorView,
-  payload: ClipboardPayload,
+  rawPayload: ClipboardPayload,
   options: ClipboardPasteOptions,
   currentTarget: () => PasteJobTarget,
   forcePlain: boolean,
 ): Promise<void> {
   const target = currentTarget()
   if (target.kind !== "active") return
+  // Covers the async path (native menu / Mod-Shift-V); the DOM handler already
+  // normalized, and re-normalizing keeps one rule for both entry points.
+  const payload = withoutInternalHtml(rawPayload)
 
   if (forcePlain || target.ranges.length > 1 || !payload.html) {
     if (!payload.html && payload.images.length > 0 && target.ranges.length === 1) {
@@ -244,6 +248,19 @@ function shouldUsePlainText(view: EditorView): boolean {
   return view.state.selection.ranges.some(range =>
     inVerbatim(view.state, range.from) ||
     (!range.empty && inVerbatim(view.state, range.to - 1)))
+}
+
+/**
+ * An oh-my-md copy carries the exact Markdown source as `text/plain` plus a
+ * `text/html` flavor already rendered from it. Dropping that HTML flavor makes
+ * the internal copy→paste byte-for-byte instead of re-serializing the source
+ * through the HTML→Markdown converter (which normalizes tables, escapes and
+ * reference links). External HTML is untouched.
+ */
+function withoutInternalHtml(payload: ClipboardPayload): ClipboardPayload {
+  return payload.plainText !== "" && isInternalMarkdownCopyHtml(payload.html)
+    ? { ...payload, html: null }
+    : payload
 }
 
 function dispatchText(view: EditorView, target: Extract<PasteJobTarget, { kind: "active" }>, raw: string): void {

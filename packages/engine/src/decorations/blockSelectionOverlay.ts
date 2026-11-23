@@ -7,6 +7,11 @@ import type { BlockWidget } from "./blockWidget"
 // DOM 位置只用于在多个 eq() widget 中确认当前实例，最终范围仍来自 specs。
 const liveWraps = new Map<BlockWidget, HTMLElement>()
 const liveRanges = new WeakMap<HTMLElement, { from: number; to: number }>()
+// Views that currently hold at least one `.omd-block-covered` element. A collapsed
+// caret can never cover a block, so an uncovered view needs no spec scan at all
+// (cursor moves, blinks, typing) — only a non-empty selection or a view that is
+// already covered has anything to toggle.
+const coveredViews = new WeakSet<EditorView>()
 
 export function registerBlockWidget(widget: BlockWidget, dom: HTMLElement) {
   liveWraps.set(widget, dom)
@@ -70,9 +75,8 @@ function findWrap(widget: BlockWidget, used: Set<HTMLElement>): HTMLElement | un
   return undefined
 }
 
-function refresh(view: EditorView) {
+function refresh(view: EditorView, docChanged: boolean) {
   const sel = view.state.selection.main
-  const specs = view.state.field(livePreviewField, false)?.specs ?? []
   // 清扫失效实例（防御性）：注册表按实例存 DOM，而注销只走 destroy()。CM 的
   // pass-0 复用（eq 相同、不调 updateDOM）会换掉 tile.widget 却不给旧实例 destroy，
   // 若某条路径漏了 updateDOM 里的 unregister，条目就会带着一个死键 + 活 DOM 留下来。
@@ -81,8 +85,19 @@ function refresh(view: EditorView) {
   // 占用内存」），现已改成 WeakMap —— 那是一次**所有权**修正，不是内存问题的修复：改完后
   // 聚合 Chromium 堆增长仍可复现且根因 inconclusive（WeakMap/ephemeron/快照的“仍可见”
   // 不等于“仍被强引用”），所以本函数仍不管 DOM 生命周期。
+  // Sweep first, in both paths: a collapsed caret in an uncovered view has no state to
+  // toggle, so cursor moves, blinks and typing skip the O(specs) scan entirely (a large
+  // doc carries 62 000+ specs). `liveWraps` holds the *mounted* block widgets only
+  // (5–20 entries), and entries can only go stale behind a document change.
+  if (sel.empty && !coveredViews.has(view)) {
+    if (docChanged && liveWraps.size > 0)
+      for (const [widget, dom] of liveWraps) if (!dom.isConnected) liveWraps.delete(widget)
+    return
+  }
   for (const [widget, dom] of liveWraps) if (!dom.isConnected) liveWraps.delete(widget)
+  const specs = view.state.field(livePreviewField, false)?.specs ?? []
   const used = new Set<HTMLElement>()
+  let anyCovered = false
   for (const spec of specs) {
     if (!spec.tag.startsWith("widget:block:")) continue
     // Decoration.spec 公有；replace 装饰的 widget 即构造时传入的实例
@@ -93,8 +108,11 @@ function refresh(view: EditorView) {
     used.add(dom)
     liveRanges.set(dom, { from: spec.from, to: spec.to })
     const covered = sel.from <= spec.from && sel.to >= spec.to
+    if (covered) anyCovered = true
     dom.classList.toggle(COVERED, covered)
   }
+  if (anyCovered) coveredViews.add(view)
+  else coveredViews.delete(view)
 }
 
 /**
@@ -103,9 +121,9 @@ function refresh(view: EditorView) {
  */
 export const blockSelectionOverlay = ViewPlugin.fromClass(
   class {
-    constructor(view: EditorView) { refresh(view) }
+    constructor(view: EditorView) { refresh(view, false) }
     update(u: ViewUpdate) {
-      if (u.selectionSet || u.docChanged || u.viewportChanged) refresh(u.view)
+      if (u.selectionSet || u.docChanged || u.viewportChanged) refresh(u.view, u.docChanged)
     }
   },
 )

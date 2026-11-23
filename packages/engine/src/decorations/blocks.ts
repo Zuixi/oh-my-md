@@ -6,6 +6,7 @@ import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidge
 import { blockSelected, type BlockEmbed } from "./blockWidget"
 import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
 import { createComplexTableWidget } from "./widgets/complexTable"
+import { parseComplexTableBlock } from "../parse/complexTable"
 import { tableDataFromNode } from "../tables/model"
 import { isTableShownAsSource } from "../tables/sourceReveal"
 import { imageResolver } from "./widgets/image"
@@ -18,6 +19,29 @@ import { blockPrefixOf } from "../format/blockPrefix"
 import { editorReferenceContext } from "../semantic/references"
 
 const MAX_QUOTE_DEPTH = 4
+// A complex table is one `<table>…</table>` envelope (`parseComplexTableBlock`), so a
+// short prefix decides whether an HTML block can render as a table at all — the whole
+// block (potentially hundreds of KiB) is only sliced once that gate passes.
+const HTML_TABLE_PROBE_CHARS = 64
+const HTML_TABLE_PROBE_RE = /^\s*<table[\s>]/i
+
+// Hoisted stateless decorations: a dirty-range rebuild pushes one spec per list mark,
+// fence marker and styled line, so allocating a fresh plain `Decoration.replace` /
+// `Decoration.line` for each of them is pure churn — the values are immutable and
+// shared by class. Widget replaces stay per-instance: their payload is the identity.
+const REPLACE_MARK = Decoration.replace({})
+const REPLACE_BLOCK = Decoration.replace({ block: true })
+const BULLET_WIDGET = new BulletWidget()
+const LINE_DECOS = new Map<string, Decoration>()
+
+/** One `Decoration.line` per CSS class (list depth keeps its inline attribute style). */
+function lineDeco(cssClass: string): Decoration {
+  const cached = LINE_DECOS.get(cssClass)
+  if (cached) return cached
+  const created = Decoration.line({ class: cssClass })
+  LINE_DECOS.set(cssClass, created)
+  return created
+}
 
 // Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
 // caret is inside the mark itself — same span granularity as the inline reveal
@@ -27,7 +51,7 @@ function foldLineMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], 
   const line = state.doc.lineAt(node.from)
   const end = Math.min(node.to + 1, line.to)
   if (!cursorInside(state, node.from, end))
-    out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: Decoration.replace({}) })
+    out.push({ from: node.from, to: end, tag: `replace:${name}`, deco: REPLACE_MARK })
 }
 
 function quoteMarkEnd(node: SyntaxNodeRef, state: EditorState): number {
@@ -43,16 +67,14 @@ function foldQuoteMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
     const prefix = state.doc.sliceString(line.from, node.from)
     if (/^[ \t]+$/.test(prefix)) {
       out.push({
-        from: line.from, to: node.from, tag: "replace:QuoteIndent",
-        deco: Decoration.replace({}),
+        from: line.from, to: node.from, tag: "replace:QuoteIndent", deco: REPLACE_MARK,
       })
     }
   }
   const end = quoteMarkEnd(node, state)
   if (cursorInside(state, node.from, end)) return
   out.push({
-    from: node.from, to: end, tag: "replace:QuoteMark",
-    deco: Decoration.replace({}),
+    from: node.from, to: end, tag: "replace:QuoteMark", deco: REPLACE_MARK,
   })
 }
 
@@ -118,15 +140,19 @@ function listDepthLine(cssClass: string, depth: number): Decoration {
   return Decoration.line({ class: cssClass, attributes: { style: `--omd-list-depth: ${depth}` } })
 }
 
-function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
-  for (let pos = node.from; pos <= node.to; ) {
+/** One `line:` spec per `lineAt` line of the closed range [from, to]. */
+function styleLines(
+  state: EditorState, out: DecoSpec[], from: number, to: number, tag: string, cssClass: string,
+): void {
+  for (let pos = from; pos <= to; ) {
     const line = state.doc.lineAt(pos)
-    out.push({
-      from: line.from, to: line.from, tag: "line:omd-codeblock",
-      deco: Decoration.line({ class: "omd-codeblock" }),
-    })
+    out.push({ from: line.from, to: line.from, tag, deco: lineDeco(cssClass) })
     pos = line.to + 1
   }
+}
+
+function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
+  styleLines(state, out, node.from, node.to, "line:omd-codeblock", "omd-codeblock")
 }
 
 // 编辑态代码块装饰：开头围栏行整行替换为 CodeChromeWidget（标题/语言可提交），
@@ -171,39 +197,38 @@ function styleEditingCodeblock(
     // 跳过整棵 FencedCode 子树（返回 true），不在这里补折叠，编辑态就会露出裸
     // `> `（渲染态由 CodeWidget 整体替换，所以只有编辑态暴露）。折叠范围与
     // foldQuoteMark 一致：标记 + 后随一个空格，光标进入该范围时按 Route A 展开。
-    const prefix = blockPrefixOf(state, line)
-    for (const mark of prefix?.marks ?? []) {
-      if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
-      out.push({
-        from: mark.from, to: mark.to, tag: "replace:QuoteMark",
-        deco: Decoration.replace({}),
-      })
+    // Outside a quote there is no prefix to fold, and `blockPrefixOf` runs a
+    // `syntaxTree.iterate` per line — skip it entirely on the typing hot path.
+    if (embed.quoteDepth > 0) {
+      const prefix = blockPrefixOf(state, line)
+      for (const mark of prefix?.marks ?? []) {
+        if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
+        out.push({ from: mark.from, to: mark.to, tag: "replace:QuoteMark", deco: REPLACE_MARK })
+      }
     }
     out.push({
-      from: line.from, to: line.from, tag: "line:omd-codeblock",
-      deco: Decoration.line({ class: "omd-codeblock" }),
+      from: line.from, to: line.from, tag: "line:omd-codeblock", deco: lineDeco("omd-codeblock"),
     })
     out.push({
-      from: line.from, to: line.from, tag: "line:omd-codeblock-num",
-      deco: Decoration.line({ class: "omd-codeblock-num" }),
+      from: line.from, to: line.from, tag: "line:omd-codeblock-num", deco: lineDeco("omd-codeblock-num"),
     })
     if (number === firstContent) {
       out.push({
         from: line.from, to: line.from, tag: "line:omd-codeblock-num-first",
-        deco: Decoration.line({ class: "omd-codeblock-num-first" }),
+        deco: lineDeco("omd-codeblock-num-first"),
       })
     }
     if (number === lastContent) {
       out.push({
         from: line.from, to: line.from, tag: "line:omd-codeblock-num-last",
-        deco: Decoration.line({ class: "omd-codeblock-num-last" }),
+        deco: lineDeco("omd-codeblock-num-last"),
       })
     }
   }
   if (closeLine && !overlaps(closeLine.from, closeLine.to)) {
     out.push({
       from: closeLine.from, to: Math.min(doc.length, closeLine.to + 1),
-      tag: "replace:CloseFence", deco: Decoration.replace({ block: true }),
+      tag: "replace:CloseFence", deco: REPLACE_BLOCK,
     })
   }
 }
@@ -216,37 +241,24 @@ function styleTableSource(
   state: EditorState,
   out: DecoSpec[],
 ): void {
-  const first = state.doc.lineAt(node.from).number
+  const first = state.doc.lineAt(node.from)
   const last = state.doc.lineAt(node.to).number
-  for (let n = first; n <= last; n++) {
-    const line = state.doc.line(n)
+  styleLines(state, out, first.from, node.to, "line:omd-table-src", "omd-table-src")
+  out.push({
+    from: first.from, to: first.from, tag: "line:omd-table-src-head", deco: lineDeco("omd-table-src-head"),
+  })
+  if (first.number < last) {
+    const delim = state.doc.line(first.number + 1)
     out.push({
-      from: line.from, to: line.from,
-      tag: "line:omd-table-src",
-      deco: Decoration.line({ class: "omd-table-src" }),
+      from: delim.from, to: delim.from, tag: "line:omd-table-src-delim", deco: lineDeco("omd-table-src-delim"),
     })
-    if (n === first) {
-      out.push({
-        from: line.from, to: line.from,
-        tag: "line:omd-table-src-head",
-        deco: Decoration.line({ class: "omd-table-src-head" }),
-      })
-    }
-    if (n === first + 1) {
-      out.push({
-        from: line.from, to: line.from,
-        tag: "line:omd-table-src-delim",
-        deco: Decoration.line({ class: "omd-table-src-delim" }),
-      })
-    }
   }
 }
 
 function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
   if (cursorInside(state, node.from, node.to)) return
   out.push({
-    from: node.from, to: node.to, tag: `replace:${name}`,
-    deco: Decoration.replace({}),
+    from: node.from, to: node.to, tag: `replace:${name}`, deco: REPLACE_MARK,
   })
 }
 
@@ -254,7 +266,6 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   const infoNode = node.node.getChild("CodeInfo")
   const infoRaw = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to) : ""
   const { lang: langToken, title } = parseFenceInfo(infoRaw)
-  const src = fencedCodeSource(node.node, state)
   const embed = blockEmbed(node.node)
 
   // 未闭合围栏正在输入（FencedCode 只有 opening 行且光标在其上）：保持纯文本。
@@ -262,17 +273,22 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   // （Typora 在 Enter 前不呈现块）。Enter 的闭合补全见 format/fences.ts，成块后
   // 走下方常规分支（光标在内 → 源码行样式，光标离开 → widget）。
   const singleLine = state.doc.lineAt(node.from).number === state.doc.lineAt(node.to).number
-  if (singleLine && blockSelected(state, node.from, node.to)) {
+  const selected = blockSelected(state, node.from, node.to)
+  if (singleLine && selected) {
     return true
   }
 
   // mermaid 与 lang-code 同一编辑模型：光标进入块 → 卸载成源码行。✎/wrap 点击、
   // ↑/↓ 进块派发的光标都依赖 blockSelected 门控触发卸载；缺门控时光标会落入被
   // replace 隐藏的源码区（✎ 点击"无效"、打字盲改）。
-  if (langToken === "mermaid" && !blockSelected(state, node.from, node.to)) {
+  // `fencedCodeSource` only runs on the two widget branches: the editing branches
+  // must not slice a large code body on every keystroke inside it.
+  if (langToken === "mermaid" && !selected) {
     out.push({
       from: node.from, to: node.to, tag: "widget:block:mermaid",
-      deco: Decoration.replace({ widget: new MermaidWidget(src, node.from, embed), block: true }),
+      deco: Decoration.replace({
+        widget: new MermaidWidget(fencedCodeSource(node.node, state), node.from, embed), block: true,
+      }),
     })
     return true
   }
@@ -281,7 +297,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
   // 语言/引用判断之前：旧顺序里 `!langToken` 先返回，无语言块永远拿不到 chrome，
   // 用户只能手敲源码才能加语言（同一段代码在光标进出时还会换一套 DOM）。
   // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
-  if (blockSelected(state, node.from, node.to)) {
+  if (selected) {
     if (langToken !== "mermaid") {
       styleEditingCodeblock(node, state, out, langToken, title, embed)
     } else {
@@ -301,7 +317,7 @@ function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
     from: node.from, to: node.to, tag: "widget:block:code",
     deco: Decoration.replace({
       widget: new CodeWidget({
-        src,
+        src: fencedCodeSource(node.node, state),
         pos: node.from,
         lang: langToken,
         title,
@@ -322,7 +338,7 @@ function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[
       out.push({
         from: line.from, to: line.from,
         tag: `line:omd-blockquote-${depth}`,
-        deco: Decoration.line({ class: `omd-blockquote omd-blockquote-${depth}` }),
+        deco: lineDeco(`omd-blockquote omd-blockquote-${depth}`),
       })
       if (itemDepth > 0) {
         out.push({
@@ -367,8 +383,7 @@ function styleListMark(
   const indentFrom = listIndentStart(line.from, node.from, state)
   if (indentFrom < node.from) {
     out.push({
-      from: indentFrom, to: node.from, tag: "replace:ListIndent",
-      deco: Decoration.replace({}),
+      from: indentFrom, to: node.from, tag: "replace:ListIndent", deco: REPLACE_MARK,
     })
   }
   if (node.node.parent?.getChild("Task")) {
@@ -376,7 +391,7 @@ function styleListMark(
       from: node.from,
       to: node.to,
       tag: "replace:ListMark",
-      deco: Decoration.replace({}),
+      deco: REPLACE_MARK,
     })
     return
   }
@@ -392,7 +407,7 @@ function styleListMark(
   }
   out.push({
     from: node.from, to: node.to, tag: "replace:ListMark",
-    deco: Decoration.replace({ widget: new BulletWidget() }),
+    deco: Decoration.replace({ widget: BULLET_WIDGET }),
   })
 }
 
@@ -474,16 +489,12 @@ export function blockRules(
     case "QuoteMark":    { foldQuoteMark(node, state, out); return false }
     case "FootnoteMark": { foldLineMark(node, state, out, "FootnoteMark"); return false }
     case "FootnoteDefinition": {
-      for (let pos = node.from; pos <= node.to; ) {
-        const line = state.doc.lineAt(pos)
-        out.push({ from: line.from, to: line.from, tag: "line:omd-footnote-def", deco: Decoration.line({ class: "omd-footnote-def" }) })
-        pos = line.to + 1
-      }
+      styleLines(state, out, node.from, node.to, "line:omd-footnote-def", "omd-footnote-def")
       break
     }
     case "HorizontalRule":
       if (blockSelected(state, node.from, node.to)) {
-        out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: Decoration.line({ class: "omd-hr" }) })
+        out.push({ from: node.from, to: node.from, tag: "line:omd-hr", deco: lineDeco("omd-hr") })
         return false
       }
       out.push({
@@ -500,11 +511,7 @@ export function blockRules(
       return true
     case "FrontMatter":
       if (blockSelected(state, node.from, node.to)) {
-        for (let pos = node.from; pos < node.to; ) {
-          const line = state.doc.lineAt(pos)
-          out.push({ from: line.from, to: line.from, tag: "line:omd-front-matter", deco: Decoration.line({ class: "omd-front-matter-src" }) })
-          pos = line.to + 1
-        }
+        styleLines(state, out, node.from, Math.max(node.from, node.to - 1), "line:omd-front-matter", "omd-front-matter-src")
         return false
       }
       out.push({
@@ -520,27 +527,23 @@ export function blockRules(
       })
       return true
     case "HTMLBlock": {
-      const src = state.doc.sliceString(node.from, node.to)
+      // Only a single-`<table>` envelope can render as a complex table, so the short
+      // prefix gate keeps non-table HTML blocks from being sliced whole.
+      const prefix = state.doc.sliceString(node.from, Math.min(node.to, node.from + HTML_TABLE_PROBE_CHARS))
+      if (!HTML_TABLE_PROBE_RE.test(prefix)) return false
+      // Selected: keep the source editable, but never build (or discard) a widget for it.
+      if (blockSelected(state, node.from, node.to)) {
+        if (!parseComplexTableBlock(state.doc.sliceString(node.from, node.to))) return false
+        styleLines(state, out, node.from, node.to, "line:omd-table-src", "omd-table-src")
+        return true
+      }
       const widget = createComplexTableWidget(
-        src,
+        state.doc.sliceString(node.from, node.to),
         node.from,
         blockEmbed(node.node),
         state.facet(imageResolver),
       )
       if (!widget) return false
-      if (blockSelected(state, node.from, node.to)) {
-        for (let pos = node.from; pos <= node.to; ) {
-          const line = state.doc.lineAt(pos)
-          out.push({
-            from: line.from,
-            to: line.from,
-            tag: "line:omd-table-src",
-            deco: Decoration.line({ class: "omd-table-src" }),
-          })
-          pos = line.to + 1
-        }
-        return true
-      }
       out.push({
         from: node.from,
         to: node.to,
