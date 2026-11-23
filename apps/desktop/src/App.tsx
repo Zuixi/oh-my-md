@@ -120,6 +120,7 @@ import {
 import { initLocale, setLocale, t as localeT, useT } from "./i18n"
 import { reportSaveStateTransitions } from "./saveDiagnostics"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
+import { disposeAppViews } from "./appViewLifecycle"
 import {
   MARKDOWN_EXTENSIONS,
   RELEASES_URL,
@@ -261,7 +262,7 @@ export default function App({
   // 否则该次写可能在 Rust 侧晚于 finisher 的 shard 删除抵达，把已关窗口的
   // shard 复活（下次启动又恢复该窗口）。
   const sessionSaveInFlightRef = useRef<Promise<void> | null>(null)
-  const sessionRestoredRef = useRef(false)
+  const startupStartedRef = useRef(false)
   const [theme, setTheme] = useState<AppTheme>("light")
   // The window theme is applied pre-paint by Rust from persisted settings;
   // frontend pushes stay off until those settings load, so the "light"
@@ -764,57 +765,53 @@ export default function App({
 
   useEffect(() => {
     mountedRef.current = true
+    materializer.reset()
     ensureViews()
-    void (async () => {
-      // P4：启动流程在 appSessionInit（纯动作模块）；host 全为 getter/ref 转发，
-      // 编排顺序（设置 → pendingOpen → 恢复）留在 App，首渲染闭包构造一次即可。
-      const sessionInit: AppSessionInitHost = {
-        services, documentScaleRegistry,
-        isMounted: () => mountedRef.current, applySpellcheck, applyAutoPair,
-        getSettingsState: () => settingsRef.current,
-        commitSettings: next => { settingsRef.current = next; setSettings(next) },
-        commitTheme: setTheme,
-        getWorkspace: () => workspaceRef.current, commitWorkspace,
-        getContents: tabId => docsRef.current.get(tabId) ?? "",
-        setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
-        resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
-        ensureDraftTarget: loadDraftTarget,
-        adoptRecovery,
-        syncDoc,
-        markSessionRestored: () => { sessionRestoredRef.current = true },
-      }
-      const initial = await loadInitialSettings(sessionInit)
-      if (mountedRef.current) setThemeSyncReady(true)
-      if (!localeInitRef.current) {
-        localeInitRef.current = true
-        initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
-      }
-      const pendingOpen = await services.takePendingOpenFiles?.() ?? []
-      if (pendingOpen.length > 0) {
-        // An explicit launch request (double-click / Open With / CLI) wins over
-        // restoring the previous session.
-        for (const path of pendingOpen) {
-          await openExternalRef.current(path)
+    if (!startupStartedRef.current) {
+      startupStartedRef.current = true
+      void (async () => {
+        // P4：启动流程在 appSessionInit（纯动作模块）；host 全为 getter/ref 转发，
+        // 编排顺序（设置 → pendingOpen → 恢复）留在 App，首渲染闭包构造一次即可。
+        const sessionInit: AppSessionInitHost = {
+          services, documentScaleRegistry,
+          isMounted: () => mountedRef.current, applySpellcheck, applyAutoPair,
+          getSettingsState: () => settingsRef.current,
+          commitSettings: next => { settingsRef.current = next; setSettings(next) },
+          commitTheme: setTheme,
+          getWorkspace: () => workspaceRef.current, commitWorkspace,
+          getContents: tabId => docsRef.current.get(tabId) ?? "",
+          setContents: (tabId, contents) => docsRef.current.set(tabId, contents),
+          resetTabDocument: (session, contents) => resetTabDocumentRef.current(session, contents),
+          ensureDraftTarget: loadDraftTarget,
+          adoptRecovery,
+          syncDoc,
         }
-      } else {
-        // Session shards are per-window (get_session_state resolves the
-        // calling webview), so EVERY window consults its own shard here —
-        // restored editor-N windows reopen their tabs and folder.
-        await restoreSavedSession(sessionInit)
-      }
-      // Draft recovery is app-global and main-gated: every record is offered,
-      // but only after the shard/open requests have settled, so a draft never
-      // steals the tab an explicit launch just opened.
-      if (isMainWindow()) await restoreDrafts(sessionInit)
-    })()
-    return () => {
-      mountedRef.current = false
-      materializer.destroy()
-      viewRef.current = null
-      viewsRef.current.forEach(item => item.destroy())
-      viewsRef.current.clear()
-      openCoordinator.dispose()
+        const initial = await loadInitialSettings(sessionInit)
+        if (mountedRef.current) setThemeSyncReady(true)
+        if (!localeInitRef.current) {
+          localeInitRef.current = true
+          initLocale(initial.locale, locale => { void services.setMenuLocale?.(locale) })
+        }
+        const pendingOpen = await services.takePendingOpenFiles?.() ?? []
+        if (pendingOpen.length > 0) {
+          // An explicit launch request (double-click / Open With / CLI) wins over
+          // restoring the previous session.
+          for (const path of pendingOpen) {
+            await openExternalRef.current(path)
+          }
+        } else {
+          // Session shards are per-window (get_session_state resolves the
+          // calling webview), so EVERY window consults its own shard here —
+          // restored editor-N windows reopen their tabs and folder.
+          await restoreSavedSession(sessionInit)
+        }
+        // Draft recovery is app-global and main-gated: every record is offered,
+        // but only after the shard/open requests have settled, so a draft never
+        // steals the tab an explicit launch just opened.
+        if (isMainWindow()) await restoreDrafts(sessionInit)
+      })()
     }
+    return () => disposeAppViews({ mountedRef, materializer, viewRef, viewsRef, openCoordinator })
   }, [])
 
   // Automatic updates (spec §10): one coordinator per mounted app, one startup

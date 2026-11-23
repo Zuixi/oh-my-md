@@ -18,6 +18,8 @@ export interface DocumentMaterializer {
   discard(tabId: number): void
   /** Whether a tab currently has unmaterialized edits. */
   hasPending(tabId: number): boolean
+  /** Re-arms a destroyed instance (StrictMode effect re-run); clears stale state. */
+  reset(): void
   /** Clears the trailing timer and all pending tabs (App unmount). */
   destroy(): void
 }
@@ -82,11 +84,17 @@ export function createDocumentMaterializer(deps: DocumentMaterializerDeps): Docu
     return pending.has(tabId)
   }
 
+  function reset(): void {
+    destroyed = false
+    cancelTimer()
+    pending.clear()
+  }
+
   function destroy(): void {
     destroyed = true
     cancelTimer()
     pending.clear()
   }
 
-  return { queue, flush, flushTab, discard, hasPending, destroy }
+  return { queue, flush, flushTab, discard, hasPending, reset, destroy }
 }

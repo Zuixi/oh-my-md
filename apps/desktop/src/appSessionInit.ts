@@ -61,8 +61,8 @@ export interface AppSessionInitHost {
    *  when it could not be mounted (the record is kept). */
   adoptRecovery(draft: RecoveryDraft): number | null
   syncDoc(value: string, tabId: number): void
-  /** 恢复成功标记（sessionRestoredRef 写）。 */
-  markSessionRestored(): void
+  /** 恢复成功标记（可选；仅测试/旧调用方使用）。 */
+  markSessionRestored?(): void
 }
 
 export async function loadInitialSettings(host: AppSessionInitHost): Promise<UserSettings> {
@@ -154,7 +154,6 @@ export async function restoreSavedSession(host: AppSessionInitHost): Promise<boo
         host.commitWorkspace(focused)
         const active = activeSession(focused)
         host.syncDoc(host.getContents(active.id), active.id)
-        host.markSessionRestored()
         return true
       }
     }

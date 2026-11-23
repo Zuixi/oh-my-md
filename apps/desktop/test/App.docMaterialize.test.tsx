@@ -38,7 +38,8 @@ describe("deferred doc materialization", () => {
     harness.renderApp({ docMaterializeMs: 250 })
     await harness.openFileTab("/a.md", "hello")
     harness.services.writeRecovery = vi.fn(async () => undefined)
-    const handle = harness.editorForTab(1)
+    const all = harness.allEditors()
+    const handle = all[all.length - 1]!
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       for (const text of ["a", "b", "c"]) {
@@ -80,6 +81,25 @@ describe("deferred doc materialization", () => {
     expect(seen.length).toBeGreaterThan(0)
     for (const payload of seen) {
       expect("doc" in payload).toBe(false)
+    }
+  })
+
+  it("keeps materializing after StrictMode's setup/cleanup/setup", async () => {
+    const harness = createAppHarness(editor)
+    harness.renderApp({ docMaterializeMs: 250, strict: true })
+    await harness.openFileTab("/a.md", "hello")
+    harness.services.writeRecovery = vi.fn(async () => undefined)
+    const all = harness.allEditors()
+    const handle = all[all.length - 1]!
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      handle.emit({ doc: "strict", docChanged: true, pendingNormalization: null })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
+      expect(harness.services.writeRecovery).toHaveBeenCalledWith(
+        expect.anything(), "/a.md", expect.stringContaining("strict"),
+      )
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

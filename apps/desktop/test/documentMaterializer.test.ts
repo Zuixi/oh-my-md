@@ -193,4 +193,21 @@ describe("document materializer", () => {
     subject.queue(3)
     expect(setTimer).toHaveBeenCalledOnce()
   })
+
+  it("reset re-arms a destroyed instance for the StrictMode second setup", () => {
+    const materialize = vi.fn()
+    const subject = createDocumentMaterializer({
+      delayMs: 0,
+      readViewText: () => "after-reset",
+      materialize,
+      setTimer: () => 1,
+      clearTimer: vi.fn(),
+    })
+    subject.destroy()
+    subject.queue(1)
+    expect(materialize).not.toHaveBeenCalled()
+    subject.reset()
+    subject.queue(1)
+    expect(materialize).toHaveBeenCalledWith(1, "after-reset")
+  })
 })
