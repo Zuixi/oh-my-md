@@ -9,10 +9,12 @@ import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import { Decoration, type DecorationSet, EditorView, type WidgetType } from "@codemirror/view"
 import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
+import type { SyntaxNode } from "@lezer/common"
 import type { DecoSpec } from "./types"
 import { measureBlockWidget } from "./widgetMeasure"
 import { revealTableSource } from "../tables/sourceReveal"
 import { editorReferenceContext } from "../semantic/references"
+import { collectOrderedListLabels } from "../lists/ordered"
 
 export { nearCursor, type DecoSpec } from "./types"
 
@@ -33,13 +35,24 @@ function sortDecoSpecs(specs: DecoSpec[]): DecoSpec[] {
 
 export function collectDecorationSpecs(state: EditorState, from: number, to: number): DecoSpec[] {
   const out: DecoSpec[] = []
+  const orderedLabels = new Map<number, ReadonlyMap<number, string>>()
+  const labelFor = (mark: SyntaxNode): string | null => {
+    const list = mark.parent?.parent
+    if (list?.name !== "OrderedList") return null
+    let labels = orderedLabels.get(list.from)
+    if (!labels) {
+      labels = collectOrderedListLabels(list, state)
+      orderedLabels.set(list.from, labels)
+    }
+    return labels.get(mark.from) ?? null
+  }
   syntaxTree(state).iterate({
     from, to,
     enter(node) {
       inlineRules(node, state, out)
       // blockRules 返回 true = 产出了覆盖整个节点的块 widget → 跳过子树，
       // 否则子树内的行内装饰会与块 replace 范围重叠，Decoration.set 直接抛错
-      if (blockRules(node, state, out)) return false
+      if (blockRules(node, state, out, labelFor)) return false
     },
   })
   // 兜底：块 widget 范围内的外层装饰（如 blockquote 行装饰盖住表格）同样冲突，丢弃。

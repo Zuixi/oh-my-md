@@ -349,7 +349,12 @@ function listIndentStart(lineFrom: number, markFrom: number, state: EditorState)
   return from
 }
 
-function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
+function styleListMark(
+  node: SyntaxNodeRef,
+  state: EditorState,
+  out: DecoSpec[],
+  labelFor?: (mark: SyntaxNode) => string | null,
+) {
   const line = state.doc.lineAt(node.from)
   const depth = listDepth(node.node)
   out.push({
@@ -378,7 +383,7 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
 
   const text = state.doc.sliceString(node.from, node.to)
   if (/^\d/.test(text)) {
-    const label = orderedLabel(node.node, state) ?? text
+    const label = labelFor ? labelFor(node.node) ?? text : orderedLabel(node.node, state) ?? text
     out.push({
       from: node.from, to: node.to, tag: "widget:ordered-mark",
       deco: Decoration.replace({ widget: new OrderedWidget(label) }),
@@ -391,9 +396,14 @@ function styleListMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[])
   })
 }
 
-export function blockRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
+export function blockRules(
+  node: SyntaxNodeRef,
+  state: EditorState,
+  out: DecoSpec[],
+  labelFor?: (mark: SyntaxNode) => string | null,
+): boolean {
   switch (node.name) {
-    case "ListMark": { styleListMark(node, state, out); break }
+    case "ListMark": { styleListMark(node, state, out, labelFor); break }
     case "FencedCode": return styleFencedCode(node, state, out)
     case "CodeMark": {
       if (node.node.parent?.name === "FencedCode")

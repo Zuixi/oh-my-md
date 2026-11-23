@@ -44,14 +44,21 @@ function forEachOrderedMark(
   }
 }
 
+export function collectOrderedListLabels(
+  list: SyntaxNode,
+  state: EditorState,
+): ReadonlyMap<number, string> {
+  const labels = new Map<number, string>()
+  forEachOrderedMark(list, state, (mark, _raw, expected) => {
+    labels.set(mark.from, expected)
+  })
+  return labels
+}
+
 export function orderedLabel(mark: SyntaxNode, state: EditorState): string | null {
   const list = mark.parent?.parent
   if (list?.name !== "OrderedList") return null
-  let label: string | null = null
-  forEachOrderedMark(list, state, (itemMark, _raw, expected) => {
-    if (itemMark.from === mark.from) label = expected
-  })
-  return label
+  return collectOrderedListLabels(list, state).get(mark.from) ?? null
 }
 
 // 安全模式（Task 4）重编号扫描的外扩半径：可见段与 docChanged 变更段两侧各扩
