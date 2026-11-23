@@ -482,7 +482,11 @@ fn save_backup_path(path: &Path) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    path.with_file_name(format!(".{}-{}.omd-save-backup", std::process::id(), nanos))
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("doc");
+    // The embedded document name lets `temp_sweep` recognise a backup that is
+    // the last copy of a file a crash left mid-rename.
+    let stamp = format!(".{}-{}", std::process::id(), nanos);
+    path.with_file_name(format!("{stamp}.{name}.omd-save-backup"))
 }
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -666,15 +670,9 @@ pub fn run() {
                 log::warn!("legacy config migration failed: {e}");
             }
             // Housekeeping (DATA-06): drop this app's own abandoned staging
-            // files from the directories it owns. Bounded and non-recursive,
-            // so it cannot stall startup.
-            for directory in [
-                workspace::config_dir(),
-                workspace::recovery_dir(),
-                workspace::config_dir().join("snapshots"),
-            ] {
-                temp_sweep::sweep_stale_entries(&directory);
-            }
+            // files from the directories it owns, one level into the snapshot
+            // buckets included. Age-guarded, so it cannot stall startup.
+            temp_sweep::sweep_app_dirs(&workspace::config_dir(), &workspace::recovery_dir());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -928,10 +926,11 @@ mod tests {
         let name =
             |p: &std::path::PathBuf| p.file_name().and_then(|n| n.to_str()).unwrap().to_owned();
         let (a_name, b_name) = (name(&a), name(&b));
-        // Unique hidden siblings (pid + nanos), never the extension-clobbering
-        // `with_extension` form where note.md and note.txt would collide.
+        // Hidden siblings (pid + nanos + document name), never the
+        // extension-clobbering `with_extension` form that would collide.
         assert!(a_name.starts_with(&format!(".{}-", std::process::id())));
-        assert!(a_name.ends_with(".omd-save-backup"));
+        assert!(a_name.ends_with(".note.md.omd-save-backup"));
+        assert!(b_name.ends_with(".note.txt.omd-save-backup"));
         assert_ne!(a_name, b_name);
         assert_ne!(a_name, "note.omd-save-backup");
         assert_eq!(a.parent(), Some(Path::new("/tmp/notes")));

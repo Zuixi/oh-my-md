@@ -11,7 +11,7 @@
 import type { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
 import {
-  createEditor, resetEditorDocument,
+  createEditor, resetEditorDocument, setEditorAutoPair, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
 } from "./Editor"
 import type { EditorStatusStore } from "./editorStatusStore"
@@ -73,6 +73,12 @@ export interface DocumentViews {
   readonly pasteOptions: (tabId: number, documentId: number) => ClipboardPasteOptions
   readonly imageInsertOptions: (tabId: number, documentId: number) => ImagePasteOptions
   readonly resetTabDocument: (nextSession: EditorSession, contents: string, docText?: Text) => boolean
+  /**
+   * Re-applies the current settings to a rebuilt view. A tab that was evicted
+   * for a while received none of the settings changes that only reach live
+   * views, so a revive must not leave it on stale spellcheck/auto-pair state.
+   */
+  readonly syncEditorSettings?: (view: EditorView) => void
   readonly ensureViews: () => void
   readonly jumpPending: () => void
   readonly focusPendingEditor: () => void
@@ -191,13 +197,30 @@ export function createDocumentViews(deps: DocumentViewsDeps): DocumentViews {
     }
   }
 
+  const syncEditorSettings = (view: EditorView): void => {
+    const settings = deps.getSettings()
+    // Fake views created by unit tests may reject both reconfigurations.
+    try {
+      setEditorSpellcheck(view, settings.spellcheck)
+      setEditorAutoPair(view, settings.autoPair)
+    } catch {
+      /* a view without the settings compartments (test doubles) */
+    }
+  }
+
   const resetTabDocument = (
     nextSession: EditorSession,
     contents: string,
     docText?: Text,
   ): boolean => {
     const view = registry.getView(nextSession.id)
-    if (!view) return false
+    if (!view) {
+      // Reloading a document on an evicted tab: the new text is authoritative,
+      // so its preserved state (old rope, undo history, caret) must not win when
+      // the tab is revived. The eviction stays, so activation still rebuilds it.
+      if (registry.isEvicted(nextSession.id)) registry.discardDetachedState(nextSession.id)
+      return false
+    }
     const previousWorkspace = store.getWorkspace()
     const previousNormalization = store.getNormalizationByTab()
     const previousDoc = store.getTabDoc(nextSession.id)
@@ -282,6 +305,7 @@ export function createDocumentViews(deps: DocumentViewsDeps): DocumentViews {
     pasteOptions,
     imageInsertOptions,
     resetTabDocument,
+    syncEditorSettings,
     ensureViews,
     jumpPending,
     focusPendingEditor,

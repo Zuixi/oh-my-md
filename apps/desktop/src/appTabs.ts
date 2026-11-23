@@ -76,17 +76,12 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
   }
 
   function activateTab(id: number): void {
-    const current = registry.getActiveView()
     const activeBefore = store.getActiveSession()
-    // Leaving a tab only needs materialization when edits are still pending; an
-    // unconditional rope flatten is the tab-switch cliff for a 50MB document.
-    if (current && materializer.hasPending(activeBefore.id)) {
-      // Write the store directly instead of materialize(): that path also runs
-      // syncDoc against the still-old active id and would briefly publish the
-      // outgoing text as the incoming tab's document.
-      store.setTabDoc(activeBefore.id, current.state.doc.toString())
-      materializer.discard(activeBefore.id)
-    }
+    // Leaving a tab only needs materialization when edits are still pending.
+    // Flushing through the materializer (instead of writing the store directly)
+    // also persists crash recovery and arms that tab's own autosave, so a tab
+    // switch cannot silently drop the outgoing tab's draft.
+    if (materializer.hasPending(activeBefore.id)) materializer.flushTab(activeBefore.id)
     deps.commitWorkspace(focusTab(store.getWorkspace(), id))
     const nextView = registry.getView(id) ?? reviveEvicted(id)
     if (!nextView) return
@@ -123,7 +118,12 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
       host,
       views.editorOptions(store.getTabDoc(tab.id), tab.id, tab.documentId, text),
     ))
-    if (view) deps.applyScalePolicy(view, tabId)
+    if (view) {
+      deps.applyScalePolicy(view, tabId)
+      // Settings may have changed while the tab had no view: the spellcheck and
+      // auto-pair toggles only reach live views, so a revived one must catch up.
+      views.syncEditorSettings?.(view)
+    }
     return view
   }
 
@@ -237,8 +237,20 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
     }
     deps.commitWorkspace(closed)
     const active = activeSession(closed)
-    registry.setActiveView(active.id)
-    views.syncDoc(store.getTabDoc(active.id), active.id)
+    // The neighbor that slides into the closed slot may be an LRU-evicted tab or
+    // a still-unloaded lazy tab; activating it blindly would leave a blank
+    // editor (no view) or overwrite unread disk content with an empty doc.
+    const nextView = registry.getView(active.id) ?? reviveEvicted(active.id)
+    if (nextView) registry.setActiveView(active.id)
+    if (!sessionContentLoaded(active)) {
+      void loadLazyTab(active)
+      return !closed.tabs.some(item => item.id === id)
+    }
+    views.syncDoc(
+      store.getTabDoc(active.id) || (nextView ? nextView.state.doc.toString() : ""),
+      active.id,
+    )
+    if (nextView) deps.refreshOutline(nextView)
     return !closed.tabs.some(item => item.id === id)
   }
 

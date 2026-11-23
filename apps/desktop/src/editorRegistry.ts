@@ -7,14 +7,27 @@
  * bounded live-view budget: past `MAX_LIVE_EDITOR_VIEWS` the least recently
  * activated *clean* background tab is torn down (its text already lives in
  * `DocumentStore`) and rebuilt on return. A plain HTML host div stays mounted so
- * React keeps its DOM position; only the CodeMirror view is released.
+ * React keeps its DOM position; only the CodeMirror view and its DOM are released.
  */
-import type { EditorView } from "@codemirror/view"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
+import { isLivePreview, setLivePreview } from "@omd/engine"
 
 export interface EvictedViewState {
   readonly anchor: number
   readonly head: number
   readonly scrollTop: number
+  /**
+   * The tab's own `EditorState`, kept across eviction so Undo/Redo history, the
+   * text rope, selection, source/live mode, ordered-list normalization and every
+   * bound view callback survive the round trip. Absent for the plain fake views
+   * used by unit tests, which are rebuilt through the `create` callback. A
+   * document reload that can reach an evicted tab must drop this entry
+   * (`destroy(tabId)`), or the preserved text would win over the new one.
+   */
+  readonly detachedState?: EditorState
+  /** Whether the tab was in Live mode when it was evicted (decorations stripped). */
+  readonly wasLive?: boolean
 }
 
 /**
@@ -37,6 +50,12 @@ export interface EditorRegistry {
   readonly revive: (tabId: number, create: (host: HTMLDivElement) => EditorView) => EditorView | null
   /** Whether a tab's view was released and must be revived before use. */
   readonly isEvicted: (tabId: number) => boolean
+  /**
+   * Drops an evicted tab's preserved `EditorState` so `revive` rebuilds it from
+   * the current document text through `create`, while keeping the tab evicted
+   * (it must still be rebuilt on activation, not eagerly by `ensureViews`).
+   */
+  readonly discardDetachedState: (tabId: number) => void
   readonly destroy: (tabId: number) => void
   readonly destroyAll: () => void
   /**
@@ -61,16 +80,6 @@ export function createEditorRegistry(): EditorRegistry {
 
   const touch = (tabId: number): void => {
     lastActivatedAt.set(tabId, ++activationClock)
-  }
-
-  const snapshot = (view: EditorView): EvictedViewState => {
-    const length = docLength(view)
-    return {
-      anchor: clampToDoc(view.state.selection?.main.anchor ?? 0, length),
-      head: clampToDoc(view.state.selection?.main.head ?? 0, length),
-      // Fake views in tests have no scrollDOM; production ones always do.
-      scrollTop: view.scrollDOM?.scrollTop ?? 0,
-    }
   }
 
   const restore = (view: EditorView, state: EvictedViewState): void => {
@@ -110,6 +119,19 @@ export function createEditorRegistry(): EditorRegistry {
       if (!host) return null
       const state = evicted.get(tabId)
       evicted.delete(tabId)
+      if (state?.detachedState) {
+        // Re-mount the preserved state directly: it already carries the tab's
+        // extensions, undo history, mode and callbacks, so `create` (which would
+        // build a fresh state and lose all of it) must not run here.
+        const restored = state.wasLive
+          ? state.detachedState.update(setLivePreview(true)).state
+          : state.detachedState
+        const view = new EditorView({ state: restored, parent: host })
+        views.set(tabId, view)
+        touch(tabId)
+        if (view.scrollDOM) view.scrollDOM.scrollTop = state.scrollTop
+        return view
+      }
       const view = create(host)
       views.set(tabId, view)
       touch(tabId)
@@ -117,6 +139,11 @@ export function createEditorRegistry(): EditorRegistry {
       return view
     },
     isEvicted: tabId => evicted.has(tabId),
+    discardDetachedState: tabId => {
+      if (!evicted.has(tabId)) return
+      // Keep the entry: `isEvicted` still routes activation through `revive`.
+      evicted.set(tabId, { anchor: 0, head: 0, scrollTop: 0 })
+    },
     destroy: tabId => {
       if (activeViewId === tabId) activeViewId = null
       const view = views.get(tabId)
@@ -143,13 +170,35 @@ export function createEditorRegistry(): EditorRegistry {
         const view = views.get(tabId)
         if (!view) continue
         flush(tabId, view.state.doc.toString())
-        evicted.set(tabId, snapshot(view))
+        evicted.set(tabId, detachSnapshot(view))
         view.destroy()
         views.delete(tabId)
         lastActivatedAt.delete(tabId)
       }
     },
   }
+}
+
+/**
+ * Snapshot for eviction. A real CodeMirror view keeps its `EditorState` with the
+ * live-preview decorations stripped: a large document's decoration set (and the
+ * block widgets' DOM) is the expensive half, while the rope, undo history,
+ * mode facets and callbacks are cheap. `setLivePreview(false)` is a pure effect
+ * transaction — it adds no history entry — so Undo/Redo still crosses the
+ * eviction boundary, and `revive` restores Live mode when it was on.
+ */
+function detachSnapshot(view: EditorView): EvictedViewState {
+  const length = docLength(view)
+  const base: EvictedViewState = {
+    anchor: clampToDoc(view.state.selection?.main.anchor ?? 0, length),
+    head: clampToDoc(view.state.selection?.main.head ?? 0, length),
+    // Fake views in tests have no scrollDOM; production ones always do.
+    scrollTop: view.scrollDOM?.scrollTop ?? 0,
+  }
+  if (!(view.state instanceof EditorState)) return base
+  const wasLive = view.state.field(isLivePreview, false) === true
+  const detachedState = wasLive ? view.state.update(setLivePreview(false)).state : view.state
+  return { ...base, detachedState, wasLive }
 }
 
 function docLength(view: EditorView): number {

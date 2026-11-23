@@ -37,11 +37,15 @@ export interface DocumentScaleRegistry {
    * count, from current bytes/read-only state. Does not mutate the cached
    * safe-mode set — callers that need a render-time gate (e.g. reacting to
    * the document crossing the line threshold mid-typing) use this instead of
-   * `classify`, which would otherwise fire cache writes on every render. */
-  evaluate(tabId: number, lines: number): DocumentScaleClassification
+   * `classify`, which would otherwise fire cache writes on every render.
+   * `minBytes` lets a caller add the live document size, which is the only size
+   * an unsaved (untitled) tab has. */
+  evaluate(tabId: number, lines: number, minBytes?: number): DocumentScaleClassification
   /** Recomputes safe mode from current bytes/read-only state plus the given
-   * line count, and updates the cached safe-mode set accordingly. */
-  classify(tabId: number, lines: number): DocumentScaleClassification
+   * line count, and updates the cached safe-mode set accordingly. A supplied
+   * `minBytes` (live document length) is latched as the tab's known size so
+   * pasting a large document into an unsaved tab raises its tier immediately. */
+  classify(tabId: number, lines: number, minBytes?: number): DocumentScaleClassification
   /** The engine policy this tab's view must carry. Every view gets an explicit
    * policy, so tabs cannot inherit each other's budget/windowing and the
    * engine's process-global defaults are never consulted. Medium/large
@@ -60,6 +64,11 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
   // allowed to move a tab between tiers.
   const linesByTab = new Map<number, number>()
   const textByTab = new Map<number, Text>()
+  // Largest live document size `classify` has seen (characters, a lower bound
+  // for bytes). Kept apart from the disk byte count so a reload can still move a
+  // tab down. Upward-only: reconfiguring a view down and back while a document
+  // hovers around a threshold would trade a memory win for policy churn.
+  const liveBytesByTab = new Map<number, number>()
   const readOnlyTabs = new Set<number>()
   const safeModeTabs = new Set<number>()
 
@@ -71,17 +80,36 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     return safeModeTabs.has(tabId)
   }
 
-  function evaluate(tabId: number, lines: number): DocumentScaleClassification {
-    const bytes = bytesByTab.get(tabId)
+  /** Largest size known for the tab: disk bytes, live length, or the caller's. */
+  function sizeOf(tabId: number, minBytes?: number): number {
+    return Math.max(
+      bytesByTab.get(tabId) ?? 0,
+      liveBytesByTab.get(tabId) ?? 0,
+      minBytes ?? 0,
+    )
+  }
+
+  function evaluate(
+    tabId: number,
+    lines: number,
+    minBytes?: number,
+  ): DocumentScaleClassification {
     const readOnly = isReadOnly(tabId)
     const safeMode = lines > deps.safeModeLines
-      || (bytes !== undefined && bytes > deps.safeModeBytes)
+      || sizeOf(tabId, minBytes) > deps.safeModeBytes
       || readOnly
     return { safeMode, readOnly }
   }
 
-  function classify(tabId: number, lines: number): DocumentScaleClassification {
+  function classify(
+    tabId: number,
+    lines: number,
+    minBytes?: number,
+  ): DocumentScaleClassification {
     linesByTab.set(tabId, lines)
+    if (minBytes !== undefined) {
+      liveBytesByTab.set(tabId, Math.max(liveBytesByTab.get(tabId) ?? 0, minBytes))
+    }
     const result = evaluate(tabId, lines)
     if (result.safeMode) safeModeTabs.add(tabId)
     else safeModeTabs.delete(tabId)
@@ -111,14 +139,14 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     classify,
     performancePolicy(tabId) {
       if (isSafeMode(tabId)) return SAFE_PERFORMANCE_POLICY
-      const bytes = bytesByTab.get(tabId) ?? 0
       const windowed = (linesByTab.get(tabId) ?? 0) > WINDOWED_LIVE_MIN_LINES
-        || bytes > WINDOWED_LIVE_MIN_BYTES
+        || sizeOf(tabId) > WINDOWED_LIVE_MIN_BYTES
       return windowed ? WINDOWED_PERFORMANCE_POLICY : STANDARD_PERFORMANCE_POLICY
     },
     remove(tabId) {
       bytesByTab.delete(tabId)
       linesByTab.delete(tabId)
+      liveBytesByTab.delete(tabId)
       textByTab.delete(tabId)
       readOnlyTabs.delete(tabId)
       safeModeTabs.delete(tabId)

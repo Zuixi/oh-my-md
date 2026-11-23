@@ -99,21 +99,7 @@ export function prepareTypingView(doc: string, opts: TypingViewOptions): EditorV
  *   （apps/desktop/test/crossLayerNoFullTree.test.ts 护栏）。 */
 export function measureTyping(
   doc: string,
-  opts: {
-    keystrokes?: number
-    mode?: "live" | "source"
-    tree?: "steady" | "complete"
-    /** 窗口化稳态（需 mode:"live"）：逐键前先把「窗口内已建、窗口外归还 pending」
-     * 落位（见 syncWindowReady），度量窗口为界的每键装饰映射成本。 */
-    safeWindow?: boolean
-    /** 逐键前同步排空当前树的 pending（见 prepareTypingView）；tree:"steady" 即
-     * 生产 ParseWindow 消化完的稳态。 */
-    drain?: boolean
-    /** 逐键起点（默认文档中点，保持既有基准不变）。 */
-    caret?: number
-    /** Per-view engine policy (windowed presets shrink the build window). */
-    policy?: EditorPerformancePolicy | null
-  } = {},
+  opts: TypingMeasureOptions = {},
 ): TypingLatency {
   const count = opts.keystrokes ?? 200
   const view = prepareTypingView(doc, {
@@ -135,6 +121,59 @@ export function measureTyping(
   }
   view.destroy()
   parent?.remove()
+  return latencyOf(samples, count)
+}
+
+/** Per-keystroke options of `measureTyping` / `measureTypingWithMicrotasks`. */
+export interface TypingMeasureOptions {
+  keystrokes?: number
+  mode?: "live" | "source"
+  tree?: "steady" | "complete"
+  /** 窗口化稳态（需 mode:"live"）：逐键前先把「窗口内已建、窗口外归还 pending」
+   * 落位（见 syncWindowReady），度量窗口为界的每键装饰映射成本。 */
+  safeWindow?: boolean
+  /** 逐键前同步排空当前树的 pending（见 prepareTypingView）；tree:"steady" 即
+   * 生产 ParseWindow 消化完的稳态。 */
+  drain?: boolean
+  /** 逐键起点（默认文档中点，保持既有基准不变）。 */
+  caret?: number
+  /** Per-view engine policy (windowed presets shrink the build window). */
+  policy?: EditorPerformancePolicy | null
+}
+
+/** `measureTyping` plus a microtask checkpoint after every keystroke: state fields and view
+ * plugins that defer work (ordered-list renumbering runs in a microtask, block widgets dispatch
+ * from one) settle inside the sample, so the number covers what the host actually pays per
+ * keystroke instead of only the synchronous dispatch return. */
+export async function measureTypingWithMicrotasks(
+  doc: string,
+  opts: TypingMeasureOptions = {},
+): Promise<TypingLatency> {
+  const count = opts.keystrokes ?? 200
+  const view = prepareTypingView(doc, {
+    mode: opts.mode ?? "live",
+    tree: opts.tree ?? "steady",
+    drain: opts.drain,
+    safeWindow: opts.safeWindow,
+    policy: opts.policy,
+    caret: opts.caret,
+  })
+  const parent = view.dom.parentElement
+  let pos = opts.caret ?? Math.floor(doc.length / 2)
+  const samples: number[] = []
+  for (let i = 0; i < count; i++) {
+    const t0 = performance.now()
+    view.dispatch({ changes: { from: pos, insert: "字" }, selection: { anchor: pos + 1 } })
+    await Promise.resolve()
+    samples.push(performance.now() - t0)
+    pos += 1
+  }
+  view.destroy()
+  parent?.remove()
+  return latencyOf(samples, count)
+}
+
+function latencyOf(samples: number[], count: number): TypingLatency {
   const sorted = [...samples].sort((a, b) => a - b)
   return { p50Ms: percentile(sorted, 50), p95Ms: percentile(sorted, 95), samples: count }
 }

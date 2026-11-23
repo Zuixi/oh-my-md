@@ -6,6 +6,7 @@
 //! file the user could write. Each command now pins the extension, the shape,
 //! and the size cap of the one file kind it serves.
 
+use std::io::Read;
 use std::path::{Component, Path};
 
 /// Custom CSS is a stylesheet, not a data channel: 1 MiB is far beyond any
@@ -28,7 +29,16 @@ fn read_custom_css_impl(path: &str) -> Result<String, String> {
     if !has_extension(target, &[CSS_EXTENSION]) {
         return Err("custom CSS must use a .css extension".into());
     }
-    let metadata = std::fs::metadata(target).map_err(|e| e.to_string())?;
+    // `theme.css` can be a symlink to any file on disk (`~/.ssh/id_rsa`), so the
+    // name proves nothing. Resolve first, apply every check — extension,
+    // regular file, size cap — to the resolved path, and read through the open
+    // handle so a swap between validation and open cannot win the race.
+    let canonical = std::fs::canonicalize(target).map_err(|e| e.to_string())?;
+    if !has_extension(&canonical, &[CSS_EXTENSION]) {
+        return Err("custom CSS target must use a .css extension".into());
+    }
+    let mut file = std::fs::File::open(&canonical).map_err(|e| e.to_string())?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() {
         return Err("custom CSS path is not a regular file".into());
     }
@@ -38,7 +48,10 @@ fn read_custom_css_impl(path: &str) -> Result<String, String> {
             MAX_CUSTOM_CSS_BYTES
         ));
     }
-    std::fs::read_to_string(target).map_err(|e| e.to_string())
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| e.to_string())?;
+    Ok(contents)
 }
 
 #[tauri::command]
@@ -56,14 +69,27 @@ fn write_exported_html_impl(path: &str, contents: String) -> Result<(), String> 
         // in an unrelated handler on every platform.
         return Err("exported HTML must use a .html or .htm extension".into());
     }
-    if target.is_dir() {
-        return Err("exported HTML path is a directory".into());
+    // `atomic_write` renames onto the target, so a pre-existing symlink would
+    // overwrite whatever it points at instead of creating the export. An export
+    // target is always a fresh file, never a link.
+    if let Ok(existing) = std::fs::symlink_metadata(target) {
+        if existing.file_type().is_symlink() {
+            return Err("exported HTML path must not be a symlink".into());
+        }
+        if existing.is_dir() {
+            return Err("exported HTML path is a directory".into());
+        }
     }
     if contents.len() > crate::export::MAX_EXPORT_HTML_BYTES {
         return Err(format!(
             "export HTML exceeds the {} byte size limit",
             crate::export::MAX_EXPORT_HTML_BYTES
         ));
+    }
+    // `atomic_write` stages its temp file inside the parent, so a missing
+    // directory must fail before anything is created.
+    if !target.parent().is_some_and(Path::is_dir) {
+        return Err("exported HTML directory does not exist".into());
     }
     crate::atomic_write(target, contents.as_bytes())
 }
@@ -198,6 +224,62 @@ mod tests {
 
         assert!(error.contains("size limit"), "unexpected error: {error}");
         assert!(!dir.join("huge.html").exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn exported_html_fails_before_staging_when_its_directory_is_absent() {
+        let dir = tmp("html-parent");
+        let missing = dir.join("absent").join("doc.html");
+
+        let error = write_exported_html_impl(&path_string(&missing), "x".into()).unwrap_err();
+
+        assert!(error.contains("directory"), "unexpected error: {error}");
+        assert!(!dir.join("absent").exists(), "no directory may be created");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_css_rejects_a_symlink_whose_resolved_target_is_not_css() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tmp("css-symlink");
+        let secret = dir.join("secret.txt");
+        fs::write(&secret, "private key material").unwrap();
+        let evil = dir.join("evil.css");
+        symlink(&secret, &evil).unwrap();
+
+        let error = read_custom_css_impl(&path_string(&evil)).unwrap_err();
+        assert!(error.contains("extension"), "unexpected error: {error}");
+
+        // A symlink that resolves to a real stylesheet stays legitimate.
+        let real = dir.join("real-theme.css");
+        fs::write(&real, ":root{--a:1}").unwrap();
+        let linked = dir.join("linked.css");
+        symlink(&real, &linked).unwrap();
+        assert_eq!(
+            read_custom_css_impl(&path_string(&linked)).unwrap(),
+            ":root{--a:1}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exported_html_refuses_to_write_through_a_preexisting_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tmp("html-symlink");
+        let victim = dir.join("target.txt");
+        fs::write(&victim, "precious").unwrap();
+        let evil = dir.join("evil.html");
+        symlink(&victim, &evil).unwrap();
+
+        let error = write_exported_html_impl(&path_string(&evil), "<p>x</p>".into()).unwrap_err();
+
+        assert!(error.contains("symlink"), "unexpected error: {error}");
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
         fs::remove_dir_all(dir).ok();
     }
 }

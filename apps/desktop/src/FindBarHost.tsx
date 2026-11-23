@@ -1,8 +1,30 @@
-import { useMemo, useRef } from "react"
-import { useActiveTabDoc, type DocumentStore } from "./documentStore"
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
+import type { DocumentStore } from "./documentStore"
 import { FindReplaceBar } from "./FindReplaceBar"
 import { collectMatches, validateFindPattern } from "./findReplace"
 import type { FindReplaceHandle } from "./useFindReplace"
+
+/** No subscription while the bar is closed. */
+const NOOP_UNSUBSCRIBE = (): void => {}
+
+/**
+ * The active tab's materialized text, subscribed only while `enabled`.
+ *
+ * A closed Find bar has nothing to count, so it must not wake on materialized
+ * edits: the subscribe/snapshot identities change with `enabled`, which makes
+ * `useSyncExternalStore` re-subscribe on open (and read the current text then).
+ */
+function useActiveTabDocWhen(store: DocumentStore, enabled: boolean): string {
+  const subscribe = useCallback(
+    (listener: () => void) => (enabled ? store.subscribe(listener) : NOOP_UNSUBSCRIBE),
+    [store, enabled],
+  )
+  const getSnapshot = useCallback(
+    () => (enabled ? store.getTabDoc(store.getWorkspace().activeId) : ""),
+    [store, enabled],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
 
 /**
  * Find bar wiring. The full-document match count needs the materialized text, so
@@ -15,7 +37,7 @@ export function FindBarHost(props: {
   readonly isSafeMode: () => boolean
 }) {
   const { find } = props
-  const doc = useActiveTabDoc(props.store)
+  const doc = useActiveTabDocWhen(props.store, find.open)
   // Stable indirection so an inline getter from the shell cannot defeat the
   // full-document memoization below.
   const isSafeModeRef = useRef(props.isSafeMode)

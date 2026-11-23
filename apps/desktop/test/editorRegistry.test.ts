@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
-import type { EditorView } from "@codemirror/view"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
+import { history, undo } from "@codemirror/commands"
+import { editorExtensions, isLivePreview, setLivePreview } from "@omd/engine"
 import { MAX_LIVE_EDITOR_VIEWS, createEditorRegistry } from "../src/editorRegistry"
 
 interface FakeView {
@@ -127,5 +130,146 @@ describe("editor registry live-view budget", () => {
     expect(entry.destroyed()).toBe(true)
     expect(registry.views().size).toBe(0)
     expect(registry.getActiveView()).toBeNull()
+  })
+})
+
+/**
+ * A real CodeMirror view, mounted like `Editor.ts` mounts it. These tests cover
+ * the production eviction path: the tab's `EditorState` is preserved (not
+ * rebuilt), so the expensive things that are *not* decorations survive.
+ */
+function realView(host: HTMLDivElement, doc: string): EditorView {
+  return new EditorView({
+    state: EditorState.create({
+      doc,
+      extensions: [history(), editorExtensions({ performancePolicy: null })],
+    }),
+    parent: host,
+  })
+}
+
+describe("editor registry state preservation across eviction", () => {
+  it("keeps undo history, source mode and scroll position for a real view", () => {
+    const registry = createEditorRegistry()
+    const host = fakeHost()
+    registry.bindHost(2, host)
+    const view = realView(host, "beta")
+    registry.add(2, view)
+    registry.bindHost(1, fakeHost())
+    registry.add(1, fakeView("active tab").view)
+    // Typing, a Live -> Source toggle, and a scroll position the user chose.
+    view.dispatch({ changes: { from: 0, insert: "alpha " } })
+    view.dispatch(setLivePreview(false))
+    expect(view.state.doc.toString()).toBe("alpha beta")
+    view.scrollDOM.scrollTop = 240
+
+    registry.evictOverBudget({
+      activeTabId: 1,
+      isEvictable: () => true,
+      flush: vi.fn(),
+      maxLiveViews: 1,
+    })
+    expect(registry.isEvicted(2)).toBe(true)
+    expect(view.state.doc.toString()).toBe("alpha beta")
+
+    const create = vi.fn(() => fakeView("rebuilt").view)
+    const revived = registry.revive(2, create)
+
+    // The preserved state is re-mounted directly: no fresh state, no lost history.
+    expect(create).not.toHaveBeenCalled()
+    expect(revived).toBe(registry.getView(2))
+    expect(revived?.state.doc.toString()).toBe("alpha beta")
+    expect(revived?.state.field(isLivePreview)).toBe(false)
+    expect(revived?.scrollDOM.scrollTop).toBe(240)
+
+    const undone: string[] = []
+    const handled = undo({
+      state: revived!.state,
+      dispatch: transaction => { undone.push(transaction.state.doc.toString()) },
+    })
+    expect(handled).toBe(true)
+    expect(undone).toEqual(["beta"])
+  })
+
+  it("restores Live mode after the decorations were stripped for eviction", () => {
+    const registry = createEditorRegistry()
+    const host = fakeHost()
+    registry.bindHost(2, host)
+    const view = realView(host, "live tab")
+    registry.add(2, view)
+    registry.bindHost(1, fakeHost())
+    registry.add(1, fakeView("active tab").view)
+    expect(view.state.field(isLivePreview)).toBe(true)
+
+    registry.evictOverBudget({
+      activeTabId: 1,
+      isEvictable: () => true,
+      flush: vi.fn(),
+      maxLiveViews: 1,
+    })
+    const revived = registry.revive(2, () => fakeView("rebuilt").view)
+
+    expect(revived?.state.field(isLivePreview)).toBe(true)
+    expect(revived?.state.doc.toString()).toBe("live tab")
+  })
+})
+
+/**
+ * A document reload can reach an evicted tab: `resetTabDocument` has no view to
+ * update, so the preserved state must be dropped while the tab stays evicted.
+ */
+describe("editor registry detached state discard", () => {
+  function evictSecondTab(text: string) {
+    const registry = createEditorRegistry()
+    const host = fakeHost()
+    registry.bindHost(2, host)
+    const view = realView(host, text)
+    registry.add(2, view)
+    registry.bindHost(1, fakeHost())
+    registry.add(1, fakeView("active tab").view)
+    registry.evictOverBudget({
+      activeTabId: 1,
+      isEvictable: () => true,
+      flush: vi.fn(),
+      maxLiveViews: 1,
+    })
+    expect(registry.isEvicted(2)).toBe(true)
+    expect(registry.getView(2)).toBeUndefined()
+    return { registry }
+  }
+
+  it("keeps the tab evicted but rebuilds it through create", () => {
+    const { registry } = evictSecondTab("reloaded text")
+
+    registry.discardDetachedState(2)
+
+    // Still evicted: activation rebuilds it, `ensureViews` must not do so eagerly.
+    expect(registry.isEvicted(2)).toBe(true)
+    const rebuilt = fakeView("reloaded text", 40, 40, 500)
+    const create = vi.fn(() => rebuilt.view)
+    const revived = registry.revive(2, create)
+
+    // The preserved state is gone, so the reloaded document wins over the old
+    // text and the caret/scroll restart from the beginning of the new document.
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(revived).toBe(rebuilt.view)
+    expect(rebuilt.dispatch).toHaveBeenCalledWith({ selection: { anchor: 0, head: 0 } })
+    expect(rebuilt.view.scrollDOM.scrollTop).toBe(0)
+    expect(registry.isEvicted(2)).toBe(false)
+    expect(registry.getView(2)).toBe(rebuilt.view)
+  })
+
+  it("ignores a tab that is not evicted", () => {
+    const registry = createEditorRegistry()
+    const host = fakeHost()
+    registry.bindHost(1, host)
+    const view = realView(host, "still live")
+    registry.add(1, view)
+
+    registry.discardDetachedState(1)
+
+    expect(registry.isEvicted(1)).toBe(false)
+    expect(registry.getView(1)).toBe(view)
+    expect(view.state.doc.toString()).toBe("still live")
   })
 })

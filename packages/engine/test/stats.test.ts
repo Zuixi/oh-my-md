@@ -34,3 +34,66 @@ describe("documentStats", () => {
     expect(documentStats("   ")).toEqual({ words: 0, chars: 0 })
   })
 })
+
+// The bounds-based implementation must stay byte-for-byte equivalent to the
+// previous `text.replace(FRONT_MATTER, "").trim()` version, which allocated two
+// full-document strings per call.
+const LEGACY_FRONT_MATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/
+const LEGACY_WORD =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[A-Za-z0-9]+/gu
+
+function legacyDocumentStats(text: string): { words: number; chars: number } {
+  const trimmed = text.replace(LEGACY_FRONT_MATTER, "").trim()
+  if (!trimmed) return { words: 0, chars: 0 }
+  LEGACY_WORD.lastIndex = 0
+  let words = 0
+  while (LEGACY_WORD.exec(trimmed)) words += 1
+  return { words, chars: trimmed.length }
+}
+
+describe("documentStats bounds parity", () => {
+  const cases: readonly string[] = [
+    "",
+    " ",
+    "\n\t\n",
+    "   hello world   ",
+    "\u00a0hello\u3000world\ufeff",
+    "---\n---\n",
+    "---\n---",
+    "---\ntitle: x\n---",
+    "---\ntitle: x\n---\n",
+    "---\ntitle: x\n---\nbody",
+    "---\ntitle: x\n---\n\n\nbody text here\n\n",
+    "---\r\ntitle: x\r\n---\r\nbody text",
+    "---\r\ntitle: x\r\n---\r\n",
+    "---\na\n----\nbody",
+    "---\na\n---\rbody",
+    "---\na\n---\n   \n",
+    "---\ntitle: unclosed\nbody text",
+    "\n---\ntitle: x\n---\nnot front matter",
+    "正文 test",
+    "中文测试",
+    "𠀀",
+    "写 hello 文档",
+    "abc123 中文 한글 カナ",
+    "hello—world",
+    "a@b.co and https://example.com",
+    "trailing spaces   ",
+    "\n\n# Heading\n\nbody with **bold** and `code`\n",
+  ]
+
+  it.each(cases.map(text => [JSON.stringify(text), text] as const))(
+    "matches the legacy result for %s",
+    (_label, text) => {
+      expect(documentStats(text)).toEqual(legacyDocumentStats(text))
+    },
+  )
+
+  it("counts a large body without trimming a copy of it", () => {
+    const body = "word ".repeat(20_000)
+    expect(documentStats(`---\ntitle: x\n---\n${body}`)).toEqual({
+      words: 20_000,
+      chars: body.trimEnd().length,
+    })
+  })
+})

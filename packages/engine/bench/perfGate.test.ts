@@ -6,6 +6,7 @@ import {
   fullyParsedLiveState,
   measureDecoRebuildMs,
   measureTyping,
+  measureTypingWithMicrotasks,
   prepareTypingView,
   type TypingLatency,
 } from "./measure"
@@ -97,6 +98,29 @@ function expectWithinBudget(
   ).toBe(true)
 }
 
+/** `expectWithinBudget` for a scenario that awaits between keystrokes (microtask drain). */
+async function expectWithinBudgetAsync(
+  name: string,
+  budget: Budget,
+  measure: () => Promise<TypingLatency>,
+): Promise<void> {
+  const p50Budget = budget.p50Ms * budgetFactor
+  const p95Budget = budget.p95Ms * budgetFactor
+  const attempts: TypingLatency[] = []
+  let passed = false
+  for (let attempt = 0; attempt < ATTEMPTS && !passed; attempt++) {
+    const latency = await measure()
+    attempts.push(latency)
+    console.info(`[perf-gate] ${name} attempt ${attempt + 1}: ${format(latency)}`)
+    passed = latency.p50Ms <= p50Budget && latency.p95Ms <= p95Budget
+  }
+  expect(
+    passed,
+    `${name} exceeded its budget (p50 <= ${p50Budget.toFixed(1)}ms, p95 <= ${p95Budget.toFixed(1)}ms): `
+      + attempts.map(format).join(" | "),
+  ).toBe(true)
+}
+
 describe("engine live-preview perf budget (PERF-01 / PERF-03)", () => {
   beforeAll(() => {
     budgetFactor = calibrationFactor()
@@ -123,6 +147,13 @@ describe("engine live-preview perf budget (PERF-01 / PERF-03)", () => {
         policy: STANDARD_PERFORMANCE_POLICY,
       }))
   }, 240_000)
+
+  it("keeps a full-tree keystroke + microtasks in the 4 800-paragraph document under budget", () =>
+    expectWithinBudgetAsync("rich 4.8k full-tree drained + microtasks", FULL_TREE_BUDGET, () =>
+      measureTypingWithMicrotasks(RICH_350K, {
+        mode: "live", tree: "complete", drain: true, keystrokes: 60,
+        policy: STANDARD_PERFORMANCE_POLICY,
+      })), 240_000)
 
   it("builds a windowed steady state (window specs built, the rest pending)", () => {
     const view = prepareTypingView(RICH_350K, {

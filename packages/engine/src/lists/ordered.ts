@@ -61,13 +61,17 @@ export function orderedLabel(mark: SyntaxNode, state: EditorState): string | nul
   return collectOrderedListLabels(list, state).get(mark.from) ?? null
 }
 
-// 安全模式（Task 4）重编号扫描的外扩半径：可见段与 docChanged 变更段两侧各扩
-// 100_000 字符后归并为扫描区间。与 LIVE_WINDOW_CHARS（262_144）同量级而更小 ——
-// 重编号扫描只找 OrderedList 节点，比装饰构建轻，100k 已覆盖视口滚动余量与
-// 「编辑点邻近列表」的常见形态。区间之外的乱序列表（大文档远端）留待滚入窗口
-// 或就近编辑时再编 —— 这是安全模式的既定取舍：远端乱序列表在被滚近/编辑近
-// 之前不会产出规范化通知（notice UX 同样以窗口为界）。非安全模式不受影响。
+// Preview-entry / parse-progress and legacy safe-mode scan radius: visible anchors and changed
+// ranges widen by 100_000 chars per side (same order as LIVE_WINDOW_CHARS, 262_144 — a renumber
+// scan only looks for OrderedList nodes). Stale lists farther out wait until they scroll into the
+// window or the user edits next to them; that safe-mode trade-off also keeps notices windowed.
 export const RENUMBER_SCAN_MARGIN_CHARS = 100_000
+
+// Steady-state user edit: only lists next to the edit need repair. Scanning 100k — or the whole
+// tree — per keystroke to find a distant stale list is pure waste, since that list is off screen
+// anyway. 2k covers the visible lists and "new item typed into a long list", because an
+// intersecting list is always renumbered as a whole.
+export const STEADY_EDIT_SCAN_MARGIN_CHARS = 2_048
 
 /** 重编号扫描区间（文档位置，from <= to）。 */
 export interface OrderedRenumberRange {
@@ -353,11 +357,10 @@ export function rejectOrderedListNormalization(
   }
 }
 
-// 扫描区间归并（与 decorations/build.ts 的 mergeRanges 同语义：升序、重叠或相邻段
-// 合一）。list 模块不便反向依赖 decorations —— blocks.ts 已依赖本模块的
-// orderedLabel，会构成环 —— 故内联同款实现。归并消除相邻/重叠段的重复扫描；
-// 横跨两个归并后仍不相邻区间间隙的同一列表仍可能被各进入一次，产出的
-// 重复变更由 dedupeMarkChanges 按 marker 起点去重兜底。
+// Range merging (same semantics as decorations/build.ts::mergeRanges: ascending, overlapping or
+// adjacent ranges collapse). Inlined because lists/ cannot depend back on decorations/ (blocks.ts
+// already depends on this module's orderedLabel, which would close a cycle). A list straddling two
+// ranges that still are not adjacent can be entered twice; dedupeMarkChanges drops the repeats.
 function mergeRenumberRanges(ranges: OrderedRenumberRange[]): OrderedRenumberRange[] {
   const sorted = ranges
     .filter(range => range.from <= range.to)
@@ -371,9 +374,9 @@ function mergeRenumberRanges(ranges: OrderedRenumberRange[]): OrderedRenumberRan
   return merged
 }
 
-// 可见段锚点：CM 半开 [from, to) 的端点原样作为位置参与相交判定（保持半开口径，
-// 与 buildDriver.visibleRegions 转闭区间 [from, to-1] 的口径不同；空列表同样退化
-// 为光标点兜底 —— 类型契约不承诺非空）。
+// Visible anchors: CM's half-open [from, to) endpoints participate as positions unchanged (unlike
+// buildDriver.visibleRegions, which closes them to [from, to-1]); an empty viewport falls back to
+// the caret, because the type contract does not promise a non-empty list.
 function visibleScanAnchors(view: EditorView): OrderedRenumberRange[] {
   const ranges = view.visibleRanges
   if (ranges.length > 0) return ranges.map(range => ({ from: range.from, to: range.to }))
@@ -381,9 +384,9 @@ function visibleScanAnchors(view: EditorView): OrderedRenumberRange[] {
   return [{ from: head, to: head }]
 }
 
-// 扫描区间随文档变更映射：微任务 apply 前多笔 update 到达时，旧的变更区间要先
-// 映射到最新坐标。邻接插入处的 ±1 关联差异由 RENUMBER_SCAN_MARGIN_CHARS 吸收
-// （该插入自身也会作为变更区间记入计划）。
+// Scan ranges map through document changes: updates arriving before the microtask `apply` must map
+// the previous ranges to the newest coordinates. The margin (100k entry/safe mode, 2k steady)
+// absorbs the ±1 assoc difference at an adjacent insertion.
 function mapRenumberRange(range: OrderedRenumberRange, changes: ChangeDesc): OrderedRenumberRange {
   return {
     from: changes.mapPos(range.from, MAP_FROM_ASSOC),
@@ -391,10 +394,10 @@ function mapRenumberRange(range: OrderedRenumberRange, changes: ChangeDesc): Ord
   }
 }
 
-// 安全模式（Task 4）下一趟扫描的计划，由微任务 apply 消费：changed 是 docChanged
-// 的变更区间（记录时已映射到最新状态坐标）；visible 标记入场/树增长触发的可见
-// 窗口扫描。微任务前多笔 update 到达时计划累积（变更区间映射后合并，visible 只
-// 置位；docChanged 与树增长同笔到达时取并集）。
+// Plan for the next scan, consumed by the microtask `apply`: `changed` holds the docChanged
+// ranges (already mapped to the newest state); `visible` marks a preview-entry or tree-growth
+// pass, which scans the visible window (windowed) or the whole tree. Updates arriving before the
+// microtask accumulate into one plan (changed ranges mapped and merged, `visible` only latched).
 interface RenumberScanPlan {
   changed: OrderedRenumberRange[]
   visible: boolean
@@ -402,9 +405,9 @@ interface RenumberScanPlan {
 
 const EMPTY_SCAN_PLAN: RenumberScanPlan = { changed: [], visible: false }
 
-// 多区间扫描可能两次进入同一个 OrderedList（列表横跨两个归并后仍不相邻区间的
-// 间隙）：同一状态下两次遍历产出完全相同的变更，按 marker 起点去重 —— 否则
-// ChangeSet.of 会把同一改写静默应用两遍，在文档里写出 "2.2." 之类的叠加标记。
+// Multiple ranges can enter the same OrderedList (a list spanning the gap between two ranges that
+// are still not adjacent): both visits see the same state and produce identical changes, so key by
+// marker start — otherwise ChangeSet.of applies the same rewrite twice ("2.2." markers).
 export function dedupeMarkChanges(changes: readonly OrderedMarkChange[]): OrderedMarkChange[] {
   const seen = new Set<number>()
   return changes.filter(change => {
@@ -419,67 +422,83 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
   // Latched by the user's first document change: from then on, a pass over a complete syntax tree
   // is a follow-up to that edit rather than part of entering live preview.
   private hasUserDocChange = false
-  // 构造入场扫描即可见窗口扫描（安全模式）；非安全模式下 apply 走全树，计划仅为
-  // 记录 —— 开关运行中切换（desktop 切 tab）时 apply 侧按读取时点的开关决定扫描
-  // 范围，计划始终完整，切换不丢待扫区间。
+  // One queued apply per tick: a burst of keystrokes between two microtask checkpoints records
+  // into the same scan plan and must not queue one full pass each.
+  private microtaskScheduled = false
+  // The constructor queues the preview-entry pass as a visible-window scan (safe mode); with the
+  // switch off, `apply` ignores the plan and scans the whole tree. The plan is always complete
+  // anyway, so flipping the switch mid-session (desktop tab switch) cannot drop pending ranges.
   private scanPlan: RenumberScanPlan = { changed: [], visible: true }
 
   constructor(readonly view: EditorView) {
-    queueMicrotask(() => this.apply())
+    this.scheduleApply()
   }
 
   update(update: ViewUpdate) {
     if (this.isDestroyed) return
     if (update.transactions.some(tr => tr.annotation(orderedRenumberAnn))) return
-    // 表格直接编辑的事务（及其撤销/重做回放）不得触发重编号：回放事务只带历史效果，
-    // 抑制注解留在原始输入事务上。
+    // A direct table edit (and its undo/redo replay) must not trigger renumbering: the replay
+    // transaction only carries history effects, the suppression annotation stays on the input.
     if (update.transactions.some(tr => tr.docChanged && (
       tr.annotation(suppressOrderedRenumberForTableEdit)
       || tr.effects.some(isTableSessionRestore)
     ))) return
+    // A doc change usually rebuilds the syntax tree, so `treeChanged` alone says nothing about
+    // whether the renumberer has to look beyond the edit (see `recordScan`).
     const treeChanged = syntaxTree(update.state) !== syntaxTree(update.startState)
     if (!update.docChanged && !treeChanged) return
     if (update.docChanged) this.hasUserDocChange = true
     this.recordScan(update, treeChanged)
-    queueMicrotask(() => this.apply())
+    this.scheduleApply()
   }
 
   destroy() {
     this.isDestroyed = true
   }
 
-  // 记录本趟扫描计划：docChanged 记变更区间（update.changes 已复合为
-  // startState→state，旧区间先映射再合并）；树增长置 visible（入场语义）。
-  // 记录本身不改变非安全模式的行为 —— apply 在开关关闭时忽略计划走全树扫描。
+  /** Queues one apply per tick (see `microtaskScheduled`); a destroyed plugin stops scheduling. */
+  private scheduleApply() {
+    if (this.microtaskScheduled || this.isDestroyed) return
+    this.microtaskScheduled = true
+    queueMicrotask(() => {
+      this.microtaskScheduled = false
+      this.apply()
+    })
+  }
+
+  // Records this pass's scan plan: a docChanged update contributes its changed ranges (mapped
+  // from the previous plan, then merged); a latched `visible` means preview entry (constructor),
+  // or background parse progress. Progress is a shrinking unparsed tail — only text the previous
+  // pass never saw can hold newly numbered lists, while a user edit usually truncates the tree at
+  // the change and grows that tail. Counting the latter as growth would make every keystroke an
+  // entry-wide scan.
   private recordScan(update: ViewUpdate, treeChanged: boolean) {
-    if (update.docChanged) {
-      const captured: OrderedRenumberRange[] = []
-      update.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
-        captured.push({ from: fromB, to: toB })
-      })
-      this.scanPlan = {
-        changed: mergeRenumberRanges([
-          ...this.scanPlan.changed.map(range => mapRenumberRange(range, update.changes)),
-          ...captured,
-        ]),
-        visible: this.scanPlan.visible || treeChanged,
-      }
-    } else if (treeChanged) {
-      this.scanPlan = { changed: this.scanPlan.changed, visible: true }
+    const unparsed = (state: EditorState) => state.doc.length - syntaxTree(state).length
+    const grew = treeChanged && unparsed(update.startState) > unparsed(update.state)
+    const captured: OrderedRenumberRange[] = []
+    update.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+      captured.push({ from: fromB, to: toB })
+    })
+    this.scanPlan = {
+      changed: mergeRenumberRanges([
+        ...this.scanPlan.changed.map(range => mapRenumberRange(range, update.changes)),
+        ...captured,
+      ]),
+      visible: this.scanPlan.visible || grew,
     }
   }
 
   private apply() {
-    // composing 期间跳过但保留计划：组合输入是暂态，结束后下一笔 update 重新入队，
-    // 组合期间累积的变更区间仍会被消费。
+    // Composing input is transient: skip the pass but keep the plan, so the next update after
+    // composition ends re-queues and still consumes the ranges accumulated meanwhile.
     if (this.isDestroyed || this.view.composing) return
     const state = this.view.state
-    // 只读文档（HUGE 档 Live 预览）禁止程序化改写：视口附近的乱序标记原样保留，
-    // 不派发规范化事务、不产出 pending 通知。非只读行为不变。
+    // A read-only document (HUGE-tier live preview) must not be rewritten programmatically: stale
+    // markers stay as typed, with no normalization transaction and no pending notice.
     if (state.readOnly) return
     const scanRanges = this.consumeScanRanges()
-    // 拒绝后的抑制无解除路径：排队中的扫描计划已随上面一行一并作废，变更区间不会
-    // 在后续每笔编辑的坐标映射中无限累积。
+    // Suppression after a reject has no release path; the plan was already discarded above, so the
+    // changed ranges cannot accumulate through coordinate mapping on every later edit.
     if (state.field(orderedNormalizationState, false)?.suppressed) return
     const changes = scanRanges === null
       ? orderedRenumberChanges(state)
@@ -493,20 +512,44 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
     this.view.dispatch(buildOrderedNormalizationTransaction(state, trigger, changes))
   }
 
-  // 取走并清空本趟扫描区间。非安全模式返回 null —— apply 走全树扫描，与既有行为
-  // 完全一致；空计划（冗余微任务/已作废）返回空数组即无事可做。安全模式：可见
-  // 锚点在读取时点取最新 visibleRanges（滚动后微任务拿到的是新视口），与变更区间
-  // 一并外扩 RENUMBER_SCAN_MARGIN_CHARS、钳制到文档范围后归并。
+  // Takes and clears this pass's scan ranges. Preview entry and parse progress (`visible`) return
+  // null without windowing (whole-tree scan, unchanged behavior) and otherwise use the visible
+  // anchors plus the changed ranges widened by RENUMBER_SCAN_MARGIN_CHARS. A steady-state edit
+  // only widens its own changed ranges by `steadyScanMarginChars`. An empty plan means nothing was
+  // recorded since the last pass, so it returns no ranges to scan.
   private consumeScanRanges(): OrderedRenumberRange[] | null {
     const plan = this.scanPlan
     this.scanPlan = EMPTY_SCAN_PLAN
-    if (!this.windowed()) return null
-    const anchors = plan.visible ? visibleScanAnchors(this.view) : []
+    const state = this.view.state
+    if (plan.visible) {
+      if (!this.windowed(state)) return null
+      return this.expandScanRanges(
+        [...visibleScanAnchors(this.view), ...plan.changed],
+        RENUMBER_SCAN_MARGIN_CHARS,
+      )
+    }
+    if (plan.changed.length === 0) return []
+    return this.expandScanRanges(plan.changed, this.steadyScanMarginChars(state))
+  }
+
+  private expandScanRanges(
+    ranges: readonly OrderedRenumberRange[],
+    margin: number,
+  ): OrderedRenumberRange[] {
     const length = this.view.state.doc.length
-    return mergeRenumberRanges([...anchors, ...plan.changed].map(range => ({
-      from: Math.max(0, range.from - RENUMBER_SCAN_MARGIN_CHARS),
-      to: Math.min(length, range.to + RENUMBER_SCAN_MARGIN_CHARS),
+    return mergeRenumberRanges(ranges.map(range => ({
+      from: Math.max(0, range.from - margin),
+      to: Math.min(length, range.to + margin),
     })))
+  }
+
+  // The legacy global safe mode (no per-view policy) keeps the 100k safety margin; every other
+  // steady path narrows to the edit neighborhood. orderedRenumberSafeMode.test.ts pins the former.
+  private steadyScanMarginChars(state: EditorState): number {
+    const policy = editorPerformancePolicy(state)
+    return this.windowed(state) && policy?.liveWindowChars === undefined
+      ? RENUMBER_SCAN_MARGIN_CHARS
+      : STEADY_EDIT_SCAN_MARGIN_CHARS
   }
 
   private windowed(state: EditorState = this.view.state): boolean {
