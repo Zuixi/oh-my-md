@@ -28,4 +28,37 @@ describe("quick open listbox", () => {
     expect(onChoose).toHaveBeenCalledWith("/notes/b.md")
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it("ignores Enter that commits an IME composition", () => {
+    const onChoose = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <QuickOpenModal
+        files={["/notes/a.md"]}
+        folder="/notes"
+        truncated={false}
+        loading={false}
+        onChoose={onChoose}
+        onClose={onClose}
+      />,
+    )
+    const input = screen.getByRole("combobox")
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true })
+    expect(onChoose).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("keeps option rows out of the tab order", () => {
+    render(
+      <QuickOpenModal
+        files={["/notes/a.md", "/notes/b.md"]}
+        folder="/notes"
+        truncated={false}
+        loading={false}
+        onChoose={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    for (const option of screen.getAllByRole("option")) expect(option.tabIndex).toBe(-1)
+  })
 })

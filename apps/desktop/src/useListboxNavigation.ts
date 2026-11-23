@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
 
+/** Chrome/Safari keyCode reported for keys that commit an IME composition. */
+const IME_COMPOSING_KEYCODE = 229
+
 export interface ListboxNavigationOptions {
   readonly count: number
   /** Resets the active row when the filtered result set changes. */
@@ -28,7 +31,17 @@ export function useListboxNavigation(options: ListboxNavigationOptions) {
 
   const activeId = count > 0 ? options.itemId(bounded) : undefined
 
+  // Rows are not focusable (tabIndex=-1), so the active row must be brought into
+  // view imperatively; `nearest` keeps an already-visible list from jumping.
+  useEffect(() => {
+    if (activeId === undefined || typeof document === "undefined") return
+    document.getElementById(activeId)?.scrollIntoView?.({ block: "nearest" })
+  }, [activeId])
+
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    // Enter that commits (or cancels) an IME composition must reach the input:
+    // running the active row here would execute a command mid-composition.
+    if (event.nativeEvent.isComposing || event.keyCode === IME_COMPOSING_KEYCODE) return
     if (event.key === "Escape") {
       event.preventDefault()
       onClose()

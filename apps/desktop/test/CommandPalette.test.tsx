@@ -45,4 +45,20 @@ describe("command palette keyboard", () => {
     expect(input.getAttribute("aria-activedescendant")).toBe("command-option-0")
     expect(screen.getAllByRole("option")).toHaveLength(1)
   })
+
+  it("ignores Enter that commits an IME composition", () => {
+    const list = commands()
+    const onClose = vi.fn()
+    render(<CommandPalette commands={list} onClose={onClose} />)
+    const input = screen.getByRole("combobox")
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true })
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })
+    expect(list[0]?.run).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("keeps option rows out of the tab order", () => {
+    render(<CommandPalette commands={commands()} onClose={() => {}} />)
+    for (const option of screen.getAllByRole("option")) expect(option.tabIndex).toBe(-1)
+  })
 })

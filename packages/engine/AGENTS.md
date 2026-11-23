@@ -33,7 +33,7 @@ packages/engine/
 │   ├── format/                  # Editing commands + keymaps (see src/format/AGENTS.md)
 │   ├── tables/                  # Lezer-range table model + edits (see src/tables/AGENTS.md)
 │   ├── paste/                   # Semantic clipboard importer (prepareSmartPaste, planSmartPaste, serializeComplexTable, blockBoundaries)
-│   ├── export/                  # html.ts (sync exportHtml + async exportRichHtml), styles.ts, printSetup.ts, printContract.json, printRules.css, shikiExport.ts, mathHtmlCache.ts
+│   ├── export/                  # html.ts (document walkers + document assembly), tableHtml.ts, primitives.ts (escaping + link/image emitters), sanitize.ts (export URL gate), richRenderers.ts, readyScript.ts, styles.ts, printSetup.ts, printContract.json, printRules.css, shikiExport.ts, mathHtmlCache.ts
 │   ├── shiki/ · highlight/      # Lazy single-flight Shiki highlighter + code syntax highlighting
 │   └── cache/boundedLru.ts      # Bounded LRU cache
 └── test/                        # Vitest suite + fixtures/
@@ -46,6 +46,7 @@ packages/engine/
 3. **Host-injected capabilities:** Resolve image URLs via `EngineOptions.resolveImageSrc` and localized fallback strings via `EngineOptions.imageBrokenLabel` (never import desktop i18n or Tauri APIs).
 4. **No stock completion/pairing:** Only the `:`-only `emojiCompletion` and `format/autoPair.ts` are permitted; never enable stock `closeBrackets`, `indentOnInput`, or generic `autocompletion`.
 5. **Module boundaries:** Apply the root size policy. Keep parsing in `parse/`, projection in `decorations/`, and editing plans in `format/`/`tables/`; put new responsibilities in cohesive modules rather than growing the widget or block dispatchers.
+6. **One export URL gate (`export/primitives.ts`, `export/sanitize.ts`):** Every export path — top-level `Link`/`Autolink`/`Image`, GFM cells, and Complex Tables — writes `href`/`src` only through `anchorHtml`/`imageHtml`, which delegate to `sanitize.ts` and then `paste/urlPolicy.ts::normalizePasteUrl`. Never emit a link or image tag by hand: a renderer that formats `href` itself re-opens the table-cell scheme bypass. Rich image sources are validated before the host resolver runs.
 
 ## Ordered-List Normalization Invariants (`lists/ordered.ts`)
 

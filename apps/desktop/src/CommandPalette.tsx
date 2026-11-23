@@ -40,6 +40,8 @@ export function CommandPalette(props: {
                 type="button"
                 id={`command-option-${index}`}
                 role="option"
+                // Focus stays on the combobox input so Tab never walks 200 rows.
+                tabIndex={-1}
                 aria-selected={index === active}
                 className={index === active ? "omd-quick-open-active" : undefined}
                 onMouseEnter={() => setActive(index)}

@@ -76,6 +76,8 @@ export function QuickOpenModal(props: {
                 type="button"
                 id={`quick-open-option-${index}`}
                 role="option"
+                // Focus stays on the combobox input so Tab never walks the rows.
+                tabIndex={-1}
                 aria-selected={index === active}
                 className={index === active ? "omd-quick-open-active" : undefined}
                 onMouseEnter={() => setActive(index)}

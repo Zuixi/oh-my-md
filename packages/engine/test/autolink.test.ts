@@ -58,3 +58,33 @@ describe("bare autolink boundaries", () => {
     expect(collect("hello@example.com").autolinks).toEqual(["hello@example.com"])
   })
 })
+
+describe("bare autolink convergent trimming", () => {
+  it("trims punctuation that sits outside the emphasis span", () => {
+    expect(collect("See **https://example.com**.").autolinks).toEqual(["https://example.com"])
+    expect(collect("See **https://example.com**.").names).toContain("StrongEmphasis")
+
+    const strike = collect("(~~https://old.com~~, new)")
+    expect(strike.autolinks).toEqual(["https://old.com"])
+    expect(strike.names).toContain("Strikethrough")
+  })
+
+  it("trims a trailing underscore for composite openers", () => {
+    const composite = collect("_**https://example.com**_")
+    expect(composite.autolinks).toEqual(["https://example.com"])
+    expect(composite.names).toContain("StrongEmphasis")
+    expect(composite.names).toContain("Emphasis")
+  })
+
+  it("balances parentheses around and inside URLs", () => {
+    expect(collect("(https://example.com)").autolinks).toEqual(["https://example.com"])
+    expect(collect("(https://en.wikipedia.org/wiki/Foo_(bar))").autolinks)
+      .toEqual(["https://en.wikipedia.org/wiki/Foo_(bar)"])
+    expect(collect("https://en.wikipedia.org/wiki/Foo_(bar)").autolinks)
+      .toEqual(["https://en.wikipedia.org/wiki/Foo_(bar)"])
+  })
+
+  it("strips trailing punctuation without dropping a URL underscore", () => {
+    expect(collect("https://example.com/a_.").autolinks).toEqual(["https://example.com/a_"])
+  })
+})

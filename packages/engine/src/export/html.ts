@@ -1,19 +1,12 @@
 import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
-import { parseCell, type CellNode } from "../parse/cell"
-import {
-  parseComplexTableBlock,
-  type ComplexTableCell,
-  type ComplexTableInline,
-  type ComplexTableModel,
-} from "../parse/complexTable"
+import { parseComplexTableBlock } from "../parse/complexTable"
 import { resolveEmoji } from "../parse/emoji"
 import { decodeHtmlEntity } from "../parse/entities"
 import { parseFenceInfo } from "../fenceInfo"
 import { linkParts, type LinkParts } from "../semantic/link"
 import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
-import { createMathHtmlCache } from "./mathHtmlCache"
 import {
   footnoteIdFromDef,
   footnoteIdFromRef,
@@ -23,11 +16,14 @@ import {
   taskCheckboxHtml,
   type ExportContext,
 } from "./exportDoc"
-import { tableDataFromNode, type TableAlignment, type TableRowData } from "../tables/model"
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
-import { safeExportHref, safeExportImageSrc, sanitizeRawAnchorTag } from "./sanitize"
+import { anchorHtml, escapeHtml, imageHtml, richImageSrc, type RichImageOptions } from "./primitives"
 import { mathTexOf } from "../semantic/math"
+import { renderCodeHtml, renderMathHtml, renderMermaidHtml } from "./richRenderers"
+import { richComplexTableHtml, richTableHtml, syncComplexTableHtml, syncTableHtml } from "./tableHtml"
+import { sanitizeRawAnchorTag } from "./sanitize"
+import { EXPORT_READY_SCRIPT } from "./readyScript"
 import {
   DEFAULT_PRINT_SETUP,
   isExplicitPageBreakHtml,
@@ -41,14 +37,6 @@ const SKIP = new Set([
   "UnderlineMark", "KbdMark", "CodeMark", "CodeInfo", "LinkMark", "QuoteMark",
   "ListMark", "TableDelimiter", "RiseMark", "FootnoteMark",
 ])
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-}
 
 function children(
   node: SyntaxNode,
@@ -79,35 +67,6 @@ function headingTag(level: number, node: SyntaxNode, state: EditorState, ctx: Ex
   return `<h${level}${attr}>${inner.trim()}</h${level}>`
 }
 
-// 可选 title 属性：null 时不输出，非 null 时同样走 escapeHtml。
-function titleAttr(title: string | null): string {
-  return title === null ? "" : ` title="${escapeHtml(title)}"`
-}
-
-function anchorHtml(href: string, title: string | null, label: string): string {
-  const safe = safeExportHref(href)
-  if (safe === null) return `<span>${label || escapeHtml(href)}</span>`
-  return `<a href="${escapeHtml(safe)}"${titleAttr(title)}>${label || escapeHtml(safe)}</a>`
-}
-
-function imageHtml(src: string, alt: string, title: string | null): string {
-  const safe = safeExportImageSrc(src)
-  if (safe === null) return escapeHtml(alt)
-  return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(alt)}"${titleAttr(title)}>`
-}
-
-// Rich export rewrites only local relative paths: remote http/https images are
-// never inlined. Resolution is async so hosts can read local files into data URLs.
-async function richImageSrc(src: string, opts: ExportRichHtmlOptions): Promise<string> {
-  const isRemote = /^https?:\/\//i.test(src)
-  if (isRemote) {
-    opts.onRemoteImage?.(src)
-    return src
-  }
-  if (!opts.resolveImageSrc) return src
-  return (await opts.resolveImageSrc(src)) ?? src
-}
-
 function fencedText(node: SyntaxNode, state: EditorState): string {
   const parts: string[] = []
   for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -116,114 +75,11 @@ function fencedText(node: SyntaxNode, state: EditorState): string {
   return parts.join("")
 }
 
-function cellChildrenHtml(children: CellNode[]): string {
-  return children.map(cellNodeHtml).join("")
-}
-
 /** `3. a` exports as `<ol start="3">`; a list starting at 1 keeps the bare `<ol>`. */
 function orderedListOpen(node: SyntaxNode, state: EditorState): string {
   const mark = node.getChild("ListItem")?.getChild("ListMark")
   const start = mark ? Number.parseInt(state.doc.sliceString(mark.from, mark.to), 10) : 1
   return Number.isFinite(start) && start !== 1 ? `ol start="${start}"` : "ol"
-}
-
-// 与 preview 的 renderTableCellContent 消费同一份 parseCell AST，保证导出与预览一致。
-function cellNodeHtml(node: CellNode): string {
-  switch (node.type) {
-    case "text": return escapeHtml(node.text)
-    case "code": return `<code>${escapeHtml(node.text)}</code>`
-    // 同步导出的已知限制：没有 KaTeX，cell 数学回退成不带 `$` 标记的 <code>tex</code>；
-    // rich 导出 (richCellNodesHtml) 才渲染 KaTeX。
-    case "math": return `<code>${escapeHtml(node.text)}</code>`
-    case "em": return `<em>${cellChildrenHtml(node.children)}</em>`
-    case "strong": return `<strong>${cellChildrenHtml(node.children)}</strong>`
-    case "del": return `<del>${cellChildrenHtml(node.children)}</del>`
-    case "mark": return `<mark>${cellChildrenHtml(node.children)}</mark>`
-    case "underline": return `<u>${cellChildrenHtml(node.children)}</u>`
-    case "kbd": return `<kbd>${cellChildrenHtml(node.children)}</kbd>`
-    case "sub": return `<sub>${cellChildrenHtml(node.children)}</sub>`
-    case "sup": return `<sup>${cellChildrenHtml(node.children)}</sup>`
-    case "link": return `<a href="${escapeHtml(node.href)}"${titleAttr(node.title)}>${cellChildrenHtml(node.children)}</a>`
-    case "image": return imageHtml(node.src, node.alt, node.title)
-    case "br": return "<br>"
-    case "hr": return "<hr>"
-    case "ul": return `<ul>${cellChildrenHtml(node.children)}</ul>`
-    case "ol": return `<ol>${cellChildrenHtml(node.children)}</ol>`
-    case "li": return `<li>${cellChildrenHtml(node.children)}</li>`
-    case "blockquote": return `<blockquote>${cellChildrenHtml(node.children)}</blockquote>`
-    case "pre": return `<pre><code>${escapeHtml(node.text)}</code></pre>`
-  }
-}
-
-interface ExportTableGrid {
-  readonly header: string[]
-  readonly rows: string[][]
-  readonly aligns: readonly TableAlignment[]
-}
-
-/**
- * Cell sources per row from the shared table model (`tables/model.ts`, the
- * one the table widget uses). Lezer emits no TableCell node for an empty slot
- * (`| 1 |  | 3 |`), so walking TableCell children dropped empty cells and
- * shifted the rest left. Rows are normalized to the delimiter-row column count
- * (GFM: short rows are padded, extra cells ignored).
- */
-function tableGrid(node: SyntaxNode, state: EditorState): ExportTableGrid | null {
-  const data = tableDataFromNode(node, state)
-  if (!data) return null
-  const width = data.delimiter.cells.length
-  const sources = (row: TableRowData) => Array.from({ length: width }, (_, i) => row.cells[i]?.source.trim() ?? "")
-  return { header: sources(data.header), rows: data.rows.map(sources), aligns: data.aligns }
-}
-
-function alignAttr(align: TableAlignment | undefined): string {
-  return align ? ` align="${align}"` : ""
-}
-
-function cellSourceHtml(source: string, ctx: ExportContext): string {
-  return cellChildrenHtml(parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.refs.resolveReference }))
-}
-
-// rich 版的同一份 CellNode 投影：语义与同步导出一致，只有两处不同 —— cell 数学
-// 走已有的 KaTeX 渲染器，本地图片走 rich 的 resolveImageSrc 策略。
-function richCellNodeHtml(
-  node: CellNode,
-  opts: ExportRichHtmlOptions,
-): string | Promise<string> {
-  switch (node.type) {
-    case "text": return escapeHtml(node.text)
-    case "code": return `<code>${escapeHtml(node.text)}</code>`
-    case "math": return renderMathHtml(node.text, false)
-    case "em": return richCellNodesHtml(node.children, opts).then(s => `<em>${s}</em>`)
-    case "strong": return richCellNodesHtml(node.children, opts).then(s => `<strong>${s}</strong>`)
-    case "del": return richCellNodesHtml(node.children, opts).then(s => `<del>${s}</del>`)
-    case "mark": return richCellNodesHtml(node.children, opts).then(s => `<mark>${s}</mark>`)
-    case "underline": return richCellNodesHtml(node.children, opts).then(s => `<u>${s}</u>`)
-    case "kbd": return richCellNodesHtml(node.children, opts).then(s => `<kbd>${s}</kbd>`)
-    case "sub": return richCellNodesHtml(node.children, opts).then(s => `<sub>${s}</sub>`)
-    case "sup": return richCellNodesHtml(node.children, opts).then(s => `<sup>${s}</sup>`)
-    case "link":
-      return richCellNodesHtml(node.children, opts).then(s =>
-        `<a href="${escapeHtml(node.href)}"${titleAttr(node.title)}>${s}</a>`)
-    case "image": return richImageSrc(node.src, opts).then(s => imageHtml(s, node.alt, node.title))
-    case "br": return "<br>"
-    case "hr": return "<hr>"
-    case "ul": return richCellNodesHtml(node.children, opts).then(s => `<ul>${s}</ul>`)
-    case "ol": return richCellNodesHtml(node.children, opts).then(s => `<ol>${s}</ol>`)
-    case "li": return richCellNodesHtml(node.children, opts).then(s => `<li>${s}</li>`)
-    case "blockquote":
-      return richCellNodesHtml(node.children, opts).then(s => `<blockquote>${s}</blockquote>`)
-    case "pre": return `<pre><code>${escapeHtml(node.text)}</code></pre>`
-  }
-}
-
-async function richCellNodesHtml(
-  nodes: readonly CellNode[],
-  opts: ExportRichHtmlOptions,
-): Promise<string> {
-  let html = ""
-  for (const node of nodes) html += await richCellNodeHtml(node, opts)
-  return html
 }
 
 function labelHtml(
@@ -234,97 +90,6 @@ function labelHtml(
 ): string {
   if (parts.kind === "autolink") return escapeHtml(parts.text)
   return children(node, state, ctx, parts.labelFrom, parts.labelTo)
-}
-
-function complexInlineHtml(
-  node: ComplexTableInline,
-  resolveSrc?: (src: string) => string,
-): string {
-  switch (node.type) {
-    case "text": return escapeHtml(node.value)
-    case "code": return `<code>${escapeHtml(node.value)}</code>`
-    case "strong": return `<strong>${complexInlinesHtml(node.children, resolveSrc)}</strong>`
-    case "emphasis": return `<em>${complexInlinesHtml(node.children, resolveSrc)}</em>`
-    case "strike": return `<del>${complexInlinesHtml(node.children, resolveSrc)}</del>`
-    case "highlight": return `<mark>${complexInlinesHtml(node.children, resolveSrc)}</mark>`
-    case "underline": return `<u>${complexInlinesHtml(node.children, resolveSrc)}</u>`
-    case "kbd": return `<kbd>${complexInlinesHtml(node.children, resolveSrc)}</kbd>`
-    case "subscript": return `<sub>${complexInlinesHtml(node.children, resolveSrc)}</sub>`
-    case "superscript": return `<sup>${complexInlinesHtml(node.children, resolveSrc)}</sup>`
-    case "link":
-      return `<a href="${escapeHtml(node.href)}"${titleAttr(node.title ?? null)}>${complexInlinesHtml(node.children, resolveSrc)}</a>`
-    case "image":
-      return imageHtml(resolveSrc ? resolveSrc(node.src) : node.src, node.alt, node.title ?? null)
-    case "break": return "<br>"
-  }
-}
-
-function complexInlinesHtml(
-  nodes: readonly ComplexTableInline[],
-  resolveSrc?: (src: string) => string,
-): string {
-  return nodes.map(n => complexInlineHtml(n, resolveSrc)).join("")
-}
-
-function complexCellHtml(
-  cell: ComplexTableCell,
-  resolveSrc?: (src: string) => string,
-): string {
-  const tag = cell.header ? "th" : "td"
-  let attrs = ""
-  if (cell.rowSpan > 1) attrs += ` rowspan="${cell.rowSpan}"`
-  if (cell.colSpan > 1) attrs += ` colspan="${cell.colSpan}"`
-  if (cell.header && cell.scope) attrs += ` scope="${cell.scope}"`
-  if (cell.align) attrs += ` align="${cell.align}"`
-  return `<${tag}${attrs}>${complexInlinesHtml(cell.children, resolveSrc)}</${tag}>`
-}
-
-function renderComplexTableHtml(
-  model: ComplexTableModel,
-  resolveSrc?: (src: string) => string,
-): string {
-  const headRows: string[] = []
-  const bodyRows: string[] = []
-  let inHead = true
-  for (const row of model.rows) {
-    if (inHead && row.length > 0 && row.every(c => c.header)) {
-      headRows.push(`<tr>${row.map(c => complexCellHtml(c, resolveSrc)).join("")}</tr>`)
-    } else {
-      inHead = false
-      bodyRows.push(`<tr>${row.map(c => complexCellHtml(c, resolveSrc)).join("")}</tr>`)
-    }
-  }
-  const thead = headRows.length > 0 ? `<thead>${headRows.join("")}</thead>` : ""
-  const tbody = bodyRows.length > 0 ? `<tbody>${bodyRows.join("")}</tbody>` : ""
-  return `<table>${thead}${tbody}</table>`
-}
-
-// renderComplexTableHtml stays sync by design: collect every image src from the
-// parsed model, await the (possibly async) host resolver, then hand the renderer
-// a pure Map-backed lookup so it keeps its synchronous shape.
-async function renderComplexTableHtmlWithImages(
-  model: ComplexTableModel,
-  opts: ExportRichHtmlOptions,
-): Promise<string> {
-  const srcs = collectComplexImageSrcs(model)
-  const resolved = new Map<string, string>()
-  await Promise.all(srcs.map(async (src) => {
-    resolved.set(src, await richImageSrc(src, opts))
-  }))
-  return renderComplexTableHtml(model, src => resolved.get(src) ?? src)
-}
-
-function collectComplexImageSrcs(model: ComplexTableModel): string[] {
-  const srcs: string[] = []
-  for (const row of model.rows) for (const cell of row) collectInlineImageSrcs(cell.children, srcs)
-  return srcs
-}
-
-function collectInlineImageSrcs(nodes: readonly ComplexTableInline[], out: string[]): void {
-  for (const node of nodes) {
-    if (node.type === "image") out.push(node.src)
-    if ("children" in node) collectInlineImageSrcs(node.children, out)
-  }
 }
 
 function render(node: SyntaxNode, state: EditorState, ctx: ExportContext): string {
@@ -406,18 +171,13 @@ function render(node: SyntaxNode, state: EditorState, ctx: ExportContext): strin
     case "ListItem": return `<li>${children(node, state, ctx)}</li>`
     case "Blockquote": return `<blockquote>${children(node, state, ctx)}</blockquote>`
     case "HorizontalRule": return "<hr>"
-    case "Table": {
-      const grid = tableGrid(node, state)
-      if (!grid) return escapeHtml(state.doc.sliceString(node.from, node.to))
-      const row = (cells: string[], tag: "th" | "td") =>
-        `<tr>${cells.map((source, i) => `<${tag}${alignAttr(grid.aligns[i])}>${cellSourceHtml(source, ctx)}</${tag}>`).join("")}</tr>`
-      return `<table><thead>${row(grid.header, "th")}</thead>${grid.rows.map(cells => row(cells, "td")).join("")}</table>`
-    }
+    case "Table":
+      return syncTableHtml(node, state, ctx) ?? escapeHtml(state.doc.sliceString(node.from, node.to))
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
       if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       const model = parseComplexTableBlock(raw)
-      if (model) return renderComplexTableHtml(model)
+      if (model) return syncComplexTableHtml(model)
       return escapeHtml(raw)
     }
     case "InlineMath":
@@ -459,9 +219,7 @@ export function exportHtml(state: EditorState, print?: PrintSetup): string {
 // Rich async export: KaTeX math, Shiki code, Mermaid SVG
 // ---------------------------------------------------------------------------
 
-export interface ExportRichHtmlOptions {
-  /** Local image resolver; may return a promise (e.g. to read the file first). */
-  resolveImageSrc?: (src: string) => string | Promise<string>
+export interface ExportRichHtmlOptions extends RichImageOptions {
   /** Page setup embedded after base typography and before custom CSS. Defaults to the shared contract. */
   print?: PrintSetup
   /** Explicit export theme; drives the data-omd-theme/data-theme root attributes. */
@@ -470,64 +228,12 @@ export interface ExportRichHtmlOptions {
   fullWidth?: boolean
   /** User custom CSS, appended after the base typography so it wins. */
   customCss?: string
-  /** Called once per http(s) image so native hosts can warn before capture. */
-  onRemoteImage?: (src: string) => void
-}
-
-const mathHtmlCache = createMathHtmlCache()
-
-async function renderMathHtml(tex: string, displayMode: boolean): Promise<string> {
-  const cacheKey = `${displayMode ? "d" : "i"}:${tex}`
-  const cached = mathHtmlCache.get(cacheKey)
-  if (cached !== undefined) return cached
-  try {
-    const katex = (await import("katex")).default
-    const html = katex.renderToString(tex, { displayMode, throwOnError: true })
-    mathHtmlCache.set(cacheKey, html)
-    return html
-  } catch {
-    return `<code>${escapeHtml(displayMode ? `$$${tex}$$` : `$${tex}$`)}</code>`
-  }
-}
-
-let _mermaidCounter = 0
-
-async function renderMermaidHtml(src: string, theme: "light" | "dark"): Promise<string> {
-  try {
-    const mermaid = (await import("mermaid")).default
-    // Mermaid's global config must be re-applied per export; alternating light
-    // and dark exports would otherwise reuse the previous palette.
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: theme === "dark" ? "dark" : "default",
-    })
-    const id = `omd-export-mmd-${++_mermaidCounter}`
-    const { svg } = await mermaid.render(id, src)
-    return svg
-  } catch {
-    return `<pre>${escapeHtml(src)}</pre>`
-  }
-}
-
-async function renderCodeHtml(src: string, lang: string, title = ""): Promise<string> {
-  const { resolveCodeLanguage, getHighlighterForExport } = await import("./shikiExport")
-  const canonical = resolveCodeLanguage(lang)
-  let pre = `<pre><code>${escapeHtml(src)}</code></pre>`
-  if (canonical) {
-    try {
-      const hl = await getHighlighterForExport(canonical)
-      pre = hl.codeToHtml(src, {
-        lang: canonical,
-        themes: { light: "github-light", dark: "github-dark" },
-        defaultColor: "light",
-      })
-    } catch {
-      pre = `<pre><code>${escapeHtml(src)}</code></pre>`
-    }
-  }
-  if (!title) return pre
-  return `<div class="omd-code-block"><div class="omd-code-title">${escapeHtml(title)}</div>${pre}</div>`
+  /**
+   * Emit the native readiness handshake script. Defaults to true so the native
+   * PDF/PNG exporters can await it; a standalone `.html` file passes false and
+   * gets the no-script CSP meta instead.
+   */
+  includeReadyScript?: boolean
 }
 
 async function richChildren(
@@ -598,28 +304,14 @@ function renderRich(
       return richLabelHtml(node, state, opts, ctx, parts).then(label =>
         anchorHtml(parts.href, parts.title, label))
     }
-    case "Table": {
-      const grid = tableGrid(node, state)
-      if (!grid) return escapeHtml(state.doc.sliceString(node.from, node.to))
-      return (async () => {
-        const row = async (cells: string[], tag: "th" | "td") => {
-          let html = "<tr>"
-          for (const [i, source] of cells.entries()) {
-            const nodes = parseCell(source, { pipeEscapes: "gfm-table", resolveReference: ctx.refs.resolveReference })
-            html += `<${tag}${alignAttr(grid.aligns[i])}>${await richCellNodesHtml(nodes, opts)}</${tag}>`
-          }
-          return `${html}</tr>`
-        }
-        let html = `<table><thead>${await row(grid.header, "th")}</thead>`
-        for (const cells of grid.rows) html += await row(cells, "td")
-        return `${html}</table>`
-      })()
-    }
+    case "Table":
+      return richTableHtml(node, state, ctx, opts).then(
+        table => table ?? escapeHtml(state.doc.sliceString(node.from, node.to)))
     case "HTMLBlock": {
       const raw = state.doc.sliceString(node.from, node.to)
       if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       const model = parseComplexTableBlock(raw)
-      if (model) return renderComplexTableHtmlWithImages(model, opts)
+      if (model) return richComplexTableHtml(model, opts)
       return escapeHtml(raw)
     }
     case "FootnoteDefinition": {
@@ -672,43 +364,6 @@ html[data-omd-theme="dark"] .shiki span {
 }
 </style>`
 
-// Inline readiness handshake consumed by the native exporters: they wait for
-// window.__omdExportReady and then measure window.__omdExportHeight. Fonts
-// and image decodes must settle before the height is read; a 4500 ms ceiling
-// keeps a hung decode from stalling the export and is flagged through
-// window.__omdExportIncomplete.
-const EXPORT_READY_SCRIPT = `<script>(async () => {
-  let incomplete = false
-  const waits = []
-  if (document.fonts && document.fonts.ready) waits.push(document.fonts.ready.catch(() => {}))
-  for (const img of document.images) {
-    // A failed decode means the exported image is missing content even though
-    // it resolves quickly; surface it as partial instead of a clean success.
-    waits.push(Promise.resolve().then(() => img.decode()).catch(() => { incomplete = true }))
-  }
-  const timeout = new Promise(resolve => setTimeout(() => { incomplete = true; resolve() }, 4500))
-  await Promise.race([Promise.all(waits), timeout])
-  const b = document.body
-  let contentBottom = 0
-  if (b) {
-    const bodyRect = b.getBoundingClientRect()
-    const style = getComputedStyle(b)
-    const padBottom = parseFloat(style.paddingBottom) || 0
-    for (let el = b.lastElementChild; el; el = el.previousElementSibling) {
-      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue
-      const r = el.getBoundingClientRect()
-      if (r.height > 0 || r.bottom > bodyRect.top) {
-        contentBottom = Math.ceil(r.bottom - bodyRect.top + padBottom)
-        break
-      }
-    }
-  }
-  const scrollH = Math.max(document.documentElement?.scrollHeight ?? 0, b?.scrollHeight ?? 0)
-  window.__omdExportIncomplete = incomplete
-  window.__omdExportReady = true
-  window.__omdExportHeight = contentBottom > 0 ? Math.max(contentBottom, Math.min(scrollH, contentBottom + 64)) : scrollH
-})()</script>`
-
 /** Prevent user CSS from closing the style element and injecting markup. */
 function escapeStyleText(css: string): string {
   return css.replace(/<\/style/gi, "<\\/style")
@@ -719,6 +374,11 @@ export async function exportRichHtml(
   options: ExportRichHtmlOptions = {},
 ): Promise<string> {
   const theme = options.theme ?? "light"
+  // Standalone `.html` files must not carry the native handshake script: it is
+  // dead weight there, and the document gets the no-script CSP instead.
+  const includeReadyScript = options.includeReadyScript ?? true
+  const csp = includeReadyScript ? "" : EXPORT_CSP_META
+  const readyScript = includeReadyScript ? EXPORT_READY_SCRIPT : ""
   const ctx = prepareExportDocument(state)
   const [renderedBody, katexCss] = await Promise.all([
     renderRich(ctx.topNode, state, options, ctx),
@@ -738,5 +398,5 @@ export async function exportRichHtml(
   const customStyle = options.customCss
     ? `<style>${escapeStyleText(options.customCss)}</style>`
     : ""
-  return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8"><title>${exportTitleHtml(options.print)}</title>${katexStyle}${baseStyle}${widthStyle}${printStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${EXPORT_READY_SCRIPT}</body></html>`
+  return `<!doctype html><html data-omd-theme="${theme}" data-theme="${theme}"><head><meta charset="utf-8">${csp}<title>${exportTitleHtml(options.print)}</title>${katexStyle}${baseStyle}${widthStyle}${printStyle}${customStyle}${SHIKI_DARK_CSS}</head><body>${body}${readyScript}</body></html>`
 }

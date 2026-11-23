@@ -124,6 +124,9 @@ export async function exportCurrent(
       theme: exportTheme,
       print: page,
       fullWidth: kind !== "html",
+      // Only the native PDF/PNG renderers need the readiness handshake; a
+      // standalone .html file gets the no-script CSP instead.
+      includeReadyScript: kind !== "html",
       onRemoteImage: () => { sawRemoteImage = true },
     })
     if (cancelled()) {
