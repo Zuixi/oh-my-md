@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, onTestFinished } from "vitest"
 import { parsePosixPs, selectReapTargets, type PsRow } from "../e2e/processReaper.mjs"
 
 // Selection is unit-tested with synthetic `ps` rows; the teardown contract is proved with
@@ -80,7 +80,8 @@ describe("selectReapTargets", () => {
 const FIXTURE_LINES = [
   'import { spawn } from "node:child_process"',
   "",
-  'const KEEP_ALIVE = "setInterval(() => {}, 1000)"',
+  '// Self-expiring keep-alive so even a sandboxed or SIGKILLed runner never leaves an immortal dummy.',
+  'const KEEP_ALIVE = "setTimeout(() => {}, 25_000)"',
   'const runTag = process.env.OMD_PW_RUN_ID ? `--omd-e2e-run=${process.env.OMD_PW_RUN_ID}` : ""',
   'const tmpDir = process.env.OMD_PW_TMPDIR ?? ""',
   "",
@@ -194,12 +195,30 @@ afterAll(() => {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true })
 })
 
+function trackPidsForSafety(supervisor: ChildProcess, pids: number[]): void {
+  onTestFinished(() => {
+    try {
+      supervisor.kill("SIGTERM")
+    } catch {
+      // Expected ESRCH once the supervisor has exited normally.
+    }
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL")
+      } catch {
+        // Expected ESRCH once the reaper has retired the fixture child.
+      }
+    }
+  })
+}
+
 describe.skipIf(process.platform === "win32")("supervised run teardown", () => {
   it("reaps the group, tagged browser and crashpad handler on SIGTERM", async () => {
     const supervisor = startRun(writeFixture())
     const stderrText = collectStderr(supervisor)
     const report = await within(readReport(supervisor, stderrText), 20_000, "fixture report")
     const pids = [report.sameGroupPid, report.browserPid, report.crashpadPid]
+    trackPidsForSafety(supervisor, pids)
     expect(pids.filter(pid => !alive(pid))).toEqual([])
     expect(existsSync(report.runTmpDir)).toBe(true)
 
@@ -210,13 +229,14 @@ describe.skipIf(process.platform === "win32")("supervised run teardown", () => {
     await expectAllDead(pids)
     expect(existsSync(report.runTmpDir)).toBe(false)
     expect(stderrText()).not.toContain("uncaughtException")
-  })
+  }, 30_000)
 
   it("reaps everything when its stdout pipe closes, like `playwright test | head`", async () => {
     const supervisor = startRun(writeFixture())
     const stderrText = collectStderr(supervisor)
     const report = await within(readReport(supervisor, stderrText), 20_000, "fixture report")
     const pids = [report.sameGroupPid, report.browserPid, report.crashpadPid]
+    trackPidsForSafety(supervisor, pids)
 
     const exit = closed(supervisor)
     supervisor.stdout?.destroy()
@@ -225,5 +245,5 @@ describe.skipIf(process.platform === "win32")("supervised run teardown", () => {
     await expectAllDead(pids)
     expect(existsSync(report.runTmpDir)).toBe(false)
     expect(stderrText()).not.toContain("uncaughtException")
-  })
+  }, 30_000)
 })

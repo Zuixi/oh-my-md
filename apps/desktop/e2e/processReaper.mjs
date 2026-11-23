@@ -156,12 +156,33 @@ export function installBrokenPipeGuard(onBrokenPipe) {
 const hasTargets = ({ targetPids, targetPgids }) => targetPids.length > 0 || targetPgids.length > 0
 const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
+function isTargetAlive(target) {
+  try {
+    process.kill(target, 0)
+    return true
+  } catch (error) {
+    return error?.code === "EPERM"
+  }
+}
+
+function directRootTargets(rootPid) {
+  const validRoot =
+    typeof rootPid === "number" &&
+    rootPid > 1 &&
+    rootPid !== process.pid &&
+    rootPid !== process.ppid
+  if (!validRoot) return { targetPids: [], targetPgids: [] }
+  const targetPids = isTargetAlive(rootPid) ? [rootPid] : []
+  const targetPgids = isTargetAlive(-rootPid) ? [rootPid] : []
+  return { targetPids, targetPgids }
+}
+
 function snapshotTargets({ rootPid, runTag, runTmpDir }) {
   try {
-    // A synchronous reap blocks the event loop, so a child that already died is still listed
-    // as `<defunct>` until this process collects it. Dropping zombie rows keeps a clean
-    // teardown at two `ps` calls instead of a full grace period.
-    const table = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,command="], {
+    // Use `-xo` (current UID only) rather than `-axo` so sandboxes that block listing
+    // other users' processes still succeed; drop `<defunct>` zombies so synchronous
+    // polling finishes in two snapshots instead of waiting out the full grace window.
+    const table = execFileSync("ps", ["-xo", "pid=,ppid=,pgid=,command="], {
       encoding: "utf8",
       maxBuffer: PS_MAX_BUFFER_BYTES,
       stdio: ["ignore", "pipe", "ignore"],
@@ -169,8 +190,9 @@ function snapshotTargets({ rootPid, runTag, runTmpDir }) {
     const rows = parsePosixPs(table).filter(row => !row.command.includes("<defunct>"))
     return selectReapTargets(rows, { rootPid, runTag, runTmpDir, selfPid: process.pid, parentPid: process.ppid })
   } catch {
-    // `ps` can fail under resource pressure; a reaper never throws from an exit handler.
-    return { targetPids: [], targetPgids: [] }
+    // If `ps` is blocked inside a restricted sandbox, still reap the known process group
+    // `-rootPid` directly rather than returning empty targets.
+    return directRootTargets(rootPid)
   }
 }
 
