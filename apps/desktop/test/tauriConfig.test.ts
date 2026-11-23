@@ -164,6 +164,19 @@ describe("Tauri frontend security configuration", () => {
     expect(config.app.security.assetProtocol.enable).toBe(true)
     expect(config.app.security.assetProtocol.scope).toEqual([])
   })
+
+  it("ships bundle metadata every installer format needs", () => {
+    // `publisher` and `shortDescription` land in the NSIS/MSI/deb/rpm metadata;
+    // `category` is the macOS App Store category and the freedesktop section.
+    // `tauri::generate_context!()` rejects an unknown category at build time.
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      bundle: { publisher?: string; category?: string; shortDescription?: string }
+    }
+
+    expect(config.bundle.publisher).toBe("oh-my-md Contributors")
+    expect(config.bundle.category).toBe("DeveloperTool")
+    expect(config.bundle.shortDescription).toBe("Fast, source-faithful Markdown editor")
+  })
 })
 
 describe("platform-specific Rust code", () => {

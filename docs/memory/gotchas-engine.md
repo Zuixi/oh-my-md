@@ -163,6 +163,19 @@ Rules:
 - `updateLiveDecorations` reuses the dropped spec object when a rebuilt spec has the same `tag`/`from`/`to` and `oldWidget.eq(newWidget)` (`build.ts`, `removedByKey` pass). Decoration identity preserved ⇒ no height-relevant change ⇒ height map untouched.
 - Reuse is equivalence-gated on widgets only: non-widget decorations (line/mark/inline replace) churn harmlessly (`compareRange` is a no-op for the height map), and a widget whose inputs changed (`eq` false — edited cell text, changed label) must rotate to a new instance so CM refreshes DOM.
 - `test/specIdentity.test.ts` guards both directions: `measureBlockWidget` keeps the instance identical (and `view.contentHeight` stable); a content edit rotates it.
+
+## The document end needs an inclusive dirty boundary
+
+Verified 2026-10-05 by the seeded property suite (`test/propertyInvariants.test.ts`, seed `54` = `0x6f6d9a`, step 3): start from a closed ```` ```ts ```` fence, delete everything after the first two lines, and the preview kept a zero-length `replace:CloseFence` decoration at the end of a now **unterminated** fence. A fresh `buildLiveDecorations` on the same state had none, so the incremental field had drifted from the full rebuild — the exact class of bug the suite exists to catch.
+
+The cause is the documented half-open removal convention. `expandRange` ends a dirty range at `endLine.to + 1` (the next line's `from`) and `ranges.intersects` is half-open for non-empty ranges, so a point decoration sitting exactly at `range.to` counts as **clean** — that is what keeps the next line's `line:omd-blockquote-N`. At the document end there is no next line: `endLine.to + 1` is clamped to `doc.length`, so a zero-length spec left at `length` was never inside any removal range and survived every later rebuild.
+
+Rules:
+
+- `ranges.ts::docEndOwned` (the closed-interval algebra module, next to `intersects`) extends a dirty range that reaches `doc.length` by one; `build.ts::updateLiveDecorations` feeds the result to both `collectDecorationSpecs` and the removal envelope (`specKept`, `RangeSet.update`'s `filterFrom`/`filterTo`, `reconcileSpecs`). Collection output is unchanged (no spec can start past `length`); only the removal side gains the point at the end.
+- Empty ranges (`from === to`, the trailing empty line) stay closed — `intersects`' point branch already owns that line.
+- Never "fix" this by making the overlap check closed: that drops the following line's point decorations and brings back the nested-quote bar loss documented above.
+- Regression coverage: `test/propertyInvariants.test.ts` (150 seeded documents × 5 random insert/delete steps, compared byte-for-byte against `buildLiveDecorations` on every step).
 - Estimate calibration matters too: with identity reuse, the estimate→measured correction happens exactly once per block (first draw), so a well-calibrated estimate makes even that one-time correction small. Calibration tooling: `apps/desktop/e2e/calibrate-heights.mjs` (block heights in real Chromium) and `apps/desktop/e2e/scroll-audit.mjs` (`估算总高 vs 全文测量后的实际总高` on a real document — the direct thumb-desync metric). Residual error is inherent: never-drawn regions are estimated, so dragging the thumb into them lands within ~2% and converges as CM measures.
 
 ## Structure and appearance live in different packages

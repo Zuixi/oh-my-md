@@ -1,0 +1,72 @@
+name: Feature request
+description: Propose a capability or a change in behavior
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check the **Scope & 1.0 non-goals** section of the
+        [README](../blob/main/README.md#scope--10-non-goals): plugin runtimes,
+        cloud sync, real-time collaboration, mobile apps, and AI assistants are
+        intentionally out of scope for 1.0, so requests for them will be closed
+        with a pointer to the roadmap.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does the current editor get in the way? Concrete workflows are more useful than abstract wishes.
+      placeholder: "When I edit a long table I have to …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen instead? Include the shortcut, menu entry, or default you expect.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Primary platform
+      description: Where would you use this most? It helps prioritize three-platform work.
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - All of them
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: oh-my-md version
+      description: Shown in **Settings → About**. Fill in when the request comes from a specific release's behavior.
+      placeholder: "0.1.5"
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other editors, workarounds, or manual steps you already use for this.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Project invariants
+      description: |
+        oh-my-md keeps the raw Markdown as the single source of truth. Proposals
+        that require rewriting user bytes on save, an account, telemetry, or a
+        network round-trip to edit local text conflict with that design.
+      options:
+        - label: This request works purely on local files and preserves the source bytes unless I explicitly edit them.
+          required: true

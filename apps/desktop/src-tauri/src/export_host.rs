@@ -297,6 +297,18 @@ pub(crate) async fn render_with_window(
         (measured, None)
     };
 
+    // The Windows CDP capture steps the device scale down when a tall PNG would
+    // exceed the GPU texture limit. Report it: a silently downsampled export
+    // would contradict the scale the user picked in Settings.
+    #[cfg(windows)]
+    let scale_warning = if format == ExportFormat::Png {
+        spec.effective_gpu_capture_scale(measured.height_css).1
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    let scale_warning: Option<ExportWarning> = None;
+
     let window_for_capture = window.clone();
     let capture_spec = spec;
     let capture_probe = measured.clone();
@@ -329,7 +341,9 @@ pub(crate) async fn render_with_window(
     }
 
     cleanup(&window);
-    let warning = clamp_warning.or_else(|| partial_warning(&measured));
+    let warning = clamp_warning
+        .or(scale_warning)
+        .or_else(|| partial_warning(&measured));
     Ok(RenderOutput { bytes, warning })
 }
 

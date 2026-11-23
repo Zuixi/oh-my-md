@@ -12,6 +12,7 @@ import type { SyntaxNode } from "@lezer/common"
 import type { DecoSpec } from "./types"
 import { mapDecoSpec, mapSpecsFast, reconcileSpecs, sortDecoSpecs, unrepresentableAtPoint } from "./specIndex"
 import {
+  docEndOwned,
   mergeRanges,
   outsideAllRegions,
   specKept,
@@ -365,11 +366,12 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   // 先让 CodeMirror 用 ChangeDesc 精确映射未受影响的装饰，再替换语法安全脏区。
   const mappedDeco = value.deco.map(tr.changes)
   const mappedAtomic = value.atomic.map(tr.changes)
-  const rebuilt = ranges.flatMap(range =>
+  const dirty = docEndOwned(ranges, tr.state.doc.length)
+  const rebuilt = dirty.flatMap(range =>
     collectDecorationSpecs(tr.state, range.from, range.to))
   // 新块 widget 可能从脏区内开始、却吞并后续旧块；移除范围必须覆盖它的完整 replace 区间。
   const removalRanges = mergeRanges([
-    ...ranges,
+    ...dirty,
     ...rebuilt
       .filter(spec => spec.tag.startsWith("widget:block:"))
       .map(spec => ({ from: spec.from, to: spec.to })),

@@ -37,6 +37,24 @@ export interface GlobalShortcutsHost {
  */
 const DIALOG_SAFE_COMMAND_IDS: ReadonlySet<string> = new Set(["preferences", "quick-open"])
 
+/**
+ * Native menu ids that stay live while a dialog owns the window. macOS and
+ * Windows deliver accelerators (`Cmd+W`, `Cmd+S`, `Cmd+N`, `Cmd+B`, …) through
+ * the menu channel, which never reaches the `keydown` handler above — so the
+ * same isolation has to be enforced on this side. Only overlay switching and
+ * app-lifecycle items survive; everything else would act on a document the
+ * user cannot see. Recent-file ids (`recent:<path>`) are deliberately absent.
+ */
+const DIALOG_SAFE_MENU_IDS: ReadonlySet<string> = new Set([
+  "preferences",
+  "quick-open",
+  "about",
+  "check-updates",
+  "export-diagnostics",
+  "open-log-folder",
+  "quit",
+])
+
 /** Chrome/WebKit keyCode reported for keys that commit an IME composition. */
 const IME_COMPOSING_KEYCODE = 229
 
@@ -108,9 +126,14 @@ export function useGlobalShortcuts(host: GlobalShortcutsHost): void {
 
   useEffect(() => {
     if (!services.listenMenu) return
-    return services.listenMenu(id => runMenuCommand(id, latest.current.commandsRef.current, {
-      openRecent: path => { void latest.current.openRecentRef.current(path) },
-    }))
+    return services.listenMenu(id => {
+      const current = latest.current
+      // Native menu accelerators bypass `keydown`; apply the same rule here.
+      if ((current.isDialogOpen() || isAnyModalOpen()) && !DIALOG_SAFE_MENU_IDS.has(id)) return
+      runMenuCommand(id, current.commandsRef.current, {
+        openRecent: path => { void current.openRecentRef.current(path) },
+      })
+    })
   }, [services])
 
   useEffect(() => {

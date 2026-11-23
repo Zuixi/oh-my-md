@@ -44,10 +44,15 @@ pub const EXPORT_MAX_DEVICE_HEIGHT: u32 = 65_535;
 /// warning instead of allocating an unbounded multi-GB bitmap.
 pub const EXPORT_MAX_DEVICE_AREA: u64 = 128_000_000;
 pub const EXPORT_MIN_HEIGHT_CSS: f64 = 600.0;
+/// One cross-platform readiness deadline for every offscreen export window.
+/// macOS waits for the WebKit navigation, Windows/Linux poll the page's ready
+/// flag; both must give a heavy document the same budget so a note exports the
+/// same way on every OS.
+pub const EXPORT_READY_TIMEOUT_SECS: u64 = 20;
 #[cfg(target_os = "macos")]
-pub const EXPORT_TIMEOUT_SECS: u64 = 20;
+pub const EXPORT_TIMEOUT_SECS: u64 = EXPORT_READY_TIMEOUT_SECS;
 #[cfg(any(windows, target_os = "linux"))]
-pub const EXPORT_READY_TIMEOUT_MS: u64 = 15_000;
+pub const EXPORT_READY_TIMEOUT_MS: u64 = EXPORT_READY_TIMEOUT_SECS * 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -150,6 +155,35 @@ impl ExportSpec {
             )),
         });
         (clamped.round(), warning)
+    }
+
+    /// Device-pixel capture scale for a PNG of `height_css` CSS pixels tall.
+    ///
+    /// GPU capture backends (WebView2 CDP, WebKit screenshots) re-rasterize at
+    /// `scale` into one texture; Chromium caps a single surface at
+    /// `EXPORT_MAX_DEVICE_DIMENSION` per side. A long note at 2x/3x would blow
+    /// that cap and come back truncated, so the scale steps down until the full
+    /// document fits one image. The returned warning is what tells the user the
+    /// image is not at the requested scale instead of silently shipping one.
+    ///
+    /// Compiled on the Windows GPU-capture backend and in tests on every OS.
+    /// macOS rasterizes through WebKit at a fixed scale, and the WebKitGTK path
+    /// keeps its own unrounded variant because it sizes the export window from
+    /// the raw measured height (`export_linux.rs`).
+    #[cfg(any(windows, test))]
+    pub fn effective_gpu_capture_scale(self, height_css: f64) -> (f64, Option<ExportWarning>) {
+        let height = height_css.round().max(1.0);
+        let max_dim = f64::from(EXPORT_MAX_DEVICE_DIMENSION);
+        let scale = (max_dim / height).min(self.scale).max(0.25);
+        let warning = (scale + 1e-6 < self.scale).then(|| ExportWarning {
+            code: "downsampled".into(),
+            detail: Some(format!(
+                "long PNG export ({height:.0} CSS px) stepped capture scale from {}x to \
+                 {scale:.2}x to fit GPU texture limit ({EXPORT_MAX_DEVICE_DIMENSION} px)",
+                self.scale
+            )),
+        });
+        (scale, warning)
     }
 
     #[cfg(test)]

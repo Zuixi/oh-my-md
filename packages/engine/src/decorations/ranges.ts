@@ -101,3 +101,27 @@ export function specKept(
   if (pruneWindows.length > 0 && outsideAllRegions(from, to, pruneWindows)) return false
   return !intersectsAny(from, to, removalRanges, removalStart)
 }
+
+/**
+ * Dirty ranges for a transaction, with the one boundary `intersects` cannot
+ * express on its own. `expandRange` ends a range at the *start of the following
+ * line*, and `intersects` is half-open for non-empty ranges — so a zero-length
+ * spec sitting exactly at `to` counts as clean, which is what keeps the next
+ * line's point decorations (`line:omd-blockquote-N`). The document end has no
+ * following line: a range clamped to `length` must own the point at `length`,
+ * or a decoration whose line was just deleted survives every later rebuild
+ * (observed: the collapsed closing fence of a code block whose last lines were
+ * removed stayed as a zero-length `replace:CloseFence` at the end of an
+ * unterminated fence).
+ *
+ * Empty ranges (the trailing empty line, `from === to`) stay closed: for those
+ * the point branch of `intersects` already owns the line.
+ */
+export function docEndOwned(
+  ranges: readonly RebuildRange[],
+  length: number,
+): RebuildRange[] {
+  return ranges.map(range => range.to === length && range.from < length
+    ? { from: range.from, to: length + 1 }
+    : range)
+}
