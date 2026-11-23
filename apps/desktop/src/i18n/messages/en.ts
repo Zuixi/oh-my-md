@@ -92,6 +92,7 @@ export const en: Record<string, string> = {
   "history.empty": "No snapshots yet. Save the file to create one.",
   "history.clear": "Clear History",
   "history.failed": "Could not load version history",
+  "history.restoreInPlace": "Restore",
 
   "quickOpen.placeholder": "Go to file…",
   "quickOpen.loading": "Loading…",

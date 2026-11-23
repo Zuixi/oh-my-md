@@ -8,11 +8,10 @@ import { useT } from "./i18n"
 export function TopBar(props: {
   workspace: string | null
   filePath: string | null
-  dirty: boolean
   tabs: EditorSession[]
   activeId: number
-  dirtyIds: number[]
-  conflictIds: number[]
+  dirtyIds: readonly number[]
+  conflictIds: readonly number[]
   sidebarOpen?: boolean
   onToggleSidebar?: () => void
   onFocusTab: (id: number) => void

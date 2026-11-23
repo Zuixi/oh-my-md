@@ -92,6 +92,7 @@ export const zh: Record<string, string> = {
   "history.empty": "暂无快照。保存文件即可生成。",
   "history.clear": "清除历史",
   "history.failed": "无法加载版本历史",
+  "history.restoreInPlace": "恢复到此文件",
 
   "quickOpen.placeholder": "跳转到文件…",
   "quickOpen.loading": "载入中…",

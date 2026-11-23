@@ -42,6 +42,24 @@ export function addTab(workspace: Workspace, session?: EditorSession): Workspace
   }
 }
 
+/**
+ * Replaces the whole tab set from a restored Hot Exit. The active id is clamped
+ * to a tab that exists, so a shard whose active index went stale still yields a
+ * usable window instead of an empty editor.
+ */
+export function replaceTabs(
+  workspace: Workspace,
+  tabs: readonly EditorSession[],
+  activeId?: number,
+): Workspace {
+  if (tabs.length === 0) return workspace
+  const nextId = tabs.reduce((max, tab) => Math.max(max, tab.id + 1), workspace.nextId)
+  const active = activeId !== undefined && tabs.some(tab => tab.id === activeId)
+    ? activeId
+    : tabs[0].id
+  return { ...workspace, tabs: [...tabs], activeId: active, nextId }
+}
+
 export function closeTab(workspace: Workspace, id: number): Workspace {
   if (workspace.tabs.length === 1) return workspace
   const index = workspace.tabs.findIndex(tab => tab.id === id)

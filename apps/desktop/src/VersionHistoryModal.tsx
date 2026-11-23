@@ -2,14 +2,21 @@ import { useT } from "./i18n"
 import type { SnapshotEntry } from "./desktopServices"
 
 /**
- * Version-history list for the active saved file. Restoring opens the
- * snapshot in a new untitled tab — the original file is never touched.
+ * Version-history list for the active saved file.
+ *
+ * Each snapshot has two distinct intents:
+ * - clicking the row opens the snapshot as a **copy** in a new untitled tab, so
+ *   the original file is never touched (the long-standing behaviour);
+ * - the trailing button restores it into the file's own tab in place, which is
+ *   what "undo my last few saves" actually means. That path only replaces the
+ *   editor buffer — nothing reaches the disk without the normal guarded save.
  */
 export function VersionHistoryModal(props: {
   path: string | null
   entries: readonly SnapshotEntry[]
   loading: boolean
   onRestore: (entry: SnapshotEntry) => void
+  onRestoreInPlace?: (entry: SnapshotEntry) => void
   onClear: () => void
   onClose: () => void
 }) {
@@ -25,11 +32,24 @@ export function VersionHistoryModal(props: {
         )}
         <ul>
           {props.entries.map(entry => (
-            <li key={entry.fileName}>
-              <button type="button" onClick={() => props.onRestore(entry)}>
+            <li key={entry.fileName} className="omd-history-row">
+              <button
+                type="button"
+                className="version-history-item"
+                onClick={() => props.onRestore(entry)}
+              >
                 <span>{new Date(entry.mtimeMs).toLocaleString()}</span>
                 <kbd>{Math.max(1, Math.round(entry.sizeBytes / 1024))} KB</kbd>
               </button>
+              {props.onRestoreInPlace ? (
+                <button
+                  type="button"
+                  className="version-history-restore-btn"
+                  onClick={() => props.onRestoreInPlace?.(entry)}
+                >
+                  {t("history.restoreInPlace")}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

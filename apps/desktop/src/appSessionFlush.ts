@@ -17,22 +17,44 @@ export interface SessionFlushHost {
 }
 
 /**
- * Persist dirty buffers to crash recovery before the session shard/ack. This is
- * the safe half of hot exit: content survives a quit even when the active tab
- * never reached the autosave window, and every background tab is included.
+ * Recovery-record key per dirty tab. Shared by the quit-time flush and the
+ * debounced shard write so both describe the same dirty set.
  */
-async function flushDirtyRecoveries(host: SessionFlushHost): Promise<void> {
-  const writer = host.getRecoveryWriter()
-  const writes: Promise<boolean>[] = []
-  for (const tab of host.getWorkspace().tabs) {
-    const contents = host.getContents(tab.id)
+export function dirtyRecoveryKeysFor(
+  workspace: Workspace,
+  getContents: (tabId: number) => string | undefined,
+): ReadonlyMap<number, string> {
+  const keys = new Map<number, string>()
+  for (const tab of workspace.tabs) {
+    const contents = getContents(tab.id)
     if (contents === undefined || !sessionDirty(tab, contents)) continue
+    keys.set(tab.id, recoveryKey(tab))
+  }
+  return keys
+}
+
+/**
+ * Persist dirty buffers to crash recovery before the session shard/ack and
+ * return each dirty tab's record key, so the shard written right after can
+ * point at the exact buffer that belongs to that tab (Hot Exit).
+ */
+async function flushDirtyRecoveries(
+  host: SessionFlushHost,
+): Promise<ReadonlyMap<number, string>> {
+  const writer = host.getRecoveryWriter()
+  const workspace = host.getWorkspace()
+  const keys = dirtyRecoveryKeysFor(workspace, tabId => host.getContents(tabId))
+  const writes: Promise<boolean>[] = []
+  for (const tab of workspace.tabs) {
+    const key = keys.get(tab.id)
+    if (key === undefined) continue
     writes.push(writer.persistNow(
-      { tabId: tab.id, key: recoveryKey(tab), path: sessionPath(tab), contents },
+      { tabId: tab.id, key, path: sessionPath(tab), contents: host.getContents(tab.id) ?? "" },
       { write: host.services.writeRecovery, reportError: host.services.reportError },
     ))
   }
   await Promise.allSettled(writes)
+  return keys
 }
 
 /** Installs the Rust-driven session-flush listener; returns its unlisten. */
@@ -49,8 +71,10 @@ export function installSessionFlush(host: SessionFlushHost): () => void {
     }
     try {
       host.flushMaterializer()
-      await flushDirtyRecoveries(host)
-      await services.saveSessionState?.(extractSessionState(host.getWorkspace()))
+      const dirtyRecoveryKeys = await flushDirtyRecoveries(host)
+      await services.saveSessionState?.(
+        extractSessionState(host.getWorkspace(), dirtyRecoveryKeys),
+      )
     } catch {
       // A failed write must still ack: otherwise Rust waits out its timeout.
     } finally {

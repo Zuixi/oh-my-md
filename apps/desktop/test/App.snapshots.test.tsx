@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
-import { createAppHarness, resetMountedApps } from "./appHarness"
+import { createAppHarness, expectPathShown, resetMountedApps } from "./appHarness"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -121,6 +121,63 @@ describe("version history snapshots", () => {
     await waitFor(() => {
       expect(screen.getByText("No snapshots yet. Save the file to create one.")).toBeTruthy()
     })
+  })
+
+  it("restores a snapshot into the file's own tab instead of a copy", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/notes/doc.md", "v1")
+    const entries = [
+      { fileName: "1700000000001.md", mtimeMs: 1700000000001, sizeBytes: 2048 },
+    ]
+    harness.services.listSnapshots = vi.fn(async () => entries)
+    harness.services.readSnapshot = vi.fn(async () => "restored content")
+
+    harness.renderApp()
+    await harness.openFileTab("/notes/doc.md", "v1")
+    const editorsBefore = harness.allEditors().length
+
+    openHistoryViaPalette()
+    await waitFor(() => expect(screen.getByText("Version History")).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }))
+
+    await waitFor(() => {
+      expect(screen.queryByText("Version History")).toBeNull()
+      expect(harness.editorForTab(1).getOptions().doc).toBe("restored content")
+    })
+    // In place, not a copy: no extra tab was created.
+    expect(harness.allEditors().length).toBe(editorsBefore)
+    // Nothing reached the disk, and the tab is dirty against the saved baseline
+    // so the normal guarded save (or autosave) owns the write.
+    expect(harness.disk("/notes/doc.md").contents()).toBe("v1")
+    expectPathShown("/notes/doc.md", { dirty: true })
+  })
+
+  it("asks before replacing unsaved edits with a snapshot", async () => {
+    const harness = createAppHarness(editor)
+    harness.seedFile("/notes/doc.md", "v1")
+    harness.services.listSnapshots = vi.fn(async () => [
+      { fileName: "1700000000001.md", mtimeMs: 1700000000001, sizeBytes: 2048 },
+    ])
+    harness.services.readSnapshot = vi.fn(async () => "restored content")
+    const confirmClose = vi.fn(() => false)
+    harness.services.confirmClose = confirmClose
+
+    harness.renderApp()
+    await harness.openFileTab("/notes/doc.md", "v1")
+    harness.editorForTab(1).emit({
+      doc: "unsaved edit", docChanged: true, pendingNormalization: null,
+    })
+
+    openHistoryViaPalette()
+    await waitFor(() => expect(screen.getByText("Version History")).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }))
+
+    await waitFor(() => expect(confirmClose).toHaveBeenCalled())
+    // Declined: the unsaved buffer and the modal both stay untouched.
+    expectPathShown("/notes/doc.md", { dirty: true })
+    expect(harness.services.readSnapshot).not.toHaveBeenCalled()
+    expect(screen.getByText("Version History")).toBeTruthy()
+    expect(harness.disk("/notes/doc.md").contents()).toBe("v1")
   })
 
   it("hints when the active tab has no file path", async () => {

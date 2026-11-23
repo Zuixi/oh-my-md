@@ -1692,6 +1692,16 @@ hover 与当前项同用 --omd-bar 灰底，当前项再加 2px 左缘 --omd-lin
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .omd-history ul { overflow-y: auto; }
+/* Two distinct restore intents per snapshot: the row opens a copy in a new tab,
+   the trailing button replaces the file tab's buffer in place. */
+.omd-history-row { display: flex; align-items: center; gap: 6px; }
+.omd-history-row .version-history-item { flex: 1 1 auto; width: auto; }
+.omd-history-restore-btn {
+  flex: 0 0 auto; margin-right: 6px;
+  min-height: 24px; padding: 4px 10px; font: inherit; cursor: pointer;
+  color: var(--omd-fg); background: var(--omd-bg);
+  border: 1px solid var(--omd-muted); border-radius: 4px;
+}
 .omd-history-actions {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 8px; border-top: 1px solid var(--omd-border);

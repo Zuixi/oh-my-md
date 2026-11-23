@@ -13,7 +13,7 @@ import {
 import type { SaveStateByTab } from "./documentSaveState"
 import { getGlobalLogger } from "./logger"
 import { pathField } from "./logPath"
-import { toDocumentCommandError } from "./desktopServices"
+import { errorMessage, toDocumentCommandError } from "./desktopServices"
 import type { NormalizationByTab } from "./normalizationState"
 import { sessionPath, type EditorSession } from "./session"
 import type { Workspace } from "./workspace"
@@ -109,4 +109,18 @@ export function createDocumentSaveAppBridge(deps: {
     },
   }, deps.pollReadFailures)
   return { saveFile, saveCopy, pollFileTabs }
+}
+
+/**
+ * Pre-save snapshot request. A snapshot is an optimisation for Version History,
+ * never a save precondition, so a failure is logged and the save proceeds — but
+ * it is *not* swallowed (the old `.catch(() => undefined)` hid a broken
+ * snapshot directory behind an empty history).
+ */
+export function snapshotAfterSave(services: DesktopServices, path: string): void {
+  const snapshot = services.snapshotDocument
+  if (!snapshot) return
+  void snapshot(path).catch(error => {
+    getGlobalLogger().warn("snapshots", `${errorMessage("pre-save snapshot failed", error)} ${pathField(path)}`)
+  })
 }

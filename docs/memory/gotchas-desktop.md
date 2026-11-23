@@ -611,3 +611,53 @@ WebView2, Linux WebKitGTK), so the document must be self-contained and determini
   `WINDOWS_ADDITIONAL_BROWSER_ARGS`. Omit them and the second environment fails while Tauri
   still registers the window: `url()`/`size()`/`with_webview()` all return
   `FailedToReceiveMessage`, and a custom-protocol export page never reports ready.
+
+## Zero-churn typing: the shell must not subscribe to document text (2026-11)
+
+`App` used to keep `const [doc, setDoc] = useState("")` and update it from the 250 ms
+materializer, so every keystroke re-rendered TopBar, FileTree, OutlinePanel, and every modal
+even though only the status bar reads the text. The fix is architectural, not a `memo`:
+
+- `documentStore.ts` owns `workspace`, `docs`, `docVersions`, `dirtyTabIds`,
+  `saveStateByTab`, and `normalizationByTab` outside React. The shell subscribes only to
+  workspace / dirty ids / save states / normalization; text is read by the components that
+  render it (`useActiveTabDoc`, `useDocVersion`, `useDocumentStats`).
+- `dirtyTabIds` must keep the **same array reference** while an already-dirty tab keeps
+  changing. `useSyncExternalStore` bails out on `Object.is`, so a rebuilt array (even with
+  equal contents) re-renders the whole shell. `test/documentStore.test.ts` asserts reference
+  identity; `test/App.renderPerf.test.tsx` asserts zero TopBar renders across ten
+  materialized edits on an already-dirty tab.
+- Anything derived from the whole document (stats, find match count, the conflict diff) is
+  computed inside its own component or through a getter polled while its panel is open. Put
+  it back in `App` and the invariant silently dies — there is no runtime error, only jank.
+- `App` must stay under the root 500-line target with **no** `module-size-baseline.json`
+  entry; `check-module-size.mjs` fails on an obsolete allowance (`<= 800`), so shrinking the
+  shell without removing its baseline line fails the quality gate.
+
+## `export default function App(props: AppProps = {})` breaks `createElement` typing (2026-11)
+
+`test/appHarness.ts` renders with `createElement(App, {...})`, not JSX. Giving the **parameter
+a default** (`props: AppProps = {}`, or a defaulted destructuring pattern) makes React's
+`createElement` overloads infer the props type as `{}`, and every caller fails with
+`Object literal may only specify known properties, and 'services' does not exist in type
+'Attributes'` — while `tsc -p tsconfig.json` (src only) stays green, so the failure only shows
+up in `tsconfig.test.json`. Keep the parameter required and all fields optional: `<App />` and
+`createElement(App, {...})` both work, and `App()` with no argument is not a supported call.
+
+## Hot Exit is a normal quit, not a crash (2026-11)
+
+The session shard is the window's own record of what was open; recovery records are crash
+safety. Treating them as one flow produced two bugs: untitled dirty tabs vanished on quit, and
+the next launch asked "restore unsaved drafts?" for work the user had simply closed — Cancel
+then deleted it. Now a quit flush writes every dirty buffer and records `hotExitTabs`
+(ordered `{kind, path, recoveryKey}`) plus `activeTabIndex` in the shard; restore rebuilds the
+tabs in that exact order, adopts each buffer against its disk baseline, and returns the
+recovery keys it claimed so the crash prompt only sees real orphans. Two traps:
+
+- `extractSessionState(ws)` with no dirty-key map must keep emitting exactly
+  `{ folder, openPaths, activePath }`; adding `hotExitTabs: []` breaks every legacy assertion
+  and older readers. The map (`dirtyRecoveryKeysFor`) is passed only by the flush and the
+  debounced shard write.
+- A dirty buffer adopted onto a file tab whose file is missing must degrade to an untitled
+  tab, never to a dropped buffer; and a claimed draft is re-armed under the tab's own
+  `recoveryKey` before its source record is deleted, or a crash right after restore loses it.

@@ -86,6 +86,9 @@
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
+- **The React shell must not subscribe to document text** — `DocumentStore` + `dirtyTabIds` reference identity are what keep typing from re-rendering the shell; a rebuilt (equal) array re-renders everything. See [gotchas-desktop](./gotchas-desktop.md).
+- **`App(props: AppProps = {})` breaks `createElement` typing** — a defaulted parameter makes React infer `{}`, so harness callers fail in `tsconfig.test.json` while `src` type-checks.
+- **Hot Exit rides the session shard, not the crash prompt** — quit writes `hotExitTabs` + `activeTabIndex`; restore claims those recovery keys so `confirmRestore` only sees real orphans.
 - **High-DPI export must self-contain images/KaTeX and scale at capture** — `asset:` URLs and `prefers-color-scheme` do not survive offscreen renderers; never upscale 1x bitmaps. See [gotchas-desktop](./gotchas-desktop.md).
 
 - **Right-click paste on macOS deletes extra lines** — dispatch from a saved `posAtCoords` position, and register the desktop paste handler before engine rich paste so HTML-bearing clipboards cannot bypass it.
