@@ -12,7 +12,7 @@
 // 输出：格式化 JSON（同时写到 /tmp/omd-table-direct-edit-audit.json），gate 失败时 exit 1。
 import fs from "node:fs"
 import { execFileSync } from "node:child_process"
-import { chromium } from "@playwright/test"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const PORT = process.env.PW_PORT ?? "9420"
 const CHANNEL = process.env.PW_CHANNEL ?? "chrome"
@@ -123,24 +123,24 @@ async function runMember(browser, mode) {
   }
 }
 
-const browser = await chromium.launch({ channel: CHANNEL })
-const environment = {
-  chromium: browser.version(),
-  channel: CHANNEL,
-  platform: process.platform,
-  arch: process.arch,
-  viewport: VIEWPORT,
-  port: PORT,
-  commit: readCommit(),
-  harness: "/e2e/harness.html?tableMemorySpike=1[&tableDirectEdit=1]",
-}
-
 const pairs = []
 const discarded = []
 let discardBudget = 1
 let aborted = null
+let environment = null
 
-try {
+await withManagedChromium({ channel: CHANNEL }, async browser => {
+  environment = {
+    chromium: browser.version(),
+    channel: CHANNEL,
+    platform: process.platform,
+    arch: process.arch,
+    viewport: VIEWPORT,
+    port: PORT,
+    commit: readCommit(),
+    harness: "/e2e/harness.html?tableMemorySpike=1[&tableDirectEdit=1]",
+  }
+
   for (let index = 0; index < PAIRS; index++) {
     const order = index % 2 === 0 ? ["experiment", "control"] : ["control", "experiment"]
     let attempt = 0
@@ -166,9 +166,7 @@ try {
     }
     if (aborted) break
   }
-} finally {
-  await browser.close().catch(() => {})
-}
+})
 
 const controlGrowth = pairs.map(entry => entry.runs.control.growth100to1000)
 const experimentGrowth = pairs.map(entry => entry.runs.experiment.growth100to1000)

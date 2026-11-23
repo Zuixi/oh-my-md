@@ -695,3 +695,58 @@ grammars, and KaTeX's `?inline` fonts. `viteChunks.ts` is the single owner of th
 `test/viteChunks.test.ts` pins it; the eager chunks (`index`, `vendor-react`,
 `vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) stay under the 700 kB budget while the
 lazy `cpp` grammar sits just under `chunkSizeWarningLimit`.
+
+## E2E teardown: a piped-out driver leaves Chromium groups behind (2026-11)
+
+`playwright test` owns browser and web-server teardown only while its own event loop is alive.
+End the driver first — `pnpm test:e2e | head` (SIGPIPE → EPIPE), Ctrl-C, `kill`, an IDE stop
+button — and `finally { await browser.close() }` never runs. The orphans are easy to miss
+because none of them share one parent:
+
+- the browser process is its own group leader (Playwright launches Chromium detached), so the
+  terminal's process group kill misses it entirely;
+- `chrome_crashpad_handler` reparents to PID 1 in a **different** PGID than the browser, so
+  even a correct `kill(-browserPgid)` leaves it behind;
+- GPU / network / renderer helpers and `vite` keep running, so the next run finds its port busy.
+
+Evidence on 2026-11: a mid-run SIGTERM to an unsupervised driver left a `Google Chrome` group
+plus `chrome_crashpad_handler --database=<tmp>/playwright_chromiumdev_profile-*/Crashpad` with
+`PPID=1`.
+
+Every run now carries two pieces of identity, created by `e2e/processReaper.mjs`:
+
+1. `--omd-e2e-run=<uuid>` on the Chromium command line (`launchOptions.args` in
+   `playwright.config.ts`, read from `OMD_PW_RUN_ID`; audits pass it through
+   `withManagedChromium`).
+2. A private `runTmpDir` exported as `TMPDIR`/`TMP`/`TEMP`, so Chromium's temp profile and the
+   crashpad `--database=` path contain this exact string.
+
+`reapRunProcessesSync` matches on those two plus the root PID/PGID, then walks the closure
+(children of a matched process, members of a matched group). It is **synchronous** on purpose:
+`process.on("exit")` cannot await, so the reaper must run ps → SIGTERM → poll → SIGKILL in one
+turn (`Atomics.wait` for the poll delay, never a busy loop).
+
+Traps this cost real debugging:
+
+- **Never match by executable name.** `pkill chrome` / `pkill -f Chromium` kills the developer's
+  system Chrome, `chrome-devtools` MCP sessions and unrelated Electron apps (WorkBuddy, Slack).
+  The tag and the temp dir are the only safe identities; keep them machine-unique per run.
+- **realpath the temp dir.** `mkdtempSync` returns `/var/folders/...` on macOS while `ps` and
+  Chromium report `/private/var/folders/...`; the string comparison then silently never matches
+  the crashpad row, which is exactly the process that leaks.
+- **Do not signal the runner.** `selfPid`, `parentPid`, their PGIDs and PID 1 are protected
+  inputs to `selectReapTargets`; without them the closure (a Vitest worker's group holds the
+  reaper) can kill the test run itself. `/sbin/launchd` and the parent's PGID are also why
+  `runE2eSupervised.mjs` never passes an unrelated group as `rootPid`.
+- **Zombies look alive.** A synchronous reap blocks the event loop, so a child that already died
+  is still listed as `<defunct>` until Node collects it; without filtering those rows every
+  teardown burns the full grace period (1.5 s) and ends in a pointless SIGKILL.
+- **`node -e <code> --flag` is not valid.** Node parses the flag as its own option (`bad
+  option`); simulated Chrome command lines need `node -e <code> -- --flag`.
+- **Vite must be started without a wrapper.** The `webServer` command is
+  `node ./node_modules/vite/bin/vite.js …`; `pnpm dev` adds another process between Playwright
+  and the server that a group kill has to infer.
+
+`test/e2eProcessSupervisor.test.ts` is the guard: pure selection cases plus two real-OS cases
+(SIGTERM → 143, closed stdout pipe → 141) that assert all spawned processes are gone and the
+temp directory is removed. Keep them process-based — a mocked reaper proves nothing here.

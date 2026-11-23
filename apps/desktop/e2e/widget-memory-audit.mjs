@@ -11,7 +11,7 @@
 //   PW_PORT=9420 PW_HEAP_SNAPSHOTS=1 pnpm --filter @omd/desktop audit:widget-memory
 // 在 baseline 与 flips1000 两个采样点后各流式落一份 .heapsnapshot，用 DevTools Memory 打开比对。
 import fs from "node:fs"
-import { chromium } from "@playwright/test"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const PORT = process.env.PW_PORT ?? "9420"
 const CHANNEL = process.env.PW_CHANNEL ?? "chrome"
@@ -31,14 +31,12 @@ const DOC = [
   "tail",
 ].join("\n")
 
-const browser = await chromium.launch({ channel: CHANNEL })
-let cdp = null
-try {
+await withManagedChromium({ channel: CHANNEL }, async browser => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   await page.goto(`http://localhost:${PORT}/e2e/harness.html?doc=${encodeURIComponent(DOC)}`)
   await page.waitForSelector(".omd-table table", { timeout: 15000 })
 
-  cdp = await page.context().newCDPSession(page)
+  const cdp = await page.context().newCDPSession(page)
   await cdp.send("HeapProfiler.enable")
 
   async function collect(label) {
@@ -117,7 +115,4 @@ try {
       2,
     ),
   )
-} finally {
-  if (cdp) await cdp.detach().catch(() => {})
-  await browser.close()
-}
+})

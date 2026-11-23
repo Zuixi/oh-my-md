@@ -23,9 +23,17 @@ export default defineConfig({
     // sandboxed/proxied networks may not reach the CDN — fall back to the
     // system Chrome channel (assertions are relative geometry, engine-robust).
     channel: process.env.CI ? undefined : (process.env.PW_CHANNEL ?? "chrome"),
+    // `runE2eSupervised.mjs` stamps the run id here. A browser that outlives the driver
+    // then carries this tag on its command line, so the reaper can find it without ever
+    // matching on the executable name (the developer's own Chrome has no tag).
+    launchOptions: {
+      args: process.env.OMD_PW_RUN_ID ? [`--omd-e2e-run=${process.env.OMD_PW_RUN_ID}`] : [],
+    },
   },
   webServer: {
-    command: `pnpm dev --port ${PORT} --strictPort`,
+    // Start Vite directly: an intermediate `pnpm dev` wrapper is one more process between
+    // Playwright and the server, and a leak target the reaper would have to infer.
+    command: `node ./node_modules/vite/bin/vite.js --port ${PORT} --strictPort`,
     url: BASE_URL,
     reuseExistingServer: process.env.PW_REUSE_SERVER === "1",
     timeout: 60_000,

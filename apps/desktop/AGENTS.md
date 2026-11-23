@@ -51,6 +51,12 @@ apps/desktop/
 │   ├── findReplace.ts · currentDocumentSearch.ts · searchCountJob.ts · useWorkspaceSearch.ts
 │   ├── session.ts · sessionRestore.ts · workspace.ts · recoveryWriter.ts · recoveryAdoption.ts · fileTreeState.ts
 │   └── *.tsx                    # Focused UI components (App* shell regions, TopBar, StatusBar, FileTree, Modals)
+├── e2e/                         # Playwright specs, harness pages, standalone browser audits
+│   ├── processReaper.mjs        # Run-scoped process/group reaper (node:* imports only)
+│   ├── browserLifecycle.mjs     # withManagedChromium(): tagged launch + guaranteed teardown
+│   └── *-audit.mjs · calibrate-heights.mjs  # One-off real-Chromium audits (not in CI)
+├── scripts/
+│   └── runE2eSupervised.mjs     # `test:e2e` entry point: supervises the Playwright CLI group
 └── src-tauri/                   # Rust backend (see src-tauri/AGENTS.md)
 ```
 
@@ -106,6 +112,8 @@ PW_PORT=9431 pnpm --filter @omd/desktop test:e2e
 - `pnpm build` must finish with zero Rollup warnings: `viteChunks.ts` keeps the eager graph (`index`, `vendor-react`, `vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) under the 700 kB budget and leaves Shiki grammars, CodeMirror language packs and KaTeX's inlined fonts lazy (`test/viteChunks.test.ts`).
 - Keyboard, overlay and IME behavior has real-browser coverage: `e2e/a11y-ergonomics.spec.ts` (focus trap, `inert`, palette IME Enter guard, tree navigation, menu clamping), `e2e/topbar-tabs.spec.ts` (tablist semantics, sibling close button geometry, arrow navigation) and `e2e/ime-and-inline-boundaries.spec.ts` (CJK composition inside a heading/bold, caret geometry and Backspace across inline marks).
 
-- Let Playwright start and stop Vite in the foreground (use a free `PW_PORT` per worktree; never run `pkill chrome`).
+- Let Playwright start and stop Vite in the foreground (use a free `PW_PORT` per worktree; never run `pkill chrome`). The `webServer` command starts `node ./node_modules/vite/bin/vite.js` directly — an intermediate `pnpm dev` wrapper is one more process a group kill has to infer.
+- `pnpm test:e2e` runs `scripts/runE2eSupervised.mjs`, never `playwright test` directly. The supervisor starts the Playwright CLI in its own process group with a per-run `--omd-e2e-run=<uuid>` tag and a private `TMPDIR`, then reaps that group plus the run's Chromium helpers on every exit path: normal completion, throw, `SIGINT`/`SIGTERM`/`SIGHUP`, closed stdout (`EPIPE` → 141), and the synchronous `process.on("exit")`. `e2e/processReaper.mjs` must stay importable from `node:*` only and synchronous: an `exit` handler cannot await. Matching uses the run tag, the run temp directory and the root PID/PGID — never an executable name, or a developer's installed Chrome and MCP browser sessions become targets. `test/e2eProcessSupervisor.test.ts` pins the selection rules and proves SIGTERM/EPIPE teardown with real OS processes.
+- Standalone audits under `e2e/*.mjs` launch through `withManagedChromium(options, fn)` (`e2e/browserLifecycle.mjs`); a bare `chromium.launch` + `finally { browser.close() }` cannot run after `SIGPIPE` or a kill. `browserLifecycle.mjs` may import only `node:*`, `@playwright/test` and `./processReaper.mjs` (`test/e2eHarnessDeps.test.ts` enforces the dependency declaration side).
 - Every bare import in an e2e harness file (`e2e/**`) must be declared in `apps/desktop/package.json`; keep shared CodeMirror dependency ranges in lockstep with `packages/engine` to reduce duplicate-resolution risk. Vite serves the harness from this package, but a warm `node_modules/.vite` dependency-optimization cache can reuse a previously pre-bundled module and hide a missing declaration. With a cold cache the dependency scan fails and the affected harness module cannot resolve its import. `test/e2eHarnessDeps.test.ts` checks both declaration and range drift; delete `apps/desktop/node_modules/.vite` and rerun `test:e2e` to exercise the cold path.
 - For engine-owned behavior, also read the corresponding [engine guide](../../packages/engine/AGENTS.md) and run its checks. For IPC changes, follow [Rust verification](./src-tauri/AGENTS.md#verification) as well.

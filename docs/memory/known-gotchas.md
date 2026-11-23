@@ -123,6 +123,7 @@
 - **Non-`main` windows must never call `restoreDraft()`** — the mount-flow `windowScope.isMainWindow()` branch keeps a fresh editor window from hijacking the main window's recovery record.
 - **File-tree rename moves a draft's recovery key** — content-only dedup can skip the new write; keep the old record until the new-key draft is durable, including when a directory rename retargets open tabs.
 - **`localStorage` is shared across same-origin webviews** — `STORAGE_KEY_SESSION` is a last-writer-wins fallback only; the Rust per-window shard is the truth.
+- **A piped-out E2E driver orphans Chromium process groups** — `pnpm test:e2e | head`, Ctrl-C or a kill ends Node before Playwright's teardown; the browser owns its own PGID and `chrome_crashpad_handler` sits in a third one, so only a run-tagged/temp-dir-matched reaper finds them. See [gotchas-desktop](./gotchas-desktop.md).
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
@@ -178,18 +179,28 @@ The ownership contract is now:
   server also owns stopping it.
 - Concurrent worktrees use different `PW_PORT` values. An occupied port is a
   useful failure, not a reason to reuse an unknown server.
-- Standalone browser audits require an externally managed Vite server: start it
-  on a dedicated `PW_PORT`, retain its PID/command handle, and stop that exact
-  process after the audit. The audit itself requires `browser.close()` in
-  `finally`, so normal failures still release Chrome.
+- Standalone browser audits launch through `withManagedChromium()`
+  (`apps/desktop/e2e/browserLifecycle.mjs`), which closes the browser in a
+  `finally` *and* reaps the run on signal, exit and broken pipe.
 
-No in-process cleanup can run after an unconditional kill or IDE crash. In
-that case, inspect listeners and command lines, then stop only the confirmed
-PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
+Ownership of the process tree needs one more layer, because a `finally` block
+never runs when the driver itself is ended: `pnpm test:e2e | head` (SIGPIPE →
+EPIPE), Ctrl-C, `kill`, or an IDE stop button leave the Chromium process group,
+`chrome_crashpad_handler` (reparented to PID 1 in its own group) and the Vite
+child alive. `apps/desktop/scripts/runE2eSupervised.mjs` now runs the Playwright
+CLI in its own process group with an `--omd-e2e-run=<uuid>` tag and a private
+temp dir, and reaps that group synchronously on every exit path
+(`apps/desktop/e2e/processReaper.mjs`); `test/e2eProcessSupervisor.test.ts`
+proves it with real processes for SIGTERM (143) and a closed stdout pipe (141).
+
+No in-process cleanup can run after an unconditional kill (SIGKILL) or an IDE
+crash. In that case, inspect listeners and command lines, then stop only the
+confirmed PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
 Win32_Process`; on macOS/Linux, use `lsof -i :<port>` and `ps`. Never kill all
 `chrome`/`node` processes by name: e2e deliberately uses the installed Chrome
 channel, and automation flags are also used by legitimate MCP browser
-sessions.
+sessions. The reaper matches only the run tag, the run temp directory and the
+root PID/PGID — never an executable name.
 
 ## Tauri updater signing keys and macOS targets are exact contracts
 

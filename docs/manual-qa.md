@@ -440,7 +440,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] **文件树右键菜单**：Shift+F10 或菜单键在焦点行打开菜单，↑/↓ 在菜单项间移动，Esc 关闭并把焦点还给该行；在窗口右下角打开（鼠标右键贴边或 Shift+F10 于底部行）时菜单完全留在视口内，不被裁切。
 - [ ] **标签条语义**：标签为 `role=tab`（`aria-selected`），←/→/Home/End 在标签间移动并激活；每个标签的关闭按钮是独立 `<button>`，Tab 可达、VoiceOver 读作「关闭标签页」，与标签本体不嵌套（无 interactive-in-interactive 告警）。
 - [ ] **`<html lang>`**：切到中文后 devtools 中 `<html lang="zh-CN">`，切回英文为 `en`；VoiceOver/NVDA 用对应语言的发音规则。
-- [ ] **真实浏览器套件**：`PW_PORT=9435 pnpm --filter @omd/desktop exec playwright test e2e/a11y-ergonomics.spec.ts e2e/ime-and-inline-boundaries.spec.ts` 全绿（焦点陷阱、inert、IME Enter 守卫、树导航、菜单夹取、IME 合成与行内边界）。
+- [ ] **真实浏览器套件**：`PW_PORT=9435 pnpm --filter @omd/desktop test:e2e e2e/a11y-ergonomics.spec.ts e2e/ime-and-inline-boundaries.spec.ts` 全绿（焦点陷阱、inert、IME Enter 守卫、树导航、菜单夹取、IME 合成与行内边界）。
 
 ## 自动化验证命令
 - 引擎单测：`pnpm test`
