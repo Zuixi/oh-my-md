@@ -112,4 +112,24 @@ describe("quick open", () => {
     })
     expect(screen.queryByLabelText("Go to file…")).toBeNull()
   })
+
+  it("ignores a listing response that resolves after the popup was closed", async () => {
+    let resolveList!: (value: { paths: string[]; truncated: boolean }) => void
+    const harness = openFolderHarness()
+    harness.services.listMarkdownFiles = vi.fn(() => new Promise<{ paths: string[]; truncated: boolean }>(resolve => {
+      resolveList = resolve
+    }))
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.services.allowWorkspaceDir).toHaveBeenCalledWith("/notes")
+    })
+
+    fireEvent.keyDown(window, { key: "p", metaKey: true })
+    const input = await waitFor(() => screen.getByLabelText("Go to file…"))
+    fireEvent.keyDown(input, { key: "Escape" })
+    await waitFor(() => expect(screen.queryByLabelText("Go to file…")).toBeNull())
+
+    resolveList({ paths: ["/notes/alpha.md"], truncated: false })
+    await waitFor(() => expect(screen.queryByLabelText("Go to file…")).toBeNull())
+  })
 })

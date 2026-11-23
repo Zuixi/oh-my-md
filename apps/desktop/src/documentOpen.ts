@@ -68,6 +68,7 @@ export interface DocumentOpen {
   readonly openExternal: (nextPath: string) => Promise<void>
   readonly cancelOpening: () => void
   readonly openQuickOpen: () => Promise<void>
+  readonly closeQuickOpen: () => void
   readonly resolveOpenTier: (path: string) => Promise<OpenTier>
   readonly readSnapshotForOpen: (path: string, tier: OpenTier) => Promise<DiskSnapshot>
   /** 留在 App 的直开入口（loadLazyTab 等）自铸令牌：自增并返回新的请求代。 */
@@ -114,6 +115,8 @@ export function createDocumentOpen(host: DocumentOpenHost): DocumentOpen {
   const invalidatedOpenPaths = new Set<string>()
   // LARGE 档确认本会话只需一次；HUGE（只读）每次都问。
   let largeOpenAccepted = false
+  // Quick Open 的列表请求代：关闭或重开都会作废旧响应。
+  let quickOpenRequest = 0
 
   /**
    * Spec 05b 分档预检：先 stat（metadata，不读内容）再决定档位与确认，
@@ -312,10 +315,11 @@ export function createDocumentOpen(host: DocumentOpenHost): DocumentOpen {
       return
     }
     if (!services.listMarkdownFiles) return
+    const token = ++quickOpenRequest
     host.setQuickOpenState({ open: true, files: [], truncated: false, loading: true })
     try {
       const response = await services.listMarkdownFiles(folder)
-      if (!host.isMounted()) return
+      if (!host.isMounted() || token !== quickOpenRequest) return
       host.setQuickOpenState({
         open: true,
         files: response.paths,
@@ -323,7 +327,7 @@ export function createDocumentOpen(host: DocumentOpenHost): DocumentOpen {
         loading: false,
       })
     } catch (error) {
-      if (host.isMounted()) {
+      if (host.isMounted() && token === quickOpenRequest) {
         host.setQuickOpenState(current => ({ ...current, loading: false }))
         services.reportError(errorMessage(t("error.openFailed"), error))
       }
@@ -341,6 +345,10 @@ export function createDocumentOpen(host: DocumentOpenHost): DocumentOpen {
     openExternal,
     cancelOpening,
     openQuickOpen,
+    closeQuickOpen: () => {
+      quickOpenRequest += 1
+      host.setQuickOpenState(current => ({ ...current, open: false }))
+    },
     resolveOpenTier,
     readSnapshotForOpen,
     nextRequest: nextToken,

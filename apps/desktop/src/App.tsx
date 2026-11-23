@@ -1912,7 +1912,7 @@ export default function App({
           truncated={quickOpenState.truncated}
           loading={quickOpenState.loading}
           onChoose={path => { void openRecentRef.current(path) }}
-          onClose={() => setQuickOpenState(current => ({ ...current, open: false }))}
+          onClose={openCoordinator.closeQuickOpen}
         />
       ) : null}
       {historyState.open ? (
