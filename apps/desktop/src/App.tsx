@@ -121,6 +121,7 @@ import { initLocale, setLocale, t as localeT, useT } from "./i18n"
 import { reportSaveStateTransitions } from "./saveDiagnostics"
 import { createDocumentMaterializer, type DocumentMaterializer } from "./documentMaterializer"
 import { disposeAppViews } from "./appViewLifecycle"
+import { installSessionFlush } from "./appSessionFlush"
 import {
   MARKDOWN_EXTENSIONS,
   RELEASES_URL,
@@ -891,34 +892,24 @@ export default function App({
     }
   }, [workspace.folder, workspace.tabs, workspace.activeId, services])
 
-  // 退出前 flush：Rust 在 CloseRequested/ExitRequested 先 emit session-flush，
-  // 这里立即取消挂起的防抖、落盘当前 workspace，再 ack 放行关闭/退出。
-  // 保存失败也要 ack——ack 卡住只会把退出拖到 Rust 的 2s 超时。
-  useEffect(() => {
-    if (!services.listenSessionFlush || !services.sessionFlushAck) return
-    return services.listenSessionFlush(async () => {
+  // 退出前 flush：先物化当前 view，再把所有 dirty tab 写入 recovery，最后写
+  // session 并 ack；Rust 的 CloseRequested/ExitRequested 依赖这个顺序。
+  useEffect(() => installSessionFlush({
+    services,
+    getWorkspace: () => workspaceRef.current,
+    getContents: tabId => docsRef.current.get(tabId),
+    getSessionSaveTimer: () => sessionSaveTimerRef.current,
+    clearSessionSaveTimer: () => {
       if (sessionSaveTimerRef.current !== null) {
         window.clearTimeout(sessionSaveTimerRef.current)
         sessionSaveTimerRef.current = null
       }
-      // 刚触发的防抖 save 可能仍在 Rust 侧在途：先等它落定，保证它不可能
-      // 晚于最终落盘 / finisher 的 shard 删除抵达。已失败的 straggler 的
-      // rejection 已被防抖路径吸收，这里不得让它连带拒绝 flush。
-      const inFlight = sessionSaveInFlightRef.current
-      if (inFlight) {
-        try { await inFlight } catch { /* absorbed by the debounce path */ }
-      }
-      try {
-        await services.saveSessionState?.(extractSessionState(workspaceRef.current))
-      } catch {
-        // 落盘失败也要走完 ack——事件回调里的逃逸 rejection 只会变成
-        // webview 的未处理拒绝，还拖慢退出。
-      } finally {
-        await flushLogs()
-        await services.sessionFlushAck?.()
-      }
-    })
-  }, [services])
+    },
+    getSessionSaveInFlight: () => sessionSaveInFlightRef.current,
+    getRecoveryWriter: () => recoveryWriterRef.current,
+    flushMaterializer: () => materializer.flush(),
+    flushLogs,
+  }), [services, materializer, flushLogs])
 
   useEffect(() => {
     applyTheme(theme, customCss)

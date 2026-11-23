@@ -123,7 +123,14 @@ export function createRecoveryWriter(): RecoveryWriter {
       pending.set(draft.tabId, entry)
       return Promise.resolve()
     },
-    persistNow: (draft, host) => writeNow({ draft, host, timer: 0 }),
+    persistNow: (draft, host) => {
+      const queued = pending.get(draft.tabId)
+      if (queued) {
+        window.clearTimeout(queued.timer)
+        pending.delete(draft.tabId)
+      }
+      return writeNow({ draft, host, timer: 0 })
+    },
     forget: async tabId => {
       const entry = pending.get(tabId)
       if (entry) window.clearTimeout(entry.timer)

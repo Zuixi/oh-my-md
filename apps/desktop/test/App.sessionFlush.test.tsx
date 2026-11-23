@@ -113,4 +113,24 @@ describe("App quit-time session flush", () => {
 
     expect(harness.services.sessionFlushAck).toHaveBeenCalledTimes(1)
   })
+
+  it("persists every dirty tab to recovery before acking quit", async () => {
+    const harness = createAppHarness(editor)
+    harness.renderApp({ docMaterializeMs: 250 })
+    harness.seedFile("/notes/a.md", "a")
+    harness.seedFile("/notes/b.md", "b")
+    await harness.openFileTab("/notes/a.md", "a")
+    const a = harness.editorForTab(1)
+    a.emit({ doc: "edited-a", docChanged: true, pendingNormalization: null })
+
+    await harness.openInNewTab("/notes/b.md", "b")
+    harness.editorForTab(2).emit({ doc: "edited-b", docChanged: true, pendingNormalization: null })
+
+    await act(async () => { await harness.triggerSessionFlush() })
+
+    const write = vi.mocked(harness.services.writeRecovery!)
+    expect(write).toHaveBeenCalledWith(expect.anything(), "/notes/a.md", expect.stringContaining("edited-a"))
+    expect(write).toHaveBeenCalledWith(expect.anything(), "/notes/b.md", expect.stringContaining("edited-b"))
+    expect(harness.services.sessionFlushAck).toHaveBeenCalledTimes(1)
+  })
 })
