@@ -109,7 +109,6 @@ export async function exportCurrent(
       announceCancelled()
       return
     }
-    const wantsRemoteWarning = kind === "pdf" || kind === "png"
     let sawRemoteImage = false
     const resolvedOptions = typeof exportOptions === "function"
       ? exportOptions(controller.signal)
@@ -125,9 +124,7 @@ export async function exportCurrent(
       theme: exportTheme,
       print: page,
       fullWidth: kind !== "html",
-      onRemoteImage: wantsRemoteWarning
-        ? () => { sawRemoteImage = true }
-        : undefined,
+      onRemoteImage: () => { sawRemoteImage = true },
     })
     if (cancelled()) {
       announceCancelled()

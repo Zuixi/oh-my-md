@@ -137,13 +137,13 @@ describe("exportRichHtml", () => {
       "| a \\| b | before<br>after | - one | ![alt](x.png) | $x_1$ | H~2~O 2^10^ |",
     ].join("\n")
     const html = await exportRichHtml(makeState(doc), {
-      resolveImageSrc: src => `file:///w/${src}`,
+      resolveImageSrc: src => `data:image/png;base64,${src}`,
     })
     expect(html).toContain("<td>a | b</td>")
     expect(html).not.toContain("a \\| b")
     expect(html).toContain("<td>before<br>after</td>")
     expect(html).toContain("<td><ul><li>one</li></ul></td>")
-    expect(html).toContain('<img src="file:///w/x.png" alt="alt">')
+    expect(html).toContain('<img src="data:image/png;base64,x.png" alt="alt">')
     // cell 数学走已有的 KaTeX 渲染器，不是同步导出的 <code> 回退。
     expect(html).toMatch(/katex/)
     expect(html).not.toContain("<code>x_1</code>")
@@ -161,10 +161,10 @@ describe("exportRichHtml", () => {
       '[img]: ./after.png "CT"',
     ].join("\n")
     const html = await exportRichHtml(makeState(doc), {
-      resolveImageSrc: src => `file:///w/${src}`,
+      resolveImageSrc: src => `data:image/png;base64,${src}`,
     })
     expect(html).toContain('<td><a href="https://r.example" title="RT">ref</a></td>')
-    expect(html).toContain('<td><img src="file:///w/./after.png" alt="pic" title="CT"></td>')
+    expect(html).toContain('<td><img src="data:image/png;base64,./after.png" alt="pic" title="CT"></td>')
     expect(html).not.toContain("[ref][id]")
     expect(html).not.toContain("![pic][img]")
   })
@@ -193,7 +193,7 @@ describe("exportRichHtml", () => {
   it("does not report local images as remote", async () => {
     const seen: string[] = []
     await exportRichHtml(makeState("![local](./pic.png)"), {
-      resolveImageSrc: src => `file:///resolved/${src}`,
+      resolveImageSrc: src => `data:image/png;base64,resolved-${src}`,
       onRemoteImage: src => { seen.push(src) },
     })
     expect(seen).toEqual([])
@@ -210,9 +210,9 @@ describe("exportRichHtml", () => {
   it("rewrites local relative image src via resolveImageSrc", async () => {
     const doc = "![pic](./pic.png \"P\")"
     const html = await exportRichHtml(makeState(doc), {
-      resolveImageSrc: (src) => `file:///resolved/${src}`,
+      resolveImageSrc: (src) => `data:image/png;base64,resolved-${src}`,
     })
-    expect(html).toContain('file:///resolved/./pic.png')
+    expect(html).toContain('data:image/png;base64,resolved-./pic.png')
     expect(html).toContain('alt="pic"')
     expect(html).toContain('title="P"')
   })
@@ -220,9 +220,9 @@ describe("exportRichHtml", () => {
   it("rewrites a reference image src without dropping alt or title", async () => {
     const doc = "![pic][img]\n\n[img]: ./ref.png \"CT\"\n"
     const html = await exportRichHtml(makeState(doc), {
-      resolveImageSrc: (src) => `file:///resolved/${src}`,
+      resolveImageSrc: (src) => `data:image/png;base64,resolved-${src}`,
     })
-    expect(html).toContain('<img src="file:///resolved/./ref.png" alt="pic" title="CT">')
+    expect(html).toContain('<img src="data:image/png;base64,resolved-./ref.png" alt="pic" title="CT">')
   })
 
   it("exports valid complex table HTMLBlock with resolveImageSrc and escapes invalid HTMLBlock", async () => {
@@ -242,10 +242,10 @@ describe("exportRichHtml", () => {
       "<table><tbody><tr><td onclick=\"alert(1)\">bad</td></tr></tbody></table>",
     ].join("\n")
     const html = await exportRichHtml(makeState(doc), {
-      resolveImageSrc: (src) => `file:///resolved/${src}`,
+      resolveImageSrc: (src) => `data:image/png;base64,resolved-${src}`,
     })
     expect(html).toContain('<td rowspan="2">A</td>')
-    expect(html).toContain('<img src="file:///resolved/./local.png" alt="local" title="LT">')
+    expect(html).toContain('<img src="data:image/png;base64,resolved-./local.png" alt="local" title="LT">')
     expect(html).toContain('<img src="https://example.com/remote.png" alt="remote">')
     expect(html).toContain("&lt;table&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td onclick=&quot;alert(1)&quot;&gt;bad&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;")
   })
@@ -280,13 +280,13 @@ describe("exportRichHtml", () => {
 
   it("projects kbd beside sub/sup, titled references and a shielded pipe without loss", async () => {
     const html = await exportRichHtml(makeState(COMBO_TABLE), {
-      resolveImageSrc: src => `file:///w/${src}`,
+      resolveImageSrc: src => `data:image/png;base64,${src}`,
     })
     expect(html).toContain("<kbd>Ctrl</kbd>")
     expect(html).toContain("<sub>2</sub>")
     expect(html).toContain("<sup>10</sup>")
     expect(html).toContain('<a href="https://r.example" title="RT">ref</a>')
-    expect(html).toContain('<img src="file:///w/./c.png" alt="pic" title="CT">')
+    expect(html).toContain('<img src="data:image/png;base64,./c.png" alt="pic" title="CT">')
     expect(html).toContain("<code>a | b</code>")
   })
 

@@ -41,7 +41,7 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 - **Data-safe by architecture** — Rust double-compare atomic saving, external-change & symlink conflict detection, multi-draft crash recovery, per-window session restore, and local version snapshots.
 - **Proven large-document speed** — Viewport-windowed live rendering, streaming open, and zero O(doc) hot-path work: **2 ms p95 typing on 20 MB / 750k lines**, verifiable with the built-in benchmark.
 - **The hard UX edges, actually solved** — Typora-style in-cell table editing, tight selection geometry (exact Markdown copy across rendered blocks), Smart Paste from Notion/Word/web (including `rowspan`/`colspan` tables), live KaTeX popup editing, and first-class CJK IME handling.
-- **Print-grade export on every OS** — Self-contained HTML, **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
+- **Print-grade export on every OS** — Self-contained HTML (local images and styles inlined; remote images keep their URL), **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
 
 |  | oh-my-md | Typora | MarkText |
 | --- | --- | --- | --- |

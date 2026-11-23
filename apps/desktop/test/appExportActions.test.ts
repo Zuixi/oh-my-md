@@ -207,13 +207,14 @@ it("threads customCss into exportRichHtml options", async () => {
     expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
 
-  it("does not notice for HTML export even with a remote image", async () => {
+  it("notices a remote-image warning for HTML export too", async () => {
     const services = makeServices({
       pickExportPath: vi.fn().mockResolvedValue("/out/doc.html"),
     })
     const onNotice = vi.fn()
+    mockReportedRemoteImage("https://example.com/x.png")
     await exportCurrent(services, makeView("![](https://example.com/x.png)"), "html", {}, undefined, onNotice)
-    expect(onNotice).not.toHaveBeenCalled()
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
 
   it("shows progress while exporting and stops it before the success toast", async () => {

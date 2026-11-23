@@ -26,6 +26,7 @@ import {
 import { tableDataFromNode, type TableAlignment, type TableRowData } from "../tables/model"
 import { loadKatexExportCss } from "./katexAssets"
 import { EXPORT_BODY_CSS } from "./styles"
+import { safeExportHref, safeExportImageSrc, sanitizeRawAnchorTag } from "./sanitize"
 import { mathTexOf } from "../semantic/math"
 import {
   DEFAULT_PRINT_SETUP,
@@ -84,11 +85,15 @@ function titleAttr(title: string | null): string {
 }
 
 function anchorHtml(href: string, title: string | null, label: string): string {
-  return `<a href="${escapeHtml(href)}"${titleAttr(title)}>${label || escapeHtml(href)}</a>`
+  const safe = safeExportHref(href)
+  if (safe === null) return `<span>${label || escapeHtml(href)}</span>`
+  return `<a href="${escapeHtml(safe)}"${titleAttr(title)}>${label || escapeHtml(safe)}</a>`
 }
 
 function imageHtml(src: string, alt: string, title: string | null): string {
-  return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${titleAttr(title)}>`
+  const safe = safeExportImageSrc(src)
+  if (safe === null) return escapeHtml(alt)
+  return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(alt)}"${titleAttr(title)}>`
 }
 
 // Rich export rewrites only local relative paths: remote http/https images are
@@ -370,8 +375,8 @@ function render(node: SyntaxNode, state: EditorState, ctx: ExportContext): strin
     }
     case "HTMLTag": {
       const raw = state.doc.sliceString(node.from, node.to)
-      if (/^<a\b[^>]*\bid\s*=\s*(['"])[^'"]+\1[^>]*>$/i.test(raw) || /^<\/a\s*>$/i.test(raw))
-        return raw
+      const anchor = sanitizeRawAnchorTag(raw)
+      if (anchor !== null) return anchor
       if (isExplicitPageBreakHtml(raw)) return PAGE_BREAK_HTML
       return escapeHtml(raw)
     }
@@ -442,10 +447,12 @@ function exportTitleHtml(setup?: PrintSetup): string {
   return escapeHtml(title || "oh-my-md")
 }
 
+const EXPORT_CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: https: http:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">`
+
 export function exportHtml(state: EditorState, print?: PrintSetup): string {
   const ctx = prepareExportDocument(state)
   const body = exportDocumentBody(render(ctx.topNode, state, ctx))
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${exportTitleHtml(print)}</title><style>${EXPORT_BODY_CSS}</style>${printStyleTag(print)}</head><body>${body}</body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8">${EXPORT_CSP_META}<title>${exportTitleHtml(print)}</title><style>${EXPORT_BODY_CSS}</style>${printStyleTag(print)}</head><body>${body}</body></html>`
 }
 
 // ---------------------------------------------------------------------------
