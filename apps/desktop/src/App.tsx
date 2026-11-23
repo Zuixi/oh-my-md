@@ -14,7 +14,7 @@ import {
 } from "@omd/engine"
 import { type ImagePasteOptions } from "./imagePaste"
 import {
-  advanceDocumentIdentity, createSession, openSession, recoveryKey,
+  createSession, openSession, recoveryKey,
   sessionContentLoaded, sessionDirty, sessionPath,
   type EditorSession,
 } from "./session"
@@ -1160,11 +1160,10 @@ export default function App({
     void services.readSnapshot(path, entry.fileName)
       .then(contents => {
         if (!mountedRef.current) return
-        newTab()
-        resetTabDocumentRef.current(advanceDocumentIdentity(sessionRef.current), contents)
+        newTab(contents)
         setHistoryState(current => ({ ...current, open: false }))
       })
-      .catch(() => undefined)
+      .catch(error => mountedRef.current && services.reportError(errorMessage(t("history.failed"), error)))
   }
 
   function clearSnapshotHistory() {
@@ -1278,12 +1277,12 @@ export default function App({
     commitSaveState({ ...saveStateRef.current, [tabId]: initialSaveState() })
   }
 
-  function newTab() {
+  function newTab(contents = "") {
     const tab = createSession(workspaceRef.current.nextId)
-    docsRef.current.set(tab.id, "")
+    docsRef.current.set(tab.id, contents)
     mountNewTab(tab.id)
     commitWorkspace(addTab(workspaceRef.current, tab))
-    syncDoc("", tab.id)
+    syncDoc(contents, tab.id)
   }
 
   function closeTabInternal(

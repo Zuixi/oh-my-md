@@ -100,8 +100,10 @@ describe("version history snapshots", () => {
       expect(readSnapshot).toHaveBeenCalledWith("/notes/doc.md", "1700000000001.md")
     })
     await waitFor(() => {
-      // The restored snapshot opened in a new untitled tab.
+      // The restored snapshot opened in a new untitled tab with its content.
       expect(harness.allEditors().length).toBe(editorsBefore + 1)
+      const editors = harness.allEditors()
+      expect(editors[editors.length - 1]!.getOptions().doc).toBe("restored content")
       expect(screen.queryByText("Version History")).toBeNull()
     })
 
