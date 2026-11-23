@@ -38,12 +38,34 @@ pub enum FlushOutcome {
 pub struct FlushGate {
     round: Arc<(Mutex<Option<Round>>, Condvar)>,
     flushed: Arc<AtomicBool>,
+    queued: Mutex<FlushQueue>,
+    restart_flushed: Mutex<Option<Instant>>,
 }
 
 struct Round {
     deadline: Instant,
     pending: HashSet<String>,
 }
+
+/// Runtime work a caller asked for while a flush round was already running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlushFollowup {
+    None,
+    /// An app exit supersedes every individual window close.
+    AppExit,
+    CloseWindows(Vec<String>),
+}
+
+#[derive(Default)]
+struct FlushQueue {
+    app_exit: bool,
+    windows: Vec<String>,
+}
+
+/// A restart flush is only valid for the `ExitRequested` it was staged for.
+/// If the restart is cancelled (or superseded) the marker must expire instead
+/// of poisoning a later ordinary quit with a skipped flush.
+pub const RESTART_FLUSHED_TTL: Duration = Duration::from_secs(5);
 
 impl FlushGate {
     /// Starts one flush round over `targets`; returns `false` (and does
@@ -127,6 +149,64 @@ impl FlushGate {
     /// follow-up exit request is allowed through without re-flushing.
     pub fn consume_flushed(&self) -> bool {
         self.flushed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Records that a restart staged its own flush. `ExitRequested` then lets
+    /// the restart through untouched — re-flushing there would run a second
+    /// round whose finish exits the process instead of restarting it.
+    pub fn mark_restart_flushed(&self) {
+        *self
+            .restart_flushed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    }
+
+    /// Consumes the restart marker once, and only while it is fresh. Consuming
+    /// an expired marker still clears it: a cancelled restart must not leave
+    /// anything behind for a future quit to trust.
+    pub fn consume_restart_flushed(&self) -> bool {
+        let mut marker = self
+            .restart_flushed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match marker.take() {
+            Some(staged) => staged.elapsed() <= RESTART_FLUSHED_TTL,
+            None => false,
+        }
+    }
+
+    /// Remembers a close that arrived mid-round. Preventing the close without
+    /// recording the intent used to drop the request: holding Cmd+W during a
+    /// slow flush made the window refuse to close at all.
+    pub fn queue_window_close(&self, window_label: &str) {
+        let mut queued = self.queued.lock().unwrap_or_else(|e| e.into_inner());
+        if !queued.windows.iter().any(|label| label == window_label) {
+            queued.windows.push(window_label.to_string());
+        }
+    }
+
+    /// Remembers an app exit that arrived mid-round (Cmd+Q during a window
+    /// close).
+    pub fn queue_app_exit(&self) {
+        self.queued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .app_exit = true;
+    }
+
+    /// Drains the queued follow-up. An exit supersedes individual closes, and
+    /// each label is reported once.
+    pub fn take_queued_followup(&self) -> FlushFollowup {
+        let mut queued = self.queued.lock().unwrap_or_else(|e| e.into_inner());
+        if queued.app_exit {
+            queued.app_exit = false;
+            queued.windows.clear();
+            return FlushFollowup::AppExit;
+        }
+        if queued.windows.is_empty() {
+            return FlushFollowup::None;
+        }
+        FlushFollowup::CloseWindows(std::mem::take(&mut queued.windows))
     }
 }
 
@@ -240,6 +320,73 @@ mod tests {
         let gate = FlushGate::default();
         gate.ack("main");
         assert!(!gate.in_progress());
+    }
+
+    #[test]
+    fn queued_window_closes_are_deduplicated_and_drained_once() {
+        let gate = FlushGate::default();
+        assert_eq!(gate.take_queued_followup(), FlushFollowup::None);
+        gate.queue_window_close("editor-2");
+        gate.queue_window_close("editor-2");
+        gate.queue_window_close("editor-3");
+        assert_eq!(
+            gate.take_queued_followup(),
+            FlushFollowup::CloseWindows(vec!["editor-2".into(), "editor-3".into()])
+        );
+        assert_eq!(gate.take_queued_followup(), FlushFollowup::None);
+    }
+
+    #[test]
+    fn a_queued_app_exit_supersedes_queued_window_closes() {
+        let gate = FlushGate::default();
+        gate.queue_window_close("editor-2");
+        gate.queue_app_exit();
+        assert_eq!(gate.take_queued_followup(), FlushFollowup::AppExit);
+        // The superseded closes must not resurrect on the next drain.
+        assert_eq!(gate.take_queued_followup(), FlushFollowup::None);
+    }
+
+    #[test]
+    fn restart_marker_is_consumed_once_and_expires() {
+        let gate = FlushGate::default();
+        assert!(!gate.consume_restart_flushed());
+        gate.mark_restart_flushed();
+        assert!(gate.consume_restart_flushed());
+        assert!(
+            !gate.consume_restart_flushed(),
+            "a restart marker is one-shot"
+        );
+
+        // A cancelled restart leaves a marker behind; once stale it must not
+        // let a later ordinary quit skip its flush.
+        let gate = FlushGate::default();
+        gate.mark_restart_flushed();
+        *gate.restart_flushed.lock().unwrap() =
+            Some(Instant::now() - RESTART_FLUSHED_TTL - Duration::from_secs(1));
+        assert!(!gate.consume_restart_flushed());
+        assert!(!gate.consume_restart_flushed(), "expired marker is cleared");
+    }
+
+    #[test]
+    fn a_finished_round_leaves_the_queue_ready_for_the_next_driver() {
+        // Mirrors the real choreography: a close arrives mid-round, the round
+        // finishes, and the queued intent survives until the driver drains it.
+        let gate = FlushGate::default();
+        let (done_tx, done_rx) = mpsc::channel();
+        let targets = vec!["main".into()];
+        assert!(
+            gate.begin(Duration::from_secs(5), &targets, move |outcome| {
+                let _ = done_tx.send(outcome);
+            })
+        );
+        gate.queue_window_close("editor-2");
+        gate.ack("main");
+        assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
+        assert!(!gate.in_progress());
+        assert_eq!(
+            gate.take_queued_followup(),
+            FlushFollowup::CloseWindows(vec!["editor-2".into()])
+        );
     }
 
     #[test]

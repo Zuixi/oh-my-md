@@ -137,7 +137,11 @@ export async function exportCurrent(
     // table-cell images warn too; a regex over the raw document missed both.
     if (sawRemoteImage) onNotice?.(t("export.remoteImageWarning"))
     if (kind === "html") {
-      await services.writeFile(path, html)
+      // Scoped native write first; the legacy pair stays as a test-double
+      // fallback only.
+      const writeHtml = services.writeExportedHtml ?? services.writeFile
+      if (!writeHtml) throw new Error("writeExportedHtml is not wired")
+      await writeHtml(path, html)
       finishProgress()
       services.notifySuccess?.(t("notify.exportCompleted", { name: baseName(path) }))
       return
@@ -219,7 +223,9 @@ export async function loadCustomCss(
   try {
     const path = await services.pickCssPath?.()
     if (!path) return
-    setCustomCss(await services.readFile(path))
+    const readCss = services.readCustomCss ?? services.readFile
+    if (!readCss) throw new Error("readCustomCss is not wired")
+    setCustomCss(await readCss(path))
   } catch (error) {
     setCustomCss("")
     services.reportError(errorMessage(t("error.css.failed"), error))

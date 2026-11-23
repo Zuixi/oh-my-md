@@ -21,20 +21,11 @@ const MAX_EVENT_PATHS: usize = 200;
 /// Guard for the watch-set command input.
 pub const MAX_WATCHED_PATHS: usize = 64;
 
+#[derive(Default)]
 struct WatcherState {
     watcher: Option<notify::RecommendedWatcher>,
     watched: Vec<PathBuf>,
     sets: PureWatchSets,
-}
-
-impl Default for WatcherState {
-    fn default() -> Self {
-        Self {
-            watcher: None,
-            watched: Vec::new(),
-            sets: PureWatchSets::default(),
-        }
-    }
 }
 
 /// Pure per-window watch-set bookkeeping. The OS watcher never sees windows;

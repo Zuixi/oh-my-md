@@ -452,11 +452,15 @@ describe("exportCurrent document hardening", () => {
     expect(html).not.toContain("__omdExportReady")
   })
 
-  it("keeps the ready handshake for native PDF and PNG exports", async () => {
+  it("keeps the ready handshake for native PDF and PNG exports under a hash-pinned CSP", async () => {
     for (const kind of ["pdf", "png"] as const) {
       const html = firstPreviewArgument(await exportWithRealEngine(kind))
       expect(html).toContain("__omdExportReady")
-      expect(html).not.toContain("Content-Security-Policy")
+      // The native renderer loads this HTML string, so the document itself
+      // must forbid inline script while allowing only the handshake hash.
+      expect(html).toContain("Content-Security-Policy")
+      expect(html).toContain("script-src 'sha256-")
+      expect(html).not.toContain("script-src 'unsafe-inline'")
     }
   })
 })

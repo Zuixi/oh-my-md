@@ -81,7 +81,7 @@ define_class!(
 
 thread_local! {
     static LIVE_PRINT_DELEGATES: RefCell<Vec<Retained<PrintRunDelegate>>> =
-        RefCell::new(Vec::new());
+        const { RefCell::new(Vec::new()) };
 }
 
 impl PrintRunDelegate {

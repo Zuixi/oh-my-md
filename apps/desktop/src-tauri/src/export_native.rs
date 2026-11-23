@@ -134,7 +134,7 @@ define_class!(
 );
 
 thread_local! {
-    static LIVE_EXPORTS: RefCell<Vec<Retained<ExportDelegate>>> = RefCell::new(Vec::new());
+    static LIVE_EXPORTS: RefCell<Vec<Retained<ExportDelegate>>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) async fn render(

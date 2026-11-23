@@ -70,7 +70,19 @@ describe("Tauri frontend security configuration", () => {
     expect(csp).toContain("default-src 'self'")
     expect(csp).toContain("script-src 'self'")
     expect(csp).toContain("img-src 'self' asset: http://asset.localhost data: https:")
-    expect(csp).toContain("connect-src ipc: http://ipc.localhost ws:")
+    // Production loads from tauri://localhost; the Vite dev server talks over
+    // the same IPC channel, so no websocket source belongs in the shipped CSP.
+    expect(csp).toContain("connect-src ipc: http://ipc.localhost")
+    expect(csp).not.toContain("ws:")
+    // Remote content must not be able to re-interpret the document.
+    for (const directive of [
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+    ]) {
+      expect(csp).toContain(directive)
+    }
   })
 
   it("configures the exact HTTPS Pages stable endpoint and shipped public key", () => {

@@ -200,7 +200,7 @@ fn copy_xattrs(source: &Path, dest: &Path) -> Result<(), DocumentError> {
 
 #[cfg(target_os = "macos")]
 fn is_required_xattr(name: &str) -> bool {
-    REQUIRED_XATTRS.iter().any(|required| *required == name)
+    REQUIRED_XATTRS.contains(&name)
 }
 
 #[cfg(target_os = "macos")]
@@ -286,6 +286,11 @@ fn replace_existing(
 
     let resolved_path = path_to_string(&resolved_target)?;
     let durability = sync_parent(parent);
+    // DATA-06: a crash between the Windows backup rename and the persist can
+    // leave `.omd-save-*.tmp` / `.omd-save-backup` siblings next to the
+    // document. Sweep only >1 h old ones, so a concurrent save's staging file
+    // is never touched.
+    crate::temp_sweep::sweep_stale_entries(parent);
     Ok(SaveDocumentResult::Saved {
         version: saved_version(&resolved_path, contents),
         durability,

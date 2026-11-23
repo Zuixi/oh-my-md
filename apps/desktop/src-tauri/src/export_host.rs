@@ -39,9 +39,35 @@ impl ExportProtocolState {
     }
 }
 
-const EXPORT_CSP: &str = "default-src 'none'; img-src data: https: http:; \
-style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; \
-base-uri 'none'; form-action 'none'";
+/// SHA-256 (base64) of the engine's `EXPORT_READY_SCRIPT` body — the only
+/// script an export document may run. Mirrored from
+/// `packages/engine/src/export/readyScript.ts` and drift-guarded by
+/// `apps/desktop/test/crossLayerConstants.test.ts`.
+pub(crate) const EXPORT_READY_SCRIPT_SHA256: &str =
+    "sha256-MyiKteHaXRL96raOhQ75BjWJi96uGSOxEFhruB2aJPg=";
+
+/// SHA-256 of the `export-smoke` harness's inline ready flag
+/// (`window.__omdExportReady=true;window.__omdExportHeight=600;`). Only
+/// compiled into the smoke feature so a release build never whitelists it.
+#[cfg(feature = "export-smoke")]
+const EXPORT_SMOKE_SCRIPT_SHA256: &str = "sha256-SZiSjxhIW5HCEBT2TcbANxb2LQ3rKx+alJgWIuMd8bU=";
+
+/// Hash-pinned CSP for every export document. Raw Markdown may contain a
+/// `<script>` tag; with `'unsafe-inline'` it would run inside a page that has
+/// the app's protocol handlers in scope. Only the readiness handshake is
+/// allowed, by hash.
+fn export_csp() -> String {
+    // The smoke feature adds the harness's own inline flag; a release build
+    // whitelists only the product's readiness script.
+    #[cfg(feature = "export-smoke")]
+    let script_sources = format!("'{EXPORT_READY_SCRIPT_SHA256}' '{EXPORT_SMOKE_SCRIPT_SHA256}'");
+    #[cfg(not(feature = "export-smoke"))]
+    let script_sources = format!("'{EXPORT_READY_SCRIPT_SHA256}'");
+    format!(
+        "default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; \
+script-src {script_sources}; font-src data:; base-uri 'none'; form-action 'none'"
+    )
+}
 
 pub fn serve<R: Runtime>(
     ctx: tauri::UriSchemeContext<'_, R>,
@@ -62,7 +88,7 @@ pub fn serve<R: Runtime>(
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
             .header(
                 header::HeaderName::from_static("content-security-policy"),
-                EXPORT_CSP,
+                export_csp(),
             )
             .header(header::CACHE_CONTROL, "no-store")
             .body(body)
@@ -79,16 +105,34 @@ pub(crate) type ProbeFn = fn(&WebviewWindow) -> Result<Option<Probe>, String>;
 pub(crate) type CaptureFn =
     Box<dyn Fn(&WebviewWindow, &ExportSpec, &Probe) -> Result<Vec<u8>, String> + Send>;
 
+/// One export document's protocol token: 128 CSPRNG bits, hex encoded. It is
+/// the only thing standing between a serving page and an attacker guessing the
+/// URL, so a clock plus counter (predictable from outside) is not enough.
 fn token() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        // getrandom only fails on a platform with no entropy source at all;
+        // fall back to a best-effort hash rather than failing the export.
+        return fallback_token();
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// An export window label uses the token as its suffix. The CSPRNG path is the
+/// only one in practice; this keeps a broken entropy source from aborting the
+/// user's export.
+fn fallback_token() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0);
-    format!(
-        "{nanos:016x}{:08x}",
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    )
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&nanos.to_le_bytes());
+    hasher.update(&std::process::id().to_le_bytes());
+    hasher.update(&counter.to_le_bytes());
+    hasher.finalize().to_hex().chars().take(32).collect()
 }
 
 fn build_window(
@@ -183,7 +227,7 @@ pub(crate) async fn render_with_window(
     }
 
     let token = token();
-    let label = format!("omd-export-{token}");
+    let label = format!("{}{token}", crate::windows::EXPORT_WINDOW_PREFIX);
     {
         let state = app.state::<ExportProtocolState>();
         state.insert(&token, html.into_bytes());
@@ -292,5 +336,47 @@ pub(crate) async fn render_with_window(
 async fn wait_for_cancel(cancel: Arc<AtomicBool>) {
     while !cancel.load(Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_are_32_hex_chars_and_never_repeat() {
+        let first = token();
+        let second = token();
+        assert_eq!(first.len(), 32, "128-bit token: {first}");
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    fn directive<'a>(csp: &'a str, name: &str) -> &'a str {
+        csp.split(';')
+            .map(str::trim)
+            .find(|directive| {
+                directive
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|token| token == name)
+            })
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn export_csp_allows_only_the_ready_script_hash() {
+        let csp = export_csp();
+        let script = directive(&csp, "script-src");
+        assert!(
+            script.contains(&format!("'{EXPORT_READY_SCRIPT_SHA256}'")),
+            "missing ready-script hash in {script}"
+        );
+        // The whole point: raw Markdown must never be able to run script.
+        assert!(!script.contains("'unsafe-inline'"), "{script}");
+        assert!(!script.contains("'none'"), "{script}");
+        assert_eq!(directive(&csp, "default-src"), "default-src 'none'");
+        assert_eq!(directive(&csp, "base-uri"), "base-uri 'none'");
+        assert_eq!(directive(&csp, "form-action"), "form-action 'none'");
     }
 }

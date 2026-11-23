@@ -100,16 +100,17 @@ export async function restoreSavedSession(host: AppSessionInitHost): Promise<boo
       // 恢复的路径可能已被移动/删除（或换机恢复）：先用真实列举验证再采纳。
       // 失效会话整体丢弃并提示一次——绝不带着死路径进入工作区，让后续每次
       // 交互都重复报同一个错。
-      if (services.listDir) {
-        try {
-          await services.listDir(state.folder)
-        } catch {
-          services.reportError(t("error.workspaceFolderMissing"))
-          return false
-        }
+      try {
+        // Authorization MUST precede the listing: `list_dir` only serves
+        // directories this window was granted, so a fire-and-forget grant
+        // would make every restored workspace look missing.
+        await services.allowWorkspaceDir?.(state.folder)
+        await services.listDir?.(state.folder)
+      } catch {
+        services.reportError(t("error.workspaceFolderMissing"))
+        return false
       }
       host.commitWorkspace(openFolder(host.getWorkspace(), state.folder))
-      void services.allowWorkspaceDir?.(state.folder)
     }
 
     if (state.openPaths.length > 0) {

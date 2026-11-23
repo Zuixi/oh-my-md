@@ -29,7 +29,7 @@ const WINDOWS_ADDITIONAL_BROWSER_ARGS: &str =
 
 /// Inlined images make the export document self-contained; a 4K screenshot with
 /// several retina images can exceed the old 8 MiB cap quickly.
-const MAX_EXPORT_HTML_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_EXPORT_HTML_BYTES: usize = 32 * 1024 * 1024;
 
 pub const EXPORT_MIN_WIDTH_CSS: u32 = 320;
 pub const EXPORT_MAX_WIDTH_CSS: u32 = 1920;
@@ -282,6 +282,9 @@ pub async fn cancel_export(app: tauri::AppHandle, request_id: String) {
     });
 }
 
+// Eight parameters because the list *is* the IPC wire contract: collapsing it
+// into a struct would rename every field the frontend sends.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn export_preview(
     app: tauri::AppHandle,

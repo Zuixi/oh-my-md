@@ -6,7 +6,7 @@
  * window.__omdExportIncomplete.
  *
  * Standalone `.html` files must not carry it (`includeReadyScript: false`);
- * they get `EXPORT_CSP_META` instead.
+ * they get the no-script `EXPORT_CSP_META` instead.
  */
 export const EXPORT_READY_SCRIPT = `<script>(async () => {
   let incomplete = false
@@ -39,3 +39,20 @@ export const EXPORT_READY_SCRIPT = `<script>(async () => {
   window.__omdExportReady = true
   window.__omdExportHeight = contentBottom > 0 ? Math.max(contentBottom, Math.min(scrollH, contentBottom + 64)) : scrollH
 })()</script>`
+
+/**
+ * SHA-256 (base64) of the script body above. Every native host pins this hash
+ * in its CSP instead of allowing `'unsafe-inline'`, so a `<script>` written in
+ * raw Markdown can never execute inside the export page. Rust mirrors the
+ * value in `export_host.rs`; `crossLayerConstants.test.ts` recomputes it from
+ * this file and fails if either copy drifts.
+ */
+export const EXPORT_READY_SCRIPT_SHA256 =
+  "sha256-MyiKteHaXRL96raOhQ75BjWJi96uGSOxEFhruB2aJPg="
+
+/**
+ * CSP meta for the native export document (WKWebView `loadHTMLString`, where
+ * no HTTP response header can carry the policy). Only the readiness handshake
+ * is allowed, and only by hash.
+ */
+export const EXPORT_NATIVE_CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src '${EXPORT_READY_SCRIPT_SHA256}'; font-src data:; base-uri 'none'; form-action 'none'">`

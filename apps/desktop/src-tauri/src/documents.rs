@@ -506,9 +506,30 @@ where
     }
 }
 
+/// A successful read/save extends the calling window's version-history scope to
+/// that exact document file. Standalone files (opened outside any workspace
+/// folder) then get snapshots too, while arbitrary paths stay unauthorized.
+fn authorize_opened_document(window_label: &str, requested: &str, resolved: &str) {
+    for path in [requested, resolved] {
+        if let Err(error) =
+            crate::auth_scope::authorize_document_file(window_label, Path::new(path))
+        {
+            log::warn!("document authorization failed: {error}");
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn read_document(path: String) -> Result<DiskSnapshot, DocumentError> {
-    spawn_blocking_document(move || read_document_blocking(&path)).await
+pub async fn read_document(
+    window: tauri::WebviewWindow,
+    path: String,
+) -> Result<DiskSnapshot, DocumentError> {
+    let requested = path.clone();
+    let snapshot = spawn_blocking_document(move || read_document_blocking(&path)).await?;
+    if let DiskSnapshot::Existing { version, .. } = &snapshot {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -521,15 +542,21 @@ pub async fn stat_document(path: String) -> Result<DocumentStat, DocumentError> 
 /// frontend can reuse the existing snapshot pipeline once assembly finishes.
 #[tauri::command]
 pub async fn read_document_streaming(
+    window: tauri::WebviewWindow,
     path: String,
     on_chunk: tauri::ipc::Channel<OpenStreamEvent>,
 ) -> Result<DocumentOpenStream, DocumentError> {
-    spawn_blocking_document(move || {
+    let requested = path.clone();
+    let opened = spawn_blocking_document(move || {
         read_document_streaming_blocking(&path, OPEN_CHUNK_BYTES, &|event| {
             let _ = on_chunk.send(event);
         })
     })
-    .await
+    .await?;
+    if let DocumentOpenStream::Existing { version, .. } = &opened {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(opened)
 }
 
 pub(crate) fn read_document_streaming_blocking(
@@ -644,12 +671,20 @@ pub async fn read_document_version(
 #[tauri::command]
 pub async fn save_document(
     coordinator: tauri::State<'_, DocumentCoordinator>,
+    window: tauri::WebviewWindow,
     path: String,
     contents: String,
     expected: ExpectedDocumentVersion,
 ) -> Result<SaveDocumentResult, DocumentError> {
     let coordinator = coordinator.inner().clone();
-    spawn_blocking_document(move || guarded_save(&coordinator, &path, &contents, &expected)).await
+    let requested = path.clone();
+    let saved =
+        spawn_blocking_document(move || guarded_save(&coordinator, &path, &contents, &expected))
+            .await?;
+    if let SaveDocumentResult::Saved { version, .. } = &saved {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(saved)
 }
 
 fn probe_disk_raw(path: &Path) -> Result<RawDiskProbe, DocumentError> {

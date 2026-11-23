@@ -984,7 +984,8 @@ export default function App({
     const folder = workspace.folder
     const listDir = services.listDir
     commitTree(emptyFileTree())
-    void listDir(folder).then(entries => {
+    // Authorize first: list_dir only serves directories this window was granted.
+    void Promise.resolve(services.allowWorkspaceDir?.(folder)).then(() => listDir(folder)).then(entries => {
       if (!cancelled) {
         treeActions.clearTreeError(folder)
         commitTree(setChildren(emptyFileTree(), folder, entries))
@@ -1348,7 +1349,6 @@ export default function App({
     const next = ensureFolder(workspaceRef.current, path)
     if (next.folder === workspaceRef.current.folder) return
     commitWorkspace(next)
-    if (next.folder) void services.allowWorkspaceDir?.(next.folder)
   }
 
   async function chooseFolder() {

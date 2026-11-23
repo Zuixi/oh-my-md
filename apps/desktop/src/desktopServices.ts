@@ -219,8 +219,18 @@ export interface DesktopServices {
     contents: string,
     expected: ExpectedDocumentVersion,
   ) => Promise<SaveDocumentResult>
-  readFile: (path: string) => Promise<string>
-  writeFile: (path: string, contents: string) => Promise<void>
+  /** Reads a user-picked custom CSS file (Rust `read_custom_css`). */
+  readCustomCss?: (path: string) => Promise<string>
+  /** Writes a finished standalone HTML export (Rust `write_exported_html`). */
+  writeExportedHtml?: (path: string, contents: string) => Promise<void>
+  /**
+   * @deprecated Legacy unrestricted file pair. Kept only so existing test
+   * doubles keep type-checking; production services never wire them to a
+   * general-purpose Rust file command.
+   */
+  readFile?: (path: string) => Promise<string>
+  /** @deprecated See `readFile`. */
+  writeFile?: (path: string, contents: string) => Promise<void>
   revealInFinder?: (path: string) => Promise<void>
   createMarkdown?: (dir: string, name: string) => Promise<string>
   createDir?: (dir: string, name: string) => Promise<string>
@@ -385,9 +395,15 @@ export const defaultServices: DesktopServices = {
   },
   saveDocument: (path, contents, expected) =>
     invokeDocument<SaveDocumentResult>("save_document", { path, contents, expected }),
-  readFile: (path) => invoke<string>("read_file", { path }),
+  readCustomCss: (path) => invoke<string>("read_custom_css", { path }),
+  writeExportedHtml: async (path, contents) => {
+    await invoke("write_exported_html", { path, contents })
+  },
+  // Legacy names delegate to the scoped commands instead of a general-purpose
+  // file API, so even a stale caller cannot read or write arbitrary paths.
+  readFile: (path) => invoke<string>("read_custom_css", { path }),
   writeFile: async (path, contents) => {
-    await invoke("write_file", { path, contents })
+    await invoke("write_exported_html", { path, contents })
   },
   revealInFinder: async path => {
     // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).

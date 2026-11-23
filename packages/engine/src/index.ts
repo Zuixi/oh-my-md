@@ -47,6 +47,11 @@ export {
   type PrintSetup,
 } from "./export/printSetup"
 export { EXPORT_BODY_CSS } from "./export/styles"
+export {
+  EXPORT_NATIVE_CSP_META,
+  EXPORT_READY_SCRIPT,
+  EXPORT_READY_SCRIPT_SHA256,
+} from "./export/readyScript"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {
   classifyLink,

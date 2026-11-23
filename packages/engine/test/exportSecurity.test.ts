@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { exportHtml, exportRichHtml } from "../src/export/html"
+import { EXPORT_READY_SCRIPT_SHA256 } from "../src/export/readyScript"
 import { makeState } from "./helpers"
 
 describe("export URL and raw-HTML policy", () => {
@@ -125,10 +126,20 @@ describe("standalone rich export lockdown", () => {
     expect(html).not.toContain("__omdExportReady")
   })
 
-  it("keeps the native ready script and no CSP by default", async () => {
+  it("keeps the native ready script and pins it by hash instead of inline script", async () => {
     const html = await exportRichHtml(makeState("hello"))
     expect(html).toContain("__omdExportReady")
-    expect(html).not.toContain("Content-Security-Policy")
+    // WKWebView loads this HTML string with no response headers, so the policy
+    // must travel in the document itself — hash-pinned, never 'unsafe-inline'.
+    expect(html).toContain("Content-Security-Policy")
+    expect(html).toContain(`script-src '${EXPORT_READY_SCRIPT_SHA256}'`)
+    expect(html).not.toContain("script-src 'unsafe-inline'")
+  })
+
+  it("denies every script in the standalone HTML export", async () => {
+    const html = await exportRichHtml(makeState("hello"), { includeReadyScript: false })
+    expect(html).toContain("script-src 'none'")
+    expect(html).not.toContain("<script")
   })
 
   it("never hands an unsafe local image source to the resolver", async () => {

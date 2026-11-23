@@ -23,7 +23,7 @@ import { mathTexOf } from "../semantic/math"
 import { renderCodeHtml, renderMathHtml, renderMermaidHtml } from "./richRenderers"
 import { richComplexTableHtml, richTableHtml, syncComplexTableHtml, syncTableHtml } from "./tableHtml"
 import { sanitizeRawAnchorTag } from "./sanitize"
-import { EXPORT_READY_SCRIPT } from "./readyScript"
+import { EXPORT_NATIVE_CSP_META, EXPORT_READY_SCRIPT } from "./readyScript"
 import {
   DEFAULT_PRINT_SETUP,
   isExplicitPageBreakHtml,
@@ -207,7 +207,7 @@ function exportTitleHtml(setup?: PrintSetup): string {
   return escapeHtml(title || "oh-my-md")
 }
 
-const EXPORT_CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: https: http:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">`
+const EXPORT_CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: https: http:; style-src 'unsafe-inline'; script-src 'none'; font-src data:; base-uri 'none'; form-action 'none'">`
 
 export function exportHtml(state: EditorState, print?: PrintSetup): string {
   const ctx = prepareExportDocument(state)
@@ -377,7 +377,9 @@ export async function exportRichHtml(
   // Standalone `.html` files must not carry the native handshake script: it is
   // dead weight there, and the document gets the no-script CSP instead.
   const includeReadyScript = options.includeReadyScript ?? true
-  const csp = includeReadyScript ? "" : EXPORT_CSP_META
+  // Both shapes carry a policy: the standalone file forbids every script, and
+  // the native inline document allows exactly the readiness handshake by hash.
+  const csp = includeReadyScript ? EXPORT_NATIVE_CSP_META : EXPORT_CSP_META
   const readyScript = includeReadyScript ? EXPORT_READY_SCRIPT : ""
   const ctx = prepareExportDocument(state)
   const [renderedBody, katexCss] = await Promise.all([

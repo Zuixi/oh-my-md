@@ -1,7 +1,5 @@
 use super::*;
 
-use super::*;
-
 const TINY_PDF: &[u8] = b"%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>

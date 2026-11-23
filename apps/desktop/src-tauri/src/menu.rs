@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::menu::{
@@ -6,6 +7,9 @@ use tauri::menu::{
     PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{App, AppHandle, Emitter, Manager, Runtime, State};
+
+mod labels;
+pub use labels::{menu_strings, MenuLabels};
 
 const MENU_EVENT: &str = "menu-command";
 
@@ -20,232 +24,17 @@ pub struct ViewMenuState {
     pub focus: bool,
 }
 
-#[derive(Clone)]
-pub struct MenuLabels {
-    pub app_menu: &'static str,
-    pub preferences: &'static str,
-    pub file: &'static str,
-    pub new: &'static str,
-    pub new_window: &'static str,
-    pub open_file: &'static str,
-    pub quick_open: &'static str,
-    pub open_folder: &'static str,
-    pub open_recent: &'static str,
-    pub no_recent: &'static str,
-    pub clear_recents: &'static str,
-    pub close: &'static str,
-    pub save: &'static str,
-    pub save_as: &'static str,
-    pub version_history: &'static str,
-    pub export: &'static str,
-    pub export_html: &'static str,
-    pub export_pdf: &'static str,
-    pub export_image: &'static str,
-    pub edit: &'static str,
-    pub find: &'static str,
-    pub find_in_document: &'static str,
-    pub search_in_folder: &'static str,
-    pub format: &'static str,
-    pub bold: &'static str,
-    pub italic: &'static str,
-    pub underline: &'static str,
-    pub strikethrough: &'static str,
-    pub inline_code: &'static str,
-    pub code_block: &'static str,
-    pub heading_1: &'static str,
-    pub heading_2: &'static str,
-    pub heading_3: &'static str,
-    pub heading_4: &'static str,
-    pub heading_5: &'static str,
-    pub heading_6: &'static str,
-    pub unordered_list: &'static str,
-    pub ordered_list: &'static str,
-    pub blockquote: &'static str,
-    pub insert_link: &'static str,
-    pub insert_image: &'static str,
-    pub view: &'static str,
-    pub show_source_code: &'static str,
-    pub show_hide_sidebar: &'static str,
-    pub show_hide_outline: &'static str,
-    pub typewriter_mode: &'static str,
-    pub focus_mode: &'static str,
-    pub toggle_theme: &'static str,
-    pub load_custom_css: &'static str,
-    pub window: &'static str,
-    pub minimize: &'static str,
-    pub zoom: &'static str,
-    pub toggle_full_screen: &'static str,
-    pub bring_all_to_front: &'static str,
-    pub undo: &'static str,
-    pub redo: &'static str,
-    pub cut: &'static str,
-    pub copy: &'static str,
-    pub paste: &'static str,
-    pub paste_plain_text: &'static str,
-    pub select_all: &'static str,
-    pub about: &'static str,
-    pub check_updates: &'static str,
-    pub export_diagnostics: &'static str,
-    pub open_log_folder: &'static str,
-    pub services: &'static str,
-    pub hide: &'static str,
-    pub hide_others: &'static str,
-    pub show_all: &'static str,
-    pub quit: &'static str,
-}
-
-pub fn menu_strings(locale: &str) -> MenuLabels {
-    match locale {
-        "zh" => MenuLabels {
-            app_menu: "oh-my-md",
-            preferences: "设置…",
-            file: "文件",
-            new: "新建",
-            new_window: "新建窗口",
-            open_file: "打开…",
-            quick_open: "快速打开…",
-            open_folder: "打开文件夹…",
-            open_recent: "最近打开",
-            no_recent: "无最近文件",
-            clear_recents: "清除菜单",
-            close: "关闭",
-            save: "保存",
-            save_as: "另存为…",
-            version_history: "版本历史…",
-            export: "导出",
-            export_html: "HTML…",
-            export_pdf: "PDF…",
-            export_image: "图片…",
-            edit: "编辑",
-            find: "查找",
-            find_in_document: "在文档中查找",
-            search_in_folder: "在文件夹中搜索",
-            format: "格式",
-            bold: "加粗",
-            italic: "斜体",
-            underline: "下划线",
-            strikethrough: "删除线",
-            inline_code: "行内代码",
-            code_block: "代码块",
-            heading_1: "一级标题",
-            heading_2: "二级标题",
-            heading_3: "三级标题",
-            heading_4: "四级标题",
-            heading_5: "五级标题",
-            heading_6: "六级标题",
-            unordered_list: "无序列表",
-            ordered_list: "有序列表",
-            blockquote: "引用",
-            insert_link: "插入链接",
-            insert_image: "插入图片…",
-            view: "视图",
-            show_source_code: "显示源码",
-            show_hide_sidebar: "显示/隐藏侧边栏",
-            show_hide_outline: "显示/隐藏大纲",
-            typewriter_mode: "打字机模式",
-            focus_mode: "专注模式",
-            toggle_theme: "切换主题",
-            load_custom_css: "加载自定义 CSS",
-            window: "窗口",
-            minimize: "最小化",
-            zoom: "缩放",
-            toggle_full_screen: "切换全屏",
-            bring_all_to_front: "前置全部窗口",
-            undo: "撤销",
-            redo: "重做",
-            cut: "剪切",
-            copy: "拷贝",
-            paste: "粘贴",
-            paste_plain_text: "粘贴为纯文本",
-            select_all: "全选",
-            about: "关于 oh-my-md",
-            check_updates: "检查更新…",
-            export_diagnostics: "导出诊断信息…",
-            open_log_folder: "打开日志目录",
-            services: "服务",
-            hide: "隐藏 oh-my-md",
-            hide_others: "隐藏其他",
-            show_all: "全部显示",
-            quit: "退出 oh-my-md",
-        },
-        _ => MenuLabels {
-            app_menu: "oh-my-md",
-            preferences: "Settings…",
-            file: "File",
-            new: "New",
-            new_window: "New Window",
-            open_file: "Open…",
-            quick_open: "Quick Open…",
-            open_folder: "Open Folder…",
-            open_recent: "Open Recent",
-            no_recent: "No Recent Files",
-            clear_recents: "Clear Menu",
-            close: "Close",
-            save: "Save",
-            save_as: "Save As…",
-            version_history: "Version History…",
-            export: "Export",
-            export_html: "HTML…",
-            export_pdf: "PDF…",
-            export_image: "Image…",
-            edit: "Edit",
-            find: "Find",
-            find_in_document: "Find in Document",
-            search_in_folder: "Search in Folder",
-            format: "Format",
-            bold: "Bold",
-            italic: "Italic",
-            underline: "Underline",
-            strikethrough: "Strikethrough",
-            inline_code: "Inline Code",
-            code_block: "Code Block",
-            heading_1: "Heading 1",
-            heading_2: "Heading 2",
-            heading_3: "Heading 3",
-            heading_4: "Heading 4",
-            heading_5: "Heading 5",
-            heading_6: "Heading 6",
-            unordered_list: "Bulleted List",
-            ordered_list: "Numbered List",
-            blockquote: "Blockquote",
-            insert_link: "Insert Link",
-            insert_image: "Insert Image…",
-            view: "View",
-            show_source_code: "Show Source Code",
-            show_hide_sidebar: "Show/Hide Sidebar",
-            show_hide_outline: "Show/Hide Outline",
-            typewriter_mode: "Typewriter Mode",
-            focus_mode: "Focus Mode",
-            toggle_theme: "Toggle Theme",
-            load_custom_css: "Load Custom CSS",
-            window: "Window",
-            minimize: "Minimize",
-            zoom: "Zoom",
-            toggle_full_screen: "Toggle Full Screen",
-            bring_all_to_front: "Bring All to Front",
-            undo: "Undo",
-            redo: "Redo",
-            cut: "Cut",
-            copy: "Copy",
-            paste: "Paste",
-            paste_plain_text: "Paste as Plain Text",
-            select_all: "Select All",
-            about: "About oh-my-md",
-            check_updates: "Check for Updates…",
-            export_diagnostics: "Export Diagnostics…",
-            open_log_folder: "Open Log Folder",
-            services: "Services",
-            hide: "Hide oh-my-md",
-            hide_others: "Hide Others",
-            show_all: "Show All",
-            quit: "Quit oh-my-md",
-        },
-    }
-}
-
 pub struct MenuState {
     pub recents: Vec<String>,
     pub locale: String,
+    /// Latest View-mode state reported by each window. macOS has ONE global
+    /// menubar, so the checkmarks must show the focused window's toggles
+    /// instead of whichever window happened to push last.
+    pub view_states: HashMap<String, ViewMenuState>,
+    /// The editor window the menubar currently reflects (the last one that
+    /// reported focus). `None` means "no window recorded yet", which applies
+    /// every incoming state so a single-window session still syncs.
+    pub focused: Option<String>,
 }
 
 impl Default for MenuState {
@@ -253,6 +42,8 @@ impl Default for MenuState {
         Self {
             recents: Vec::new(),
             locale: "en".to_string(),
+            view_states: HashMap::new(),
+            focused: None,
         }
     }
 }
@@ -284,8 +75,7 @@ pub fn install<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
         let label = {
             let registry = handle.state::<std::sync::Mutex<crate::windows::WindowRegistry>>();
             let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
-            let live: Vec<String> = handle.webview_windows().keys().cloned().collect();
-            focused_label(&guard, &live)
+            focused_label(&guard, &live_editor_labels(handle))
         };
         if let Some(label) = label {
             let _ = handle.emit_to(&label, MENU_EVENT, id);
@@ -293,6 +83,17 @@ pub fn install<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
         // Zero windows (macOS): no webview to receive the command — drop it.
     });
     Ok(())
+}
+
+/// Live editor-window labels. Export render hosts are deliberately excluded:
+/// a menu command routed at one would be emitted into a page that has no IPC
+/// capability and no menu listener.
+fn live_editor_labels<R: Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    app.webview_windows()
+        .keys()
+        .filter(|label| crate::windows::is_editor_window_label(label))
+        .cloned()
+        .collect()
 }
 
 /// Menu actions target the focused window: macOS's app-level menu has no
@@ -317,8 +118,8 @@ fn handle_window_command<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
     let target = if id != "window-bring-all-to-front" {
         let registry = app.state::<std::sync::Mutex<crate::windows::WindowRegistry>>();
         let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
-        let live: Vec<String> = app.webview_windows().keys().cloned().collect();
-        focused_label(&guard, &live).and_then(|label| app.get_webview_window(&label))
+        focused_label(&guard, &live_editor_labels(app))
+            .and_then(|label| app.get_webview_window(&label))
     } else {
         None
     };
@@ -344,7 +145,12 @@ fn handle_window_command<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
             }
         }
         "window-bring-all-to-front" => {
-            for window in app.webview_windows().values() {
+            // Export hosts are offscreen helpers, not windows the user can
+            // bring forward.
+            for (label, window) in app.webview_windows() {
+                if !crate::windows::is_editor_window_label(&label) {
+                    continue;
+                }
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
@@ -449,6 +255,67 @@ pub fn set_view_state<R: Runtime>(app: &AppHandle<R>, state: &ViewMenuState) {
     set("view-outline", state.outline);
     set("view-typewriter", state.typewriter);
     set("view-focus", state.focus);
+}
+
+/// Records one window's View state and reflects it in the menubar only when
+/// that window owns the menubar (it is the focused editor window, or no window
+/// has reported focus yet). Without this, the last window to toggle a mode
+/// painted its checkmarks globally.
+pub fn set_window_view_state<R: Runtime>(
+    app: &AppHandle<R>,
+    window_label: &str,
+    state: ViewMenuState,
+) {
+    let Some(managed) = app.try_state::<Mutex<MenuState>>() else {
+        // Menu not installed yet (tests, non-macOS): still show the state.
+        set_view_state(app, &state);
+        return;
+    };
+    let owns_menu = {
+        let mut guard = managed.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .view_states
+            .insert(window_label.to_string(), state.clone());
+        owns_menubar(guard.focused.as_deref(), window_label)
+    };
+    if owns_menu {
+        set_view_state(app, &state);
+    }
+}
+
+/// Whether `window_label`'s View state should be painted into the single
+/// global menubar. Pure so the multi-window rule is unit-testable.
+fn owns_menubar(focused: Option<&str>, window_label: &str) -> bool {
+    focused.is_none_or(|focused| focused == window_label)
+}
+
+/// Focus moved to `window_label`: repaint the menubar with that window's last
+/// reported View state, so switching windows cannot leave stale checkmarks.
+pub fn sync_focused_window<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
+    let Some(managed) = app.try_state::<Mutex<MenuState>>() else {
+        return;
+    };
+    let state = {
+        let mut guard = managed.lock().unwrap_or_else(|e| e.into_inner());
+        guard.focused = Some(window_label.to_string());
+        guard.view_states.get(window_label).cloned()
+    };
+    if let Some(state) = state {
+        set_view_state(app, &state);
+    }
+}
+
+/// A destroyed window must not keep a View state that would be shown again by
+/// a future window reusing its label.
+pub fn drop_window_state<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
+    let Some(managed) = app.try_state::<Mutex<MenuState>>() else {
+        return;
+    };
+    let mut guard = managed.lock().unwrap_or_else(|e| e.into_inner());
+    guard.view_states.remove(window_label);
+    if guard.focused.as_deref() == Some(window_label) {
+        guard.focused = None;
+    }
 }
 
 #[tauri::command]

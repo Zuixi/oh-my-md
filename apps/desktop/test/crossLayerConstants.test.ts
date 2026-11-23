@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -34,7 +35,12 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   VERBOSE_LOGGING_SETTINGS_KEY,
 } from "../src/constants"
-import { LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES, SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES } from "@omd/engine"
+import {
+  EXPORT_READY_SCRIPT,
+  EXPORT_READY_SCRIPT_SHA256,
+  LARGE_DOC_LINES as ENGINE_LARGE_DOC_LINES,
+  SAFE_MODE_LINES as ENGINE_SAFE_MODE_LINES,
+} from "@omd/engine"
 import {
   DEFAULT_SETTINGS,
   EXPORT_SCALE_OPTIONS,
@@ -57,6 +63,7 @@ const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/sess
 const LOGGING_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging.rs"), "utf8")
 const LOG_FIELDS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging/fields.rs"), "utf8")
 const EXPORT_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/export.rs"), "utf8")
+const EXPORT_HOST_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/export_host.rs"), "utf8")
 const STYLES_CSS = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")
   .replace(/\r\n/g, "\n")
 
@@ -102,6 +109,22 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("recent-files cap matches lib.rs MAX_RECENT_FILES", () => {
     expect(MAX_RECENTS).toBe(rustConstNumber(LIB_RS, "MAX_RECENT_FILES"))
+  })
+
+  // The native export CSP allows inline script by hash, so the hash is a
+  // security boundary: if the engine's readiness script changes and either
+  // host keeps the old hash, the export handshake silently never completes
+  // (or, worse, the old hash keeps whitelisting a script that no longer is
+  // the one we audited).
+  it("export ready-script hash matches the script body and the Rust CSP copy", () => {
+    const innerScript = EXPORT_READY_SCRIPT.replace(/^<script>/, "").replace(/<\/script>$/, "")
+    const digest = `sha256-${createHash("sha256").update(innerScript, "utf8").digest("base64")}`
+    expect(digest).toBe(EXPORT_READY_SCRIPT_SHA256)
+    const rustCopy = /const EXPORT_READY_SCRIPT_SHA256: &str =\s*"([^"]+)";/.exec(EXPORT_HOST_RS)
+    expect(rustCopy?.[1]).toBe(digest)
+    // The host must pin that hash instead of allowing inline script.
+    expect(EXPORT_HOST_RS).toContain("script-src {script_sources}")
+    expect(EXPORT_HOST_RS).not.toContain("script-src 'unsafe-inline'")
   })
 
   it("search hit cap matches workspace.rs MAX_SEARCH_HITS", () => {

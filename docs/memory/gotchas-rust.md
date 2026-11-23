@@ -41,6 +41,84 @@ Fix pattern (already used by `SaveDocumentResult`): put `#[serde(rename_all = "c
 
 `read_document_version` is stat-first (2026-08-20, Spec 05b §14.9 follow-up): Rust keeps a `(mtime_ns, size) → version` cache (`DocumentVersionCache`, keyed by requested path). A matching stat returns the cached fingerprint **without reading the file**; a mismatch pays the full read + blake3 and refreshes the cache (re-stat after read — a torn mid-read write is not cached); a missing/deleted file returns `Missing` and evicts its entry. Guarded-save still always reads fresh. Residual risk (accepted): on coarse-mtime filesystems (HFS+ 1s ticks) a same-size external write inside one mtime tick is invisible until the next stat change — the poll under-reports external changes for that window; likewise a symlink retargeted to a file with an identical (mtime_ns, size) pair.
 
+## Auxiliary windows are not editor windows
+
+The Windows/Linux exporters render one export document in an offscreen
+`omd-export-*` window (`export_host.rs`). Those labels are not covered by any
+capability pattern, so the page cannot invoke IPC at all — it has no
+`session-flush` listener either. Routing them into editor bookkeeping is what
+made exports slow and windows sticky:
+
+- `CloseRequested` called `api.prevent_close()` for **every** window, so
+  `export_host.rs`'s own `window.close()` was blocked and the runtime waited out
+  `SESSION_FLUSH_TIMEOUT` for an ack that could never arrive — and then removed a
+  session shard for a label that never had one.
+- `all_window_labels` fed them into app-wide flush rounds; `menu.rs` could route
+  a menu command at them.
+
+`windows::is_editor_window_label` (not `EXPORT_WINDOW_PREFIX`) is the single
+predicate: flush targets, `ExitRequested`, menu targeting, and the focus/
+destroyed handlers all filter through it. A non-editor window returns from the
+handler **before** any `prevent_close()`, which is what makes the export window
+close instantly.
+
+## A prevented close is an intent to record, not to drop
+
+`FlushGate::begin` refuses a second concurrent round, and the old handlers
+answered that refusal with a bare `return` *after* `api.prevent_close()` — so a
+second `Cmd+W`/`Cmd+Q` during a slow flush did nothing at all. The gate now
+queues (`queue_window_close` / `queue_app_exit`); an `AppExit` supersedes
+individual closes, and each round's finish calls
+`app_lifecycle::drain_flush_followup`, so queued work runs deterministically
+(it terminates: the first close starts the next round, the rest re-queue).
+
+`restart_app` is the mirror-image trap: it flushes, then calls
+`request_restart()`, which emits `ExitRequested` **with windows still open**. The
+old `consume_flushed() && webview_windows().is_empty()` check therefore ignored
+the marker and ran a second flush whose finish called `exit(0)` — restart became
+quit. `mark_restart_flushed()`/`consume_restart_flushed()` (5 s TTL, so a
+cancelled restart cannot poison a later quit) is consumed before anything else in
+`ExitRequested`.
+
+## Window geometry: builder takes logical, getters return physical
+
+Tauri's `WebviewWindowBuilder::position/inner_size` are logical (DIP) values
+while `outer_position()`/`inner_size()` return physical pixels. Persisting the
+getter values and replaying them into the builder doubled every restored window
+on a 2x display, and a shard saved on an unplugged monitor restored fully
+offscreen. `window_bounds.rs` now owns this:
+
+- `WindowBounds.logical` records the unit; `#[serde(default)]` reads legacy
+  shards as physical, and `normalize_and_clamp_bounds` divides by the window
+  scale **once** (idempotent for already-logical input).
+- A restored window must keep a `120x80` logical titlebar strip on some monitor,
+  or it is shrunk to the primary monitor and pinned inside it — negative
+  coordinates on a left-hand monitor stay untouched.
+- `apply_bounds` (existing `main` window) and `builder_geometry` (new windows,
+  which only have the primary monitor's scale) are the only entry points.
+
+## Authorization is per window and per file kind
+
+`workspace.rs` used a process-global `Mutex<Vec<PathBuf>>` that was never
+revoked: a closed workspace stayed readable for the rest of the process, and
+`list_dir`/`search_markdown`/`list_markdown_files` skipped the check entirely
+(any webview could enumerate and search the disk). `auth_scope.rs` replaces it:
+
+- Grants are keyed by window label and dropped in `WindowEvent::Destroyed`.
+- `assert_dir_authorized` guards listing, search, quick-open, and every mutation
+  (rename/delete always need the **root**, never a single-file grant).
+- `assert_file_or_workspace_authorized` guards version history, so a standalone
+  file opened outside any folder still gets snapshots while its siblings and its
+  parent directory stay out of scope.
+- `read_document`/`read_document_streaming`/`save_document`/`allow_document_assets`
+  record the document grant; workspace commands take the injected
+  `tauri::WebviewWindow` so the TS contract is unchanged.
+
+Every workspace command therefore has to arrive **after** `allow_workspace_dir`;
+`appSessionInit.ts` awaits the grant before its restore listing and the
+`workspace.folder` effect authorizes before listing, otherwise a restored
+workspace reads as missing.
+
 ## Tauri 2 sync commands run on the Rust main thread (Spec 05b)
 
 Non-`async` `#[tauri::command]` fns execute on the main thread and serialize
