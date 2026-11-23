@@ -15,6 +15,8 @@ import {
   LIVE_PRUNE_MARGIN_CHARS,
   LIVE_WINDOW_CHARS,
   performancePolicyExtension,
+  performancePruneMarginChars,
+  performanceWindowChars,
   SAFE_MODE_RENDER_BUDGET_LINES,
   SAFE_PERFORMANCE_POLICY,
   samePerformancePolicy,
@@ -22,6 +24,11 @@ import {
   setEditorPerformancePolicy,
   setSafeModeRendering,
   STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_LIVE_MIN_BYTES,
+  WINDOWED_LIVE_MIN_LINES,
+  WINDOWED_LIVE_PRUNE_MARGIN_CHARS,
+  WINDOWED_LIVE_WINDOW_CHARS,
+  WINDOWED_PERFORMANCE_POLICY,
   type EditorPerformancePolicy,
 } from "../src/index"
 import { blockRenderBudgetFor } from "../src/decorations/renderBudget"
@@ -260,6 +267,51 @@ describe("editor performance policy", () => {
       windowLiveDecorations: true,
       blockRenderBudgetLines: 60,
     })
+  })
+
+  it("exposes the windowed preset and its scale thresholds", () => {
+    expect(WINDOWED_LIVE_MIN_LINES).toBe(2_000)
+    expect(WINDOWED_LIVE_MIN_BYTES).toBe(100 * 1024)
+    expect(WINDOWED_LIVE_WINDOW_CHARS).toBe(32_768)
+    expect(WINDOWED_LIVE_PRUNE_MARGIN_CHARS).toBe(16_384)
+    expect(WINDOWED_PERFORMANCE_POLICY).toEqual({
+      windowLiveDecorations: true,
+      blockRenderBudgetLines: null,
+      liveWindowChars: 32_768,
+      livePruneMarginChars: 16_384,
+    })
+    // Legacy presets keep resolving the module constants as their radii.
+    expect(performanceWindowChars(STANDARD_PERFORMANCE_POLICY)).toBe(LIVE_WINDOW_CHARS)
+    expect(performancePruneMarginChars(SAFE_PERFORMANCE_POLICY)).toBe(LIVE_PRUNE_MARGIN_CHARS)
+    expect(performanceWindowChars(WINDOWED_PERFORMANCE_POLICY)).toBe(32_768)
+    expect(performancePruneMarginChars(WINDOWED_PERFORMANCE_POLICY)).toBe(16_384)
+    expect(performanceWindowChars(null)).toBe(LIVE_WINDOW_CHARS)
+    expect(performancePruneMarginChars(null)).toBe(LIVE_PRUNE_MARGIN_CHARS)
+  })
+
+  it("compares the window radii and validates them on configure", () => {
+    expect(samePerformancePolicy(WINDOWED_PERFORMANCE_POLICY, WINDOWED_PERFORMANCE_POLICY)).toBe(true)
+    expect(samePerformancePolicy(WINDOWED_PERFORMANCE_POLICY, SAFE_PERFORMANCE_POLICY)).toBe(false)
+    expect(samePerformancePolicy(
+      { ...WINDOWED_PERFORMANCE_POLICY, liveWindowChars: 4_096 },
+      WINDOWED_PERFORMANCE_POLICY,
+    )).toBe(false)
+    expect(samePerformancePolicy(
+      { windowLiveDecorations: true, blockRenderBudgetLines: null },
+      { windowLiveDecorations: true, blockRenderBudgetLines: null, liveWindowChars: LIVE_WINDOW_CHARS },
+    )).toBe(false)
+
+    const view = mountView("stable")
+    for (const radius of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const field of ["liveWindowChars", "livePruneMarginChars"] as const) {
+        const invalid = { windowLiveDecorations: true, blockRenderBudgetLines: null, [field]: radius }
+        expect(() => setEditorPerformancePolicy(view, invalid)).toThrow(RangeError)
+        expect(() => performancePolicyExtension(invalid)).toThrow(RangeError)
+      }
+    }
+    expect(editorPerformancePolicy(view.state)).toBe(null)
+    expect(view.state.doc.toString()).toBe("stable")
+    view.destroy()
   })
 
   it("rejects negative and non-finite budgets without reconfiguring the view", () => {

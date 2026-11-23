@@ -1,5 +1,4 @@
 import {
-  type ChangeDesc,
   type EditorState,
   StateEffect,
   StateField,
@@ -11,12 +10,21 @@ import { inlineRules } from "./inline"
 import { blockRules } from "./blocks"
 import type { SyntaxNode } from "@lezer/common"
 import type { DecoSpec } from "./types"
+import { mapDecoSpec, mapSpecsFast, reconcileSpecs, sortDecoSpecs, unrepresentableAtPoint } from "./specIndex"
+import {
+  mergeRanges,
+  outsideAllRegions,
+  specKept,
+  subtractRanges,
+  type RebuildRange,
+} from "./ranges"
 import { measureBlockWidget } from "./widgetMeasure"
 import { revealTableSource } from "../tables/sourceReveal"
 import { editorReferenceContext } from "../semantic/references"
 import { collectOrderedListLabels } from "../lists/ordered"
 
 export { nearCursor, type DecoSpec } from "./types"
+export { mergeRanges } from "./ranges"
 
 // 大文档（50MB 级）全量装饰同步构建会冻结数秒 —— live 预览改为渐进：
 // create/reconfigure 只同步构建光标附近的“种子”区间，其余记入 LiveDeco.pending，
@@ -28,10 +36,6 @@ export const LIVE_SEED_RADIUS_CHARS = 120_000
 
 // 单个 liveBuildChunk 的字符上限（2^18）：测试排空与分片驱动共用同一粒度。
 export const LIVE_BUILD_CHUNK_CHARS = 262_144
-
-function sortDecoSpecs(specs: DecoSpec[]): DecoSpec[] {
-  return [...specs].sort((a, b) => a.from - b.from || a.to - b.to || a.tag.localeCompare(b.tag))
-}
 
 export function collectDecorationSpecs(state: EditorState, from: number, to: number): DecoSpec[] {
   const out: DecoSpec[] = []
@@ -93,8 +97,6 @@ function isAtomicSpec(spec: DecoSpec, state: EditorState): boolean {
   return spec.from > line.from && spec.to <= line.to
 }
 
-interface RebuildRange { from: number; to: number }
-
 export interface LiveDeco {
   deco: DecorationSet
   atomic: DecorationSet
@@ -149,40 +151,9 @@ export function seedLiveDecorations(state: EditorState): LiveDeco {
   }
 }
 
-// 有序不相交化（from 升序、相邻区间 from <= prev.to + 1 合并）：种子 pending
-// 归一化、docChanged 映射、窗口裁剪归还、驱动（buildDriver）窗口区域计算共用。
-export function mergeRanges(ranges: RebuildRange[]): RebuildRange[] {
-  const sorted = ranges
-    .filter(range => range.from <= range.to)
-    .sort((a, b) => a.from - b.from || a.to - b.to)
-  const merged: RebuildRange[] = []
-  for (const range of sorted) {
-    const previous = merged[merged.length - 1]
-    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to)
-    else merged.push({ ...range })
-  }
-  return merged
-}
-
-// 闭区间减法：从有序不相交的 ranges 中挖掉 removals 覆盖的部分，
-// 结果保持有序、互不相交、from <= to（挖空即丢弃）。种子与 chunk 消耗
-// 共用此语义：端点 +1/-1，使点装饰位置在种子与各 chunk 间恰好划分一次。
-function subtractRanges(ranges: RebuildRange[], removals: RebuildRange[]): RebuildRange[] {
-  const cuts = mergeRanges(removals)
-  const out: RebuildRange[] = []
-  for (const range of ranges) {
-    let from = range.from
-    for (const cut of cuts) {
-      if (cut.to < from) continue          // 剪裁区间完全在左侧
-      if (cut.from > range.to) break       // 完全在右侧，后续更不可能相交
-      if (cut.from > from) out.push({ from, to: cut.from - 1 })
-      from = Math.max(from, cut.to + 1)
-      if (from > range.to) break
-    }
-    if (from <= range.to) out.push({ from, to: range.to })
-  }
-  return out
-}
+// `mergeRanges` / `subtractRanges` / `specKept` live in `./ranges` (one owner for
+// the closed-interval algebra shared with the build driver); `mergeRanges` is
+// re-exported above for existing callers.
 
 const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HTMLBlock", "HorizontalRule", "FrontMatter"])
 
@@ -215,55 +186,16 @@ function expandRange(
       }
     } else {
       while (node.parent?.parent) node = node.parent
+      // 位置落在顶层块之间的空白行（段落间隔、文末空行）时 resolve 返回
+      // Document 本身：此处没有可外扩的块，行级区间已经覆盖该空行（空行不产出
+      // 装饰）。若照旧外扩到 Document，一次普通段落内的逐键编辑就会把重建区间
+      // 扩成整篇 —— 353 KB / 57 600 spec 的文档每键全量重建（66–81 ms）。
+      if (node.parent === null) continue
       safeFrom = Math.min(safeFrom, node.from)
       safeTo = Math.max(safeTo, node.to)
     }
   }
   return { from: safeFrom, to: safeTo }
-}
-
-// expandRange uses endLine.to + 1 as an exclusive end (the next line's from).
-// A closed overlap would drop point decorations sitting exactly at that boundary
-// (the next line's omd-blockquote-N / QuoteMark) without the inner Blockquote
-// being visited again, so the following quote line loses its bar.
-function intersects(from: number, to: number, range: RebuildRange) {
-  if (range.from === range.to) return from <= range.to && to >= range.from
-  return from < range.to && to >= range.from
-}
-
-// CodeMirror's `RangeSet.map` drops a non-point range when it collapses and
-// `startSide > 0 && endSide <= 0` (marks and non-block replaces; line
-// decorations use side -200000000 and survive as points). Read the sides from
-// the decoration itself rather than inferring them from the tag string.
-function dropsWhenCollapsed(spec: DecoSpec) {
-  return spec.deco.startSide > 0 && spec.deco.endSide <= 0
-}
-
-// Mirrors each decoration's own `range(from, to)` check for an empty range:
-// `MarkDecoration` always rejects one, `PointDecoration` rejects a replace with
-// non-inclusive sides but accepts a widget, and `LineDecoration` accepts it.
-// `point`/`isReplace` are CodeMirror internals; treat an unknown shape as the
-// conservative (reject) case. A representable empty spec must not block a repair.
-function unrepresentableAtPoint(spec: DecoSpec) {
-  if (spec.from !== spec.to) return false
-  const deco = spec.deco as { point?: boolean; isReplace?: boolean }
-  if (deco.point !== true) return true
-  return deco.isReplace === true && dropsWhenCollapsed(spec)
-}
-
-function mapSpec(spec: DecoSpec, changes: ChangeDesc): DecoSpec | null {
-  if (spec.from === spec.to) {
-    const pos = changes.mapPos(spec.from, 1)
-    return { ...spec, from: pos, to: pos }
-  }
-  const from = changes.mapPos(spec.from, 1)
-  const to = changes.mapPos(spec.to, -1)
-  if (from > to) return null
-  // Mirror that drop rule here so the spec list never counts ranges the
-  // RangeSet has dropped, and a later rebuild never feeds `Decoration.range`
-  // an empty mark/replace.
-  if (from === to && dropsWhenCollapsed(spec)) return null
-  return { ...spec, from, to }
 }
 
 function rebuildRanges(tr: Transaction) {
@@ -343,14 +275,6 @@ export const liveBuildChunk = StateEffect.define<{ from: number; to: number }>()
 // 显式指令，开关只约束驱动策略（也便于字段级测试直接驱动）。
 export const livePruneOutside = StateEffect.define<{ from: number; to: number }[]>()
 
-// 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
-function outsideAllRegions(from: number, to: number, regions: RebuildRange[]): boolean {
-  for (const region of regions) {
-    if (from <= region.to && to >= region.from) return false
-  }
-  return true
-}
-
 function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   // 重配置（compartment 切换 / StateEffect.reconfigure）同样只做种子构建，不再全量
   if (tr.reconfigured) return seedLiveDecorations(tr.state)
@@ -413,9 +337,7 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   // 先归还再扣分片：分片来自构建窗口（含可见区）、裁剪只动裁剪窗口外（驱动侧
   // 保证裁剪窗口 ⊇ 构建窗口），二者不相交，顺序不影响结果。
   const mappedSpecs = tr.docChanged
-    ? value.specs
-      .map(spec => mapSpec(spec, tr.changes))
-      .filter((spec): spec is DecoSpec => spec !== null)
+    ? mapSpecsFast(value.specs, tr.changes, mapDecoSpec)
     : value.specs
   const prunedSpecs = pruneWindows.length > 0
     ? mappedSpecs.filter(spec => outsideAllRegions(spec.from, spec.to, pruneWindows))
@@ -454,57 +376,58 @@ function updateLiveDecorations(value: LiveDeco, tr: Transaction): LiveDeco {
   ])
   // 保留谓词 = 窗口内（或与窗口相交）∧ 不在脏区移除范围：specs/deco/atomic 三处
   // 必须共用同一口径，否则 specs 数组与 RangeSet 漂移（deco.size !== specs.length
-  // 级别的不变量破坏）。窗口裁剪为空时与 Task 2 的谓词完全一致。
-  const keep = (from: number, to: number) =>
-    (pruneWindows.length === 0 || !outsideAllRegions(from, to, pruneWindows)) &&
-    !removalRanges.some(range => intersects(from, to, range))
-  const retained = mappedSpecs.filter(spec => keep(spec.from, spec.to))
-  const seen = new Set(retained.map(spec => `${spec.tag}:${spec.from}:${spec.to}`))
+  // 级别的不变量破坏）。分区与 filter 同一个 `specKept` 实现（specIndex.ts）。
+  const keep = (from: number, to: number) => specKept(from, to, removalRanges, pruneWindows)
+  // `RangeSet.update` only invokes `filter` for ranges inside [filterFrom, filterTo].
+  // Every spec at which `keep` returns false intersects a removal range, so it
+  // necessarily sits inside the removal envelope — whole B-tree chunks outside it
+  // are skipped in O(log N) instead of walking all 57k decorations per keystroke.
+  // A prune window is not bounded by the dirty ranges, so windowed updates keep
+  // the unbounded filter (their spec count is bounded by the window as well).
+  const bounded = pruneWindows.length === 0 && removalRanges.length > 0
+  const filterSpec = bounded
+    ? {
+        filter: keep,
+        filterFrom: removalRanges[0].from,
+        filterTo: removalRanges[removalRanges.length - 1].to,
+      }
+    : pruneWindows.length > 0 ? { filter: keep } : {}
   // 身份复用（滚动稳定性）：重建区间内被移除的同键 spec，若 widget 等价（eq）则
   // 复用原 spec 对象。CM 的 heightRelevantDecoChanges 按对象身份判变（比较器不
   // 调 eq），Decoration 身份漂移 = height-relevant 变更 → applyChanges 用估算值
   // 重建该块高度图，丢弃已测高度 → 下一帧实测改回。measureBlockWidget 每次绘制
   // 都触发该重建，「实测→估算→实测」振荡表现为滚轮下滑时位置回撤、拖动滚动条
   // 时 thumb 与内容映射漂移。复用身份后该区间对高度图零变更。
-  const removedByKey = new Map<string, DecoSpec>()
-  for (const spec of mappedSpecs) {
-    if (!keep(spec.from, spec.to)) {
-      removedByKey.set(`${spec.tag}:${spec.from}:${spec.to}`, spec)
-    }
-  }
   const widgetOf = (spec: DecoSpec): WidgetType | undefined =>
     (spec.deco.spec as { widget?: WidgetType }).widget
-  const additions = rebuilt
-    .filter(spec => {
-      const key = `${spec.tag}:${spec.from}:${spec.to}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    .map(spec => {
-      const dropped = removedByKey.get(`${spec.tag}:${spec.from}:${spec.to}`)
-      if (!dropped) return spec
+  const specs = reconcileSpecs({
+    mapped: mappedSpecs,
+    rebuilt,
+    removalRanges,
+    pruneWindows,
+    reuse: (dropped, spec) => {
       const oldWidget = widgetOf(dropped)
       const newWidget = widgetOf(spec)
       // 仅 widget spec 等价时复用：非 widget 装饰（line/mark/replace）身份漂移
       // 不影响高度图（compareRange 是 no-op），不值得冒语义比较风险。
       return oldWidget && newWidget && oldWidget.eq(newWidget) ? dropped : spec
-    })
+    },
+  })
 
   const next: LiveDeco = {
     deco: mappedDeco.update({
-      filter: keep,
-      add: additions.map(spec => spec.deco.range(spec.from, spec.to)),
+      ...filterSpec,
+      add: specs.additions.map(spec => spec.deco.range(spec.from, spec.to)),
       sort: true,
     }),
     atomic: mappedAtomic.update({
-      filter: keep,
-      add: additions
+      ...filterSpec,
+      add: specs.additions
         .filter(spec => isAtomicSpec(spec, tr.state))
         .map(spec => Decoration.replace({}).range(spec.from, spec.to)),
       sort: true,
     }),
-    specs: [...retained, ...additions].sort((a, b) => a.from - b.from || a.to - b.to),
+    specs: specs.specs,
     treeLength,
     pending,
   }

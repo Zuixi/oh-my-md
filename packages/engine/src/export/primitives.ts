@@ -31,17 +31,11 @@ export function titleAttr(title: string | null): string {
 
 /**
  * The single link emitter. A rejected href keeps its label as plain text
- * inside a `<span>`; `fallbackText` is the caller's plain-text label for a
- * link whose rich label rendered empty.
+ * inside a `<span>` (no host text is trusted to be HTML).
  */
-export function anchorHtml(
-  href: string,
-  title: string | null,
-  labelHtml: string,
-  fallbackText = "",
-): string {
+export function anchorHtml(href: string, title: string | null, labelHtml: string): string {
   const safe = safeExportHref(href)
-  if (safe === null) return `<span>${labelHtml || escapeHtml(fallbackText || href)}</span>`
+  if (safe === null) return `<span>${labelHtml || escapeHtml(href)}</span>`
   return `<a href="${escapeHtml(safe)}"${titleAttr(title)}>${labelHtml || escapeHtml(safe)}</a>`
 }
 

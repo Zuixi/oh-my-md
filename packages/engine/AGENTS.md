@@ -30,6 +30,8 @@ packages/engine/
 │   ├── parse/                   # Lezer Markdown + dialect extensions + complexTable.ts (see src/parse/AGENTS.md)
 │   ├── semantic/                # linkParts, imageParts, escapeParts, hardBreakParts, referenceIndexExtension
 │   ├── decorations/             # StateField live preview + widgets (see src/decorations/AGENTS.md)
+│   │   ├── specIndex.ts         # O(n) spec algebra: fast change mapping, partition, dedup, merge
+│   │   └── ranges.ts            # Closed-interval algebra: merge/subtract/intersect/specKept
 │   ├── format/                  # Editing commands + keymaps (see src/format/AGENTS.md)
 │   ├── tables/                  # Lezer-range table model + edits (see src/tables/AGENTS.md)
 │   ├── paste/                   # Semantic clipboard importer (prepareSmartPaste, planSmartPaste, serializeComplexTable, blockBoundaries)
@@ -66,6 +68,7 @@ packages/engine/
 pnpm test
 pnpm --filter @omd/desktop test
 pnpm --filter @omd/engine bench
+pnpm --filter @omd/engine perf:gate   # blocking PERF-01/PERF-03 budget gate (own config, one worker)
 ```
 
 - Use `test/helpers.ts::makeState` when a test requires a complete syntax tree (`ensureSyntaxTree`). Production code must **never** force full-document parsing (`apps/desktop/test/crossLayerNoFullTree.test.ts`).

@@ -1,6 +1,12 @@
 import { Text } from "@codemirror/state"
 import { describe, expect, it } from "vitest"
-import { SAFE_PERFORMANCE_POLICY, STANDARD_PERFORMANCE_POLICY } from "@omd/engine"
+import {
+  SAFE_PERFORMANCE_POLICY,
+  STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_LIVE_MIN_BYTES,
+  WINDOWED_LIVE_MIN_LINES,
+  WINDOWED_PERFORMANCE_POLICY,
+} from "@omd/engine"
 import { createDocumentScaleRegistry } from "../src/documentScaleRegistry"
 
 const THRESHOLDS = { safeModeLines: 50_000, safeModeBytes: 8_000_000 }
@@ -73,6 +79,33 @@ describe("document scale registry", () => {
     registry.classify(2, 10)
     expect(registry.performancePolicy(2)).toBe(STANDARD_PERFORMANCE_POLICY)
     expect(registry.performancePolicy(1)).toBe(SAFE_PERFORMANCE_POLICY)
+  })
+
+  it("derives the windowed policy from the recorded line and byte scale", () => {
+    const registry = makeRegistry()
+    // Exactly at a threshold stays standard ("above", not "at or above").
+    registry.classify(1, WINDOWED_LIVE_MIN_LINES)
+    expect(registry.performancePolicy(1)).toBe(STANDARD_PERFORMANCE_POLICY)
+    registry.classify(1, WINDOWED_LIVE_MIN_LINES + 1)
+    expect(registry.performancePolicy(1)).toBe(WINDOWED_PERFORMANCE_POLICY)
+
+    registry.setBytes(2, WINDOWED_LIVE_MIN_BYTES)
+    registry.classify(2, 10)
+    expect(registry.performancePolicy(2)).toBe(STANDARD_PERFORMANCE_POLICY)
+    registry.setBytes(2, WINDOWED_LIVE_MIN_BYTES + 1)
+    expect(registry.performancePolicy(2)).toBe(WINDOWED_PERFORMANCE_POLICY)
+
+    // Safe mode wins over windowing: it still needs the block render budget.
+    registry.classify(3, THRESHOLDS.safeModeLines + 1)
+    expect(registry.performancePolicy(3)).toBe(SAFE_PERFORMANCE_POLICY)
+  })
+
+  it("drops the recorded line count when the tab is removed", () => {
+    const registry = makeRegistry()
+    registry.classify(1, WINDOWED_LIVE_MIN_LINES + 1)
+    expect(registry.performancePolicy(1)).toBe(WINDOWED_PERFORMANCE_POLICY)
+    registry.remove(1)
+    expect(registry.performancePolicy(1)).toBe(STANDARD_PERFORMANCE_POLICY)
   })
 
   it("evaluate reads the line, byte, and read-only axes without mutating cached isSafeMode", () => {

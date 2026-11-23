@@ -5,7 +5,8 @@
   "scripts": {
     "test": "tsc --noEmit && vitest run",
     "bench": "vitest bench --run --reporter=verbose",
-    "bench:policy-spike": "vitest bench --run bench/policy.bench.ts --reporter=verbose"
+    "bench:policy-spike": "vitest bench --run bench/policy.bench.ts --reporter=verbose",
+    "perf:gate": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

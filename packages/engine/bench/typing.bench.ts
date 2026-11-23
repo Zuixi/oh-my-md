@@ -4,9 +4,10 @@ import {
   measureDecoRebuildMs, measureStatsMs, measureTyping, STATS_BUDGET_MS, TYPING_P95_BUDGET_MS,
 } from "./measure"
 import {
-  SAFE_MODE_RENDER_BUDGET_LINES, setBlockRenderBudget, setSafeModeRendering,
+  SAFE_MODE_RENDER_BUDGET_LINES, STANDARD_PERFORMANCE_POLICY, WINDOWED_PERFORMANCE_POLICY,
+  setBlockRenderBudget, setSafeModeRendering,
 } from "../src/index"
-import { makeBenchmarkDoc, makeBenchmarkDocBytes } from "./generate"
+import { makeBenchmarkDoc, makeBenchmarkDocBytes, makeOrderedListDoc, makeRichFormattedDoc } from "./generate"
 
 const DOC_10K = makeBenchmarkDoc(10000)
 const DOC_30K = makeBenchmarkDoc(30000)
@@ -14,6 +15,12 @@ const DOC_50K = makeBenchmarkDoc(50000)
 // Spec 05a：超大文档档（UTF-8 字节精确，确定性生成）。
 const DOC_10MB = makeBenchmarkDocBytes(10 * 1024 * 1024)
 const DOC_20MB = makeBenchmarkDocBytes(20 * 1024 * 1024)
+// PERF-03 real-format tiers: dense formatted prose (~460 KB / 72 000 specs for
+// 4 800 paragraphs — denser than the 353 KB / 57 600-spec board probe) and
+// ~1.3 MB for 13 600 paragraphs.
+const RICH_350K = makeRichFormattedDoc(4_800)
+const RICH_1MB = makeRichFormattedDoc(13_600)
+const ORDERED_2000 = makeOrderedListDoc(2_000)
 // steady drained 三档的统一起点：必须落在**已解析/已 materialize**的区间内。
 // 默认起点 = doc.length/2 只有 10k 档（175k 字符）落在其中；30k/50k 的中点已在
 // 解析窗口（viewport.to + 100000 ≈ 前 10 万字符）之外，那里的逐键测量是
@@ -132,5 +139,47 @@ describe("large document benchmarks (advisory)", () => {
 
   bench("documentStats 50k", () => {
     console.info(budgetLine("documentStats 50k", measureStatsMs(DOC_50K), STATS_BUDGET_MS))
+  })
+})
+
+// PERF-01/03：真实格式文档的 live 逐键口径。全部使用显式 per-view 策略，
+// 不依赖进程级全局开关（bench 之间不会互相污染）。
+describe("formatted prose typing (PERF-03)", () => {
+  bench("typing 4.8k paragraphs rich formatted (live, complete tree drained)", () => {
+    const r = measureTyping(RICH_350K, {
+      mode: "live", tree: "complete", drain: true, keystrokes: 60,
+      policy: STANDARD_PERFORMANCE_POLICY,
+    })
+    console.info(
+      budgetLine("typing p95 rich 4.8k full-tree drained", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms chars ${RICH_350K.length}`,
+    )
+  })
+
+  bench("typing 4.8k paragraphs rich formatted (live, windowed)", () => {
+    const r = measureTyping(RICH_350K, {
+      mode: "live", tree: "complete", safeWindow: true, keystrokes: 60,
+      policy: WINDOWED_PERFORMANCE_POLICY,
+    })
+    console.info(
+      budgetLine("typing p95 rich 4.8k windowed", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms`,
+    )
+  })
+
+  bench("typing 13.6k paragraphs rich formatted (live, windowed)", () => {
+    const r = measureTyping(RICH_1MB, {
+      mode: "live", tree: "complete", safeWindow: true, keystrokes: 60,
+      policy: WINDOWED_PERFORMANCE_POLICY,
+    })
+    console.info(
+      budgetLine("typing p95 rich 13.6k windowed", r.p95Ms, TYPING_P95_BUDGET_MS),
+      `p50 ${r.p50Ms.toFixed(2)}ms chars ${RICH_1MB.length}`,
+    )
+  })
+
+  bench("ordered list 2000 build", () => {
+    const state = fullyParsedLiveState(ORDERED_2000)
+    console.info(`ordered list 2000 build: ${measureDecoRebuildMs(state).toFixed(2)}ms`)
   })
 })

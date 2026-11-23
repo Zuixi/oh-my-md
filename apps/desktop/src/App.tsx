@@ -512,6 +512,8 @@ export default function App({
   )
   function syncDoc(value: string, tabId = workspaceRef.current.activeId) {
     docsRef.current.set(tabId, value)
+    // 按实时行数刷新档位策略（标准 ↔ 窗口化 ↔ 安全）；未变时不 dispatch/不发 notice。
+    applyDocumentScalePolicy.refresh(viewsRef.current.get(tabId), tabId)
     if (tabId !== workspaceRef.current.activeId) return
     docRef.current = value
     setDoc(value)
@@ -1169,9 +1171,7 @@ export default function App({
       .catch(() => undefined)
   }
 
-  function openFile() {
-    return openCoordinator.runOpen(() => services.pickOpenPath())
-  }
+  const openFile = () => openCoordinator.runOpen(() => services.pickOpenPath())
 
   function activateTab(id: number) {
     const current = viewRef.current

@@ -2,6 +2,9 @@ import type { Text } from "@codemirror/state"
 import {
   SAFE_PERFORMANCE_POLICY,
   STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_LIVE_MIN_BYTES,
+  WINDOWED_LIVE_MIN_LINES,
+  WINDOWED_PERFORMANCE_POLICY,
   type EditorPerformancePolicy,
 } from "@omd/engine"
 
@@ -41,7 +44,10 @@ export interface DocumentScaleRegistry {
   classify(tabId: number, lines: number): DocumentScaleClassification
   /** The engine policy this tab's view must carry. Every view gets an explicit
    * policy, so tabs cannot inherit each other's budget/windowing and the
-   * engine's process-global defaults are never consulted. */
+   * engine's process-global defaults are never consulted. Medium/large
+   * documents (over `WINDOWED_LIVE_MIN_LINES`/`BYTES`, but under the safe-mode
+   * thresholds) get viewport windowing only — no block render budget — so dense
+   * formatted prose stays at full fidelity. */
   performancePolicy(tabId: number): EditorPerformancePolicy
   /** Drops all state for a closed tab. */
   remove(tabId: number): void
@@ -49,6 +55,10 @@ export interface DocumentScaleRegistry {
 
 export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): DocumentScaleRegistry {
   const bytesByTab = new Map<number, number>()
+  // Last line count seen by `classify`: the windowed tier is derived from the
+  // document scale, and only `classify` (view creation / policy refresh) is
+  // allowed to move a tab between tiers.
+  const linesByTab = new Map<number, number>()
   const textByTab = new Map<number, Text>()
   const readOnlyTabs = new Set<number>()
   const safeModeTabs = new Set<number>()
@@ -71,6 +81,7 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
   }
 
   function classify(tabId: number, lines: number): DocumentScaleClassification {
+    linesByTab.set(tabId, lines)
     const result = evaluate(tabId, lines)
     if (result.safeMode) safeModeTabs.add(tabId)
     else safeModeTabs.delete(tabId)
@@ -99,10 +110,15 @@ export function createDocumentScaleRegistry(deps: DocumentScaleRegistryDeps): Do
     evaluate,
     classify,
     performancePolicy(tabId) {
-      return isSafeMode(tabId) ? SAFE_PERFORMANCE_POLICY : STANDARD_PERFORMANCE_POLICY
+      if (isSafeMode(tabId)) return SAFE_PERFORMANCE_POLICY
+      const bytes = bytesByTab.get(tabId) ?? 0
+      const windowed = (linesByTab.get(tabId) ?? 0) > WINDOWED_LIVE_MIN_LINES
+        || bytes > WINDOWED_LIVE_MIN_BYTES
+      return windowed ? WINDOWED_PERFORMANCE_POLICY : STANDARD_PERFORMANCE_POLICY
     },
     remove(tabId) {
       bytesByTab.delete(tabId)
+      linesByTab.delete(tabId)
       textByTab.delete(tabId)
       readOnlyTabs.delete(tabId)
       safeModeTabs.delete(tabId)

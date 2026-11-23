@@ -95,6 +95,22 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
       - run: pnpm test
 
+  # Blocking performance gate (PERF-01/PERF-03). Separate from the unit suite so
+  # the 1 000+ test files never share the CPU with the timed scenarios
+  # (vitest.perf.config.ts runs one worker). Budgets are scaled by an in-process
+  # calibration loop, so a slower runner gets proportionally more headroom while
+  # an algorithmic regression (the ~10x per-keystroke O(N) rebuild) still fails.
+  perf:
+    name: Engine perf gate (PERF-01/PERF-03)
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-pnpm
+      - run: pnpm check:perf
+
   desktop:
     name: Desktop (tsc + Vitest + build)
     needs: changes

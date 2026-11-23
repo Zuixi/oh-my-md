@@ -1,8 +1,11 @@
 import type { EditorView } from "@codemirror/view"
-import { editorPerformancePolicy, type EditorPerformancePolicy } from "./performancePolicy"
+import {
+  editorPerformancePolicy,
+  performanceWindowChars,
+  type EditorPerformancePolicy,
+} from "./performancePolicy"
 import { livePreviewField } from "./decorations/build"
 import { expandedRegions, pendingInWindow } from "./decorations/buildDriver"
-import { LIVE_WINDOW_CHARS } from "./safeModeRendering"
 
 export interface PerformancePolicyDiagnostics {
   readonly policy: EditorPerformancePolicy | null
@@ -21,7 +24,7 @@ export function getPerformancePolicyDiagnostics(view: EditorView): PerformancePo
     policy,
     pendingInBuildWindow: pendingInWindow(
       live.pending,
-      expandedRegions(view, LIVE_WINDOW_CHARS),
+      expandedRegions(view, performanceWindowChars(policy)),
     ).length,
     pendingRanges: live.pending.length,
     decorationSpecs: live.specs.length,

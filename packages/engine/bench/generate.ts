@@ -62,3 +62,22 @@ export function makeTableHeavyDoc(tableCount: number, rows: number, cols: number
   }
   return blocks.join("\n\n")
 }
+
+/** Dense formatted prose (PERF-03 live-preview gate): every paragraph carries
+ * bold, italic, inline-code and link specs, so the decoration count per
+ * character is close to the worst case a real technical note reaches.
+ * Deterministic — no randomness, byte-identical across runs and machines.
+ *
+ * 4_800 paragraphs ≈ 460 KB / 72 000 decoration specs, i.e. denser than the
+ * 353 KB / 57 600-spec probe that motivated the incremental-update rewrite. */
+export function makeRichFormattedDoc(paragraphs: number): string {
+  return Array.from({ length: paragraphs }, (_, i) =>
+    `paragraph ${i} with **bold** and *italic* and \`code_${i}\` and [link](https://example.com/${i})`,
+  ).join("\n\n")
+}
+
+/** One ordered list with `items` entries (PERF-02 build benchmark: display-label
+ * collection used to re-scan the list per mark). */
+export function makeOrderedListDoc(items: number): string {
+  return Array.from({ length: items }, (_, i) => `${i + 1}. item ${i}`).join("\n")
+}

@@ -8,12 +8,13 @@ import {
   livePruneOutside,
   mergeRanges,
 } from "./build"
+import { safeModeRenderingEnabled } from "../safeModeRendering"
 import {
-  LIVE_PRUNE_MARGIN_CHARS,
-  LIVE_WINDOW_CHARS,
-  safeModeRenderingEnabled,
-} from "../safeModeRendering"
-import { editorPerformancePolicy } from "../performancePolicy"
+  editorPerformancePolicy,
+  performancePruneMarginChars,
+  performanceWindowChars,
+} from "../performancePolicy"
+import { outsideAllRegions } from "./ranges"
 
 // 分片驱动（Task 2）：livePreviewField 只同步构建光标附近的种子区间，其余记入
 // LiveDeco.pending。本插件在微任务/idle 回调里逐片 dispatch liveBuildChunk 消耗
@@ -24,11 +25,13 @@ import { editorPerformancePolicy } from "../performancePolicy"
 //      挑「距视口最近的 pending 区间」、从靠视口一端切 ≤LIVE_BUILD_CHUNK_CHARS 一片，
 //      按墙钟预算 LIVE_BUILD_SLICE_MS 连续构建若干片后重新调度让出主线程。
 //   3. 安全模式窗口化（Task 3，safeModeRenderingEnabled() 开启）：不再排空到全量
-//      —— idle 循环只构建「构建窗口」（视口 ± LIVE_WINDOW_CHARS）内的 pending，
+//      —— idle 循环只构建「构建窗口」（视口 ± 策略窗口半径）内的 pending，
 //      窗口外的留在 pending 待滚动进入；每次视口/文档/选区变化后的首帧通道同时
-//      dispatch livePruneOutside：完全落在「裁剪窗口」（构建窗口再叠
-//      LIVE_PRUNE_MARGIN_CHARS 迟滞裕量）外的已建装饰归还 pending，滚回时重建。
+//      dispatch livePruneOutside：完全落在「裁剪窗口」（构建窗口再叠迟滞裕量）
+//      外的已建装饰归还 pending，滚回时重建。
 //      装饰内存与每笔编辑的映射成本都以窗口为界。开关关闭时行为与 Task 2 完全一致。
+//      半径来自 per-view 策略：显式 `liveWindowChars` / `livePruneMarginChars`，
+//      缺省回退遗留全局常量（LIVE_WINDOW_CHARS / LIVE_PRUNE_MARGIN_CHARS）。
 // 禁止在 ViewPlugin.update 内直接 dispatch（CodeMirror 限制）——所有 dispatch 都经
 // 微任务/idle 回调。视口变化无需取消在途回调：每片都用最新 view.visibleRanges 重选。
 
@@ -104,12 +107,7 @@ export function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): 
 // 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
 // 裁剪门槛用：specs 按 from 有序，但多段窗口存在间隙，O(1) 首尾包络检查会漏掉
 // 间隙内的装饰，这里按装饰逐个精确判定（安全模式下 specs 以窗口为界，代价有界）。
-function outsideAllRegions(from: number, to: number, regions: ClosedRange[]): boolean {
-  for (const region of regions) {
-    if (from <= region.to && to >= region.from) return false
-  }
-  return true
-}
+// Predicate lives in `./ranges` so the field's keep/filter uses the same one.
 
 // 点到闭区间集的最小距离（点在区间内为 0，否则为到最近端点的间隔）。
 function pointDistance(pos: number, regions: ClosedRange[]): number {
@@ -182,9 +180,13 @@ class LiveBuildDriver {
   // 无布局测试宿主用「stub visibleRanges + 触发一笔交易」模拟。
   private windowDirty = true
   private lastWindowed: boolean
+  private lastWindowChars: number
+  private lastPruneMarginChars: number
 
   constructor(private readonly view: EditorView) {
     this.lastWindowed = this.windowed(view.state)
+    this.lastWindowChars = this.windowChars(view.state)
+    this.lastPruneMarginChars = this.pruneMarginChars(view.state)
     this.arm()
   }
 
@@ -201,6 +203,20 @@ class LiveBuildDriver {
       this.idleScheduled = false
       this.windowDirty = true
     }
+    // Policy switch between two windowed presets (SAFE ↔ WINDOWED): the radius
+    // changed, so the cached build window must be recomputed and re-pruned even
+    // though pending never changed. Queued idle work targets the old radius, so
+    // cancel it and arm a fresh first pass.
+    const windowChars = this.windowChars(update.state)
+    const pruneMarginChars = this.pruneMarginChars(update.state)
+    if (windowChars !== this.lastWindowChars || pruneMarginChars !== this.lastPruneMarginChars) {
+      this.cancelIdle?.()
+      this.cancelIdle = null
+      this.idleScheduled = false
+      if (isWindowed) this.windowDirty = true
+    }
+    this.lastWindowChars = windowChars
+    this.lastPruneMarginChars = pruneMarginChars
     if (isWindowed && (update.viewportChanged || update.docChanged || update.selectionSet)) {
       this.windowDirty = true
     }
@@ -210,6 +226,16 @@ class LiveBuildDriver {
   private windowed(state: EditorState = this.view.state): boolean {
     const policy = editorPerformancePolicy(state)
     return policy ? policy.windowLiveDecorations : safeModeRenderingEnabled()
+  }
+
+  // 构建窗口半径：显式策略可收紧（WINDOWED_PERFORMANCE_POLICY = ±32k），缺省
+  // 回退遗留全局常量（LIVE_WINDOW_CHARS = ±262k）。
+  private windowChars(state: EditorState = this.view.state): number {
+    return performanceWindowChars(editorPerformancePolicy(state))
+  }
+
+  private pruneMarginChars(state: EditorState = this.view.state): number {
+    return performancePruneMarginChars(editorPerformancePolicy(state))
   }
 
   destroy() {
@@ -237,10 +263,10 @@ class LiveBuildDriver {
     queueMicrotask(() => this.firstPass())
   }
 
-  // 构建窗口：可见段 ± LIVE_WINDOW_CHARS。窗口化下 idle 循环与首帧通道的构建
+  // 构建窗口：可见段 ± 策略窗口半径。窗口化下 idle 循环与首帧通道的构建
   // 范围都以此为界（首帧通道取 pending∩可见区，天然在窗口内）。
   private buildWindow(): ClosedRange[] {
-    return expandedRegions(this.view, LIVE_WINDOW_CHARS)
+    return expandedRegions(this.view, this.windowChars())
   }
 
   private firstPass() {
@@ -278,7 +304,7 @@ class LiveBuildDriver {
     const chunks = visibleChunks(live.pending, visibleRegions(this.view))
     for (const chunk of chunks) effects.push(liveBuildChunk.of(chunk))
     const pruneWindow = expandedRegions(
-      this.view, LIVE_WINDOW_CHARS + LIVE_PRUNE_MARGIN_CHARS)
+      this.view, this.windowChars() + this.pruneMarginChars())
     if (live.specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))) {
       effects.push(livePruneOutside.of(pruneWindow))
     }
