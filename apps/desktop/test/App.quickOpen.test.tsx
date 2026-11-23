@@ -73,7 +73,7 @@ describe("quick open", () => {
     })
 
     fireEvent.keyDown(window, { key: "p", metaKey: true })
-    const input = await waitFor(() => screen.getByLabelText("Go to file…"))
+    const input = await waitFor(() => screen.getByRole("combobox", { name: "Go to file…" }))
     expect(harness.services.listMarkdownFiles).toHaveBeenCalledWith("/notes")
 
     fireEvent.change(input, { target: { value: "beta" } })
@@ -110,7 +110,7 @@ describe("quick open", () => {
       expect(document.querySelector(".save-transient-status")?.textContent)
         .toContain("Open a folder")
     })
-    expect(screen.queryByLabelText("Go to file…")).toBeNull()
+    expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull()
   })
 
   it("ignores a listing response that resolves after the popup was closed", async () => {
@@ -125,11 +125,11 @@ describe("quick open", () => {
     })
 
     fireEvent.keyDown(window, { key: "p", metaKey: true })
-    const input = await waitFor(() => screen.getByLabelText("Go to file…"))
+    const input = await waitFor(() => screen.getByRole("combobox", { name: "Go to file…" }))
     fireEvent.keyDown(input, { key: "Escape" })
-    await waitFor(() => expect(screen.queryByLabelText("Go to file…")).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull())
 
     resolveList({ paths: ["/notes/alpha.md"], truncated: false })
-    await waitFor(() => expect(screen.queryByLabelText("Go to file…")).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull())
   })
 })

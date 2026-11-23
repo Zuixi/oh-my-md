@@ -20,7 +20,7 @@ function treeProps(rows = [file()]) {
 }
 
 function startRename(name = "doc.md"): HTMLInputElement {
-  fireEvent.contextMenu(screen.getByRole("button", { name }))
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name }))
   fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
   return screen.getByRole<HTMLInputElement>("textbox", { name: "Rename" })
 }
@@ -81,7 +81,7 @@ describe("文件树原地重命名", () => {
     fireEvent.keyDown(input, { key: "Escape" })
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(props.onRename).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "drafts" }))
+    expect(document.activeElement).toBe(screen.getByRole("treeitem", { name: "drafts" }))
   })
 
   it("失焦保留草稿，不打开文件，也不触发全局快捷键", () => {
@@ -110,13 +110,13 @@ describe("文件树原地重命名", () => {
     const props = treeProps([file(), file("other.md"), directory])
     render(<FileTree {...props} />)
     fireEvent.change(startRename(), { target: { value: "draft.md" } })
-    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(props.onOpenFile).toHaveBeenCalledWith("/notes/other.md")
     expect(props.onRename).not.toHaveBeenCalled()
 
     fireEvent.change(startRename(), { target: { value: "draft.md" } })
-    fireEvent.click(screen.getByRole("button", { name: "drafts" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "drafts" }))
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(props.onToggleDir).toHaveBeenCalledWith("/notes/drafts")
     expect(props.onRename).not.toHaveBeenCalled()
@@ -126,7 +126,7 @@ describe("文件树原地重命名", () => {
     const props = treeProps([file(), file("other.md")])
     const view = render(<FileTree {...props} />)
     fireEvent.change(startRename(), { target: { value: "draft.md" } })
-    fireEvent.contextMenu(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(props.onRename).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
@@ -144,7 +144,7 @@ describe("文件树原地重命名", () => {
     render(<FileTree {...props} onEditError={onEditError} />)
     fireEvent.change(startRename(), { target: { value: "taken.md" } })
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename" }), { key: "Enter" })
-    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(props.onOpenFile).toHaveBeenCalledWith("/notes/other.md")
     await act(async () => { fail(new Error("path already exists")) })
@@ -160,7 +160,7 @@ describe("文件树原地重命名", () => {
     const onEditError = vi.fn()
     render(<FileTree {...props} onEditError={onEditError} />)
     fireEvent.keyDown(startRename(), { key: "Enter" })
-    const nextRow = screen.getByRole("button", { name: "other.md" })
+    const nextRow = screen.getByRole("treeitem", { name: "other.md" })
     nextRow.focus()
     fireEvent.click(nextRow)
     await act(async () => { complete("/notes/renamed.md") })
@@ -268,7 +268,7 @@ describe("文件树原地重命名", () => {
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     expect(screen.queryByRole("status")?.textContent ?? "").not.toMatch(/no longer available/)
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: "renamed.md" })))
+      expect(document.activeElement).toBe(screen.getByRole("treeitem", { name: "renamed.md" })))
   })
 
   it("提交期间用户移到其他输入框，完成后不抢回焦点", async () => {

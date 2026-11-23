@@ -362,6 +362,11 @@ export default function App(props: AppProps) {
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
     paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
+  // Keyboard isolation (UX-01) covers real dialogs only: the search panel is a
+  // side panel, so `Cmd+W` keeps closing tabs while it is open.
+  const dialogOpenRef = useRef(false)
+  dialogOpenRef.current =
+    settingsOpen || aboutOpen || history.state.open || paletteOpen || quickOpenState.open
   const openingLabelRef = useRef<string | null>(null)
   openingLabelRef.current = openingLabel
   const cancelOpeningRef = useRef(openCoordinator.cancelOpening)
@@ -376,6 +381,7 @@ export default function App(props: AppProps) {
     openingLabelRef,
     cancelOpeningRef,
     isModalChromeOpen: () => modalChromeOpenRef.current,
+    isDialogOpen: () => dialogOpenRef.current,
     togglePalette: () => setPaletteOpen(open => !open),
   })
 

@@ -1,8 +1,10 @@
 [package]
 name = "omd"
 version = "0.1.5"
-description = "A Tauri App"
-authors = ["you"]
+description = "Cross-platform Markdown editor with CodeMirror 6 live preview"
+authors = ["zuixi"]
+license = "Apache-2.0"
+repository = "https://github.com/Zuixi/oh-my-md"
 edition = "2021"
 # `cargo run` picks the app, not the `export-smoke` helper binary.
 default-run = "omd"

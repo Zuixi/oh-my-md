@@ -149,7 +149,6 @@ export const zh: Record<string, string> = {
   "largeDoc.safeMode": "超大文档（{lines} 行）：实时预览采用渐进渲染（视口优先，滚动逐步补齐），字数统计需手动刷新。",
   "largeDoc.readonly": "超大文档（{lines} 行）已按只读实时预览打开。滚动浏览时解析树会占用数倍于文件的内存。如需编辑，建议先拆分文件。",
   "largeDoc.dismiss": "知道了",
-  "statusbar.status.idle": "",
   "statusbar.status.saving": "保存中",
   "statusbar.status.saveFailed": "保存失败",
   "statusbar.status.conflict": "冲突",
@@ -164,6 +163,7 @@ export const zh: Record<string, string> = {
   "outline.preview.hint": "点击展开",
   "outline.empty": "无标题",
 
+  "topbar.aria.tabs": "打开的文档",
   "topbar.aria.showSidebar": "显示侧边栏",
   "topbar.title.showSidebar": "显示侧边栏（{shortcut}）",
   "topbar.title.untitled": "未命名",
@@ -191,6 +191,7 @@ export const zh: Record<string, string> = {
   "about.platform.linux": "Linux",
   "about.close": "关闭",
 
+  "sidebar.files": "文件",
   "filetree.title.fallback": "文件",
   "filetree.aria.hideSidebar": "隐藏侧边栏",
   "filetree.title.hideSidebar": "隐藏侧边栏（{shortcut}）",

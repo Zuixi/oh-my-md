@@ -3,9 +3,11 @@ import { useEditorStatus, type EditorStatusStore } from "./editorStatusStore"
 
 export type SaveStatus = "idle" | "saving" | "save failed" | "conflict"
 
-function saveStatusDisplay(status: SaveStatus, t: (key: string) => string): string {
+/** `idle` renders nothing (the caller filters it), so it has no label key. */
+type VisibleSaveStatus = Exclude<SaveStatus, "idle">
+
+function saveStatusDisplay(status: VisibleSaveStatus, t: (key: string) => string): string {
   switch (status) {
-    case "idle": return t("statusbar.status.idle")
     case "saving": return t("statusbar.status.saving")
     case "save failed": return t("statusbar.status.saveFailed")
     case "conflict": return t("statusbar.status.conflict")

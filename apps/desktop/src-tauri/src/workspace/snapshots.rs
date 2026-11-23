@@ -52,9 +52,20 @@ fn valid_snapshot_name(file_name: &str) -> bool {
         && stem.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// `(file name, size)` for every snapshot in `dir`, ascending by timestamp
-/// name. Entries that are not snapshots are skipped (never offered to the
-/// user); [`cleanup_staging_files`] removes them during a write.
+/// Numeric timestamp of a snapshot file name (`"1700000000000.md"` → the
+/// millis). Anything else sorts as the oldest possible stamp.
+fn snapshot_stamp(file_name: &str) -> u128 {
+    file_name
+        .strip_suffix(&format!(".{SNAPSHOT_EXTENSION}"))
+        .and_then(|stem| stem.parse::<u128>().ok())
+        .unwrap_or(0)
+}
+
+/// `(file name, size)` for every snapshot in `dir`, ascending by timestamp.
+/// Comparison is numeric: lexical order puts `9.md` after `10.md`, which would
+/// rotate the wrong entry once a stamp loses a digit. Entries that are not
+/// snapshots are skipped (never offered to the user);
+/// [`cleanup_staging_files`] removes them during a write.
 fn snapshot_files(dir: &Path) -> Result<Vec<(String, u64)>, String> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
@@ -68,7 +79,7 @@ fn snapshot_files(dir: &Path) -> Result<Vec<(String, u64)>, String> {
         }
         files.push((name, metadata.len()));
     }
-    files.sort();
+    files.sort_by_key(|(name, _)| snapshot_stamp(name));
     Ok(files)
 }
 
@@ -98,8 +109,7 @@ fn next_snapshot_stamp(dir: &Path, millis: u128) -> u128 {
     let newest = snapshot_files(dir)
         .unwrap_or_default()
         .iter()
-        .filter_map(|(name, _)| name.strip_suffix(".md"))
-        .filter_map(|stem| stem.parse::<u128>().ok())
+        .map(|(name, _)| snapshot_stamp(name))
         .max();
     match newest {
         Some(newest) if newest >= millis => newest + 1,
@@ -111,8 +121,9 @@ fn rotate_snapshots(dir: &Path) -> Result<(), String> {
     cleanup_staging_files(dir);
     let mut files = snapshot_files(dir)?;
     let mut total: u64 = files.iter().map(|(_, size)| *size).sum();
-    // Timestamp names sort chronologically. The newest snapshot is never
-    // evicted: it is the copy that just proved it fits the per-file cap.
+    // `snapshot_files` sorted numerically, so index 0 is the oldest. The newest
+    // snapshot is never evicted: it is the copy that just proved it fits the
+    // per-file cap.
     while files.len() > 1
         && (files.len() > MAX_SNAPSHOTS_PER_FILE || total > MAX_SNAPSHOT_DIR_BYTES)
     {
@@ -192,8 +203,9 @@ pub fn list_snapshots(
             })
         })
         .collect();
-    // Newest first for the history list.
-    entries.sort_by(|a, b| b.file_name.cmp(&a.file_name));
+    // `snapshot_files` is oldest-first, so reversing yields newest-first for
+    // the history list without a second (lexical) comparison.
+    entries.reverse();
     Ok(entries)
 }
 
@@ -272,6 +284,25 @@ mod tests {
         assert!(!valid_snapshot_name("1.md.exe"));
         assert!(!valid_snapshot_name(".md"));
         assert!(!valid_snapshot_name("12345678901234567890.md"));
+    }
+
+    #[test]
+    fn snapshot_files_sort_numerically_not_lexicographically() {
+        let root = tmp("numeric-sort");
+        let dir = root.join("snaps");
+        fs::create_dir_all(&dir).unwrap();
+        for stamp in ["9", "10", "100"] {
+            fs::write(dir.join(format!("{stamp}.md")), "snapshot").unwrap();
+        }
+
+        let names: Vec<String> = snapshot_files(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+
+        assert_eq!(names, vec!["9.md", "10.md", "100.md"]);
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -1,24 +1,32 @@
 import { LanguageDescription, LanguageSupport, StreamLanguage, type StreamParser } from "@codemirror/language"
 import { css } from "@codemirror/lang-css"
+import { markdown } from "@codemirror/lang-markdown"
 import { html } from "@codemirror/lang-html"
 import { javascript } from "@codemirror/lang-javascript"
 
 /**
- * lang-markdown 的嵌套代码语言表：fence info 的语言 token 命中后，代码内容由
- * 对应 Lezer 语法解析（编辑态原生高亮的来源）。全部懒加载；CSS / HTML /
- * JavaScript 已由 Markdown/HTML 依赖链静态加载，直接复用以避免无效动态分块警告。
+ * Fenced-code language table for `lang-markdown`: when a fence's info token
+ * matches, its content is parsed by that Lezer grammar (the source of native
+ * highlighting while editing). Entries load on demand. CSS / HTML / JavaScript
+ * are imported statically because `@codemirror/lang-markdown` already pulls
+ * them in for nested fences, so a dynamic import here would only produce a
+ * "dynamically imported but also statically imported" warning.
  *
- * 两级来源：
- * 1. 官方 `@codemirror/lang-*` 包（首选，精确 grammar）；
- * 2. `@codemirror/legacy-modes` 的 StreamParser（`StreamLanguage.define`）——
- *    覆盖没有独立 Lezer 包的高频语言（Go / Ruby / Shell / C# / Kotlin …）。
+ * Two sources:
+ * 1. the official `@codemirror/lang-*` packages (preferred: exact grammar);
+ * 2. `@codemirror/legacy-modes` StreamParsers (`StreamLanguage.define`) for the
+ *    frequent languages without their own Lezer package (Go / Ruby / Shell /
+ *    C# / Kotlin …).
  *
- * Shiki 的 60+ 语言渲染态高亮不受影响 —— 两套体系各管一态：渲染态 CodeWidget 用
- * Shiki，编辑态原生行用这套。两侧 token 必须尽量对齐（否则同一段代码在光标进出时
- * 一半有高亮一半没有）：`shiki/languages.ts` 的 LANGUAGE_ALIASES 里出现的写法
- * （`sh` / `cs` / `rb` / `kt` / `ps1` / `dockerfile` / `svg` …）都要能在本表命中。
- * 仍无对应实现的缺口（terraform / graphql / tex / vim）只影响编辑态：渲染态由
- * Shiki 侧负责，测试用显式缺口清单守住这份差异，见 docs/memory/gotchas-engine.md。
+ * Shiki's 60+ language rendered-state highlighting is unaffected — the two
+ * systems own one state each: rendered `CodeWidget`s use Shiki, the editing
+ * line uses this table. Tokens must stay aligned on both sides (otherwise the
+ * same code is highlighted half the time as the caret enters and leaves):
+ * every spelling in `shiki/languages.ts`'s LANGUAGE_ALIASES (`sh` / `cs` / `rb`
+ * / `kt` / `ps1` / `dockerfile` / `svg` …) must resolve here. Gaps with no
+ * implementation (terraform / graphql / tex / vim) only affect the editing
+ * state — the rendered state is Shiki's job, and a test keeps that difference
+ * honest with an explicit gap list; see docs/memory/gotchas-engine.md.
  */
 /** 单例：同一个描述实例的 load() 完成后，已构建的 codeParser 闭包才能读到
  * support（换成真实 parser）。测试/宿主可用 preloadMarkdownCodeLanguages 预热。 */
@@ -91,7 +99,7 @@ export function markdownCodeLanguages(): LanguageDescription[] {
     }),
     LanguageDescription.of({
       name: "Markdown", alias: ["md", "mdx"], extensions: ["md"],
-      load: async () => (await import("@codemirror/lang-markdown")).markdown(),
+      load: async () => markdown(),
     }),
 
     // --- legacy-modes：没有独立 Lezer 包的高频语言 -----------------------------

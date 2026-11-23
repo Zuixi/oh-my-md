@@ -7,7 +7,7 @@ for (const theme of ["light", "dark"]) {
     page.on("pageerror", error => errors.push(error.message))
     page.on("dialog", dialog => { errors.push("unexpected browser dialog"); void dialog.dismiss() })
     await page.goto(`/e2e/filetree-harness.html?theme=${theme}`)
-    const row = page.getByRole("button", { name: "中文 草稿.md", exact: true })
+    const row = page.getByRole("treeitem", { name: "中文 草稿.md", exact: true })
     const nameBefore = await row.locator(".filetree-name").boundingBox()
     await row.click({ button: "right" })
     await page.getByRole("menuitem", { name: "New File", exact: true }).click()
@@ -27,7 +27,7 @@ for (const theme of ["light", "dark"]) {
     await input.fill("layout.md")
     await input.press("Escape")
     await expect(input).toHaveCount(0)
-    await expect(page.getByRole("button", { name: "layout.md", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("treeitem", { name: "layout.md", exact: true })).toHaveCount(0)
     // Root creation scrolls to the list end; Escape returns focus to the tree
     // instead of leaving it on <body>, and writes nothing.
     await expect(page.getByRole("tree")).toBeFocused()
@@ -40,7 +40,7 @@ test("长列表末尾新建文件：草稿滚动可见，落盘后选中并 reve
   const tree = page.getByRole("tree")
   expect(await tree.evaluate(element => element.scrollTop)).toBe(0)
 
-  await page.getByRole("button", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
+  await page.getByRole("treeitem", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
   await page.getByRole("menuitem", { name: "New File", exact: true }).click()
   const input = page.getByRole("textbox", { name: "New file name", exact: true })
   await expect(input).toBeFocused()
@@ -50,7 +50,7 @@ test("长列表末尾新建文件：草稿滚动可见，落盘后选中并 reve
 
   await input.fill("zz-new.md")
   await input.press("Enter")
-  const created = page.getByRole("button", { name: "zz-new.md", exact: true })
+  const created = page.getByRole("treeitem", { name: "zz-new.md", exact: true })
   await expect(created).toBeVisible()
   await expect(created).toBeInViewport()
   await expect(created).toHaveClass(/is-selected/)
@@ -60,18 +60,18 @@ test("长列表末尾新建文件：草稿滚动可见，落盘后选中并 reve
 
 test("折叠目录新建文件夹：先展开，草稿在子级末尾缩进渲染，落盘后选中并聚焦", async ({ page }) => {
   await page.goto("/e2e/filetree-harness.html")
-  const drafts = page.getByRole("button", { name: "drafts", exact: true })
+  const drafts = page.getByRole("treeitem", { name: "drafts", exact: true })
   await expect(drafts).toHaveAttribute("aria-expanded", "false")
 
   await drafts.click({ button: "right" })
   await page.getByRole("menuitem", { name: "New Folder", exact: true }).click()
   await expect(drafts).toHaveAttribute("aria-expanded", "true")
-  await expect(page.getByRole("button", { name: "draft-b.md", exact: true })).toBeVisible()
+  await expect(page.getByRole("treeitem", { name: "draft-b.md", exact: true })).toBeVisible()
 
   const input = page.getByRole("textbox", { name: "New folder name", exact: true })
   await expect(input).toBeFocused()
   await expect(input).toHaveValue("untitled-folder")
-  const lastChild = page.getByRole("button", { name: "draft-b.md", exact: true })
+  const lastChild = page.getByRole("treeitem", { name: "draft-b.md", exact: true })
   const childName = await lastChild.locator(".filetree-name").boundingBox()
   const draftBox = await input.boundingBox()
   expect(draftBox!.x).toBe(childName!.x)
@@ -79,7 +79,7 @@ test("折叠目录新建文件夹：先展开，草稿在子级末尾缩进渲�
 
   await input.fill("ideas")
   await input.press("Enter")
-  const created = page.getByRole("button", { name: "ideas", exact: true })
+  const created = page.getByRole("treeitem", { name: "ideas", exact: true })
   await expect(created).toBeVisible()
   await expect(created).toBeFocused()
   await expect(created).toHaveClass(/is-selected/)
@@ -89,12 +89,12 @@ test("折叠目录新建文件夹：先展开，草稿在子级末尾缩进渲�
 
 test("失焦取消新建，点击树外不产生任何行", async ({ page }) => {
   await page.goto("/e2e/filetree-harness.html")
-  await page.getByRole("button", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
+  await page.getByRole("treeitem", { name: "中文 草稿.md", exact: true }).click({ button: "right" })
   await page.getByRole("menuitem", { name: "New File", exact: true }).click()
   const input = page.getByRole("textbox", { name: "New file name", exact: true })
   await expect(input).toBeFocused()
   await input.fill("canceled.md")
   await page.getByRole("button", { name: "Outside the tree" }).click()
   await expect(input).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "canceled.md", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("treeitem", { name: "canceled.md", exact: true })).toHaveCount(0)
 })

@@ -206,7 +206,9 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }))
     expect(onClose).toHaveBeenCalledOnce()
 
-    fireEvent.keyDown(window, { key: "Escape" })
+    // Key events reach the dialog through the document, exactly like a real
+    // keypress on the focused control inside it.
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
     expect(onClose).toHaveBeenCalledTimes(2)
   })
 

@@ -661,3 +661,37 @@ recovery keys it claimed so the crash prompt only sees real orphans. Two traps:
 - A dirty buffer adopted onto a file tab whose file is missing must degrade to an untitled
   tab, never to a dropped buffer; and a claimed draft is re-armed under the tab's own
   `recoveryKey` before its source record is deleted, or a crash right after restore loses it.
+
+## A React `autoFocus` inside a Dialog steals the opener (2026-11)
+
+`Dialog` records `document.activeElement` when it opens so it can hand focus back on close.
+React applies `autoFocus` during the commit phase — before any effect runs — so an input with
+`autoFocus` inside the dialog is already focused when the opener is captured: the dialog then
+"restores" focus to an unmounted input and the real trigger keeps nothing. The palette and
+quick-open inputs therefore carry no `autoFocus`; initial focus belongs to `Dialog`
+(`initialFocusRef` → `[autofocus]` → first focusable). Same class of bug exists in the Tab
+trap: the focusable selector is OR-ed, so every clause needs its own
+`:not([tabindex="-1"])` — `button:not(:disabled)` alone puts the palette's roving option rows
+back into the Tab cycle.
+
+## Chromium applies `inert` at style resolution, not synchronously (2026-11)
+
+Background `inert` is the correct way to take the shell out of the tab/hit-test order while a
+modal is open, but removing the attribute and calling `opener.focus()` in the same task can
+drop the focus call when the opener lives inside the region that was inert (topbar, sidebar):
+Blink recomputes inertness when styles are resolved, i.e. after the task. `Dialog` therefore
+retries once on `requestAnimationFrame` when `document.activeElement` did not become the
+opener, and skips the retry when the node is detached or still inside an `[inert]` subtree.
+The happy-dom unit test still sees the synchronous restore (no layout engine, no retry).
+
+## `manualChunks` patterns must match resolved ids, not export-map specifiers (2026-11)
+
+`shiki/langs/cpp.mjs` resolves to `…/node_modules/shiki/dist/langs/cpp.mjs`, so a rule written
+against `/shiki/langs/` never fires and every grammar lands in `vendor-shiki-core` — a 3.4 MB
+chunk (verified by probing `manualChunks` ids during a build). Match both spellings
+(`/shiki/(dist/)?langs/`, `@shikijs/langs`) and keep the same discipline for the other lazy
+families: `@codemirror/lang-*`, `@codemirror/legacy-modes`, the per-language `@lezer/*`
+grammars, and KaTeX's `?inline` fonts. `viteChunks.ts` is the single owner of that routing and
+`test/viteChunks.test.ts` pins it; the eager chunks (`index`, `vendor-react`,
+`vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) stay under the 700 kB budget while the
+lazy `cpp` grammar sits just under `chunkSizeWarningLimit`.

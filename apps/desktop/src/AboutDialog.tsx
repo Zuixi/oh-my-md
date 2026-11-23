@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react"
 import { currentPlatform } from "./platform"
 import { useT } from "./i18n"
+import { Dialog } from "./Dialog"
 import type { DesktopServices } from "./desktopServices"
 
 /**
  * Minimal About dialog for the in-app Help menu (non-macOS; macOS covers this
  * with the native app menu's PredefinedMenuItem::about). Version comes from
  * the Rust `app_version` command so the dialog cannot drift from the bundle.
+ *
+ * Focus trap, fixed positioning and Escape belong to `Dialog`; this component
+ * only renders the content.
  */
 export function AboutDialog(props: {
   isOpen: boolean
@@ -25,41 +29,25 @@ export function AboutDialog(props: {
     )
   }, [props.isOpen, props.services])
 
-  useEffect(() => {
-    if (!props.isOpen) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation()
-        props.onClose()
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [props.isOpen, props.onClose])
-
-  if (!props.isOpen) return null
-
   return (
-    <div className="modal-backdrop" onClick={props.onClose}>
-      <div
-        className="settings-modal about-modal"
-        role="dialog"
-        aria-label={t("about.title")}
-        onClick={event => event.stopPropagation()}
-      >
-        <div className="about-body">
-          <h2 className="about-name">oh-my-md</h2>
-          <p className="about-version">
-            {version === null ? t("about.version", { version: "…" }) : t("about.version", { version })}
-          </p>
-          <p className="about-platform">{t(`about.platform.${currentPlatform()}`)}</p>
-        </div>
-        <div className="about-actions">
-          <button type="button" className="about-close-btn" onClick={props.onClose}>
-            {t("about.close")}
-          </button>
-        </div>
+    <Dialog
+      isOpen={props.isOpen}
+      onClose={props.onClose}
+      ariaLabelledBy="about-dialog-title"
+      className="about-dialog"
+    >
+      <div className="about-body">
+        <h2 className="about-name" id="about-dialog-title">oh-my-md</h2>
+        <p className="about-version">
+          {version === null ? t("about.version", { version: "…" }) : t("about.version", { version })}
+        </p>
+        <p className="about-platform">{t(`about.platform.${currentPlatform()}`)}</p>
       </div>
-    </div>
+      <div className="about-actions">
+        <button type="button" className="about-close-btn" onClick={props.onClose}>
+          {t("about.close")}
+        </button>
+      </div>
+    </Dialog>
   )
 }

@@ -429,6 +429,19 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 
 **已知限制（i18n）**：错误 toast 的错误详情后缀（errorMessage 拼接的 error message，如 `File not found`）、保存冲突横幅动作标签（Compare/Overwrite/Save copy…）、以及持久化/跳过标记状态横幅（DURABILITY_WARNING/SKIPPED_MARKERS_STATUS）在 zh 下仍为英文——这些是模块级常量、Rust/JS 异常文本或测试断言钉住的文案，需独立重构，不在本次 i18n 范围内。（toast 前缀与 notify.* 成功文案均随 i18n 提供 zh。）
 
+## 可访问性与键盘（A11Y / UX-01，2026-11）
+
+- [ ] **对话框焦点**：依次打开 Settings / About / 版本历史 / 命令面板（⌘⇧P）/ Quick Open（⌘P）→ 焦点落在对话框内第一个可操作控件；Tab 与 Shift+Tab 只在对话框内循环（命令面板/Quick Open 的 Tab 停在输入框，不逐行走 200 项）。
+- [ ] **焦点归还**：Esc 关闭对话框后焦点回到打开它的控件（顶栏齿轮、菜单触发的对话框回到原焦点；面板回到编辑器）。
+- [ ] **背景 inert**：对话框打开时点击/用 VoiceOver 浏览顶栏与侧边栏无反应（元素带 `inert`）；关闭后立即恢复。
+- [ ] **Escape 优先级**：设置里打开字体选择器时按 Esc 只收下拉（对话框不关）；再按 Esc 才关对话框。
+- [ ] **快捷键隔离**：Settings / 命令面板 / Quick Open / 版本历史打开时按 ⌘W、⌘N、⌘O、⌘S、⌘F、⌘H、⌘⇧F、⌘\\ 均不改变文档或标签；⌘,、⌘P、⌘⇧P 仍可切换浮层。
+- [ ] **文件树键盘**：Tab 进入文件树只有一行获得焦点（roving tabindex）；↑/↓ 移动、Home/End 到首末、→ 展开目录或进入首个子项、← 折叠或跳回父级；焦点行有可见高亮，VoiceOver 播报层级与展开状态（`aria-level` / `aria-expanded` / `aria-selected`）。
+- [ ] **文件树右键菜单**：Shift+F10 或菜单键在焦点行打开菜单，↑/↓ 在菜单项间移动，Esc 关闭并把焦点还给该行；在窗口右下角打开（鼠标右键贴边或 Shift+F10 于底部行）时菜单完全留在视口内，不被裁切。
+- [ ] **标签条语义**：标签为 `role=tab`（`aria-selected`），←/→/Home/End 在标签间移动并激活；每个标签的关闭按钮是独立 `<button>`，Tab 可达、VoiceOver 读作「关闭标签页」，与标签本体不嵌套（无 interactive-in-interactive 告警）。
+- [ ] **`<html lang>`**：切到中文后 devtools 中 `<html lang="zh-CN">`，切回英文为 `en`；VoiceOver/NVDA 用对应语言的发音规则。
+- [ ] **真实浏览器套件**：`PW_PORT=9435 pnpm --filter @omd/desktop exec playwright test e2e/a11y-ergonomics.spec.ts e2e/ime-and-inline-boundaries.spec.ts` 全绿（焦点陷阱、inert、IME Enter 守卫、树导航、菜单夹取、IME 合成与行内边界）。
+
 ## 自动化验证命令
 - 引擎单测：`pnpm test`
 - Desktop 类型检查与自动化：`pnpm --filter @omd/desktop test`

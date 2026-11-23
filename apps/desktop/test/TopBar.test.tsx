@@ -40,7 +40,7 @@ describe("TopBar", () => {
       />,
     )
 
-    const tabs = screen.getAllByRole("button", { name: /alpha\.md|beta\.md|unnamed/ })
+    const tabs = screen.getAllByRole("tab", { name: /alpha\.md|beta\.md|unnamed/ })
     expect(tabs).toHaveLength(3)
 
     const activeTab = tabs[0]
@@ -67,7 +67,7 @@ describe("TopBar", () => {
       />,
     )
 
-    const tabs = screen.getAllByRole("button", { name: /alpha\.md|beta\.md|unnamed/ })
+    const tabs = screen.getAllByRole("tab", { name: /alpha\.md|beta\.md|unnamed/ })
     fireEvent.click(tabs[1])
     expect(onFocusTab).toHaveBeenCalledWith(2)
 

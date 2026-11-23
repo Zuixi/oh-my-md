@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, type KeyboardEvent } from "react"
 import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
 import { baseName, pathWithinDir, relativeToDir } from "./workspace"
@@ -35,6 +35,31 @@ export function TopBar(props: {
 
   const breadcrumb = buildBreadcrumb(props.workspace, props.filePath)
 
+  // Arrow keys move the roving tab stop across the strip (WAI-ARIA tabs).
+  // Focus is moved imperatively first: the button identities survive the
+  // activation re-render, so the newly focused tab keeps focus.
+  const handleTabsKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const ids = props.tabs.map(tab => tab.id)
+    if (ids.length === 0) return
+    const currentIndex = Math.max(0, ids.indexOf(props.activeId))
+    const lastIndex = ids.length - 1
+    let nextIndex: number
+    switch (event.key) {
+      case "ArrowLeft": nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1; break
+      case "ArrowRight": nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1; break
+      case "Home": nextIndex = 0; break
+      case "End": nextIndex = lastIndex; break
+      default: return
+    }
+    event.preventDefault()
+    const nextId = ids[nextIndex]
+    if (nextId === undefined) return
+    const buttons = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
+    buttons[nextIndex]?.focus()
+    props.onFocusTab(nextId)
+  }
+
   return (
     <header className="topbar" data-tauri-drag-region="">
       {!props.sidebarOpen && props.onToggleSidebar ? (
@@ -52,51 +77,59 @@ export function TopBar(props: {
         </div>
       ) : null}
       <div className="topbar-tabs-wrap" data-tauri-drag-region="">
-        <div className="topbar-tabs" data-tauri-drag-region="">
+        <div
+          className="topbar-tabs"
+          role="tablist"
+          aria-label={t("topbar.aria.tabs")}
+          data-tauri-drag-region=""
+          onKeyDown={handleTabsKeyDown}
+        >
           {props.tabs.map(tab => {
             const isActive = tab.id === props.activeId
             const isDirty = props.dirtyIds.includes(tab.id)
             const hasConflict = props.conflictIds.includes(tab.id)
             const path = sessionPath(tab)
             return (
-              <button
-                key={tab.id}
-                type="button"
-                ref={isActive ? activeTabRef : undefined}
-                className={isActive ? "tab is-active" : "tab"}
-                onClick={() => props.onFocusTab(tab.id)}
-                title={path ?? t("topbar.title.untitled")}
-              >
-                <FileText size={13} className="tab-icon" aria-hidden="true" />
-                <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
-                  {sessionLabel(tab)}
-                </span>
-                {isDirty ? (
-                  <span
-                    className="tab-dirty"
-                    aria-label={isActive ? t("topbar.aria.unsaved") : undefined}
-                  >
-                    •
+              // The close control is a sibling, never a child: interactive
+              // content may not nest inside another button (WCAG 4.1.2).
+              <div key={tab.id} className={isActive ? "tab-slot is-active" : "tab-slot"}>
+                <button
+                  type="button"
+                  ref={isActive ? activeTabRef : undefined}
+                  role="tab"
+                  aria-selected={isActive}
+                  tabIndex={isActive ? 0 : -1}
+                  className={isActive ? "tab is-active" : "tab"}
+                  onClick={() => props.onFocusTab(tab.id)}
+                  title={path ?? t("topbar.title.untitled")}
+                >
+                  <FileText size={13} className="tab-icon" aria-hidden="true" />
+                  <span className={isActive ? "tab-title topbar-file" : "tab-title"}>
+                    {sessionLabel(tab)}
                   </span>
-                ) : null}
-                {hasConflict ? (
-                  <span className="tab-conflict" aria-label={t("topbar.aria.conflict")}>
-                    !
-                  </span>
-                ) : null}
-                <span
-                  role="button"
-                  tabIndex={-1}
+                  {isDirty ? (
+                    <span
+                      className="tab-dirty"
+                      aria-label={isActive ? t("topbar.aria.unsaved") : undefined}
+                    >
+                      •
+                    </span>
+                  ) : null}
+                  {hasConflict ? (
+                    <span className="tab-conflict" aria-label={t("topbar.aria.conflict")}>
+                      !
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
                   className="tab-close"
                   aria-label={t("topbar.aria.closeTab")}
-                  onClick={event => {
-                    event.stopPropagation()
-                    props.onCloseTab(tab.id)
-                  }}
+                  onClick={() => props.onCloseTab(tab.id)}
                 >
                   <X size={12} aria-hidden="true" />
-                </span>
-              </button>
+                </button>
+              </div>
             )
           })}
         </div>

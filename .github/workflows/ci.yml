@@ -139,11 +139,32 @@ jobs:
       - run: pnpm --filter @omd/desktop exec playwright install chromium --with-deps
       - run: pnpm --filter @omd/desktop test:e2e
 
+  # Advisories are reported, not enforced (TOOL-01): a freshly published advisory
+  # has no fix on the day it lands, so blocking every PR would only teach people
+  # to ignore the job. Failures are visible in the run summary and release prep
+  # must check them before tagging.
+  audit:
+    name: Dependency audit (advisory)
+    needs: changes
+    if: ${{ needs.changes.outputs.desktop == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-pnpm
+      - name: Audit JavaScript dependencies
+        run: pnpm audit --audit-level high
+      - name: Audit Rust dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --manifest-path apps/desktop/src-tauri/Cargo.toml
+
   # Merged former `rust` and `link` jobs: they shared the same setup (toolchain,
   # Linux system deps, rust cache, pnpm install, frontend build), and cargo test
   # + cargo build reuse one dependency compilation instead of two full jobs.
   rust:
-    name: Rust (fmt + test + link) ${{ matrix.os }}
+    name: Rust (fmt + clippy + test + link) ${{ matrix.os }}
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
     strategy:
@@ -162,11 +183,14 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: 1.87.0
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: ./.github/actions/setup-pnpm
       # `tauri::generate_context!` embeds `frontendDist`; build it so cargo test compiles.
       - run: pnpm --filter @omd/desktop build
       - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+      # Warnings are defects in a release branch: `-D warnings` keeps clippy a gate
+      # instead of a suggestion. Runs on every matrix OS (cfg-specific lints differ).
+      - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       # cargo test (test profile) never links the app binary; build.sh is the
       # link gate that catches stale-target/toolchain link failures.
