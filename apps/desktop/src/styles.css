@@ -52,8 +52,10 @@ html[data-theme="light"] {
   --omd-lightbox-bar-border: rgba(255, 255, 255, 0.1);
   --omd-lightbox-btn-hover: rgba(255, 255, 255, 0.14);
   --omd-lightbox-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.65);
+  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.8);
   --omd-lightbox-hint-bg: rgba(20, 22, 28, 0.72);
+  /* Primary action button foreground: white on the light-theme link blue. */
+  --omd-btn-primary-fg: #ffffff;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -97,8 +99,11 @@ html[data-theme="dark"] {
   --omd-lightbox-bar-border: rgba(255, 255, 255, 0.1);
   --omd-lightbox-btn-hover: rgba(255, 255, 255, 0.14);
   --omd-lightbox-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.65);
+  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.8);
   --omd-lightbox-hint-bg: rgba(20, 22, 28, 0.72);
+  /* The dark link token is a light blue, so primary buttons need dark text to
+     clear 4.5:1 (white on it is only ~2.9:1). */
+  --omd-btn-primary-fg: #111111;
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
    fall back to inherited/initial values, so unthemed tokens stay correct. */
@@ -916,6 +921,8 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   -webkit-app-region: drag;
 }
 .topbar-tabs {
+  /* Anchor for the absolutely positioned tablist owner below. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -928,6 +935,15 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
 }
 .topbar-tabs::-webkit-scrollbar {
   display: none;
+}
+/* Empty layout-free tablist owner: it claims the tab buttons through
+   `aria-owns`, so the sibling close controls never sit directly inside
+   `role="tablist"`. Absolute so it adds no flex item, line box, or scroll
+   width to the strip. */
+.topbar-tablist-owner {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 .topbar-actions {
   display: flex;
@@ -1633,7 +1649,6 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   margin-left: auto;
   font-size: 10px;
   color: var(--omd-muted);
-  opacity: 0.8;
 }
 .sidebar-actions { display: flex; gap: 6px; font-weight: 400; }
 .sidebar-actions button, .search-panel .sidebar-title button {
@@ -1807,6 +1822,9 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   justify-content: center;
   z-index: 100;
   animation: omd-fade-in 0.12s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop { animation: none; }
 }
 .settings-modal {
   width: min(560px, 92vw);
@@ -2053,7 +2071,7 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
 .settings-btn-primary {
   border: none;
   background: var(--omd-link);
-  color: #fff;
+  color: var(--omd-btn-primary-fg);
 }
 .settings-btn-primary:hover {
   opacity: 0.9;
@@ -2204,7 +2222,7 @@ dialog.media-lightbox {
   height: 100vh;
   max-width: none;
   max-height: none;
-  background: transparent;
+  background: var(--omd-lightbox-backdrop);
   color: var(--omd-lightbox-fg);
   overflow: hidden;
   user-select: none;
@@ -2224,7 +2242,7 @@ dialog.media-lightbox:modal {
   overscroll-behavior: contain;
 }
 dialog.media-lightbox::backdrop {
-  background: var(--omd-lightbox-backdrop);
+  background: transparent;
   backdrop-filter: blur(4px);
   overflow: hidden;
   overscroll-behavior: contain;

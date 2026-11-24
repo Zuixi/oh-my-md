@@ -254,6 +254,7 @@ function MediaLightboxDialog(props: {
           deltaX: Number.isFinite(event.deltaX) ? event.deltaX : 0,
           deltaY: Number.isFinite(event.deltaY) ? event.deltaY : 0,
           ctrlKey: Boolean(event.ctrlKey),
+          metaKey: Boolean(event.metaKey),
           deltaMode: Number.isFinite(event.deltaMode) ? event.deltaMode : 0,
         },
         focalX,
@@ -464,7 +465,7 @@ function MediaLightboxDialog(props: {
             type="button"
             className="media-lightbox-btn media-lightbox-zoom-readout"
             onClick={resetFit}
-            aria-label={t("lightbox.fit")}
+            aria-label={`${zoomUi.percent}% · ${t("lightbox.fit")}`}
             title={t("lightbox.fit")}
           >
             {zoomUi.percent}%

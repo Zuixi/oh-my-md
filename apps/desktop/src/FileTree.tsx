@@ -33,6 +33,10 @@ export function FileTree(props: {
 }) {
   const t = useT()
   const title = props.folder ? baseName(props.folder) : t("filetree.title.fallback")
+  // The shortcut hint is part of the control's visible text, so the accessible
+  // name has to contain it (WCAG 2.5.3 "label in name"); `aria-keyshortcuts`
+  // exposes the binding to assistive tech as well.
+  const searchShortcut = shortcutFor("search") ?? ""
   return (
     <aside className="filetree">
       <div className="sidebar-title">
@@ -56,11 +60,14 @@ export function FileTree(props: {
           type="button"
           className="filetree-search-btn"
           onClick={props.onSearch}
-          aria-label={t("filetree.aria.search")}
+          aria-label={t("filetree.aria.search", { shortcut: searchShortcut })}
+          aria-keyshortcuts={searchShortcut || undefined}
         >
           <Search size={13} className="filetree-search-icon" aria-hidden="true" />
           <span>{t("filetree.searchInFolder")}</span>
-          <kbd>{t("filetree.kbd.searchShortcut", { shortcut: shortcutFor("search") ?? "" })}</kbd>
+          <kbd aria-hidden="true">
+            {t("filetree.kbd.searchShortcut", { shortcut: searchShortcut })}
+          </kbd>
         </button>
       </div>
       {!props.folder ? (

@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright"
 import { expect, test, type Page } from "@playwright/test"
 
 // Real-Chromium user journeys against the full desktop <App> shell
@@ -38,6 +39,15 @@ const runMenuCommand = (page: Page, id: string): Promise<void> =>
 
 const appErrors = (page: Page): Promise<readonly string[]> =>
   page.evaluate(() => (window as unknown as AppTestWindow).__omdAppTest.errors())
+
+/** WCAG 2.0/2.1 Level A+AA rule set; `color-contrast` stays on (wcag2aa). */
+type AxeResults = Awaited<ReturnType<AxeBuilder["analyze"]>>
+const wcagScan = (builder: AxeBuilder): Promise<AxeResults> =>
+  builder.withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()
+const violationSummary = (violations: AxeResults["violations"]): string =>
+  violations
+    .map(v => `${v.id}: ${v.help} (${v.nodes.map(n => n.html).join(" | ")})`)
+    .join("\n")
 
 /** Load the harness and wait until the restored welcome document and tree render. */
 async function openHarness(page: Page): Promise<void> {
@@ -192,7 +202,16 @@ test("passes structural WCAG/ARIA ergonomics invariants across the live App shel
     if (tablists.length === 0) failures.push("no rendered tablist")
     let tabs = 0
     for (const list of tablists) {
-      for (const tab of list.querySelectorAll('[role="tab"]')) {
+      // The live tab strip keeps close buttons as siblings of each tab, so the
+      // tablist itself owns the tabs through `aria-owns` instead of DOM
+      // children. Fall back to descendant tabs for ordinary tablists.
+      const ownedIds = list.getAttribute("aria-owns")?.split(/\s+/).filter(Boolean) ?? []
+      const listTabs = ownedIds.length > 0
+        ? ownedIds
+            .map(id => document.getElementById(id))
+            .filter((el): el is HTMLElement => el !== null && el.getAttribute("role") === "tab")
+        : [...list.querySelectorAll('[role="tab"]')]
+      for (const tab of listTabs) {
         tabs += 1
         const selected = tab.getAttribute("aria-selected")
         if (selected !== "true" && selected !== "false") {
@@ -232,4 +251,60 @@ test("passes structural WCAG/ARIA ergonomics invariants across the live App shel
   expect(audit.buttons).toBeGreaterThan(0)
   expect(audit.tabs).toBeGreaterThan(0)
   expect(audit.treeitems).toBeGreaterThan(0)
+})
+
+test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings modal, and media lightbox", async ({ page }) => {
+  // Every surface below is the real <App>: axe sees the shipped markup, tokens
+  // and computed colors, so a token-level contrast regression fails here. The
+  // surface label keeps a failure attributable on whichever host runs the suite.
+  const violationsOf = async (surface: string, builder: AxeBuilder) => {
+    // Wait for finite entrance transitions (e.g. .modal-backdrop / dialog fade-in)
+    // to finish so axe samples steady-state opacity rather than an intermediate frame.
+    await page.evaluate(() =>
+      Promise.all(
+        document
+          .getAnimations()
+          .filter(anim => anim.effect?.getComputedTiming().iterations !== Infinity)
+          .map(anim => anim.finished.catch(() => undefined)),
+      ))
+    const { violations } = await wcagScan(builder)
+    expect(violations, `${surface}\n${violationSummary(violations)}`).toEqual([])
+  }
+
+  // Light shell. Only CodeMirror's contenteditable scroller is excluded: its
+  // syntax tokens are engine-owned, the surrounding chrome is audited in full
+  // (topbar, tablist, sidebar, tree, statusbar, buttons, color contrast).
+  await openHarness(page)
+  await expect(page.locator(".app.theme-light")).toBeVisible()
+  await violationsOf("light shell", new AxeBuilder({ page }).exclude(".cm-editor"))
+
+  // Settings modal is an in-page overlay, not a browser top layer.
+  await runMenuCommand(page, "preferences")
+  const settingsDialog = page.locator(".settings-modal")
+  await expect(settingsDialog).toBeVisible()
+  await violationsOf("settings modal", new AxeBuilder({ page }).include(".settings-modal"))
+  await page.keyboard.press("Escape")
+  await expect(settingsDialog).toHaveCount(0)
+
+  // MediaLightbox lives in the native <dialog> top layer.
+  await page.locator('.editor-host:not([hidden]) img.omd-image[alt="Sample diagram"]').click()
+  const lightbox = page.locator("dialog.media-lightbox")
+  await expect(lightbox).toBeVisible()
+  await violationsOf("media lightbox", new AxeBuilder({ page }).include("dialog.media-lightbox"))
+  await page.keyboard.press("Escape")
+  await expect(lightbox).toHaveCount(0)
+
+  // Dark shell: the harness seeds settings.theme from ?theme so the shell keeps
+  // dark instead of resolving the default "system" back to light.
+  await page.goto(`${HARNESS}?theme=dark`)
+  await expect(page.locator(".editor-host:not([hidden]) .cm-editor")).toBeVisible()
+  await expect(roadmapTreeItem(page)).toBeVisible()
+  await expect(page.locator(".app.theme-dark")).toBeVisible()
+  await violationsOf("dark shell", new AxeBuilder({ page }).exclude(".cm-editor"))
+
+  // Dark Settings modal: primary buttons flip to --omd-btn-primary-fg, so the
+  // dark contrast floor is asserted on the real overlay rather than by token.
+  await page.locator(".topbar").getByRole("button", { name: "Preferences" }).click()
+  await expect(page.getByRole("dialog", { name: "Preferences" })).toBeVisible()
+  await violationsOf("dark settings modal", new AxeBuilder({ page }).include(".settings-modal"))
 })

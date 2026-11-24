@@ -199,6 +199,33 @@ describe("MediaLightbox", () => {
     expect(document.querySelector("dialog.media-lightbox")).toBeNull()
   })
 
+  it("pans on a two-finger trackpad scroll and keeps Cmd+scroll as a zoom gesture", async () => {
+    render(
+      <MediaLightbox
+        target={{ kind: "image", src: "photo.png", resolvedSrc: "asset://photo.png", alt: "Photo", title: null }}
+        onClose={() => {}}
+      />,
+    )
+
+    const stage = document.querySelector<HTMLElement>(".media-lightbox-stage")!
+    const content = document.querySelector<HTMLElement>(".media-lightbox-content")!
+
+    // Small pixel deltas are a two-finger trackpad scroll: pan, never zoom.
+    fireEvent.wheel(stage, { deltaX: 0, deltaY: -10, clientX: 0, clientY: 0 })
+    // Wheel/wheel-pan writes coalesce into one rAF frame; zoom readout is synchronous.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    expect(screen.getByText("100%")).toBeTruthy()
+    expect(content.style.transform).toContain("translate3d(0px, 10px, 0)")
+
+    // Cmd+scroll zooms even with a small delta. happy-dom's WheelEvent extends
+    // UIEvent (real browsers extend MouseEvent), so `metaKey` must be attached
+    // explicitly to exercise the host's pass-through.
+    const cmdScroll = new WheelEvent("wheel", { deltaY: -10, bubbles: true, cancelable: true })
+    Object.defineProperty(cmdScroll, "metaKey", { value: true })
+    fireEvent(stage, cmdScroll)
+    expect(screen.queryByText("100%")).toBeNull()
+  })
+
   it("supports wheel zoom, pointer-drag pan without closing, and backdrop click to close", () => {
     const onClose = vi.fn()
     render(

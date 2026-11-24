@@ -79,11 +79,20 @@ export function TopBar(props: {
       <div className="topbar-tabs-wrap" data-tauri-drag-region="">
         <div
           className="topbar-tabs"
-          role="tablist"
-          aria-label={t("topbar.aria.tabs")}
           data-tauri-drag-region=""
           onKeyDown={handleTabsKeyDown}
         >
+          {/* The close control must stay a sibling of the tab button, but
+              WAI-ARIA 1.2 forbids `role="button"` children inside a tablist.
+              The tablist therefore lives in an empty, layout-free owner and
+              claims the tab buttons through `aria-owns` (same widget, no
+              banned direct children). */}
+          <div
+            className="topbar-tablist-owner"
+            role="tablist"
+            aria-label={t("topbar.aria.tabs")}
+            aria-owns={props.tabs.map(tab => `omd-tab-${tab.id}`).join(" ") || undefined}
+          />
           {props.tabs.map(tab => {
             const isActive = tab.id === props.activeId
             const isDirty = props.dirtyIds.includes(tab.id)
@@ -96,6 +105,7 @@ export function TopBar(props: {
                 <button
                   type="button"
                   ref={isActive ? activeTabRef : undefined}
+                  id={`omd-tab-${tab.id}`}
                   role="tab"
                   aria-selected={isActive}
                   tabIndex={isActive ? 0 : -1}

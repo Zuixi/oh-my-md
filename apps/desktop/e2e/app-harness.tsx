@@ -71,7 +71,11 @@ declare global {
 
 const params = new URLSearchParams(location.search)
 setLocale("en")
-document.documentElement.dataset.theme = params.get("theme") ?? "light"
+// `?theme=dark` must seed the persisted setting, not just the document attribute:
+// the shell resolves `theme: "system"` back to light, which would silently drop
+// dark mode before the first paint.
+const initialTheme: UserSettings["theme"] = params.get("theme") === "dark" ? "dark" : "light"
+document.documentElement.dataset.theme = initialTheme
 
 const disk = makeFakeDisk()
 disk.seed(WELCOME_PATH, WELCOME_DOC)
@@ -87,7 +91,7 @@ const snapshotsByPath = new Map<string, SeededSnapshot[]>([
 // Mutable in-memory host state: the app reads and writes it like the Tauri shard.
 const memory: { session: SavedSessionState | null; settings: UserSettings } = {
   session: null,
-  settings: { ...DEFAULT_SETTINGS },
+  settings: { ...DEFAULT_SETTINGS, theme: initialTheme },
 }
 // Effects register these once; the test handle drives them deterministically, so
 // a menu item behaves the same on macOS and Linux (no accelerator guessing).

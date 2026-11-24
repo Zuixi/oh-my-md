@@ -14,6 +14,11 @@ export const LIGHTBOX_KEY_PAN_PX = 60
 export const LIGHTBOX_STAGE_PADDING_PX = 96
 export const LIGHTBOX_CLICK_DRAG_THRESHOLD_PX = 4
 export const LIGHTBOX_MIN_VISIBLE_PX = 80
+/** Line-mode wheel deltas (`deltaMode === 1`) are reported in lines, not pixels. */
+export const LIGHTBOX_WHEEL_LINE_PX = 16
+/** Notched mouse wheels emit integer pixel deltas of at least this size; finer
+ *  or fractional deltas come from trackpads. */
+export const LIGHTBOX_MOUSE_WHEEL_MIN_DELTA_PX = 40
 
 export interface BoxSize {
   readonly width: number
@@ -24,6 +29,7 @@ export interface WheelGestureInput {
   readonly deltaX: number
   readonly deltaY: number
   readonly ctrlKey: boolean
+  readonly metaKey?: boolean
   readonly deltaMode: number
 }
 
@@ -74,9 +80,13 @@ export function wheelZoomScale(
 
 /**
  * Interpret wheel/trackpad gestures like Figma/Apple Preview:
- * - Trackpad pinch (`ctrlKey`) zooms smoothly with higher pinch sensitivity.
- * - Trackpad two-finger horizontal/diagonal pan (`deltaX !== 0` in pixel mode) pans.
- * - Vertical mouse wheel zooms anchored at the pointer.
+ * - Trackpad pinch (`ctrlKey`) and `Cmd+scroll` zoom with pinch sensitivity.
+ * - Line-mode wheels (`deltaMode !== 0`) zoom, scaled from lines to pixels.
+ * - Pixel-mode wheels with an integer, notched-sized vertical delta zoom at the
+ *   pointer; that signature never comes from a trackpad.
+ * - Everything else pans. A two-finger trackpad swipe reports `deltaX === 0` on
+ *   some frames and a tiny `deltaX` on others, so keying zoom purely off
+ *   `deltaX === 0` made one continuous swipe oscillate between zoom and pan.
  */
 export function applyWheelGesture(
   current: LightboxTransform,
@@ -84,23 +94,36 @@ export function applyWheelGesture(
   focalX: number,
   focalY: number,
 ): LightboxTransform {
-  if (gesture.ctrlKey) {
+  if (gesture.ctrlKey || gesture.metaKey) {
+    const dy = gesture.deltaMode === 1 ? gesture.deltaY * LIGHTBOX_WHEEL_LINE_PX : gesture.deltaY
     return zoomAtPoint(
       current,
-      wheelZoomScale(current.scale, gesture.deltaY, LIGHTBOX_PINCH_SENSITIVITY),
+      wheelZoomScale(current.scale, dy, LIGHTBOX_PINCH_SENSITIVITY),
       focalX,
       focalY,
     )
   }
-  if (Math.abs(gesture.deltaX) > 0 && gesture.deltaMode === 0) {
-    return panBy(current, -gesture.deltaX, -gesture.deltaY)
+  if (gesture.deltaMode !== 0) {
+    return zoomAtPoint(
+      current,
+      wheelZoomScale(current.scale, gesture.deltaY * LIGHTBOX_WHEEL_LINE_PX, LIGHTBOX_WHEEL_SENSITIVITY),
+      focalX,
+      focalY,
+    )
   }
-  return zoomAtPoint(
-    current,
-    wheelZoomScale(current.scale, gesture.deltaY, LIGHTBOX_WHEEL_SENSITIVITY),
-    focalX,
-    focalY,
-  )
+  const notchedWheel =
+    gesture.deltaX === 0 &&
+    Number.isInteger(gesture.deltaY) &&
+    Math.abs(gesture.deltaY) >= LIGHTBOX_MOUSE_WHEEL_MIN_DELTA_PX
+  if (notchedWheel) {
+    return zoomAtPoint(
+      current,
+      wheelZoomScale(current.scale, gesture.deltaY, LIGHTBOX_WHEEL_SENSITIVITY),
+      focalX,
+      focalY,
+    )
+  }
+  return panBy(current, -gesture.deltaX, -gesture.deltaY)
 }
 
 /**
@@ -160,10 +183,39 @@ const SVG_REFERENCE_ATTRIBUTES = [
   "href", "xlink:href", "marker-start", "marker-mid", "marker-end", "clip-path",
   "mask", "fill", "stroke", "filter", "aria-labelledby", "aria-describedby", "style",
 ]
-const SVG_DANGEROUS_ELEMENTS = ["script", "iframe", "object", "embed"]
-/** Executable URL schemes a hostile diagram could smuggle through the modal. */
-const SVG_UNSAFE_URL = /^\s*(?:javascript|vbscript|data:text\/html)/i
-const SVG_URL_ATTRIBUTES = new Set(["href", "xlink:href"])
+const SVG_DANGEROUS_ELEMENTS = [
+  "script", "iframe", "object", "embed", "applet", "meta", "link", "base",
+  "form", "input", "button", "select", "textarea", "video", "audio", "source",
+  "animate", "animatemotion", "animatetransform", "set",
+]
+/** Attributes that can navigate or submit a request without any script. */
+const SVG_CONTROL_ATTRIBUTES = new Set(["srcdoc", "formaction", "action", "ping"])
+/** Attributes that fetch a resource; only fragments and inline raster may stay. */
+const SVG_URL_ATTRIBUTES = new Set(["href", "xlink:href", "src", "data", "poster"])
+const SVG_SAFE_DATA_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i
+
+/**
+ * Strip network fetches from diagram CSS. Comments and CSS Syntax L3 backslash
+ * escapes (`\75 rl(...)`, `@\69 mport`, `u\rl(...)`) are normalized first so
+ * obfuscated tokens resolve to their real keywords before `@import` removal and
+ * `url(...)` allowlisting (only in-document `#id` fragments may stay).
+ */
+function sanitizeSvgCss(css: string): string {
+  const unescaped = css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\\([0-9a-f]{1,6})\s?/gi, (_m, hex: string) => {
+      const cp = Number.parseInt(hex, 16)
+      return cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff)
+        ? String.fromCodePoint(cp)
+        : "\ufffd"
+    })
+    .replace(/\\([\s\S])/g, (_m, ch: string) => (ch === "\n" || ch === "\r" || ch === "\f" ? "" : ch))
+  return unescaped
+    .replace(/@import\b[^;{}]*(?:;|$)/gi, "")
+    .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (full, _quote, rawUrl: string) =>
+      /^#[A-Za-z0-9_.:-]+$/.test(rawUrl.trim()) ? full : "none",
+    )
+}
 
 function parseSvgLength(raw: string | null): number | null {
   if (!raw) return null
@@ -187,16 +239,35 @@ function escapeRegExp(text: string): string {
 
 /** Sanitizes one parsed SVG subtree and namespaces its ids in place. */
 function sanitizeSvg(root: Element, idPrefix: string): void {
-  for (const tag of SVG_DANGEROUS_ELEMENTS) {
-    for (const node of [...root.querySelectorAll(tag)]) node.remove()
+  // Match on `localName` so HTML inside `foreignObject` is caught regardless of
+  // the namespace or tag-name case the parser reports.
+  for (const element of [...root.querySelectorAll("*")]) {
+    if (SVG_DANGEROUS_ELEMENTS.includes(element.localName.toLowerCase())) element.remove()
   }
   for (const element of [root, ...root.querySelectorAll("*")]) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase()
-      if (name.startsWith("on") || (SVG_URL_ATTRIBUTES.has(name) && SVG_UNSAFE_URL.test(attribute.value))) {
+      if (name.startsWith("on") || SVG_CONTROL_ATTRIBUTES.has(name)) {
         element.removeAttribute(attribute.name)
+        continue
+      }
+      if (SVG_URL_ATTRIBUTES.has(name)) {
+        const value = attribute.value.trim()
+        if (!value.startsWith("#") && !SVG_SAFE_DATA_URL.test(value)) {
+          element.removeAttribute(attribute.name)
+        }
+        continue
+      }
+      if (name === "style") {
+        const cleaned = sanitizeSvgCss(attribute.value)
+        if (cleaned.trim()) element.setAttribute(attribute.name, cleaned)
+        else element.removeAttribute(attribute.name)
       }
     }
+  }
+  for (const style of root.querySelectorAll("style")) {
+    const css = style.textContent
+    if (css) style.textContent = sanitizeSvgCss(css)
   }
 
   // Collect ids by DOM traversal (never by rewriting serialized text): a label
@@ -238,8 +309,11 @@ function sanitizeSvg(root: Element, idPrefix: string): void {
  * Prepare a Mermaid SVG snapshot for crisp full-screen zoom/pan:
  * - Rejects markup that cannot be parsed as an SVG document (`markup: ""`), so
  *   the lightbox renders its broken state instead of injecting raw text.
- * - Strips scriptable elements, event-handler attributes, and unsafe URL
- *   schemes before the markup reaches `dangerouslySetInnerHTML`.
+ * - Strips scriptable/active elements, event-handler and control attributes,
+ *   non-fragment URLs (only inline raster `data:` images survive), and network
+ *   fetches in CSS (`@import`, external `url(...)`), so an untrusted diagram
+ *   cannot run script, submit a form, or beacon out while `htmlLabels` keep
+ *   working.
  * - Namespaces every id (with digit-boundary guard so `omd-mmd-1` never
  *   rewrites `omd-mmd-10`) so the modal copy never collides with inline editor defs.
  * - Extracts intrinsic dimensions from `viewBox` (or width/height attributes)
