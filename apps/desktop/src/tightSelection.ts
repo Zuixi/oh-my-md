@@ -1,7 +1,7 @@
 /**
  * Vendored "tight selection" drawing for the oh-my-md desktop editor.
  *
- * Ported from @codemirror/view 6.43.8,
+ * Ported from @codemirror/view 6.43.15,
  * Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin>
  * and others, MIT License (see the package's LICENSE file). Sources:
  * src/drawSelection.ts, src/layer.ts (the layer machinery itself is reused

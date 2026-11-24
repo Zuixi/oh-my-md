@@ -90,8 +90,8 @@ importers:
         specifier: ^2.14.0
         version: 2.14.0
       happy-dom:
-        specifier: ^16.8.1
-        version: 16.8.1
+        specifier: 16.0.0
+        version: 16.0.0
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -100,7 +100,7 @@ importers:
         version: 7.3.8(@types/node@26.6.6)
       vitest:
         specifier: ^3.2.7
-        version: 3.2.7(@types/node@26.6.6)(happy-dom@16.8.1)(supports-color@7.1.0)
+        version: 3.2.7(@types/node@26.6.6)(happy-dom@16.0.0)(supports-color@7.1.0)
 
   packages/engine:
     dependencies:
@@ -181,14 +181,14 @@ importers:
         specifier: ^26.6.6
         version: 26.6.6
       happy-dom:
-        specifier: ^16.8.1
-        version: 16.8.1
+        specifier: 16.0.0
+        version: 16.0.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.0
-        version: 3.2.7(@types/node@26.6.6)(happy-dom@16.8.1)(supports-color@7.1.0)
+        version: 3.2.7(@types/node@26.6.6)(happy-dom@16.0.0)(supports-color@7.1.0)
 
 packages:
 
@@ -1432,8 +1432,8 @@ packages:
   hachure-fill@0.5.2:
     resolution: {integrity: sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg==}
 
-  happy-dom@16.8.1:
-    resolution: {integrity: sha512-n0QrmT9lD81rbpKsyhnlz3DgnMZlaOkJPpgi746doA+HvaMC79bdWkwjrNnGJRvDrWTI8iOcJiVTJ5CdT/AZRw==}
+  happy-dom@16.0.0:
+    resolution: {integrity: sha512-Br2gCVyasiuBFSunZpgkKJ84ruoM/a1e6OnJj3MU1O2pz9+HDBc03WD00/DNQ2xnQpLlpGwU37TaubonvlZWIQ==}
     engines: {node: '>=18.0.0'}
 
   has-flag@4.0.0:
@@ -3164,7 +3164,7 @@ snapshots:
 
   hachure-fill@0.5.2: {}
 
-  happy-dom@16.8.1:
+  happy-dom@16.0.0:
     dependencies:
       webidl-conversions: 7.0.0
       whatwg-mimetype: 3.0.0
@@ -3570,7 +3570,7 @@ snapshots:
       '@types/node': 26.6.6
       fsevents: 2.3.3
 
-  vitest@3.2.7(@types/node@26.6.6)(happy-dom@16.8.1)(supports-color@7.1.0):
+  vitest@3.2.7(@types/node@26.6.6)(happy-dom@16.0.0)(supports-color@7.1.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
@@ -3597,7 +3597,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.6.6
-      happy-dom: 16.8.1
+      happy-dom: 16.0.0
     transitivePeerDependencies:
       - jiti
       - less
