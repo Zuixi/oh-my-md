@@ -46,7 +46,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "colord": "^2.10.0",
     "happy-dom": "^16.0.0",
-    "typescript": "~5.8.3",
+    "typescript": "~7.0.2",
     "vite": "^7.0.4",
     "vitest": "^3.2.7"
   }
