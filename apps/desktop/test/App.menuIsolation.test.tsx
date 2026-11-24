@@ -130,6 +130,18 @@ describe("native menu commands behind a modal dialog", () => {
     await waitFor(() => expectPathShown("unnamed"))
     expect(tabCount()).toBe(1)
   })
+
+  it("opens the command palette when Shift produces uppercase P in real browsers", async () => {
+    const harness = makeAppHarness()
+    harness.renderApp()
+    await harness.openIntoActive("/notes/doc.md", "saved")
+
+    fireEvent.keyDown(window, { key: "P", metaKey: true, shiftKey: true })
+    await screen.findByPlaceholderText("Run a command…")
+
+    fireEvent.keyDown(window, { key: "P", ctrlKey: true, shiftKey: true })
+    await waitFor(() => expect(screen.queryByPlaceholderText("Run a command…")).toBeNull())
+  })
 })
 
 function expectTabUnchanged(

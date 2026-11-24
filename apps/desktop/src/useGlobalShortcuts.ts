@@ -82,7 +82,7 @@ export function useGlobalShortcuts(host: GlobalShortcutsHost): void {
         current.cancelOpeningRef.current()
         return
       }
-      if (event.key === "p" && event.shiftKey && (event.metaKey || event.ctrlKey)) {
+      if ((event.key === "p" || event.key === "P") && event.shiftKey && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         current.togglePalette()
         return
