@@ -1,8 +1,10 @@
 import type { MarkdownConfig } from "@lezer/markdown"
+import { lineDepth } from "./lineDepth"
 
-// 文档顶部的 `---\n…\n---\n` YAML front matter，按不透明块处理：
-// 不校验 YAML 语法、不引入 YAML 依赖（规格 2026-08-18-25）。
-// 只在文档第一行生效；thematic break 解析不会吃掉它（before: "HorizontalRule"）。
+// Top-of-document `---\n…\n---\n` YAML front matter treated as an opaque block:
+// no YAML grammar validation and no YAML parser dependency (spec 2026-08-18-25).
+// Recognized only at column 0 of line 1; `before: "HorizontalRule"` keeps the
+// thematic-break rule from claiming an unindented opening fence.
 export const FrontMatter: MarkdownConfig = {
   defineNodes: [
     { name: "FrontMatter", block: true },
@@ -12,14 +14,15 @@ export const FrontMatter: MarkdownConfig = {
     name: "FrontMatter",
     before: "HorizontalRule",
     parse(cx, line) {
-      // 仅文档开头（offset 0）识别；行内其他位置的 --- 仍是分隔线。
-      if (cx.lineStart !== 0) return false
-      if (line.text.slice(line.pos).trimEnd() !== "---") return false
-      const start = cx.lineStart + line.pos
+      // Only column 0 of byte 0 opens front matter; indented `  ---` on line 1
+      // or `---` anywhere later in the document stays a thematic break.
+      if (cx.lineStart !== 0 || line.pos !== 0) return false
+      if (line.text.trimEnd() !== "---") return false
+      const start = 0
       const marks = [cx.elt("FrontMatterMark", start, start + 3)]
 
-      // 吞到下一个 --- 行（含）；未闭合则整个块吞到 EOF（与 math 的容错一致）。
-      while (cx.nextLine() && (line as unknown as { depth: number }).depth >= cx.depth) {
+      // Consume through the next column-0 `---` line; unclosed blocks extend to EOF (matching math).
+      while (cx.nextLine() && lineDepth(line) >= cx.depth) {
         const to = cx.lineStart + line.text.length
         if (line.text.trimEnd() === "---") {
           marks.push(cx.elt("FrontMatterMark", cx.lineStart, to))

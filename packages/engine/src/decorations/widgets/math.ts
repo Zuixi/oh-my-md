@@ -9,6 +9,7 @@ import { BlockWidget, applyBlockEmbed } from "../blockWidget"
 import { MATH_BLOCK_ESTIMATE_PX } from "../widgetHeights"
 import { blockWidgetRange } from "../blockSelectionOverlay"
 import { mathEditorTexOf, mathTexOf, rebuildMathSrc } from "../../semantic/math"
+import { createMathHtmlCache } from "../../export/mathHtmlCache"
 
 export { mathEditorTexOf, mathTexOf, rebuildMathSrc }
 
@@ -111,32 +112,55 @@ function isolatePopupEvents(popup: HTMLElement): void {
     popup.addEventListener(type, stop)
   }
 }
-// widget 实例会轮换，实例字段会指向已漂移的旧 this，DOM 才是稳定的查找锚点。
-// 内层编辑器实例挂在 popup DOM 上而不是 widget 实例字段里：pass-1 复用 DOM 时
-// widget 实例会轮换，实例字段会指向已漂移的旧 this，DOM 才是稳定的查找锚点。
-type MathPopupHost = HTMLElement & { __omdMathPopupView?: EditorView }
+// Widget instances rotate while CodeMirror reuses the DOM: the popup DOM, not widget fields,
+// anchors what outlives an instance (the inner editor and its ResizeObserver).
+type MathPopupHost = HTMLElement & { __omdMathPopupView?: EditorView; __omdMathResizeObs?: ResizeObserver }
+const popupEditorOf = (root: Element | null) => root?.querySelector<MathPopupHost>(".omd-math-popup")?.__omdMathPopupView
 
-function popupEditorOf(root: Element | null): EditorView | undefined {
-  return root?.querySelector<MathPopupHost>(".omd-math-popup")?.__omdMathPopupView
+// Never hold the observer on a widget field: it would keep the retired EditorView alive.
+function disconnectPopupResizeObserver(root: Element | null) {
+  const popup = root?.classList.contains("omd-math-popup")
+    ? (root as MathPopupHost) : root?.querySelector<MathPopupHost>(".omd-math-popup")
+  popup?.__omdMathResizeObs?.disconnect()
+  if (popup) popup.__omdMathResizeObs = undefined
 }
 
-// 块/行内共用的渲染：懒加载 katex，失败把错误交给基类/调用方兜底
-async function renderMath(
-  el: HTMLElement,
-  tex: string,
-  displayMode: boolean,
-  isActive: () => boolean,
-  throwOnError = true,
-) {
-  const katex = (await import("katex")).default
+// KaTeX stays a lazy chunk, but the resolved module and its HTML are session state: once
+// either is warm, toDOM projects markup directly (no placeholder flash, no reflow).
+const mathHtmlCache = createMathHtmlCache()
+let katexInstance: typeof import("katex")["default"] | null = null
+let katexLoadPromise: Promise<typeof import("katex")["default"]> | null = null
+
+function loadKatex(): Promise<typeof import("katex")["default"]> {
+  return katexInstance ? Promise.resolve(katexInstance) : katexLoadPromise ??= import("katex").then(
+    m => { katexInstance = m.default; return m.default },
+    err => { katexLoadPromise = null; throw err },   // transient chunk failure may retry
+  )
+}
+
+/** Synchronous projection when KaTeX is warm; null = cold, the caller keeps its placeholder. */
+function renderMathHtmlSync(tex: string, displayMode: boolean, throwOnError: boolean): string | null {
+  const key = `${displayMode ? "B" : "I"}:${throwOnError ? "1" : "0"}:${tex}`
+  const cached = mathHtmlCache.get(key)
+  if (cached !== undefined) return cached
+  if (!katexInstance) return null
+  // Only successful renders are cached; a throw degrades to source at the caller.
+  const html = katexInstance.renderToString(tex, { displayMode, throwOnError })
+  mathHtmlCache.set(key, html)
+  return html
+}
+
+// Shared async path (cold start, live edits): writes through the same cache the sync path reads.
+async function renderMath(el: HTMLElement, tex: string, displayMode: boolean, isActive: () => boolean, throwOnError = true) {
+  await loadKatex()
+  const html = renderMathHtmlSync(tex, displayMode, throwOnError)
   if (!isActive()) return
-  el.innerHTML = katex.renderToString(tex, { displayMode, throwOnError })
+  if (html === null) throw new Error("katex module did not resolve")
+  el.innerHTML = html
 }
 
 export class MathBlockWidget extends BlockWidget {
   protected get cssClass() { return "omd-math" }
-
-  private resizeObs?: ResizeObserver
 
   // 滚动性能：display 数学通常 ~2 行，缺省一行行高估算偏小（见 widgetHeights.ts）。
   override get estimatedHeight() { return MATH_BLOCK_ESTIMATE_PX }
@@ -189,10 +213,9 @@ export class MathBlockWidget extends BlockWidget {
   }
 
   override destroy(dom?: HTMLElement) {
-    this.resizeObs?.disconnect()
-    this.resizeObs = undefined
-    // wrap 被 CM 整体丢弃（如光标进块）时 close() 不会走 focusout 路径，
-    // 这里兜底销毁内层编辑器，防监听器/实例泄漏。
+    // A discarded wrap (e.g. the caret entering the block) never runs close(), so the
+    // popup's observer and inner editor must be released here.
+    disconnectPopupResizeObserver(dom ?? null)
     popupEditorOf(dom ?? null)?.destroy()
     super.destroy(dom)
   }
@@ -245,7 +268,7 @@ export class MathBlockWidget extends BlockWidget {
       ? mathEditorTexOf(view.state.sliceDoc(range.from, range.to))
       : mathEditorTexOf(this.src)
     const initialAnchor = clickRatioOffset(initialTex, body, event)
-    const popup = document.createElement("div")
+    const popup: MathPopupHost = document.createElement("div")
     popup.className = "omd-math-popup"
     isolatePopupEvents(popup)
     const host = document.createElement("div")
@@ -260,8 +283,7 @@ export class MathBlockWidget extends BlockWidget {
     const close = () => {
       if (closed) return
       closed = true
-      this.resizeObs?.disconnect()
-      this.resizeObs = undefined
+      disconnectPopupResizeObserver(popup)
       inner.destroy()
       popup.remove()
     }
@@ -277,7 +299,7 @@ export class MathBlockWidget extends BlockWidget {
         ],
       }),
     })
-    ;(popup as MathPopupHost).__omdMathPopupView = inner
+    popup.__omdMathPopupView = inner
     let pointerInPopup = false
     popup.addEventListener("mousedown", () => {
       pointerInPopup = true
@@ -293,9 +315,12 @@ export class MathBlockWidget extends BlockWidget {
       }
       close()
     })
-    this.resizeObs?.disconnect()
-    this.resizeObs = new ResizeObserver(() => view.requestMeasure())
-    this.resizeObs.observe(popup)
+    // Guarded: minimal DOM hosts (headless tests) may not implement ResizeObserver.
+    if (typeof ResizeObserver !== "undefined") {
+      const obs = new ResizeObserver(() => view.requestMeasure())
+      popup.__omdMathResizeObs = obs
+      obs.observe(popup)
+    }
     inner.focus()
     if (initialAnchor > 0) {
       inner.dispatch({ selection: { anchor: initialAnchor } })
@@ -331,6 +356,12 @@ export class MathBlockWidget extends BlockWidget {
   }
 
   protected renderPlaceholder(el: HTMLElement) {
+    // Warm KaTeX (or a cached render) projects here, so renderInto is a no-op rather
+    // than a second DOM write after a layout measure.
+    try {
+      const html = renderMathHtmlSync(mathTexOf(this.src), true, true)
+      if (html !== null) { el.innerHTML = html; el.dataset.omdRender = "katex"; return }
+    } catch { /* invalid TeX: renderInto reports it through the error fallback */ }
     const pre = document.createElement("pre")
     pre.className = "omd-block-placeholder"
     pre.textContent = this.src
@@ -339,6 +370,8 @@ export class MathBlockWidget extends BlockWidget {
   }
 
   protected renderInto(el: HTMLElement) {
+    // renderPlaceholder may already have committed KaTeX HTML synchronously.
+    if (el.dataset.omdRender === "katex") return undefined
     return renderMath(el, mathTexOf(this.src), true, () => this.isActive(el))
       .then(() => { el.dataset.omdRender = "katex" })
       .catch(err => {
@@ -373,6 +406,13 @@ export class InlineMathWidget extends WidgetType {
       view.dispatch({ selection: { anchor }, scrollIntoView: true })
       view.focus()
     })
+    try {
+      const html = renderMathHtmlSync(this.tex, false, true)
+      if (html !== null) { el.innerHTML = html; return el }
+    } catch {
+      el.textContent = `$${this.tex}$`   // warm KaTeX + invalid TeX: degrade in-frame
+      return el
+    }
     renderMath(el, this.tex, false, () => this.alive).catch(() => {
       if (this.alive) el.textContent = `$${this.tex}$`
     })

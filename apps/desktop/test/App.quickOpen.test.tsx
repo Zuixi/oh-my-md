@@ -66,6 +66,8 @@ function openFolderHarness() {
 describe("quick open", () => {
   it("opens via ⌘P, filters, and opens the chosen file", async () => {
     const harness = openFolderHarness()
+    const listDir = vi.fn(async () => [])
+    harness.services.listDir = listDir
     harness.renderApp()
     // Session restore must finish so the workspace folder is set before ⌘P.
     await waitFor(() => {
@@ -73,7 +75,7 @@ describe("quick open", () => {
     })
 
     fireEvent.keyDown(window, { key: "p", metaKey: true })
-    const input = await waitFor(() => screen.getByLabelText("Go to file…"))
+    const input = await waitFor(() => screen.getByRole("combobox", { name: "Go to file…" }))
     expect(harness.services.listMarkdownFiles).toHaveBeenCalledWith("/notes")
 
     fireEvent.change(input, { target: { value: "beta" } })
@@ -81,6 +83,11 @@ describe("quick open", () => {
 
     await waitFor(() => {
       expectPathShown("/notes/sub/beta.md")
+    })
+    // `openPath` must reveal the opened file: the ancestor directory is listed
+    // (and therefore expanded) through the coordinator's expandToPath ref.
+    await waitFor(() => {
+      expect(listDir).toHaveBeenCalledWith("/notes/sub")
     })
   })
 
@@ -110,6 +117,26 @@ describe("quick open", () => {
       expect(document.querySelector(".save-transient-status")?.textContent)
         .toContain("Open a folder")
     })
-    expect(screen.queryByLabelText("Go to file…")).toBeNull()
+    expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull()
+  })
+
+  it("ignores a listing response that resolves after the popup was closed", async () => {
+    let resolveList!: (value: { paths: string[]; truncated: boolean }) => void
+    const harness = openFolderHarness()
+    harness.services.listMarkdownFiles = vi.fn(() => new Promise<{ paths: string[]; truncated: boolean }>(resolve => {
+      resolveList = resolve
+    }))
+    harness.renderApp()
+    await waitFor(() => {
+      expect(harness.services.allowWorkspaceDir).toHaveBeenCalledWith("/notes")
+    })
+
+    fireEvent.keyDown(window, { key: "p", metaKey: true })
+    const input = await waitFor(() => screen.getByRole("combobox", { name: "Go to file…" }))
+    fireEvent.keyDown(input, { key: "Escape" })
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull())
+
+    resolveList({ paths: ["/notes/alpha.md"], truncated: false })
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Go to file…" })).toBeNull())
   })
 })

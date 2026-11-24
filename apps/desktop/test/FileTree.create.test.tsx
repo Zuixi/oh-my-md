@@ -34,7 +34,7 @@ function treeProps(rows: VisibleRow[]) {
 }
 
 function openCreate(label: string, item: "New File" | "New Folder"): HTMLInputElement {
-  fireEvent.contextMenu(screen.getByRole("button", { name: label }))
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name: label }))
   fireEvent.click(screen.getByRole("menuitem", { name: item }))
   return screen.getByRole<HTMLInputElement>("textbox", {
     name: item === "New File" ? "New file name" : "New folder name",
@@ -77,7 +77,7 @@ describe("文件树内联新建", () => {
 
     expect(screen.queryByRole("textbox")).toBeNull()
     expect(props.onCreateFile).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "drafts" }))
+    expect(document.activeElement).toBe(screen.getByRole("treeitem", { name: "drafts" }))
   })
 
   it("失焦取消新建，不落盘也不抢回焦点", async () => {
@@ -98,13 +98,13 @@ describe("文件树内联新建", () => {
     const view = render(<FileTree {...props} />)
 
     fireEvent.change(openCreate("doc.md", "New File"), { target: { value: "a.md" } })
-    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox")).toBeNull()
     expect(props.onCreateFile).not.toHaveBeenCalled()
     expect(props.onOpenFile).toHaveBeenCalledWith("/notes/other.md")
 
     fireEvent.change(openCreate("doc.md", "New File"), { target: { value: "b.md" } })
-    fireEvent.contextMenu(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox")).toBeNull()
 
     fireEvent.change(openCreate("doc.md", "New File"), { target: { value: "c.md" } })
@@ -285,7 +285,7 @@ describe("文件树内联新建", () => {
     const created = folder("/notes/drafts/untitled-folder", 1)
     view.rerender(<FileTree {...props} rows={[folder("/notes/drafts"), created]} />)
 
-    const row = screen.getByRole("button", { name: "untitled-folder" })
+    const row = screen.getByRole("treeitem", { name: "untitled-folder" })
     await waitFor(() => expect(document.activeElement).toBe(row))
     expect(row.className).toContain("is-selected")
     expect(row.getAttribute("aria-expanded")).toBe("false")
@@ -308,7 +308,7 @@ describe("文件树内联新建", () => {
       complete("/notes/drafts/untitled-folder")
     })
 
-    const row = screen.getByRole("button", { name: "untitled-folder" })
+    const row = screen.getByRole("treeitem", { name: "untitled-folder" })
     await waitFor(() => expect(document.activeElement).toBe(row))
     expect(row.className).toContain("is-selected")
   })
@@ -322,7 +322,7 @@ describe("文件树内联新建", () => {
     await act(async () => { fireEvent.keyDown(input, { key: "Enter" }) })
     view.rerender(<FileTree {...props} rows={[file(), file("fresh.md")]} />)
 
-    const row = screen.getByRole("button", { name: "fresh.md" })
+    const row = screen.getByRole("treeitem", { name: "fresh.md" })
     expect(row.className).toContain("is-selected")
     expect(document.activeElement).not.toBe(row)
   })
@@ -356,14 +356,14 @@ describe("文件树内联新建", () => {
     expect((input.closest(".filetree-item")!.parentElement as HTMLElement).style.top)
       .toBe(`${rows.length * ROW_HEIGHT}px`)
     expect(tree.scrollTop).toBe((rows.length + 1) * ROW_HEIGHT - 5 * ROW_HEIGHT)
-    expect(screen.getByRole("button", { name: "doc-99.md" })).toBeTruthy()
+    expect(screen.getByRole("treeitem", { name: "doc-99.md" })).toBeTruthy()
   })
 
   it("缺少新建服务时菜单项禁用", () => {
     const props = treeProps([file()])
     render(<FileTree {...props} onCreateFile={undefined} onCreateFolder={undefined} />)
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "doc.md" }))
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: "doc.md" }))
     expect(screen.getByRole("menuitem", { name: "New File" })).toHaveProperty("disabled", true)
     expect(screen.getByRole("menuitem", { name: "New Folder" })).toHaveProperty("disabled", true)
   })

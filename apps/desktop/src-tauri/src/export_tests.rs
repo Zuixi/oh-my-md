@@ -19,25 +19,31 @@ fn parse_accepts_pdf_and_png_only() {
 #[test]
 fn validate_export_rejects_traversal_and_mismatched_extension() {
     let html = "<p>hi</p>";
-    assert!(validate_export("/tmp/../etc/x.pdf", ExportFormat::Pdf, html).is_err());
-    assert!(validate_export("/tmp/out.png", ExportFormat::Pdf, html).is_err());
-    assert!(validate_export("/tmp/out.pdf", ExportFormat::Png, html).is_err());
+    let dir = std::env::temp_dir();
+    let traversal = dir.join("..").join("etc").join("x.pdf");
+    let png = dir.join("out.png");
+    let pdf = dir.join("out.pdf");
+    assert!(validate_export(traversal.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
+    assert!(validate_export(png.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
+    assert!(validate_export(pdf.to_str().unwrap(), ExportFormat::Png, html).is_err());
     assert_eq!(
-        validate_export("/tmp/out.pdf", ExportFormat::Pdf, html).unwrap(),
-        PathBuf::from("/tmp/out.pdf")
+        validate_export(pdf.to_str().unwrap(), ExportFormat::Pdf, html).unwrap(),
+        pdf
     );
 }
 
 #[test]
 fn validate_export_appends_png_when_save_dialog_omits_extension() {
     let html = "<p>hi</p>";
+    let base = std::env::temp_dir().join("out");
+    let base_str = base.to_str().unwrap();
     assert_eq!(
-        validate_export("/tmp/out", ExportFormat::Png, html).unwrap(),
-        PathBuf::from("/tmp/out.png")
+        validate_export(base_str, ExportFormat::Png, html).unwrap(),
+        std::env::temp_dir().join("out.png")
     );
     assert_eq!(
-        validate_export("/tmp/out", ExportFormat::Pdf, html).unwrap(),
-        PathBuf::from("/tmp/out.pdf")
+        validate_export(base_str, ExportFormat::Pdf, html).unwrap(),
+        std::env::temp_dir().join("out.pdf")
     );
 }
 
@@ -158,6 +164,59 @@ fn clamp_reports_instead_of_silently_cutting() {
 }
 
 #[test]
+fn every_platform_shares_one_export_readiness_timeout() {
+    assert_eq!(EXPORT_READY_TIMEOUT_SECS, 20);
+    #[cfg(any(windows, target_os = "linux"))]
+    assert_eq!(EXPORT_READY_TIMEOUT_MS, EXPORT_READY_TIMEOUT_SECS * 1_000);
+    #[cfg(target_os = "macos")]
+    assert_eq!(EXPORT_TIMEOUT_SECS, EXPORT_READY_TIMEOUT_SECS);
+}
+
+#[test]
+fn gpu_capture_scale_keeps_a_short_page_at_the_requested_scale() {
+    let spec = ExportSpec::new(800, 2).unwrap();
+    // 8000 CSS px at 2x is 16,000 device px, still inside the 16,383 px cap.
+    let (scale, warning) = spec.effective_gpu_capture_scale(8_000.0);
+    assert_eq!(scale, 2.0);
+    assert!(warning.is_none());
+    let (scale, warning) = spec.effective_gpu_capture_scale(6_000.0);
+    assert_eq!(scale, 2.0);
+    assert!(warning.is_none());
+}
+
+#[test]
+fn gpu_capture_scale_reports_a_downsampled_long_png() {
+    let spec = ExportSpec::new(640, 2).unwrap();
+    let (scale, warning) = spec.effective_gpu_capture_scale(10_000.0);
+    assert!(
+        scale < 2.0,
+        "10,000 CSS px at 2x cannot fit one texture: {scale}"
+    );
+    assert_eq!(scale, f64::from(EXPORT_MAX_DEVICE_DIMENSION) / 10_000.0);
+    let warning = warning.expect("a stepped-down capture must report itself");
+    assert_eq!(warning.code, "downsampled");
+    let detail = warning.detail.unwrap();
+    assert!(detail.contains("10000 CSS px"), "{detail}");
+    assert!(detail.contains("from 2x to 1.64x"), "{detail}");
+    assert!(detail.contains("16383 px"), "{detail}");
+    // Re-capturing at the reported scale is exactly what the backend requests.
+    let device_height = (10_000.0 * scale).round();
+    assert!(device_height <= f64::from(EXPORT_MAX_DEVICE_DIMENSION));
+    assert!(device_height >= f64::from(EXPORT_MAX_DEVICE_DIMENSION) - 1.0);
+}
+
+#[test]
+fn gpu_capture_scale_never_goes_below_the_settled_floor() {
+    let spec = ExportSpec::new(800, 1).unwrap();
+    let (scale, warning) = spec.effective_gpu_capture_scale(1_000_000.0);
+    assert_eq!(scale, 0.25);
+    assert_eq!(warning.unwrap().code, "downsampled");
+    // A zero/NaN measurement still yields a usable, positive scale.
+    let (scale, _) = spec.effective_gpu_capture_scale(0.0);
+    assert_eq!(scale, 1.0);
+}
+
+#[test]
 fn windows_browser_args_match_the_main_window_config() {
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid tauri config");
@@ -169,4 +228,23 @@ fn windows_browser_args_match_the_main_window_config() {
         main["additionalBrowserArgs"].as_str(),
         Some(WINDOWS_ADDITIONAL_BROWSER_ARGS)
     );
+}
+
+#[test]
+fn validate_export_requires_an_absolute_path() {
+    let html = "<p>hi</p>";
+    assert!(validate_export("out/relative.pdf", ExportFormat::Pdf, html).is_err());
+    assert!(validate_export("out", ExportFormat::Png, html).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_export_rejects_a_symlink_target() {
+    let html = "<p>hi</p>";
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.pdf");
+    std::fs::write(&real, b"old").unwrap();
+    let link = dir.path().join("link.pdf");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(validate_export(link.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
 }

@@ -124,4 +124,34 @@ describe("blockEntryPosition", () => {
     expect(blockEntryPosition(s, from, to, 1)).toBe(doc.indexOf("| a |"))
     expect(doc.slice(blockEntryPosition(s, from, to, -1))).toBe("| 1 | 2 |\n\npost\n")
   })
+
+  it("skips opening fences whose info string contains ~ or backticks in tilde fences", () => {
+    const withTildeTitle = 'pre\n\n```ts title="~/app.ts"\nconst x = 1\n```\n\npost\n'
+    const from1 = withTildeTitle.indexOf("```ts")
+    const to1 = withTildeTitle.lastIndexOf("```") + 3
+    const s1 = makeState(withTildeTitle)
+    expect(withTildeTitle.slice(blockEntryPosition(s1, from1, to1, 1))).toBe("const x = 1\n```\n\npost\n")
+
+    const tildeWithBacktick = "pre\n\n~~~md `meta`\nbody line\n~~~\n\npost\n"
+    const from2 = tildeWithBacktick.indexOf("~~~md")
+    const to2 = tildeWithBacktick.lastIndexOf("~~~") + 3
+    const s2 = makeState(tildeWithBacktick)
+    expect(tildeWithBacktick.slice(blockEntryPosition(s2, from2, to2, 1))).toBe("body line\n~~~\n\npost\n")
+  })
+
+  it("does not skip the last code line of an unclosed 4-backtick fence ending in ```", () => {
+    const doc = "pre\n\n````md\ninner\n```"
+    const from = doc.indexOf("````md")
+    const to = doc.length
+    const s = makeState(doc)
+    expect(doc.slice(blockEntryPosition(s, from, to, -1))).toBe("```")
+  })
+
+  it("skips --- fence lines when entering FrontMatter from above or below", () => {
+    const doc = "---\ntitle: a\ndate: 2026\n---\n\nbody\n"
+    const to = doc.indexOf("\n\nbody")
+    const s = makeState(doc)
+    expect(doc.slice(blockEntryPosition(s, 0, to, 1))).toBe("title: a\ndate: 2026\n---\n\nbody\n")
+    expect(doc.slice(blockEntryPosition(s, 0, to, -1))).toBe("date: 2026\n---\n\nbody\n")
+  })
 })

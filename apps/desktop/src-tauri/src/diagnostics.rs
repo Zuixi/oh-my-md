@@ -332,23 +332,67 @@ fn write_diagnostics_bundle(
 
     let manifest = manifest_json(&entries, &skipped, context)?;
 
-    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    for (name, bytes) in &entries {
-        zip.start_file(name.as_str(), options)
+    let target = diagnostics_target(path)?;
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "diagnostics bundle has no parent directory".to_string())?;
+    // The bundle is a durable user artifact: stage it beside the destination and
+    // rename it into place, so a crash mid-zip can never leave a truncated file
+    // where the user expects a support bundle.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("failed to stage diagnostics bundle: {e}"))?;
+    {
+        let mut zip = zip::ZipWriter::new(temporary.as_file_mut());
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, bytes) in &entries {
+            zip.start_file(name.as_str(), options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(bytes).map_err(|e| e.to_string())?;
+        }
+        // The manifest is written last and is not one of the files it lists: a
+        // hash of itself cannot be computed, and a reader can tell the two apart.
+        zip.start_file("manifest.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(bytes).map_err(|e| e.to_string())?;
-    }
-    // The manifest is written last and is not one of the files it lists: a hash
-    // of itself cannot be computed, and a reader can tell the two apart.
-    zip.start_file("manifest.json", options)
-        .map_err(|e| e.to_string())?;
-    zip.write_all(manifest.as_bytes())
-        .map_err(|e| e.to_string())?;
+        zip.write_all(manifest.as_bytes())
+            .map_err(|e| e.to_string())?;
 
-    zip.finish().map_err(|e| e.to_string())?;
+        zip.finish().map_err(|e| e.to_string())?;
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("failed to sync diagnostics bundle: {e}"))?;
+    temporary
+        .persist(&target)
+        .map_err(|e| format!("failed to replace diagnostics bundle: {e}"))?;
     Ok(())
+}
+
+/// The save dialog already supplies a user-chosen path, but the command is
+/// reachable from the webview directly: pin the shape so a stray invoke cannot
+/// truncate an unrelated file through `File::create`.
+fn diagnostics_target(path: &Path) -> Result<PathBuf, String> {
+    crate::scoped_io::validate_target(path)?;
+    let target = match path.extension() {
+        Some(_) => path.to_path_buf(),
+        None => path.with_extension("zip"),
+    };
+    if !crate::scoped_io::has_extension(&target, &["zip"]) {
+        return Err("diagnostics bundle must use a .zip extension".into());
+    }
+    if let Ok(existing) = std::fs::symlink_metadata(&target) {
+        if existing.file_type().is_symlink() {
+            return Err("diagnostics bundle path must not be a symlink".into());
+        }
+        if existing.is_dir() {
+            return Err("diagnostics bundle path is a directory".into());
+        }
+    }
+    if !target.parent().is_some_and(Path::is_dir) {
+        return Err("diagnostics bundle directory does not exist".into());
+    }
+    Ok(target)
 }
 
 /// The persisted session shards, raw.

@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react"
 import type { OutlineItem } from "@omd/engine"
 import { outlineCurrentIndex } from "@omd/engine"
 import { useT } from "./i18n"
-import { useEditorStatus, type EditorStatusStore } from "./editorStatusStore"
+import type { EditorStatusStore } from "./editorStatusStore"
 
 export function OutlinePanel(props: {
   items: OutlineItem[]
@@ -23,6 +23,22 @@ export function OutlinePanel(props: {
 }
 
 /**
+ * The caret's current heading index, subscribed as a primitive.
+ *
+ * Subscribing to the whole status snapshot re-rendered the heading list on every
+ * keystroke and arrow key, because the cursor string changes constantly while the
+ * current *section* usually does not. `useSyncExternalStore` compares the derived
+ * index, so a snapshot that maps to the same section commits nothing.
+ */
+function useCurrentOutlineIndex(items: OutlineItem[], store: EditorStatusStore): number {
+  const getSnapshot = useCallback(
+    () => outlineCurrentIndex(items, store.getSnapshot().head),
+    [items, store],
+  )
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot)
+}
+
+/**
  * Scrolls the freshly-changed current item into view, panel only (the hover
  * peek is transient and must never scroll). Guarded by the current *index*:
  * cursor moves inside one section trigger no scroll, and outline refreshes
@@ -35,8 +51,7 @@ function useCurrentReveal(
   store: EditorStatusStore,
   revealRef: React.RefObject<HTMLDivElement | null>,
 ) {
-  const { head } = useEditorStatus(store)
-  const current = outlineCurrentIndex(items, head)
+  const current = useCurrentOutlineIndex(items, store)
   const lastRevealedRef = useRef(-1)
   useEffect(() => {
     if (current < 0 || current === lastRevealedRef.current) return
@@ -59,8 +74,7 @@ export function OutlineList(props: {
   statusStore: EditorStatusStore
   onJump: (from: number) => void
 }) {
-  const { head } = useEditorStatus(props.statusStore)
-  const current = outlineCurrentIndex(props.items, head)
+  const current = useCurrentOutlineIndex(props.items, props.statusStore)
   return (
     <>
       {props.items.map((item, i) => (

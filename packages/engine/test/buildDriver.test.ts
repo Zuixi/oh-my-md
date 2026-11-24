@@ -96,7 +96,7 @@ describe("live build driver", () => {
   })
 
   it("exports the driver scheduling constants", () => {
-    expect(LIVE_BUILD_SLICE_MS).toBe(24)
+    expect(LIVE_BUILD_SLICE_MS).toBe(8)
     expect(LIVE_IDLE_TIMEOUT_MS).toBe(200)
     expect(LIVE_BUILD_CHUNK_CHARS).toBe(262_144)
   })

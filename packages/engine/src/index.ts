@@ -52,6 +52,11 @@ export {
   type PrintSetup,
 } from "./export/printSetup"
 export { EXPORT_BODY_CSS } from "./export/styles"
+export {
+  EXPORT_NATIVE_CSP_META,
+  EXPORT_READY_SCRIPT,
+  EXPORT_READY_SCRIPT_SHA256,
+} from "./export/readyScript"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
 export {
   mediaInspectHandler,
@@ -177,8 +182,15 @@ export {
   SAFE_MODE_RENDER_BUDGET_LINES,
   SAFE_PERFORMANCE_POLICY,
   STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_LIVE_MIN_BYTES,
+  WINDOWED_LIVE_MIN_LINES,
+  WINDOWED_LIVE_PRUNE_MARGIN_CHARS,
+  WINDOWED_LIVE_WINDOW_CHARS,
+  WINDOWED_PERFORMANCE_POLICY,
   editorPerformancePolicy,
   performancePolicyExtension,
+  performancePruneMarginChars,
+  performanceWindowChars,
   samePerformancePolicy,
   setEditorPerformancePolicy,
   type EditorPerformancePolicy,

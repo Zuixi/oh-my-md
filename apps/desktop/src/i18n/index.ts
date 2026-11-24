@@ -15,6 +15,16 @@ let current: Locale
 let listeners = new Set<() => void>()
 let menuSetter: MenuLocaleSetter = () => {}
 
+/**
+ * Keep the document language in step with the active catalog. Screen readers,
+ * spell-check and font fallback all read `<html lang>`; without this every
+ * session announced itself as English even while rendering Chinese.
+ */
+export function syncDocumentLang(locale: Locale): void {
+  if (typeof document === "undefined") return
+  document.documentElement.lang = locale === "zh" ? "zh-CN" : "en"
+}
+
 export function resolveLocale(stored: StoredLocale): Locale {
   if (stored === "en" || stored === "zh") return stored
   const nav = (typeof navigator !== "undefined" && navigator.language) || "en"
@@ -25,6 +35,7 @@ export function resolveLocale(stored: StoredLocale): Locale {
 // module init. This lets auto-mode users render in the correct locale on the
 // first frame instead of briefly rendering English.
 current = resolveLocale("auto")
+syncDocumentLang(current)
 
 function emit(): void {
   for (const fn of listeners) fn()
@@ -42,6 +53,7 @@ export function subscribe(fn: () => void): () => void {
 export function initLocale(stored: StoredLocale, setMenuLocale?: MenuLocaleSetter): Locale {
   if (setMenuLocale) menuSetter = setMenuLocale
   current = resolveLocale(stored)
+  syncDocumentLang(current)
   emit()
   void notifyMenu()
   return current
@@ -49,6 +61,7 @@ export function initLocale(stored: StoredLocale, setMenuLocale?: MenuLocaleSette
 
 export function setLocale(stored: StoredLocale): Locale {
   current = resolveLocale(stored)
+  syncDocumentLang(current)
   emit()
   void notifyMenu()
   return current

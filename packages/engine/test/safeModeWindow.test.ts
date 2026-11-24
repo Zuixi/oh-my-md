@@ -9,6 +9,7 @@ import {
   LIVE_WINDOW_CHARS,
   SAFE_PERFORMANCE_POLICY,
   STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_PERFORMANCE_POLICY,
   safeModeRenderingEnabled,
   setEditorPerformancePolicy,
   setLivePreview,
@@ -23,6 +24,7 @@ import {
   livePruneOutside,
 } from "../src/decorations/build"
 import { LIVE_BUILD_SLICE_MS } from "../src/decorations/buildDriver"
+import { getPerformancePolicyDiagnostics } from "../src/performancePolicyDiagnostics"
 
 // 每行都带 **bold**：任何区间构建都应产出 mark 装饰。
 function boldDoc(lines: number) {
@@ -675,6 +677,54 @@ describe("per-editor windowing policy", () => {
     expect(recorded.chunks).toEqual([])
     expect(pendingOf(view)).toEqual(afterPrune)
     expectPendingInvariants(view)
+    cleanup()
+  }, 30_000)
+
+  // 窗口半径来自 per-view 策略：WINDOWED_PERFORMANCE_POLICY 把构建/裁剪窗口收到
+  // ±32 768 / +16 384，而不是全局 262 144 / 32 768。POLICY_DOC 的引用区
+  // [0, 90299] 在两种半径下的裁剪结果完全不同，是半径生效的直接观测点。
+  it("prunes at the policy's own window radius instead of the legacy constant", async () => {
+    vi.useFakeTimers()
+    stepClock()
+    const { view, cleanup } = mountedWindowedView(POLICY_DOC)
+    setEditorPerformancePolicy(view, WINDOWED_PERFORMANCE_POLICY)
+    setVisible(view, 0, 30)
+    const recorded = recordDriverEffects(view)
+    await Promise.resolve()
+
+    // 可见段 [0, 29] → 构建窗口 [0, 32797]（窗口内无待建 pending）、裁剪窗口
+    // [0, 49181]：引用区 49182..90299 的装饰归还 pending。
+    expect(recorded.prunes).toEqual([[{ from: 0, to: 49181 }]])
+    expect(recorded.chunks).toEqual([])
+    const pending = pendingOf(view)
+    expect(pending[pending.length - 1].to).toBe(POLICY_DOC.length)
+    expect(pending[0].from).toBeGreaterThan(49_181)
+    expect(getPerformancePolicyDiagnostics(view).pendingInBuildWindow).toBe(0)
+    expectPendingInvariants(view)
+    expectFieldConsistency(view)
+    cleanup()
+  }, 30_000)
+
+  it("re-prunes with the new radius when switching safe → windowed mid-flight", async () => {
+    vi.useFakeTimers()
+    stepClock()
+    const { view, cleanup } = mountedWindowedView(POLICY_DOC)
+    setEditorPerformancePolicy(view, SAFE_PERFORMANCE_POLICY)
+    setVisible(view, 0, 30)
+    await Promise.resolve()
+    // 安全模式构建窗口 [0, 262173] 把引用区整体排空，裁剪窗口覆盖全篇 → 无裁剪。
+    drainPendingLiveBuild(view)
+    expect(specKeys(view).length).toBeGreaterThan(0)
+    const recorded = recordDriverEffects(view)
+
+    setEditorPerformancePolicy(view, WINDOWED_PERFORMANCE_POLICY)
+    await Promise.resolve()
+
+    expect(recorded.prunes).toEqual([[{ from: 0, to: 49181 }]])
+    expect(view.state.field(livePreviewField).specs.every(spec => spec.from <= 49_181)).toBe(true)
+    expect(pendingOf(view).some(range => range.to === POLICY_DOC.length)).toBe(true)
+    expectPendingInvariants(view)
+    expectFieldConsistency(view)
     cleanup()
   }, 30_000)
 

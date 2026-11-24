@@ -39,9 +39,9 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 
 - **Pure source fidelity (clean Git diffs)** — Live preview is a projection over your raw `.md` bytes, not a rich-text AST that silently reformats lists, escapes, or tables on save. Even in-cell table edits apply byte-minimal syntax-range patches.
 - **Data-safe by architecture** — Rust double-compare atomic saving, external-change & symlink conflict detection, multi-draft crash recovery, per-window session restore, and local version snapshots.
-- **Proven large-document speed** — Viewport-windowed live rendering, streaming open, and zero O(doc) hot-path work: **2 ms p95 typing on 20 MB / 750k lines**, verifiable with the built-in benchmark.
+- **Proven large-document speed** — Viewport-windowed live rendering, streaming open, and zero O(doc) hot-path work: **2 ms p95 typing on a 20 MB / 750k-line file (source mode)**, verifiable with the built-in benchmark.
 - **The hard UX edges, actually solved** — Typora-style in-cell table editing, tight selection geometry (exact Markdown copy across rendered blocks), Smart Paste from Notion/Word/web (including `rowspan`/`colspan` tables), live KaTeX popup editing, and first-class CJK IME handling.
-- **Print-grade export on every OS** — Self-contained HTML, **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
+- **Print-grade export on every OS** — Self-contained HTML (local images and styles inlined; remote images keep their URL), **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
 
 |  | oh-my-md | Typora | MarkText |
 | --- | --- | --- | --- |
@@ -59,7 +59,7 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 ## Features
 
 **Writing & Live Preview**
-- **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to plain source mode in under 1 ms without touching your bytes
+- **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to plain source mode in under 1 ms on typical notes (a cursor-seed build, ~6 ms p95 at 20 MB) without touching your bytes
 - **Full CommonMark + GFM** — tables, task lists, footnotes (click to jump/return), strikethrough, `==highlights==`, `<mark>`, `<u>`, `:gemoji:` completion
 - **Typora-style tables & Smart Paste** — click directly into rendered table cells to edit with byte-minimal range patches, or paste rich HTML from browsers/Notion/Feishu/Word (including complex `rowspan`/`colspan` tables)
 - **Rich blocks** — live **KaTeX math** with an inline CodeMirror LaTeX popup editor, **Mermaid diagrams**, and **Shiki** syntax highlighting
@@ -84,19 +84,31 @@ Typora proved that a Markdown editor can feel like a modern word processor — t
 
 One promise: **you should never split a document up because of the editor.**
 
-- Keystroke latency stays far inside the 16 ms frame budget on every document we benchmark — **2 ms (p95, source mode) even on a 20 MB / 750k-line file**
-- `⌘E` mode switching builds only a seed around the cursor — **sub-millisecond, independent of document size**
-- Large documents use viewport-windowed live rendering so editing stays responsive
+- Keystroke latency stays inside the 16 ms frame budget in both live and source mode — **~2.5 ms live p95 on a 350 KB richly formatted note (4,800 paragraphs), and still ~2.5 ms live p95 at 1.3 MB (13,600 paragraphs)**
+- Live rendering is **viewport-windowed above 2,000 lines or 100 KB**, so those two tiers cost the same per keystroke instead of scaling with the file
+- `⌘E` mode switching builds only a cursor-centred seed instead of the whole document — **under 1 ms on typical notes**, and **~6 ms p95 at 20 MB**, which is the honest upper bound rather than a size-independent constant
+- The largest tiers trade live preview for safety: 10 MB / 380k lines keeps windowed live editing, 20 MB / 750k lines is a **source-mode, read-only-scale tier** where live preview is deliberately not claimed
 
-| Document | Typing p95 (live / source) | Main-thread open |
+| Document | Typing p95 (live / source) | Main-thread open (live) |
 | --- | --- | --- |
-| 10k lines | 5.5 / 2 ms | 32 ms |
-| 10 MB · 380k lines | 2.5 / 2 ms² | ~15 ms |
-| 20 MB · 750k lines | — / 2 ms | ~30 ms |
+| 350 KB · 4,800 formatted paragraphs | ~2.5 / 2 ms | ~10 ms |
+| 1.3 MB · 13,600 formatted paragraphs | ~2.5 / 2 ms¹ | ~8 ms |
+| 10 MB · 380k lines | ~2.5 / 2 ms¹ | ~15 ms |
+| 20 MB · 750k lines | — / 2 ms² | ~30 ms |
 
-² Safe mode: live rendering is viewport-windowed.
+¹ Viewport-windowed live rendering: only the visible window and its prune margin hold decorations, so cost tracks the viewport rather than the document.
+² Source / read-only scale tier — editing stays responsive, live preview is not claimed at this size.
 
-Figures come from the built-in advisory benchmark on an M-series machine — run `pnpm --filter @omd/engine bench` and see for yourself.
+Figures come from the built-in advisory benchmark on an M-series machine (run-to-run p95 lands between 2.5 and 3.2 ms for the windowed tiers) — run `pnpm --filter @omd/engine bench` and see for yourself. The blocking regression gate is `pnpm check:perf`.
+
+## Scope & 1.0 non-goals
+
+1.0 is a **single-machine desktop Markdown editor**, on purpose:
+
+- **In scope** — Typora-class live editing over raw Markdown, conflict-safe local files (atomic saves, external-change and symlink detection, crash recovery, version snapshots), native HTML / paginated PDF / PNG export on macOS, Windows and Linux, and a workspace that stays responsive on very large documents.
+- **Explicitly out of scope for 1.0** — plugin runtimes, cloud sync and real-time collaboration, mobile apps, and AI writing assistants. These are deferred rather than half-built: no hidden sync, no background upload, no assistant surfaces in the shell.
+
+The bet behind that scope: local, source-faithful editing is the part worth being excellent at. If you need plugins, sync, or an AI assistant today, a general-purpose editor is the better tool.
 
 ## Download
 
@@ -174,7 +186,7 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 - [Logging & Troubleshooting](./docs/guides/troubleshooting-en.md) ([简体中文](./docs/guides/troubleshooting.md))
 - [Windows Installer Policy (NSIS / MSI)](./docs/guides/windows-installer.md)
 - [Security & Privacy Policy](./SECURITY.md)
-- [Contributing Guide](./CONTRIBUTING.md) & [Architecture / Agent Guides (`AGENTS.md`)](./AGENTS.md)
+- [Contributing Guide](./CONTRIBUTING.md) · [Code of Conduct](./CODE_OF_CONDUCT.md) · [Architecture / Agent Guides (`AGENTS.md`)](./AGENTS.md)
 
 ## Roadmap
 
@@ -193,7 +205,7 @@ Formatting sits on familiar keys (`⌘B`, `⌘I`, `⌘1`–`⌘6`, …), and eve
 
 ## Contributing
 
-Issues and pull requests are welcome! Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev setup, the per-domain test matrix, and commit conventions. `pnpm verify` should pass before you open a PR.
+Issues and pull requests are welcome! Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev setup, the per-domain test matrix, and commit conventions. `pnpm verify` should pass before you open a PR. Bug reports get their own [issue form](./.github/ISSUE_TEMPLATE/bug_report.yml); all participation is covered by the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## Acknowledgments
 

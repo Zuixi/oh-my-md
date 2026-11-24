@@ -57,7 +57,7 @@ afterEach(() => {
 async function openTreeMenu(label: string): Promise<void> {
   const sidebar = document.getElementById("primary-sidebar")
   if (!sidebar) throw new Error("primary sidebar is not mounted")
-  fireEvent.contextMenu(within(sidebar).getByRole("button", { name: label }))
+  fireEvent.contextMenu(within(sidebar).getByRole("treeitem", { name: label }))
   await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy())
 }
 
@@ -270,7 +270,7 @@ describe("FileTree sidebar menu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }))
     fireEvent.change(screen.getByRole("textbox", { name: "Rename" }), { target: { value: "taken.md" } })
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename" }), { key: "Enter" })
-    fireEvent.click(screen.getByRole("button", { name: "other.md" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "other.md" }))
     expect(screen.queryByRole("textbox", { name: "Rename" })).toBeNull()
     await act(async () => { reject(new Error("path already exists")) })
     await waitFor(() => expect(harness.services.reportError)
@@ -324,7 +324,7 @@ describe("FileTree sidebar menu", () => {
     fireEvent.change(screen.getByPlaceholderText("Run a command…"), { target: { value: "Open folder" } })
     fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
     await waitFor(() => expect(screen.getByText("drafts")).toBeTruthy())
-    fireEvent.click(screen.getByRole("button", { name: "drafts" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "drafts" }))
     await waitFor(() => expect(screen.getByText("doc.md", { selector: ".filetree-name" })).toBeTruthy())
     await harness.openIntoActive(`${from}\\doc.md`, "saved")
     const handle = harness.editorForTab(1)
@@ -600,7 +600,7 @@ describe("FileTree sidebar menu", () => {
 
     harness.renderApp()
     await harness.openIntoActive("/notes/doc.md", "saved")
-    fireEvent.contextMenu(screen.getByRole("tree", { name: "notes" }))
+    fireEvent.contextMenu(screen.getByRole("tree", { name: "Files" }))
     await waitFor(() => expect(screen.getByRole("menu", { name: "Folder actions" })).toBeTruthy())
     expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull()
     fireEvent.click(screen.getByRole("menuitem", { name: "New File" }))

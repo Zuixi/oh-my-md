@@ -103,6 +103,7 @@ export const en: Record<string, string> = {
   "history.empty": "No snapshots yet. Save the file to create one.",
   "history.clear": "Clear History",
   "history.failed": "Could not load version history",
+  "history.restoreInPlace": "Restore",
 
   "quickOpen.placeholder": "Go to file…",
   "quickOpen.loading": "Loading…",
@@ -159,7 +160,6 @@ export const en: Record<string, string> = {
   "largeDoc.safeMode": "Very large document ({lines} lines): live preview renders progressively starting at the viewport, and word count is on demand.",
   "largeDoc.readonly": "Very large document ({lines} lines) opened read-only with live preview. Scrolling grows parse-tree memory (a few times the file size). Consider splitting the file to edit it.",
   "largeDoc.dismiss": "OK",
-  "statusbar.status.idle": "",
   "statusbar.status.saving": "saving",
   "statusbar.status.saveFailed": "save failed",
   "statusbar.status.conflict": "conflict",
@@ -174,6 +174,7 @@ export const en: Record<string, string> = {
   "outline.preview.hint": "Click to expand",
   "outline.empty": "No headings",
 
+  "topbar.aria.tabs": "Open documents",
   "topbar.aria.showSidebar": "Show sidebar",
   "topbar.title.showSidebar": "Show sidebar ({shortcut})",
   "topbar.title.untitled": "unnamed",
@@ -201,6 +202,7 @@ export const en: Record<string, string> = {
   "about.platform.linux": "Linux",
   "about.close": "Close",
 
+  "sidebar.files": "Files",
   "filetree.title.fallback": "Files",
   "filetree.aria.hideSidebar": "Hide sidebar",
   "filetree.title.hideSidebar": "Hide sidebar ({shortcut})",

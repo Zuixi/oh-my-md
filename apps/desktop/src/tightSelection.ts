@@ -255,7 +255,7 @@ function tightRectanglesForRange(
         between.push(piece(leftSide, top.bottom, rightSide, startBandBottom))
       for (let block of view.viewportLineBlocks)
         if (block.from >= startTo && block.to <= endFrom)
-          between.push(...pieces(tightDrawForLine(null, null, wholeBlock(block))))
+          between.push(...tightDrawWholeBlock(block))
       // When the selection stays inside one soft-wrapped block, both remainder
       // spans describe the same rows. `startBandBottom` in the lower bound
       // collapses the second one to nothing — the selection background is
@@ -279,6 +279,39 @@ function tightRectanglesForRange(
     for (let i = 0; i < horizontal.length; i += 2)
       pieces.push(piece(horizontal[i], top, horizontal[i + 1], bottom))
     return pieces
+  }
+  /**
+   * Draws a block that sits entirely inside the selection, so both of its own
+   * line ends are open. Modification A clamps an open end to the text end, and
+   * for a soft-wrapped block that clamp only describes its LAST visual row:
+   * every row above it wraps at the wrap margin, so painting them at the last
+   * row's width leaves their right side unhighlighted. A DrawnLine holds one
+   * width per span, so split the block: a full-width band for the rows above
+   * the last, the tight span for the last row alone. Single-row blocks (and
+   * empty lines) keep the untouched tight span.
+   */
+  function tightDrawWholeBlock(block: BlockInfo): RectangleMarker[] {
+    let drawn = tightDrawForLine(null, null, wholeBlock(block))
+    if (drawn.bottom - drawn.top <= BAND_EPSILON_PX)
+      return []
+    // -2 resolves the block's last glyph; an empty block has none, so its start
+    // side is queried instead.
+    let firstRow = coordsAtPos(view, block.from, 2)
+    let lastRow = coordsAtPos(view, block.to, block.to == block.from ? 2 : -2)
+    if (!firstRow || !lastRow || !wrapsToSecondRow(firstRow, lastRow, drawn))
+      return pieces(drawn)
+    return [piece(leftSide, drawn.top, rightSide, lastRow.top)]
+      .concat(pieces({ top: lastRow.top, bottom: drawn.bottom, horizontal: drawn.horizontal }))
+  }
+  /**
+   * Whether the block's last glyph really sits on a visual row below its first
+   * one. Glyph rects are inset by their line box's half-leading, so a
+   * single-row block also reports `lastRow.top > drawn.top`; only a last glyph
+   * box starting at or below the first glyph box's bottom proves a second row.
+   */
+  function wrapsToSecondRow(firstRow: Rect, lastRow: Rect, drawn: DrawnLine): boolean {
+    return lastRow.top - drawn.top > BAND_EPSILON_PX &&
+      lastRow.top >= firstRow.bottom - BAND_EPSILON_PX
   }
   // Gets passed from/to in line-local positions
   function tightDrawForLine(

@@ -1,3 +1,4 @@
+import { Profiler } from "react"
 import { fireEvent, render, screen, act } from "@testing-library/react"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { OutlineItem } from "@omd/engine"
@@ -146,3 +147,28 @@ describe("OutlinePanel reveals the current item", () => {
   })
 })
 
+// Zero-churn reactivity: the panel subscribes to the derived current-section
+// index, so the status snapshot churning on every key press (cursor text) does
+// not re-render the heading list unless the section actually changes.
+describe("OutlineList subscribes to the current index", () => {
+  it("does not re-render when the caret moves inside the same section", () => {
+    const store = createEditorStatusStore({ cursor: "1:1", head: 10, mode: "live" })
+    const commits = vi.fn()
+    render(
+      <Profiler id="outline" onRender={commits}>
+        <OutlineList items={ITEMS} statusStore={store} onJump={vi.fn()} />
+      </Profiler>,
+    )
+    expect(currentItem()?.textContent).toBe("Deep")
+    commits.mockClear()
+
+    act(() => store.publish({ cursor: "1:5", head: 12, mode: "live" }))
+    expect(commits).not.toHaveBeenCalled()
+    expect(currentItem()?.textContent).toBe("Deep")
+
+    // Crossing into another heading still commits, so the guard is not a freeze.
+    act(() => store.publish({ cursor: "2:1", head: 25, mode: "live" }))
+    expect(commits).toHaveBeenCalled()
+    expect(currentItem()?.textContent).toBe("Next")
+  })
+})

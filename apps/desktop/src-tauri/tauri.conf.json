@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: https:; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws:",
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: https:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": []
@@ -30,6 +30,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "oh-my-md Contributors",
+    "category": "DeveloperTool",
+    "shortDescription": "Fast, source-faithful Markdown editor",
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

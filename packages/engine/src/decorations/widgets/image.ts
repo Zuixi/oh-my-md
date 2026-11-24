@@ -52,6 +52,8 @@ export class ImageWidget extends WidgetType {
     img.alt = this.alt
     if (this.title) img.title = this.title
     img.className = "omd-image"
+    // Async decode keeps the bitmap off the frame CM measures in, so the block height only
+    // settles when the image arrives: ask for a re-measure from that callback.
     img.decoding = "async"
     const cachedDims = imageDimensionsCache.get(this.resolvedSrc)
     if (cachedDims) {
@@ -65,7 +67,7 @@ export class ImageWidget extends WidgetType {
           height: img.naturalHeight,
         })
       }
-      view.requestMeasure?.()
+      if (img.isConnected && typeof view?.requestMeasure === "function") view.requestMeasure()
     }
     img.addEventListener("mousedown", event => {
       if (!isInspectPointerEvent(event)) return
@@ -93,9 +95,12 @@ export class ImageWidget extends WidgetType {
     })
     img.onerror = () => {
       const label = view.state.facet(imageBrokenLabel)(this.src)
-      img.replaceWith(Object.assign(document.createElement("span"), {
+      const span = Object.assign(document.createElement("span"), {
         className: "omd-image-broken", textContent: label,
-      }))
+      })
+      img.replaceWith(span)
+      // The broken label replaces an unsized <img>: re-measure where the swap happened.
+      if (span.isConnected && typeof view?.requestMeasure === "function") view.requestMeasure()
     }
     return img
   }

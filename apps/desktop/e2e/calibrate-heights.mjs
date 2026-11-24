@@ -2,7 +2,7 @@
 // 的实际渲染高度，校准 packages/engine/src/decorations/widgetHeights.ts 的估算
 // 常数。用法：先起 vite dev server（PW_PORT，默认 9420；调用方负责关闭），再
 // `node e2e/calibrate-heights.mjs`。
-import { chromium } from "@playwright/test"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const TABLE_20 = [
   "| h1 | h2 | h3 | h4 |",
@@ -23,8 +23,7 @@ const doc = [
 ].join("\n")
 
 const port = Number.parseInt(process.env.PW_PORT ?? "", 10) || 9420
-const browser = await chromium.launch({ channel: process.env.PW_CHANNEL ?? "chrome" })
-try {
+await withManagedChromium({ channel: process.env.PW_CHANNEL ?? "chrome" }, async browser => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   await page.goto(`http://127.0.0.1:${port}/e2e/harness.html?doc=${encodeURIComponent(doc)}`)
   await page.waitForSelector(".omd-table table", { timeout: 15000 })
@@ -69,6 +68,4 @@ try {
     }
   })
   console.log(JSON.stringify(metrics, null, 2))
-} finally {
-  await browser.close().catch(() => {})
-}
+})

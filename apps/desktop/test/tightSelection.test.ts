@@ -574,6 +574,55 @@ describe("tightSelection geometry (fake view)", () => {
     expect(rightEdge(bottom)).toBe(textX(2))
   })
 
+  it("soft-wrapped intermediate block: rows above the last fill the text column", () => {
+    // Regression: a fully-selected soft-wrapped block was drawn as one rect
+    // carrying the LAST row's open-end clamp, so every row above it stopped at
+    // that row's text end instead of the wrap margin — leaving their right side
+    // unhighlighted. The block needs both widths at once.
+    const spec: FakeViewSpec = {
+      doc: `head\n${"b".repeat(2 * WRAP_COL)}\ntail`,
+      anchor: 1,
+      head: 48,
+      wrapColumn: WRAP_COL,
+    }
+    const markers = tightSelectionMarkers(makeFakeView(spec))
+    expect(markers).toHaveLength(4)
+    const [topRow, upperRows, lastRow, bottom] = markers
+    expect(topRow.top).toBe(rowTop(0))
+    // Upper wrapped rows: full text-column width, as if every wrap were a
+    // line end — the wrap margin is where those rows really stop.
+    expect(upperRows.left).toBe(textX(0))
+    expect(rightEdge(upperRows)).toBe(RIGHT_SIDE)
+    expect(upperRows.top).toBe(rowTop(1))
+    // Last row: still clamped to its own text end plus the nub.
+    expect(lastRow.left).toBe(textX(0))
+    expect(rightEdge(lastRow)).toBe(textX(WRAP_COL) + NUB_PX)
+    expect(rightEdge(lastRow)).toBeLessThan(RIGHT_SIDE)
+    expect(lastRow.top + lastRow.height).toBe(rowTop(3))
+    // The two shapes meet exactly, and the seam sits inside the last row's box
+    // so no vertical gap (or overlap) can appear between them.
+    expect(upperRows.top + upperRows.height).toBe(lastRow.top)
+    expect(lastRow.top).toBeGreaterThanOrEqual(rowTop(2))
+    expect(lastRow.top).toBeLessThan(rowTop(2) + LINE_H)
+    expect(bottom.top).toBe(rowTop(3))
+    expectConfinedToLines(markers, spec, [1, 2, 3])
+  })
+
+  it("single-row intermediate block keeps one tight bar, no full-width stripe", () => {
+    // Glyph rects are inset by their line box's half-leading, so a single-row
+    // block also reports a last-glyph top below the drawn row top. Splitting on
+    // that alone paints a full-width stripe above every ordinary line.
+    const spec: FakeViewSpec = { doc: "head\nshort\ntail", anchor: 1, head: 13 }
+    const markers = tightSelectionMarkers(makeFakeView(spec))
+    expect(markers).toHaveLength(3)
+    const [, middle] = markers
+    expect(middle.top).toBe(rowTop(1))
+    expect(middle.height).toBe(LINE_H)
+    expect(middle.left).toBe(textX(0))
+    expect(rightEdge(middle)).toBe(textX(5) + NUB_PX)
+    expect(markers.some(m => rightEdge(m) === RIGHT_SIDE)).toBe(false)
+  })
+
   it("selection within one wrapped line: every visual row painted", () => {
     // One 50-char line wrapping into 3 rows; selection spans row 0 into
     // row 2 — no whole block is ever "between", so the middle row only

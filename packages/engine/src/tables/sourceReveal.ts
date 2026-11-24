@@ -1,6 +1,6 @@
-import { syntaxTree } from "@codemirror/language"
 import { StateEffect, StateField, type EditorState, type Transaction } from "@codemirror/state"
-import type { SyntaxNode } from "@lezer/common"
+import { blockSelected } from "../decorations/blockSelection"
+import { tableNodeAt } from "./navigate"
 
 /**
  * 被展开成源码的那一张表。`null` 表示没有表处于源码态。
@@ -51,11 +51,8 @@ export function isRevealedTableRange(state: EditorState, from: number, to: numbe
  */
 export function isTableShownAsSource(state: EditorState, from: number, to: number): boolean {
   if (!isRevealedTableRange(state, from, to)) return false
-  const { anchor, from: selFrom, to: selTo } = state.selection.main
-  // `blockWidget.ts::blockSelected`, inlined: importing it here closes an import cycle
-  // through the table widgets (`tableShownAsSource.test.ts` keeps the two in step).
-  const partlySelected = selFrom <= to && selTo >= from && !(selFrom <= from && selTo >= to)
-  return partlySelected || (anchor >= from && anchor <= to)
+  const { anchor } = state.selection.main
+  return blockSelected(state, from, to) || (anchor >= from && anchor <= to)
 }
 
 function revealedTableAtHead(state: EditorState): RevealedTable | null {
@@ -63,16 +60,6 @@ function revealedTableAtHead(state: EditorState): RevealedTable | null {
   const node = tableNodeAt(state, head)
   if (!node || head < node.from || head > node.to) return null
   return { from: node.from, to: node.to }
-}
-
-function tableNodeAt(state: EditorState, pos: number): SyntaxNode | null {
-  const tree = syntaxTree(state)
-  const walk = (side: -1 | 1): SyntaxNode | null => {
-    let node: SyntaxNode | null = tree.resolveInner(pos, side)
-    while (node && node.name !== "Table") node = node.parent
-    return node
-  }
-  return walk(1) ?? (pos > 0 ? walk(-1) : null)
 }
 
 function mapRevealedTable(range: RevealedTable, tr: Transaction): RevealedTable | null {

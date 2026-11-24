@@ -31,9 +31,9 @@ import { toggleTheme, type AppTheme } from "./theme"
 export interface AppCommandsContext {
   readonly services: DesktopServices
   readonly t: (key: string, params?: Record<string, string | number>) => string
-  readonly viewRef: RefObject<EditorView | null>
-  readonly sessionRef: RefObject<EditorSession>
-  readonly workspaceRef: RefObject<Workspace>
+  readonly getView: () => EditorView | null
+  readonly getSession: () => EditorSession
+  readonly getWorkspace: () => Workspace
   readonly tabById: (id: number) => EditorSession | undefined
   readonly openFile: () => Promise<void>
   readonly saveFile: DocumentSaveAppBridge["saveFile"]
@@ -65,7 +65,7 @@ export interface AppCommandsContext {
 export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
   const {
     services, t,
-    viewRef, sessionRef, workspaceRef, tabById,
+    getView, getSession, getWorkspace, tabById,
     openFile, saveFile, newTab, chooseFolder, openCoordinator,
     findReplace, search,
     requestCloseTab, clearRecents, openVersionHistory,
@@ -76,7 +76,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
   } = ctx
 
   const runEditorCommand = (command: (view: EditorView) => boolean): (() => void) => () => {
-    const view = viewRef.current
+    const view = getView()
     if (view) try { command(view) } catch { /* mock views */ }
   }
 
@@ -84,7 +84,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
    * deletes only after the write succeeds. Best-effort — clipboard access can
    * fail in restricted webviews, and the native Ctrl+C/X path stays primary. */
   const runClipboardCopy = (cut: boolean): (() => void) => () => {
-    const view = viewRef.current
+    const view = getView()
     if (!view) return
     let text = ""
     let from = 0
@@ -112,9 +112,9 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
    * pasted text and an empty clipboard no-ops instead of deleting the
    * selection. Best-effort — the native Ctrl/Cmd-V path stays primary. */
   const runClipboardPaste = (): (() => void) => () => {
-    const view = viewRef.current
+    const view = getView()
     if (!view) return
-    const active = sessionRef.current
+    const active = getSession()
     void pasteFromSystemClipboard(
       view,
       systemClipboardReader,
@@ -123,8 +123,8 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
   }
 
   const insertImage = () => {
-    const view = viewRef.current
-    const active = sessionRef.current
+    const view = getView()
+    const active = getSession()
     if (!view) return
     // 只读档（HUGE）不可变：不弹文件选择器（imagePaste 侧 state.readOnly 兜底再拦）。
     if (documentScaleRegistry.isReadOnly(active.id)) return
@@ -134,12 +134,12 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
   return [
     { id: "open", label: t("cmd.label.open"), shortcut: shortcutFor("open"), run: () => void openFile() },
     { id: "quick-open", label: t("cmd.label.quick-open"), shortcut: shortcutFor("quick-open"), run: () => void openCoordinator.openQuickOpen() },
-    { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(workspaceRef.current.activeId, "explicit") },
-    { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(workspaceRef.current.activeId, "explicit", true) },
+    { id: "save", label: t("cmd.label.save"), shortcut: shortcutFor("save"), run: () => void saveFile(getWorkspace().activeId, "explicit") },
+    { id: "save-as", label: t("cmd.label.save-as"), shortcut: shortcutFor("save-as"), run: () => void saveFile(getWorkspace().activeId, "explicit", true) },
     { id: "folder", label: t("cmd.label.folder"), run: () => void chooseFolder() },
     { id: "tab", label: t("cmd.label.tab"), shortcut: shortcutFor("tab"), run: newTab },
     { id: "new-window", label: t("cmd.label.newWindow"), shortcut: shortcutFor("new-window"), run: () => { void services.createNewWindow?.() } },
-    { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(workspaceRef.current.activeId) },
+    { id: "close", label: t("cmd.label.close"), shortcut: shortcutFor("close"), run: () => requestCloseTab(getWorkspace().activeId) },
     { id: "theme", label: t("cmd.label.theme"), run: () => setTheme(current => toggleTheme(current)) },
     { id: "css", label: t("cmd.label.css"), run: () => void loadCustomCss(services, setCustomCss) },
     { id: "focus", label: t("cmd.label.focus"), run: () => setFocusMode(on => !on) },
@@ -148,7 +148,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
     { id: "outline", label: t("cmd.label.outline"), shortcut: shortcutFor("outline"), run: () => setOutlineOpen(open => !open) },
     { id: "typewriter", label: t("cmd.label.typewriter"), run: () => setTypewriter(on => !on) },
     { id: "source", label: t("cmd.label.source"), shortcut: shortcutFor("source"), run: () => {
-      const view = viewRef.current
+      const view = getView()
       if (!view) return
       try {
         view.dispatch(applyToggle(view.state))
@@ -162,8 +162,8 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
     { id: "copy", label: t("cmd.label.copy"), shortcut: shortcutFor("copy"), run: runClipboardCopy(false) },
     { id: "paste", label: t("cmd.label.paste"), shortcut: shortcutFor("paste"), run: runClipboardPaste() },
     { id: "pastePlainText", label: t("cmd.label.pastePlainText"), shortcut: shortcutFor("pastePlainText"), run: () => {
-      const view = viewRef.current
-      const active = sessionRef.current
+      const view = getView()
+      const active = getSession()
       if (view) void pastePlainText(view, pasteOptions(active.id, active.documentId))
     } },
     { id: "select-all", label: t("cmd.label.select-all"), shortcut: shortcutFor("select-all"), run: runEditorCommand(selectAll) },
@@ -176,7 +176,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
       id: kind === "png" ? "export-image" : `export-${kind}`,
       label: t(kind === "png" ? "cmd.label.export-image" : `cmd.label.export-${kind}`),
       run: () => {
-        const tab = tabById(workspaceRef.current.activeId)
+        const tab = tabById(getWorkspace().activeId)
         const docPath = tab ? sessionPath(tab) : null
         const base = exportOptions()
         const renderOptions = {
@@ -188,7 +188,7 @@ export function buildAppCommands(ctx: AppCommandsContext): AppCommand[] {
         }
         void exportCurrent(
           services,
-          viewRef.current,
+          getView(),
           kind,
           signal => ({ resolveImageSrc: makeExportImageResolver(() => docPath, signal) }),
           customCss,

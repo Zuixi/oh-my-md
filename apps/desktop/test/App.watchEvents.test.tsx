@@ -61,7 +61,7 @@ function folderHarness() {
     changeHandler = next
     return () => { changeHandler = undefined }
   }
-  const watchPaths = vi.fn(async () => undefined)
+  const watchPaths = vi.fn(async (_paths: string[]) => undefined)
   harness.services.watchPaths = watchPaths
   const listDir = vi.fn(async () => [] as TreeEntry[])
   harness.services.listDir = listDir
@@ -71,13 +71,43 @@ function folderHarness() {
 }
 
 describe("native workspace-change events", () => {
-  it("watches the restored folder", async () => {
+  it("watches the restored folder only after allowWorkspaceDir resolves", async () => {
     const { harness, watchPaths } = folderHarness()
+    const order: string[] = []
+    const pendingReleases: Array<() => void> = []
+    harness.services.allowWorkspaceDir = vi.fn(
+      () => new Promise<void>(resolve => {
+        order.push("allow:start")
+        pendingReleases.push(() => {
+          order.push("allow:done")
+          resolve()
+        })
+      }),
+    )
+    watchPaths.mockImplementation(async (paths: string[]) => {
+      if (paths.length > 0) order.push(`watch:${paths.join(",")}`)
+    })
     harness.renderApp()
 
     await waitFor(() => {
+      expect(pendingReleases.length).toBeGreaterThan(0)
+    })
+    expect(watchPaths).not.toHaveBeenCalledWith(["/notes"])
+
+    // Release session-init authorization, then watcher authorization if issued.
+    await act(async () => {
+      while (pendingReleases.length > 0) pendingReleases.shift()!()
+    })
+    await waitFor(() => {
+      if (pendingReleases.length > 0) {
+        while (pendingReleases.length > 0) pendingReleases.shift()!()
+      }
       expect(watchPaths).toHaveBeenCalledWith(["/notes"])
     })
+    const watchIdx = order.indexOf("watch:/notes")
+    const lastAllowDone = order.lastIndexOf("allow:done")
+    expect(watchIdx).toBeGreaterThan(lastAllowDone)
+    expect(lastAllowDone).toBeGreaterThan(-1)
   })
 
   it("probes open tabs and refreshes the tree when an event arrives", async () => {

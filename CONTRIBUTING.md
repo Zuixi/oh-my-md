@@ -67,3 +67,5 @@ Commits follow `<type>: <why>` with types `feat | fix | refactor | docs | test |
 ## Updating docs
 
 If your change alters behavior, check whether these need updates before you finish: the domain `AGENTS.md` files, `docs/memory/known-gotchas.md`, `docs/manual-qa.md`, and the READMEs (user-visible behavior or setup changes).
+
+All new or modified documentation and code comments must be written in English; localized user-facing docs (`README-zh.md`, Chinese guides, i18n messages) are exempt. See the root `AGENTS.md` §Code & Module Style → Language.

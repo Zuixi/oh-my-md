@@ -64,6 +64,19 @@ fn menu_state_defaults() {
     let s = MenuState::default();
     assert_eq!(s.locale, "en");
     assert!(s.recents.is_empty());
+    assert!(s.view_states.is_empty());
+    assert!(s.focused.is_none());
+}
+
+#[test]
+fn only_the_focused_window_owns_the_global_menubar() {
+    // No window recorded yet: the first state to arrive is shown, so a
+    // single-window session still syncs before any focus event lands.
+    assert!(owns_menubar(None, "main"));
+    // Two editor windows with different toggles: the unfocused one's push must
+    // not repaint the global menu with its own checkmarks.
+    assert!(owns_menubar(Some("main"), "main"));
+    assert!(!owns_menubar(Some("main"), "editor-2"));
 }
 
 #[test]

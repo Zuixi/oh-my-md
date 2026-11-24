@@ -29,7 +29,7 @@ const WINDOWS_ADDITIONAL_BROWSER_ARGS: &str =
 
 /// Inlined images make the export document self-contained; a 4K screenshot with
 /// several retina images can exceed the old 8 MiB cap quickly.
-const MAX_EXPORT_HTML_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_EXPORT_HTML_BYTES: usize = 32 * 1024 * 1024;
 
 pub const EXPORT_MIN_WIDTH_CSS: u32 = 320;
 pub const EXPORT_MAX_WIDTH_CSS: u32 = 1920;
@@ -44,10 +44,15 @@ pub const EXPORT_MAX_DEVICE_HEIGHT: u32 = 65_535;
 /// warning instead of allocating an unbounded multi-GB bitmap.
 pub const EXPORT_MAX_DEVICE_AREA: u64 = 128_000_000;
 pub const EXPORT_MIN_HEIGHT_CSS: f64 = 600.0;
+/// One cross-platform readiness deadline for every offscreen export window.
+/// macOS waits for the WebKit navigation, Windows/Linux poll the page's ready
+/// flag; both must give a heavy document the same budget so a note exports the
+/// same way on every OS.
+pub const EXPORT_READY_TIMEOUT_SECS: u64 = 20;
 #[cfg(target_os = "macos")]
-pub const EXPORT_TIMEOUT_SECS: u64 = 20;
+pub const EXPORT_TIMEOUT_SECS: u64 = EXPORT_READY_TIMEOUT_SECS;
 #[cfg(any(windows, target_os = "linux"))]
-pub const EXPORT_READY_TIMEOUT_MS: u64 = 15_000;
+pub const EXPORT_READY_TIMEOUT_MS: u64 = EXPORT_READY_TIMEOUT_SECS * 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -150,6 +155,35 @@ impl ExportSpec {
             )),
         });
         (clamped.round(), warning)
+    }
+
+    /// Device-pixel capture scale for a PNG of `height_css` CSS pixels tall.
+    ///
+    /// GPU capture backends (WebView2 CDP, WebKit screenshots) re-rasterize at
+    /// `scale` into one texture; Chromium caps a single surface at
+    /// `EXPORT_MAX_DEVICE_DIMENSION` per side. A long note at 2x/3x would blow
+    /// that cap and come back truncated, so the scale steps down until the full
+    /// document fits one image. The returned warning is what tells the user the
+    /// image is not at the requested scale instead of silently shipping one.
+    ///
+    /// Compiled on the Windows GPU-capture backend and in tests on every OS.
+    /// macOS rasterizes through WebKit at a fixed scale, and the WebKitGTK path
+    /// keeps its own unrounded variant because it sizes the export window from
+    /// the raw measured height (`export_linux.rs`).
+    #[cfg(any(windows, test))]
+    pub fn effective_gpu_capture_scale(self, height_css: f64) -> (f64, Option<ExportWarning>) {
+        let height = height_css.round().max(1.0);
+        let max_dim = f64::from(EXPORT_MAX_DEVICE_DIMENSION);
+        let scale = (max_dim / height).min(self.scale).max(0.25);
+        let warning = (scale + 1e-6 < self.scale).then(|| ExportWarning {
+            code: "downsampled".into(),
+            detail: Some(format!(
+                "long PNG export ({height:.0} CSS px) stepped capture scale from {}x to \
+                 {scale:.2}x to fit GPU texture limit ({EXPORT_MAX_DEVICE_DIMENSION} px)",
+                self.scale
+            )),
+        });
+        (scale, warning)
     }
 
     #[cfg(test)]
@@ -267,21 +301,34 @@ pub(crate) mod platform;
 #[tauri::command]
 pub async fn cancel_export(app: tauri::AppHandle, request_id: String) {
     let state = app.state::<self::export_cancel::ExportCancelState>();
-    if state.cancel(&request_id) {
+    if state.cancel(&request_id) != self::export_cancel::CancelOutcome::PreRegistered {
         return;
     }
     // The user can click Cancel while the frontend is still dispatching
-    // `export_preview`. If that command never reaches us, drop the pre-created
-    // entry rather than leaking it; an active export finishes far sooner than
-    // this grace period.
+    // `export_preview`. If that command never claims the entry, sweep it after
+    // 60 s; claimed entries are owned exclusively by `export_preview`.
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         app.state::<self::export_cancel::ExportCancelState>()
-            .remove(&request_id);
+            .remove_unclaimed(&request_id);
     });
 }
 
+struct ExportCancelGuard<'a> {
+    state: &'a self::export_cancel::ExportCancelState,
+    request_id: &'a str,
+}
+
+impl Drop for ExportCancelGuard<'_> {
+    fn drop(&mut self) {
+        self.state.remove(self.request_id);
+    }
+}
+
+// Eight parameters because the list *is* the IPC wire contract: collapsing it
+// into a struct would rename every field the frontend sends.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn export_preview(
     app: tauri::AppHandle,
@@ -298,19 +345,30 @@ pub async fn export_preview(
     let page = export_page::PageSetup::from_dto(page)?;
     let target = validate_export(&path, fmt, &html)?;
     let styled = styled_export_html(&html, &page);
+    if !self::export_cancel::valid_request_id(&request_id) {
+        return Err("invalid export request id".into());
+    }
     let state = app.state::<self::export_cancel::ExportCancelState>();
-    let cancel = state.token(&request_id);
+    let Some(cancel) = state.token(&request_id) else {
+        return Err("too many pending exports".into());
+    };
+    let _cancel_guard = ExportCancelGuard {
+        state: state.inner(),
+        request_id: &request_id,
+    };
     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-        state.remove(&request_id);
         return Err(self::export_cancel::EXPORT_CANCELLED.into());
     }
-    let result = platform::render(app.clone(), styled, spec, fmt, cancel.clone(), page).await;
-    state.remove(&request_id);
-    let output = result?;
+    let output = platform::render(app.clone(), styled, spec, fmt, cancel.clone(), page).await?;
     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(self::export_cancel::EXPORT_CANCELLED.into());
     }
-    crate::atomic_write(&target, &output.bytes)?;
+    // Up to 32 MiB plus fsync and a parent fsync: never on the runtime worker.
+    let bytes = output.bytes;
+    let write_target = target.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::atomic_write(&write_target, &bytes))
+        .await
+        .map_err(|error| format!("export write task failed: {error}"))??;
     // Boundary: the export artifact reached the disk. The path is logged
     // through the structured field so the diagnostics redactor can find it.
     log::info!("export ok {}", crate::logging::path_field(&target));
@@ -341,14 +399,25 @@ pub(crate) const PROBE_SCRIPT: &str = r#"JSON.stringify({
 
 fn reject_export_path(path: &str, format: ExportFormat) -> Result<PathBuf, String> {
     let target = Path::new(path);
+    // Same contract as `scoped_io::write_exported_html`: the save dialog always
+    // returns an absolute path, and `atomic_write` stages its temp file in the
+    // parent directory (a relative path would resolve against the process CWD).
+    if !target.is_absolute() {
+        return Err("export path must be absolute".into());
+    }
     if target
         .components()
         .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
     {
         return Err("path must not contain traversal".into());
     }
-    if target.is_dir() {
-        return Err("export path must be a file, not a directory".into());
+    if let Ok(existing) = std::fs::symlink_metadata(target) {
+        if existing.file_type().is_symlink() {
+            return Err("export path must not be a symlink".into());
+        }
+        if existing.is_dir() {
+            return Err("export path must be a file, not a directory".into());
+        }
     }
     let extension = target.extension().and_then(|extension| extension.to_str());
     match extension {

@@ -9,7 +9,7 @@
     "test": "tsc -p tsconfig.test.json && vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/runE2eSupervised.mjs",
     "bench:search-spike": "vitest bench --run bench/search.bench.ts --reporter=verbose",
     "audit:search-spike": "node e2e/search-100m-audit.mjs",
     "audit:widget-memory": "node e2e/widget-memory-audit.mjs",

@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use regex::RegexBuilder;
 
+use crate::auth_scope::{assert_dir_authorized, canonical_parent_and_name, reject_traversal};
 use crate::windows::WindowBounds;
 
 mod recovery;
@@ -15,7 +16,11 @@ pub use recovery::{
     RecoveryRecord,
 };
 
-static AUTHORIZED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+mod snapshots;
+pub use snapshots::{
+    clear_snapshots, list_snapshots, read_snapshot, snapshot_document, SnapshotEntry,
+};
+
 // Serializes tests that mutate OMD_CONFIG_DIR / OMD_RECOVERY_DIR so parallel
 // runs cannot observe each other's env vars (config_dir() reads them live).
 
@@ -128,134 +133,9 @@ fn move_file(from: &Path, to: &Path) -> Result<(), String> {
 
 // --- Version-history snapshots -------------------------------------------------
 
+// Read by the cross-layer drift guard in the desktop tests; the snapshot
+// implementation lives in `workspace/snapshots.rs`.
 const MAX_SNAPSHOTS_PER_FILE: usize = 20;
-const SNAPSHOT_NAME_MAX_DIGITS: usize = 19;
-
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotEntry {
-    pub file_name: String,
-    pub mtime_ms: u64,
-    pub size_bytes: u64,
-}
-
-fn snapshots_root(parent: &Path, name: &str) -> PathBuf {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(parent.to_string_lossy().as_bytes());
-    hasher.update(name.as_bytes());
-    let key: String = hasher.finalize().to_hex().chars().take(16).collect();
-    config_dir().join("snapshots").join(key)
-}
-
-fn valid_snapshot_name(file_name: &str) -> bool {
-    let Some(stem) = file_name.strip_suffix(".md") else {
-        return false;
-    };
-    !stem.is_empty()
-        && stem.len() <= SNAPSHOT_NAME_MAX_DIGITS
-        && stem.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-fn rotate_snapshots(dir: &Path) -> Result<(), String> {
-    let mut names: Vec<String> = fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if valid_snapshot_name(&name) {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
-    names.sort();
-    // Timestamp names sort chronologically; drop the oldest beyond the cap.
-    while names.len() > MAX_SNAPSHOTS_PER_FILE {
-        let oldest = names.remove(0);
-        fs::remove_file(dir.join(oldest)).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-fn write_snapshot(dir: &Path, millis: u128, source: &Path) -> Result<(), String> {
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let target = dir.join(format!("{millis}.md"));
-    fs::copy(source, &target).map_err(|e| e.to_string())?;
-    rotate_snapshots(dir)
-}
-
-pub fn snapshot_document(path: String) -> Result<(), String> {
-    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_inside_authorized(&parent)?;
-    let name = name.to_string_lossy().into_owned();
-    let source = parent.join(&name);
-    if !source.is_file() {
-        return Err("snapshot source is not a file".into());
-    }
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis();
-    write_snapshot(&snapshots_root(&parent, &name), millis, &source)
-}
-
-pub fn list_snapshots(path: String) -> Result<Vec<SnapshotEntry>, String> {
-    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_inside_authorized(&parent)?;
-    let name = name.to_string_lossy().into_owned();
-    let dir = snapshots_root(&parent, &name);
-    if !dir.is_dir() {
-        return Ok(vec![]);
-    }
-    let mut entries: Vec<SnapshotEntry> = fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let file_name = entry.file_name().to_string_lossy().into_owned();
-            if !valid_snapshot_name(&file_name) {
-                return None;
-            }
-            let metadata = entry.metadata().ok()?;
-            let mtime_ms = metadata
-                .modified()
-                .ok()?
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
-            Some(SnapshotEntry {
-                file_name,
-                mtime_ms,
-                size_bytes: metadata.len(),
-            })
-        })
-        .collect();
-    // Newest first for the history list.
-    entries.sort_by(|a, b| b.file_name.cmp(&a.file_name));
-    Ok(entries)
-}
-
-pub fn read_snapshot(path: String, file_name: String) -> Result<String, String> {
-    if !valid_snapshot_name(&file_name) {
-        return Err("snapshot name is invalid".into());
-    }
-    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_inside_authorized(&parent)?;
-    let name = name.to_string_lossy().into_owned();
-    let snapshot = snapshots_root(&parent, &name).join(&file_name);
-    fs::read_to_string(snapshot).map_err(|e| e.to_string())
-}
-
-pub fn clear_snapshots(path: String) -> Result<(), String> {
-    let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_inside_authorized(&parent)?;
-    let name = name.to_string_lossy().into_owned();
-    let dir = snapshots_root(&parent, &name);
-    if dir.exists() {
-        fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
 
 pub fn get_settings() -> Result<String, String> {
     let path = config_dir().join("settings.json");
@@ -471,41 +351,6 @@ pub fn list_session_windows() -> Result<Vec<SessionWindowEntry>, String> {
     list_session_windows_at(&config_dir())
 }
 
-pub fn authorize_workspace_root(path: &Path) -> Result<PathBuf, String> {
-    let root = canonical_directory(path)?;
-    let mut roots = AUTHORIZED_ROOTS
-        .lock()
-        .map_err(|_| "workspace authorization lock is poisoned".to_string())?;
-    if !roots.iter().any(|existing| existing == &root) {
-        roots.push(root.clone());
-    }
-    Ok(root)
-}
-
-fn assert_inside_authorized(path: &Path) -> Result<(), String> {
-    let roots = AUTHORIZED_ROOTS
-        .lock()
-        .map_err(|_| "workspace authorization lock is poisoned".to_string())?;
-    if roots
-        .iter()
-        .any(|root| path == root || path.starts_with(root))
-    {
-        Ok(())
-    } else {
-        Err("path is outside the authorized workspace".into())
-    }
-}
-
-fn reject_traversal(path: &Path) -> Result<(), String> {
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err("path must not contain traversal".into());
-    }
-    Ok(())
-}
-
 fn validate_single_segment(name: &str) -> Result<&str, String> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err("name must be a single path segment".into());
@@ -516,27 +361,11 @@ fn validate_single_segment(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-fn canonical_directory(path: &Path) -> Result<PathBuf, String> {
-    reject_traversal(path)?;
-    let directory = fs::canonicalize(path).map_err(|e| e.to_string())?;
-    if !directory.is_dir() {
-        return Err("path is not a directory".into());
-    }
-    Ok(directory)
-}
-
-fn canonical_parent_and_name(path: &Path) -> Result<(PathBuf, &std::ffi::OsStr), String> {
-    reject_traversal(path)?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| "path must include a file or directory name".to_string())?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "path must include a parent directory".to_string())?;
-    Ok((canonical_directory(parent)?, name))
-}
-
-pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
+pub fn create_markdown(
+    dir: String,
+    name: String,
+    window_label: Option<String>,
+) -> Result<String, String> {
     let name = validate_single_segment(&name)?;
     if Path::new(name)
         .extension()
@@ -545,8 +374,7 @@ pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
     {
         return Err("markdown files must use a .md extension".into());
     }
-    let parent = canonical_directory(Path::new(&dir))?;
-    assert_inside_authorized(&parent)?;
+    let parent = assert_dir_authorized(window_label.as_deref(), Path::new(&dir))?;
     let target = parent.join(name);
     if target.exists() {
         return Err("path already exists".into());
@@ -559,10 +387,13 @@ pub fn create_markdown(dir: String, name: String) -> Result<String, String> {
     Ok(target.to_string_lossy().into_owned())
 }
 
-pub fn create_dir(dir: String, name: String) -> Result<String, String> {
+pub fn create_dir(
+    dir: String,
+    name: String,
+    window_label: Option<String>,
+) -> Result<String, String> {
     let name = validate_single_segment(&name)?;
-    let parent = canonical_directory(Path::new(&dir))?;
-    assert_inside_authorized(&parent)?;
+    let parent = assert_dir_authorized(window_label.as_deref(), Path::new(&dir))?;
     let target = parent.join(name);
     if target.exists() {
         return Err("path already exists".into());
@@ -672,10 +503,17 @@ fn rename_case_only(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
+pub fn rename_path(
+    from: String,
+    to_name: String,
+    window_label: Option<String>,
+) -> Result<String, String> {
     let to_name = validate_single_segment(&to_name)?;
     let (parent, current_name) = canonical_parent_and_name(Path::new(&from))?;
-    assert_inside_authorized(&parent)?;
+    // Renames mutate the workspace tree, so they always need the workspace
+    // root grant — a single-document grant is version history, not folder
+    // management.
+    assert_dir_authorized(window_label.as_deref(), &parent)?;
     let source = parent.join(current_name);
     let source_metadata = fs::metadata(&source).map_err(|e| e.to_string())?;
     if source_metadata.is_file()
@@ -703,9 +541,9 @@ pub fn rename_path(from: String, to_name: String) -> Result<String, String> {
     Ok(target.to_string_lossy().into_owned())
 }
 
-pub fn delete_path(path: String) -> Result<(), String> {
+pub fn delete_path(path: String, window_label: Option<String>) -> Result<(), String> {
     let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_inside_authorized(&parent)?;
+    assert_dir_authorized(window_label.as_deref(), &parent)?;
     let name = name.to_string_lossy().into_owned();
     let target = parent.join(name);
     // Fail fast on a missing target so callers keep their not-found semantics.
@@ -714,18 +552,20 @@ pub fn delete_path(path: String) -> Result<(), String> {
     trash::delete(&target).map_err(|e| e.to_string())
 }
 
-pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || list_dir_sync(&path))
+pub async fn list_dir(path: String, window_label: Option<String>) -> Result<Vec<DirEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_sync(&path, window_label.as_deref()))
         .await
         .map_err(|error| format!("directory listing task failed: {error}"))?
 }
 
-pub(crate) fn list_dir_sync(path: &str) -> Result<Vec<DirEntry>, String> {
-    let root = Path::new(path);
-    reject_traversal(root)?;
-    if !root.is_dir() {
-        return Err("path is not a directory".into());
-    }
+pub(crate) fn list_dir_sync(
+    path: &str,
+    window_label: Option<&str>,
+) -> Result<Vec<DirEntry>, String> {
+    reject_traversal(Path::new(path))?;
+    // SEC-04: listing is a read of the workspace tree, so it needs the same
+    // grant as a mutation. Canonicalization also rejects a non-directory.
+    let root = &assert_dir_authorized(window_label, Path::new(path))?;
     let mut entries = Vec::new();
     for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -752,9 +592,10 @@ pub async fn search_markdown(
     root: String,
     query: String,
     case_sensitive: bool,
+    window_label: Option<String>,
 ) -> Result<SearchResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        search_markdown_sync(&root, &query, case_sensitive)
+        search_markdown_sync(&root, &query, case_sensitive, window_label.as_deref())
     })
     .await
     .map_err(|error| format!("markdown search task failed: {error}"))?
@@ -764,6 +605,7 @@ pub(crate) fn search_markdown_sync(
     root: &str,
     query: &str,
     case_sensitive: bool,
+    window_label: Option<&str>,
 ) -> Result<SearchResponse, String> {
     if query.trim().is_empty() {
         return Ok(SearchResponse {
@@ -771,8 +613,17 @@ pub(crate) fn search_markdown_sync(
             truncated: false,
         });
     }
-    let dir = Path::new(root);
-    reject_traversal(dir)?;
+    reject_traversal(Path::new(root))?;
+    // A missing root walks to nothing (unchanged UX); an existing one must be
+    // a workspace the calling window opened, or a sandboxed webview could
+    // search the whole disk.
+    if !Path::new(root).exists() {
+        return Ok(SearchResponse {
+            hits: vec![],
+            truncated: false,
+        });
+    }
+    let dir = &assert_dir_authorized(window_label, Path::new(root))?;
     let matcher = build_matcher(query, case_sensitive)?;
 
     let mut builder = ignore::WalkBuilder::new(dir);
@@ -850,15 +701,31 @@ pub(crate) fn search_markdown_sync(
 
 const MAX_QUICK_OPEN_FILES: usize = 5000;
 
-pub async fn list_markdown_files(root: String) -> Result<QuickOpenResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || list_markdown_files_sync(&root))
-        .await
-        .map_err(|error| format!("markdown listing task failed: {error}"))?
+pub async fn list_markdown_files(
+    root: String,
+    window_label: Option<String>,
+) -> Result<QuickOpenResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        list_markdown_files_sync(&root, window_label.as_deref())
+    })
+    .await
+    .map_err(|error| format!("markdown listing task failed: {error}"))?
 }
 
-pub(crate) fn list_markdown_files_sync(root: &str) -> Result<QuickOpenResponse, String> {
-    let dir = Path::new(root);
-    reject_traversal(dir)?;
+pub(crate) fn list_markdown_files_sync(
+    root: &str,
+    window_label: Option<&str>,
+) -> Result<QuickOpenResponse, String> {
+    reject_traversal(Path::new(root))?;
+    // Quick Open on a folder that was just deleted lists nothing instead of
+    // erroring; an existing folder must still be an authorized workspace.
+    if !Path::new(root).exists() {
+        return Ok(QuickOpenResponse {
+            paths: vec![],
+            truncated: false,
+        });
+    }
+    let dir = &assert_dir_authorized(window_label, Path::new(root))?;
 
     let mut builder = ignore::WalkBuilder::new(dir);
     builder
@@ -989,7 +856,7 @@ mod tests {
     fn reset_dir(path: &Path) {
         fs::remove_dir_all(path).ok();
         fs::create_dir_all(path).unwrap();
-        authorize_workspace_root(path).unwrap();
+        crate::auth_scope::authorize_workspace_root("test", path).unwrap();
     }
 
     fn path_string(path: &Path) -> String {
@@ -1005,16 +872,17 @@ mod tests {
 
     #[test]
     fn list_dir_rejects_traversal() {
-        assert!(list_dir_sync("/tmp/../etc").is_err());
+        assert!(list_dir_sync("/tmp/../etc", Some("test")).is_err());
     }
 
     #[test]
     fn lists_markdown_and_directories_only() {
         let root = tmp("list");
+        reset_dir(&root);
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("note.md"), "hi").unwrap();
         fs::write(root.join("skip.txt"), "no").unwrap();
-        let entries = list_dir_sync(&root.to_string_lossy()).unwrap();
+        let entries = list_dir_sync(&root.to_string_lossy(), Some("test")).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"sub"));
         assert!(names.contains(&"note.md"));
@@ -1027,7 +895,8 @@ mod tests {
         let root = tmp("search");
         reset_dir(&root);
         fs::write(root.join("a.md"), "alpha\nfind me\n").unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "find", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "find", false, Some("test")).unwrap();
         assert_eq!(response.hits.len(), 1);
         assert_eq!(response.hits[0].line, 2);
         assert_eq!(response.hits[0].start, 0);
@@ -1049,7 +918,8 @@ mod tests {
         }
 
         let started = std::time::Instant::now();
-        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&path_string(&root), "needle", false, Some("test")).unwrap();
         let elapsed = started.elapsed();
         eprintln!(
             "workspace search 1000x200: {:.2}ms",
@@ -1066,7 +936,8 @@ mod tests {
         let root = tmp("search-case");
         reset_dir(&root);
         fs::write(root.join("note.md"), "Hello world\n").unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "hello", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "hello", false, Some("test")).unwrap();
         assert_eq!(response.hits.len(), 1);
         assert_eq!(response.hits[0].line, 1);
         fs::remove_dir_all(root).ok();
@@ -1077,7 +948,8 @@ mod tests {
         let root = tmp("search-case-sens");
         reset_dir(&root);
         fs::write(root.join("note.md"), "Hello\nhello\n").unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "hello", true).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "hello", true, Some("test")).unwrap();
         assert_eq!(response.hits.len(), 1);
         assert_eq!(response.hits[0].line, 2);
         fs::remove_dir_all(root).ok();
@@ -1089,7 +961,8 @@ mod tests {
         reset_dir(&root);
         fs::write(root.join("visible.md"), "needle").unwrap();
         fs::write(root.join(".secret.md"), "needle").unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "needle", false, Some("test")).unwrap();
         assert_eq!(response.hits.len(), 1);
         assert!(response.hits[0].path.ends_with("visible.md"));
         fs::remove_dir_all(root).ok();
@@ -1102,7 +975,8 @@ mod tests {
         for i in 0..600 {
             fs::write(root.join(format!("f{i}.md")), "needle").unwrap();
         }
-        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "needle", false, Some("test")).unwrap();
         assert!(response.truncated);
         assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
         fs::remove_dir_all(root).ok();
@@ -1122,7 +996,8 @@ mod tests {
         }
 
         for _ in 0..5 {
-            let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+            let response =
+                search_markdown_sync(&path_string(&root), "needle", false, Some("test")).unwrap();
             assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
             assert!(response.truncated);
             assert!(response.hits[0].path.ends_with("f0000.md"));
@@ -1142,15 +1017,15 @@ mod tests {
     fn parallel_search_never_exceeds_the_cap_with_many_hits_per_file() {
         let root = tmp("search-parallel-cap");
         reset_dir(&root);
-        let content = std::iter::repeat("needle")
-            .take(40)
+        let content = std::iter::repeat_n("needle", 40)
             .collect::<Vec<_>>()
             .join("\n");
         for index in 0..64 {
             fs::write(root.join(format!("f{index:02}.md")), &content).unwrap();
         }
 
-        let response = search_markdown_sync(&path_string(&root), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&path_string(&root), "needle", false, Some("test")).unwrap();
         assert_eq!(response.hits.len(), MAX_SEARCH_HITS);
         assert!(response.truncated);
         assert!(response.hits.windows(2).all(|pair| {
@@ -1166,7 +1041,8 @@ mod tests {
         reset_dir(&root);
         let long = format!("prefix {} needle", "a".repeat(500));
         fs::write(root.join("long.md"), &long).unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "needle", false, Some("test")).unwrap();
         let hit = &response.hits[0];
         assert!(hit.text.len() <= MAX_LINE_BYTES + 6);
         let units: Vec<u16> = hit.text.encode_utf16().skip(hit.start).take(6).collect();
@@ -1179,7 +1055,8 @@ mod tests {
         let root = tmp("search-emoji");
         reset_dir(&root);
         fs::write(root.join("emoji.md"), "🦀 needle\n").unwrap();
-        let response = search_markdown_sync(&root.to_string_lossy(), "needle", false).unwrap();
+        let response =
+            search_markdown_sync(&root.to_string_lossy(), "needle", false, Some("test")).unwrap();
         let hit = &response.hits[0];
         assert_eq!(hit.start, 3);
         assert_eq!(hit.end, 9);
@@ -1217,7 +1094,8 @@ mod tests {
         let root = tmp("create-markdown");
         reset_dir(&root);
 
-        let created = create_markdown(path_string(&root), "draft.md".into()).unwrap();
+        let created =
+            create_markdown(path_string(&root), "draft.md".into(), Some("test".into())).unwrap();
 
         assert_eq!(created, canonical_string(&root.join("draft.md")));
         assert_eq!(fs::read_to_string(created).unwrap(), "");
@@ -1230,10 +1108,24 @@ mod tests {
         reset_dir(&root);
         fs::write(root.join("draft.md"), "existing").unwrap();
 
-        assert!(create_markdown(path_string(&root), "../draft.md".into()).is_err());
-        assert!(create_markdown(path_string(&root), "nested/draft.md".into()).is_err());
-        assert!(create_markdown(path_string(&root), "draft.txt".into()).is_err());
-        assert!(create_markdown(path_string(&root), "draft.md".into()).is_err());
+        assert!(create_markdown(
+            path_string(&root),
+            "../draft.md".into(),
+            Some("test".into())
+        )
+        .is_err());
+        assert!(create_markdown(
+            path_string(&root),
+            "nested/draft.md".into(),
+            Some("test".into())
+        )
+        .is_err());
+        assert!(
+            create_markdown(path_string(&root), "draft.txt".into(), Some("test".into())).is_err()
+        );
+        assert!(
+            create_markdown(path_string(&root), "draft.md".into(), Some("test".into())).is_err()
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1243,7 +1135,7 @@ mod tests {
         let root = tmp("create-dir");
         reset_dir(&root);
 
-        let created = create_dir(path_string(&root), "notes".into()).unwrap();
+        let created = create_dir(path_string(&root), "notes".into(), Some("test".into())).unwrap();
 
         assert_eq!(created, canonical_string(&root.join("notes")));
         assert!(Path::new(&created).is_dir());
@@ -1258,10 +1150,15 @@ mod tests {
         fs::write(&source, "hello").unwrap();
         fs::write(root.join("taken.md"), "occupied").unwrap();
 
-        assert!(rename_path(path_string(&source), "renamed".into()).is_err());
-        assert!(rename_path(path_string(&source), "taken.md".into()).is_err());
+        assert!(rename_path(path_string(&source), "renamed".into(), Some("test".into())).is_err());
+        assert!(rename_path(path_string(&source), "taken.md".into(), Some("test".into())).is_err());
 
-        let renamed = rename_path(path_string(&source), "renamed.md".into()).unwrap();
+        let renamed = rename_path(
+            path_string(&source),
+            "renamed.md".into(),
+            Some("test".into()),
+        )
+        .unwrap();
 
         assert_eq!(renamed, canonical_string(&root.join("renamed.md")));
         assert_eq!(fs::read_to_string(&renamed).unwrap(), "hello");
@@ -1275,7 +1172,8 @@ mod tests {
         reset_dir(&root);
         let file = root.join("draft.md");
         fs::write(&file, "hello").unwrap();
-        let renamed = rename_path(path_string(&file), "DRAFT.md".into()).unwrap();
+        let renamed =
+            rename_path(path_string(&file), "DRAFT.md".into(), Some("test".into())).unwrap();
         assert_eq!(
             renamed,
             path_string(&root.canonicalize().unwrap().join("DRAFT.md"))
@@ -1287,7 +1185,8 @@ mod tests {
         let directory = root.join("notes");
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("child.md"), "child").unwrap();
-        let renamed = rename_path(path_string(&directory), "NOTES".into()).unwrap();
+        let renamed =
+            rename_path(path_string(&directory), "NOTES".into(), Some("test".into())).unwrap();
         assert_eq!(
             fs::read_to_string(Path::new(&renamed).join("child.md")).unwrap(),
             "child"
@@ -1307,13 +1206,15 @@ mod tests {
         fs::write(&source, "original").unwrap();
         fs::write(&target, "keep").unwrap();
         assert!(rename_no_replace(&source, &target).is_err());
-        assert!(rename_path(path_string(&source), "taken.md".into()).is_err());
+        assert!(rename_path(path_string(&source), "taken.md".into(), Some("test".into())).is_err());
         assert_eq!(fs::read_to_string(&source).unwrap(), "original");
         assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
 
         let alias = root.join("DRAFT.md");
         if fs::hard_link(&source, &alias).is_ok() {
-            assert!(rename_path(path_string(&source), "DRAFT.md".into()).is_err());
+            assert!(
+                rename_path(path_string(&source), "DRAFT.md".into(), Some("test".into())).is_err()
+            );
             assert_eq!(fs::read_to_string(&alias).unwrap(), "original");
         }
         fs::remove_dir_all(root).ok();
@@ -1340,7 +1241,7 @@ mod tests {
         let root = tmp("delete-missing");
         reset_dir(&root);
 
-        assert!(delete_path(path_string(&root.join("absent.md"))).is_err());
+        assert!(delete_path(path_string(&root.join("absent.md")), Some("test".into())).is_err());
 
         fs::remove_dir_all(root).ok();
     }
@@ -1351,12 +1252,14 @@ mod tests {
         fs::remove_dir_all(&root).ok();
         fs::create_dir_all(&root).unwrap();
 
-        assert!(create_markdown(path_string(&root), "draft.md".into()).is_err());
-        assert!(create_dir(path_string(&root), "notes".into()).is_err());
+        assert!(
+            create_markdown(path_string(&root), "draft.md".into(), Some("test".into())).is_err()
+        );
+        assert!(create_dir(path_string(&root), "notes".into(), Some("test".into())).is_err());
         let file = root.join("draft.md");
         fs::write(&file, "hello").unwrap();
-        assert!(rename_path(path_string(&file), "other.md".into()).is_err());
-        assert!(delete_path(path_string(&file)).is_err());
+        assert!(rename_path(path_string(&file), "other.md".into(), Some("test".into())).is_err());
+        assert!(delete_path(path_string(&file), Some("test".into())).is_err());
         assert!(file.exists());
 
         fs::remove_dir_all(root).ok();
@@ -1400,12 +1303,7 @@ mod tests {
             root.path(),
             "editor-2",
             r#"{"folder":"/d","openPaths":[],"activePath":null}"#,
-            Some(WindowBounds {
-                x: 10,
-                y: 20,
-                width: 800,
-                height: 600,
-            }),
+            Some(WindowBounds::logical(10, 20, 800, 600)),
             true,
         )
         .unwrap();
@@ -1486,16 +1384,11 @@ mod tests {
 
     #[test]
     fn window_bounds_and_entry_serialize_camel_case() {
-        // IPC wire assertion (AGENTS.md casing rule).
+        // IPC wire assertion (AGENTS.md casing rule). The bounds payload itself
+        // is pinned in window_bounds.rs; this pins the shard envelope.
         assert_eq!(
-            serde_json::to_string(&WindowBounds {
-                x: 1,
-                y: 2,
-                width: 3,
-                height: 4
-            })
-            .unwrap(),
-            r#"{"x":1,"y":2,"width":3,"height":4}"#
+            serde_json::to_string(&WindowBounds::physical(1, 2, 3, 4)).unwrap(),
+            r#"{"x":1,"y":2,"width":3,"height":4,"logical":false}"#
         );
         assert_eq!(
             serde_json::to_string(&SessionWindowEntry {
@@ -1506,6 +1399,73 @@ mod tests {
             .unwrap(),
             r#"{"label":"editor-2","bounds":null,"maximized":true}"#
         );
+    }
+
+    #[test]
+    fn listing_and_quick_open_reject_paths_outside_authorized_roots() {
+        // SEC-04: these three commands used to skip authorization entirely, so
+        // any webview could enumerate (and then search) the whole disk.
+        let unauthorized = tmp("sec04-list");
+        fs::remove_dir_all(&unauthorized).ok();
+        fs::create_dir_all(&unauthorized).unwrap();
+        fs::write(unauthorized.join("secret.md"), "secret").unwrap();
+
+        assert!(list_dir_sync(&path_string(&unauthorized), Some("editor-sec04")).is_err());
+        assert!(search_markdown_sync(
+            &path_string(&unauthorized),
+            "secret",
+            false,
+            Some("editor-sec04")
+        )
+        .is_err());
+        assert!(
+            list_markdown_files_sync(&path_string(&unauthorized), Some("editor-sec04")).is_err()
+        );
+
+        // After the owning window is granted the root, all three work again.
+        crate::auth_scope::authorize_workspace_root("editor-sec04", &unauthorized).unwrap();
+        assert_eq!(
+            list_dir_sync(&path_string(&unauthorized), Some("editor-sec04"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            search_markdown_sync(
+                &path_string(&unauthorized),
+                "secret",
+                false,
+                Some("editor-sec04")
+            )
+            .unwrap()
+            .hits
+            .len(),
+            1
+        );
+        assert_eq!(
+            list_markdown_files_sync(&path_string(&unauthorized), Some("editor-sec04"))
+                .unwrap()
+                .paths
+                .len(),
+            1
+        );
+
+        fs::remove_dir_all(unauthorized).ok();
+    }
+
+    #[test]
+    fn a_grant_for_one_window_does_not_authorize_another() {
+        let root = tmp("sec04-per-window");
+        fs::create_dir_all(&root).unwrap();
+        crate::auth_scope::authorize_workspace_root("editor-own", &root).unwrap();
+
+        assert!(list_dir_sync(&path_string(&root), Some("editor-own")).is_ok());
+        assert!(list_dir_sync(&path_string(&root), Some("editor-other")).is_err());
+
+        // Destroying the owning window revokes its access and nothing else.
+        crate::auth_scope::revoke_window("editor-own");
+        assert!(list_dir_sync(&path_string(&root), Some("editor-own")).is_err());
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1581,7 +1541,7 @@ mod tests {
         fs::write(root.join("note.txt"), "x").unwrap();
         fs::write(root.join(".hidden.md"), "h").unwrap();
 
-        let response = list_markdown_files_sync(&path_string(&root)).unwrap();
+        let response = list_markdown_files_sync(&path_string(&root), Some("test")).unwrap();
 
         assert_eq!(response.paths.len(), 2);
         // Normalize path separators for cross-platform comparison.
@@ -1592,118 +1552,15 @@ mod tests {
         assert!(!response.truncated);
 
         // A missing root walks to nothing (matching search), traversal is rejected.
-        let missing = list_markdown_files_sync(&path_string(&root.join("nope"))).unwrap();
+        let missing =
+            list_markdown_files_sync(&path_string(&root.join("nope")), Some("test")).unwrap();
         assert!(missing.paths.is_empty());
-        assert!(
-            list_markdown_files_sync(&root.join("..").join("elsewhere").to_string_lossy()).is_err()
-        );
+        assert!(list_markdown_files_sync(
+            &root.join("..").join("elsewhere").to_string_lossy(),
+            Some("test")
+        )
+        .is_err());
         fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn snapshot_entry_serializes_camel_case() {
-        let entry = SnapshotEntry {
-            file_name: "123.md".into(),
-            mtime_ms: 45,
-            size_bytes: 67,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        assert_eq!(json, r#"{"fileName":"123.md","mtimeMs":45,"sizeBytes":67}"#);
-    }
-
-    #[test]
-    fn snapshot_rotation_keeps_the_newest_entries() {
-        let root = tmp("snapshot-rotate");
-        reset_dir(&root);
-        let src = root.join("doc.md");
-        fs::write(&src, "v1").unwrap();
-        let dir = root.join("snaps");
-
-        for millis in 0..(MAX_SNAPSHOTS_PER_FILE as u128 + 5) {
-            write_snapshot(&dir, millis, &src).unwrap();
-        }
-
-        let mut names: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names.len(), MAX_SNAPSHOTS_PER_FILE);
-        assert!(!names.contains(&"0.md".to_string()));
-        assert!(names.contains(&format!("{}.md", MAX_SNAPSHOTS_PER_FILE + 4)));
-
-        fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn snapshot_names_reject_traversal_and_non_timestamps() {
-        assert!(valid_snapshot_name("1700000000000.md"));
-        assert!(!valid_snapshot_name("../evil.md"));
-        assert!(!valid_snapshot_name("sub/evil.md"));
-        assert!(!valid_snapshot_name("abc.md"));
-        assert!(!valid_snapshot_name("1.md.exe"));
-        assert!(!valid_snapshot_name(".md"));
-        assert!(!valid_snapshot_name("12345678901234567890.md"));
-    }
-
-    #[test]
-    fn snapshot_document_roundtrip_under_authorized_root() {
-        // Isolate from other tests that mutate OMD_CONFIG_DIR (they run in
-        // parallel, so config_dir() can change mid-test otherwise).
-        let _guard = config_env_guard();
-        let config = tmp("snapshot-config");
-        fs::create_dir_all(&config).unwrap();
-        std::env::set_var("OMD_CONFIG_DIR", &config);
-
-        let root = tmp("snapshot-doc");
-        reset_dir(&root);
-        let doc = root.join("doc.md");
-        fs::write(&doc, "content v1").unwrap();
-
-        snapshot_document(path_string(&doc)).unwrap();
-
-        // Verify snapshot was written by checking the directory directly.
-        let (parent, name) = canonical_parent_and_name(&doc).unwrap();
-        let snap_dir = snapshots_root(&parent, &name.to_string_lossy());
-        assert!(
-            snap_dir.is_dir(),
-            "snapshot dir should exist: {}",
-            snap_dir.display()
-        );
-        let direct_entries: Vec<_> = fs::read_dir(&snap_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect();
-        assert!(
-            !direct_entries.is_empty(),
-            "snapshot dir should have entries"
-        );
-
-        let listed = list_snapshots(path_string(&doc)).unwrap();
-        assert_eq!(listed.len(), 1, "expected 1 snapshot, got {}", listed.len());
-        let name = listed[0].file_name.clone();
-        assert_eq!(
-            read_snapshot(path_string(&doc), name).unwrap(),
-            "content v1"
-        );
-        assert!(read_snapshot(path_string(&doc), "../evil.md".into()).is_err());
-
-        clear_snapshots(path_string(&doc)).unwrap();
-        assert!(list_snapshots(path_string(&doc)).unwrap().is_empty());
-
-        // Outside the authorized roots the commands refuse to touch anything.
-        // (reset_dir would authorize the directory, so create it bare.)
-        let outside = tmp("snapshot-outside");
-        fs::remove_dir_all(&outside).ok();
-        fs::create_dir_all(&outside).unwrap();
-        let foreign = outside.join("foreign.md");
-        fs::write(&foreign, "x").unwrap();
-        assert!(snapshot_document(path_string(&foreign)).is_err());
-
-        std::env::remove_var("OMD_CONFIG_DIR");
-        fs::remove_dir_all(config).ok();
-        fs::remove_dir_all(root).ok();
-        fs::remove_dir_all(outside).ok();
     }
 
     #[test]

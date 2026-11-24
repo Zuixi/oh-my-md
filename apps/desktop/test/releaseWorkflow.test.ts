@@ -12,9 +12,13 @@ const SETUP_RUST_ACTION = readFileSync(
 ).replace(/\r\n/g, "\n")
 
 function jobBlock(name: string, nextName?: string): string {
-  const start = WORKFLOW.indexOf(`  ${name}:\n`)
-  if (start < 0) throw new Error(`missing ${name} job`)
-  const end = nextName ? WORKFLOW.indexOf(`  ${nextName}:\n`, start + 1) : WORKFLOW.length
+  // Anchor on the newline: `  rust:` also occurs inside the indented
+  // paths-filter YAML of the `changes` job.
+  const start = WORKFLOW.indexOf(`\n  ${name}:\n`) + 1
+  if (start <= 0) throw new Error(`missing ${name} job`)
+  const end = nextName
+    ? WORKFLOW.indexOf(`\n  ${nextName}:\n`, start + 1) + 1
+    : WORKFLOW.length
   return WORKFLOW.slice(start, end < 0 ? WORKFLOW.length : end)
 }
 
@@ -61,7 +65,7 @@ describe("release workflow", () => {
   it("aggregates all platforms, validates five package patterns, and publishes one draft", () => {
     const publish = jobBlock("publish")
 
-    expect(publish).toContain("needs: [macos, windows, linux]")
+    expect(publish).toContain("needs: [verify, macos, windows, linux]")
     expect(publish).toContain("actions/download-artifact@")
     for (const pattern of ["*.dmg", "*-setup.exe", "*.deb", "*.AppImage"]) {
       expect(publish).toContain(pattern)
@@ -76,6 +80,39 @@ describe("release workflow", () => {
     expect(publish).toContain("if: github.event_name == 'push'")
 
     expect(WORKFLOW.match(/softprops\/action-gh-release@/g)).toHaveLength(1)
+  })
+
+  it("gates every platform builder and the draft on pre-release verification", () => {
+    const verify = jobBlock("verify", "macos")
+    expect(verify).toContain("pnpm check:quality")
+    expect(verify).toContain("pnpm test")
+    expect(verify).toContain("pnpm --filter @omd/desktop test")
+    expect(verify).toContain("cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml")
+
+    // The gate is only useful if the builders wait for it.
+    for (const [name, next] of [
+      ["macos", "windows"],
+      ["windows", "linux"],
+      ["linux", "publish"],
+    ] as const) {
+      expect(jobBlock(name, next)).toContain("needs: verify")
+    }
+    expect(jobBlock("publish")).toContain("verify")
+  })
+
+  it("keeps the draft release notes version-agnostic", () => {
+    // A hardcoded version in the body ships a stale release page the moment the
+    // tag moves on; notes must describe the current tag and the install path.
+    const body = WORKFLOW.slice(
+      WORKFLOW.indexOf("          body: |"),
+      WORKFLOW.indexOf("          files: release-assets/*"),
+    )
+    expect(body.length).toBeGreaterThan(200)
+    expect(body).not.toMatch(/\bv?\d+\.\d+\.\d+\b/)
+    expect(WORKFLOW).toContain("github.ref_name")
+    expect(WORKFLOW).toContain("CHANGELOG.md")
+    expect(WORKFLOW).toContain("xattr -cr /Applications/oh-my-md.app")
+    expect(WORKFLOW).toContain("SHA256SUMS.txt")
   })
 
   it("installs the Linux dependency needed to render SVG app icons", () => {

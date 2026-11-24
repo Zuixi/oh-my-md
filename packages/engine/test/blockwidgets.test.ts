@@ -92,6 +92,13 @@ describe("block widget pipeline", () => {
     expect(t).not.toContain("widget:block:code")
   })
 
+  it("detects the mermaid fence case-insensitively, matching export", () => {
+    const doc = "intro\n\n```Mermaid\ngraph TD; A-->B\n```\n"
+    const t = collectDecorationSpecs(makeState(doc), 0, doc.length).map(d => d.tag)
+    expect(t).toContain("widget:block:mermaid")
+    expect(t).not.toContain("widget:block:code")
+  })
+
   it("unmounts a mermaid widget when the cursor is inside the block", () => {
     const doc = "intro\n\n```mermaid\ngraph TD; A-->B\n```\n"
     const state = makeState(doc)

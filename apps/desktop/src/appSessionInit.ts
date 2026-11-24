@@ -13,14 +13,15 @@
  */
 import type { AutoPairOptions } from "@omd/engine"
 import {
-  lazyFileSession, openSession, recoveryKey, sessionPath,
+  createSession, lazyFileSession, openSession, recoveryKey, sessionPath,
   type EditorSession,
 } from "./session"
 import type { RecoveryDraft } from "./recoveryAdoption"
 import {
-  activeSession, addTab, focusTab, openFolder, replaceTabSession,
+  activeSession, addTab, focusTab, openFolder, replaceTabSession, replaceTabs,
   type Workspace,
 } from "./workspace"
+import type { HotExitTabEntry, SavedSessionState } from "./sessionRestore"
 import { DEFAULT_SETTINGS, sameAutoPair, type UserSettings } from "./settings"
 import type { DesktopServices } from "./desktopServices"
 import { getGlobalLogger } from "./logger"
@@ -61,8 +62,8 @@ export interface AppSessionInitHost {
    *  when it could not be mounted (the record is kept). */
   adoptRecovery(draft: RecoveryDraft): number | null
   syncDoc(value: string, tabId: number): void
-  /** 恢复成功标记（sessionRestoredRef 写）。 */
-  markSessionRestored(): void
+  /** 恢复成功标记（可选；仅测试/旧调用方使用）。 */
+  markSessionRestored?(): void
 }
 
 export async function loadInitialSettings(host: AppSessionInitHost): Promise<UserSettings> {
@@ -89,27 +90,40 @@ export async function loadInitialSettings(host: AppSessionInitHost): Promise<Use
   return DEFAULT_SETTINGS
 }
 
-export async function restoreSavedSession(host: AppSessionInitHost): Promise<boolean> {
+export async function restoreSavedSession(
+  host: AppSessionInitHost,
+): Promise<ReadonlySet<string>> {
+  const claimedRecoveryKeys = new Set<string>()
   const { services, documentScaleRegistry } = host
-  if (!services.getSessionState) return false
+  if (!services.getSessionState) return claimedRecoveryKeys
   try {
     const state = await services.getSessionState()
-    if (!state || (!state.folder && state.openPaths.length === 0)) return false
+    if (!state) return claimedRecoveryKeys
+    const hotExitTabs = state.hotExitTabs ?? []
+    if (!state.folder && state.openPaths.length === 0 && hotExitTabs.length === 0) {
+      return claimedRecoveryKeys
+    }
 
     if (state.folder) {
       // 恢复的路径可能已被移动/删除（或换机恢复）：先用真实列举验证再采纳。
       // 失效会话整体丢弃并提示一次——绝不带着死路径进入工作区，让后续每次
       // 交互都重复报同一个错。
-      if (services.listDir) {
-        try {
-          await services.listDir(state.folder)
-        } catch {
-          services.reportError(t("error.workspaceFolderMissing"))
-          return false
-        }
+      try {
+        // Authorization MUST precede the listing: `list_dir` only serves
+        // directories this window was granted, so a fire-and-forget grant
+        // would make every restored workspace look missing.
+        await services.allowWorkspaceDir?.(state.folder)
+        await services.listDir?.(state.folder)
+      } catch {
+        services.reportError(t("error.workspaceFolderMissing"))
+        return claimedRecoveryKeys
       }
       host.commitWorkspace(openFolder(host.getWorkspace(), state.folder))
-      void services.allowWorkspaceDir?.(state.folder)
+    }
+
+    if (hotExitTabs.length > 0) {
+      await restoreHotExitTabs(host, state, hotExitTabs, claimedRecoveryKeys)
+      return claimedRecoveryKeys
     }
 
     if (state.openPaths.length > 0) {
@@ -144,8 +158,11 @@ export async function restoreSavedSession(host: AppSessionInitHost): Promise<boo
           }
           firstTabOpened = true
           activeTabId = updated.id
-        } catch {
-          /* skip unreadable files */
+        } catch (error) {
+          getGlobalLogger().warn(
+            "session",
+            `skipped unreadable session tab ${pathField(path)}: ${error instanceof Error ? error.message : "unknown"}`,
+          )
         }
       }
 
@@ -154,14 +171,164 @@ export async function restoreSavedSession(host: AppSessionInitHost): Promise<boo
         host.commitWorkspace(focused)
         const active = activeSession(focused)
         host.syncDoc(host.getContents(active.id), active.id)
-        host.markSessionRestored()
-        return true
       }
     }
-  } catch {
-    /* tolerate session restore failure */
+  } catch (error) {
+    // Restoring a partial session is acceptable; losing the whole shard
+    // silently is not. The caller still opens an empty workspace.
+    getGlobalLogger().warn(
+      "session",
+      `session restore failed: ${error instanceof Error ? error.message : "unknown"}`,
+    )
   }
-  return false
+  return claimedRecoveryKeys
+}
+
+interface RestoredHotExitTab {
+  readonly tab: EditorSession
+  readonly contents: string
+  /** Recovery record this tab's contents came from, when the tab was dirty. */
+  readonly draftKey: string | null
+}
+
+/**
+ * Rebuilds the window exactly as it was closed: every file tab in its original
+ * order, every dirty untitled tab, the active tab, and the unsaved buffers
+ * themselves. Nothing here prompts — a Hot Exit is a normal quit, so its
+ * drafts are claimed rather than offered as crash orphans.
+ */
+async function restoreHotExitTabs(
+  host: AppSessionInitHost,
+  state: SavedSessionState,
+  entries: readonly HotExitTabEntry[],
+  claimedRecoveryKeys: Set<string>,
+): Promise<void> {
+  const drafts = await readHotExitDrafts(host.services, entries)
+  const activeIndex = state.activeTabIndex ?? 0
+  const workspace = host.getWorkspace()
+  // Reuse the pristine scratch tab's id for the first entry so the mounted view
+  // keeps its host element; the remaining entries take fresh ids.
+  const firstTabId = workspace.tabs[0]?.id ?? 1
+  let nextTabId = Math.max(workspace.nextId, firstTabId + 1)
+  const restored: RestoredHotExitTab[] = []
+  let activeTabId: number | undefined
+
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]
+    const draft = entry.recoveryKey !== null ? drafts.get(entry.recoveryKey) ?? null : null
+    const tabId = restored.length === 0 ? firstTabId : nextTabId++
+    const tab = await materializeHotExitTab(host, entry, draft, index === activeIndex, tabId)
+    if (!tab) continue
+    restored.push(tab)
+    if (index === activeIndex) activeTabId = tab.tab.id
+  }
+  if (restored.length === 0) return
+
+  host.commitWorkspace(replaceTabs(workspace, restored.map(item => item.tab), activeTabId))
+  for (const item of restored) {
+    host.setContents(item.tab.id, item.contents)
+    // A reused tab id keeps the view created before the restore: it still holds
+    // the pre-restore document identity and must be rebuilt from the restored
+    // buffer. Other tabs get their view from ensureViews once the workspace
+    // commits; resetTabDocument is a no-op for those.
+    host.resetTabDocument(item.tab, item.contents)
+  }
+  const active = activeSession(host.getWorkspace())
+  host.syncDoc(host.getContents(active.id), active.id)
+
+  for (const item of restored) {
+    if (item.draftKey !== null) {
+      await claimHotExitDraft(host, item, claimedRecoveryKeys)
+    }
+  }
+}
+
+async function readHotExitDrafts(
+  services: DesktopServices,
+  entries: readonly HotExitTabEntry[],
+): Promise<ReadonlyMap<string, { contents: string }>> {
+  const drafts = new Map<string, { contents: string }>()
+  if (!services.readRecovery) return drafts
+  for (const entry of entries) {
+    const key = entry.recoveryKey
+    if (key === null || drafts.has(key)) continue
+    try {
+      const record = await services.readRecovery(key)
+      if (record.contents !== "") drafts.set(key, { contents: record.contents })
+    } catch {
+      // A transient read failure degrades that tab to its disk baseline; the
+      // record stays on disk for the crash-recovery prompt.
+    }
+  }
+  return drafts
+}
+
+/**
+ * Opens one Hot Exit tab. A clean file tab is read eagerly only when it is the
+ * active tab (the pre-`ensureViews` window needs its text); the rest stay lazy
+ * exactly like a legacy restore. A dirty buffer always needs its disk baseline
+ * first, because that baseline is what makes the adopted buffer dirty again.
+ */
+async function materializeHotExitTab(
+  host: AppSessionInitHost,
+  entry: HotExitTabEntry,
+  draft: { readonly contents: string } | null,
+  eager: boolean,
+  tabId: number,
+): Promise<RestoredHotExitTab | null> {
+  const { services, documentScaleRegistry } = host
+  if (entry.kind === "file" && entry.path !== null) {
+    if (draft === null && !eager) {
+      return { tab: lazyFileSession(tabId, entry.path), contents: "", draftKey: null }
+    }
+    try {
+      const snapshot = await services.readDocument(entry.path)
+      if (snapshot.kind !== "missing") {
+        await services.allowDocumentAssets(entry.path)
+        const tab = openSession(createSession(tabId), snapshot)
+        if (snapshot.stats) documentScaleRegistry.setBytes(tab.id, snapshot.stats.byteLength)
+        return {
+          tab,
+          contents: draft?.contents ?? snapshot.contents,
+          draftKey: draft ? entry.recoveryKey : null,
+        }
+      }
+    } catch {
+      /* fall through to the draft-only fallback */
+    }
+    // The file is gone or unreadable: keep the buffer rather than lose it.
+    if (draft === null) return null
+    return { tab: createSession(tabId), contents: draft.contents, draftKey: entry.recoveryKey }
+  }
+  if (draft === null) return null
+  return { tab: createSession(tabId), contents: draft.contents, draftKey: entry.recoveryKey }
+}
+
+/**
+ * Keeps a claimed Hot Exit draft durable under the tab's own recovery key so
+ * closing without saving still tracks it, then retires the record it came from.
+ * Equal keys already are that copy and are kept (the `restoreDrafts` rule).
+ */
+async function claimHotExitDraft(
+  host: AppSessionInitHost,
+  item: RestoredHotExitTab,
+  claimedRecoveryKeys: Set<string>,
+): Promise<void> {
+  const { services } = host
+  const sourceKey = item.draftKey
+  if (sourceKey === null) return
+  claimedRecoveryKeys.add(sourceKey)
+  const key = recoveryKey(item.tab)
+  if (key === sourceKey) return
+  try {
+    await services.writeRecovery?.(key, sessionPath(item.tab), item.contents)
+    claimedRecoveryKeys.add(key)
+    await discardRecovery(services, sourceKey)
+  } catch {
+    // The source record stays the durable copy; the record is offered again
+    // only when its own read succeeds next launch.
+    getGlobalLogger().warn("recovery", `could not re-arm hot exit draft ${keyField(key)}`)
+  }
 }
 
 /**
@@ -209,11 +376,17 @@ async function rearmDraft(
  * mounted and re-armed under the tab's key; a transient read failure keeps it
  * for the next launch.
  */
-export async function restoreDrafts(host: AppSessionInitHost): Promise<void> {
+export async function restoreDrafts(
+  host: AppSessionInitHost,
+  claimedRecoveryKeys: ReadonlySet<string> = new Set(),
+): Promise<void> {
   const { services } = host
   const records = await services.listRecoveries?.() ?? []
   if (!services.readRecovery) return
   for (const record of records) {
+    // A Hot Exit already restored this buffer as a live tab; offering it again
+    // would duplicate the user's work behind a crash prompt.
+    if (claimedRecoveryKeys.has(record.key)) continue
     if (!services.confirmRestore?.(record.label)) {
       await discardRecovery(services, record.key)
       continue

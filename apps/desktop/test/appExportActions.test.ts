@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
+import { EditorState } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
 import { exportRichHtml } from "@omd/engine"
 import { t } from "../src/i18n"
@@ -207,13 +208,14 @@ it("threads customCss into exportRichHtml options", async () => {
     expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
 
-  it("does not notice for HTML export even with a remote image", async () => {
+  it("notices a remote-image warning for HTML export too", async () => {
     const services = makeServices({
       pickExportPath: vi.fn().mockResolvedValue("/out/doc.html"),
     })
     const onNotice = vi.fn()
+    mockReportedRemoteImage("https://example.com/x.png")
     await exportCurrent(services, makeView("![](https://example.com/x.png)"), "html", {}, undefined, onNotice)
-    expect(onNotice).not.toHaveBeenCalled()
+    expect(onNotice).toHaveBeenCalledWith(t("export.remoteImageWarning"))
   })
 
   it("shows progress while exporting and stops it before the success toast", async () => {
@@ -413,6 +415,52 @@ it("threads customCss into exportRichHtml options", async () => {
       })
       await exportCurrent(services, makeView(), "pdf")
       expect(services.reportError).toHaveBeenCalledWith(expected)
+    }
+  })
+})
+
+/**
+ * Document-content assertions need the real exporter: the module mock above
+ * returns a fixed HTML string, so each case delegates to the actual engine
+ * implementation with the options `exportCurrent` passed down.
+ */
+describe("exportCurrent document hardening", () => {
+  async function exportWithRealEngine(kind: "html" | "pdf" | "png"): Promise<DesktopServices> {
+    const actual = await vi.importActual<typeof import("@omd/engine")>("@omd/engine")
+    vi.mocked(exportRichHtml).mockImplementationOnce(async (_state, options) =>
+      actual.exportRichHtml(EditorState.create({ doc: "hello" }), options))
+    const services = makeServices({
+      pickExportPath: vi.fn().mockResolvedValue(`/out/doc.${kind}`),
+    })
+    await exportCurrent(services, makeView("hello"), kind)
+    return services
+  }
+
+  function firstWriteFileArgument(services: DesktopServices): string {
+    const calls = vi.mocked(services.writeFile as ReturnType<typeof vi.fn>).mock.calls
+    return String(calls[0]?.[1] ?? "")
+  }
+
+  function firstPreviewArgument(services: DesktopServices): string {
+    const calls = vi.mocked(services.exportPreview as ReturnType<typeof vi.fn>).mock.calls
+    return String(calls[0]?.[0] ?? "")
+  }
+
+  it("writes a CSP-locked standalone document without the native ready script", async () => {
+    const html = firstWriteFileArgument(await exportWithRealEngine("html"))
+    expect(html).toContain("Content-Security-Policy")
+    expect(html).not.toContain("__omdExportReady")
+  })
+
+  it("keeps the ready handshake for native PDF and PNG exports under a hash-pinned CSP", async () => {
+    for (const kind of ["pdf", "png"] as const) {
+      const html = firstPreviewArgument(await exportWithRealEngine(kind))
+      expect(html).toContain("__omdExportReady")
+      // The native renderer loads this HTML string, so the document itself
+      // must forbid inline script while allowing only the handshake hash.
+      expect(html).toContain("Content-Security-Policy")
+      expect(html).toContain("script-src 'sha256-")
+      expect(html).not.toContain("script-src 'unsafe-inline'")
     }
   })
 })

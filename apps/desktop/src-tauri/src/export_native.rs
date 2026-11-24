@@ -1,6 +1,6 @@
 use super::{
     ExportFormat, ExportSpec, ExportWarning, RenderOutput, EXPORT_MIN_HEIGHT_CSS,
-    EXPORT_TIMEOUT_SECS,
+    EXPORT_READY_TIMEOUT_SECS, EXPORT_TIMEOUT_SECS,
 };
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -28,7 +28,9 @@ use tauri::AppHandle;
 const OFFSCREEN_X: f64 = -20_000.0;
 const OFFSCREEN_Y: f64 = -20_000.0;
 /// How long to wait for `window.__omdExportReady` before exporting anyway.
-const READY_TIMEOUT: Duration = Duration::from_secs(5);
+/// One cross-platform deadline: macOS used to wait 5 s while Windows/Linux
+/// waited 20 s, so the same heavy document degraded on one OS only.
+const READY_TIMEOUT: Duration = Duration::from_secs(EXPORT_READY_TIMEOUT_SECS);
 const READY_POLL_MS: u64 = 100;
 /// Cancel is cooperative and checked on the main queue; 50 ms keeps the
 /// offscreen window from lingering perceptibly after the user clicks Cancel.
@@ -134,7 +136,7 @@ define_class!(
 );
 
 thread_local! {
-    static LIVE_EXPORTS: RefCell<Vec<Retained<ExportDelegate>>> = RefCell::new(Vec::new());
+    static LIVE_EXPORTS: RefCell<Vec<Retained<ExportDelegate>>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) async fn render(

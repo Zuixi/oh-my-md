@@ -1,5 +1,5 @@
 import { defaultKeymap, historyKeymap } from "@codemirror/commands"
-import { forceParsing, syntaxTree } from "@codemirror/language"
+import { ensureSyntaxTree, forceParsing, syntaxTree } from "@codemirror/language"
 import { EditorState, type Extension } from "@codemirror/state"
 import { EditorView, keymap } from "@codemirror/view"
 import type { SyntaxNode } from "@lezer/common"
@@ -53,7 +53,10 @@ function caret(view: EditorView) {
 function listDepth(state: EditorState, lineNumber: number): number {
   const line = state.doc.line(lineNumber)
   const items: SyntaxNode[] = []
-  syntaxTree(state).iterate({
+  // The keymap dispatch above mutates the document outside a view update; under
+  // full-suite load the incremental parser may still be mid-pass, and iterating
+  // a partial tree reports depth 0. Parse the asserted line explicitly.
+  ;(ensureSyntaxTree(state, line.to, 10_000) ?? syntaxTree(state)).iterate({
     from: line.from,
     to: line.to,
     enter: node => {

@@ -17,6 +17,44 @@ const HEADING_CLASS: Record<string, string> = {
   SetextHeading1: "omd-h1", SetextHeading2: "omd-h2",
 }
 
+// Hoisted stateless decorations: a dirty-range rebuild pushes one spec per folded
+// mark / styled line, so building a fresh `Decoration.replace` / `mark` / `line` for
+// each of them is pure allocation churn. The values are immutable — the generic
+// no-options replace and one instance per class are safe to share across ranges.
+const DECO_REPLACE_EMPTY = Decoration.replace({})
+// Setext underlines are folded across their line break; a replace spanning a line
+// break has to be block-level.
+const DECO_REPLACE_BLOCK = Decoration.replace({ block: true })
+
+interface HeadingLineDecos { readonly plain: Decoration; readonly active: Decoration }
+
+const MARK_DECOS = new Map<string, Decoration>()
+const HEADING_LINE_DECOS = new Map<string, HeadingLineDecos>()
+
+/** One `Decoration.mark` per CSS class. */
+function markDeco(cssClass: string): Decoration {
+  const cached = MARK_DECOS.get(cssClass)
+  if (cached) return cached
+  const created = Decoration.mark({ class: cssClass })
+  MARK_DECOS.set(cssClass, created)
+  return created
+}
+
+/** One pair of heading line styles per level; the active one carries the level badge. */
+function headingLineDecos(cssClass: string): HeadingLineDecos {
+  const cached = HEADING_LINE_DECOS.get(cssClass)
+  if (cached) return cached
+  const created: HeadingLineDecos = {
+    plain: Decoration.line({ class: cssClass }),
+    active: Decoration.line({
+      class: `${cssClass} omd-h-active`,
+      attributes: { "data-omd-h": cssClass.slice(-1) },
+    }),
+  }
+  HEADING_LINE_DECOS.set(cssClass, created)
+  return created
+}
+
 function childMarks(node: SyntaxNodeRef, name: string): { from: number; to: number }[] {
   const marks: { from: number; to: number }[] = []
   const c = node.node.cursor()
@@ -30,9 +68,9 @@ function foldPair(node: SyntaxNodeRef, out: DecoSpec[], markName: string, markCl
   const marks = childMarks(node, markName)
   if (marks.length >= 2) {
     for (const m of [marks[0], marks[marks.length - 1]])
-      out.push({ from: m.from, to: m.to, tag: `replace:${markName}`, deco: Decoration.replace({}) })
+      out.push({ from: m.from, to: m.to, tag: `replace:${markName}`, deco: DECO_REPLACE_EMPTY })
   }
-  out.push({ from: node.from, to: node.to, tag: `mark:${markClass}`, deco: Decoration.mark({ class: markClass }) })
+  out.push({ from: node.from, to: node.to, tag: `mark:${markClass}`, deco: markDeco(markClass) })
 }
 
 // 展开/折叠的粒度必须是**语法节点整体**，绝不能逐子节点判定：光标在链接文字里时
@@ -44,22 +82,22 @@ function foldLink(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   const active = cursorInside(state, node.from, node.to)
   if (!active) {
     for (const m of childMarks(node, "LinkMark"))
-      out.push({ from: m.from, to: m.to, tag: "replace:LinkMark", deco: Decoration.replace({}) })
+      out.push({ from: m.from, to: m.to, tag: "replace:LinkMark", deco: DECO_REPLACE_EMPTY })
     const c = node.node.cursor()
     if (c.firstChild()) do {
       if (node.name !== "Link") continue
       if (c.name === "URL")
-        out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: Decoration.replace({}) })
+        out.push({ from: c.from, to: c.to, tag: "replace:URL", deco: DECO_REPLACE_EMPTY })
       // 标题（含引号）与其前的 URL 之间的分隔空白是裸文本，需一并吞掉，否则漏出到预览。
       if (c.name === "LinkTitle") {
         const line = state.doc.lineAt(c.from)
         let from = c.from
         while (from > line.from && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--
-        out.push({ from, to: c.to, tag: "replace:LinkTitle", deco: Decoration.replace({}) })
+        out.push({ from, to: c.to, tag: "replace:LinkTitle", deco: DECO_REPLACE_EMPTY })
       }
     } while (c.nextSibling())
   }
-  out.push({ from: node.from, to: node.to, tag: "mark:omd-link", deco: Decoration.mark({ class: "omd-link" }) })
+  out.push({ from: node.from, to: node.to, tag: "mark:omd-link", deco: markDeco("omd-link") })
 }
 
 function isAnchorTag(state: EditorState, node: SyntaxNodeRef): boolean {
@@ -70,7 +108,7 @@ function isAnchorTag(state: EditorState, node: SyntaxNodeRef): boolean {
 
 export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
   if (isAnchorTag(state, node) && !cursorInside(state, node.from, node.to)) {
-    out.push({ from: node.from, to: node.to, tag: "replace:HTMLTag", deco: Decoration.replace({}) })
+    out.push({ from: node.from, to: node.to, tag: "replace:HTMLTag", deco: DECO_REPLACE_EMPTY })
     return
   }
 
@@ -82,14 +120,10 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     //（标题标记本就无条件折叠，这里不像 cursorInside 的折叠语义那样需要排斥边界）。
     const active = cursorInside(state, node.from, node.to + 1)
     const classes = active ? `${headingClass} omd-h-active` : headingClass
+    const lineDecos = headingLineDecos(headingClass)
     out.push({
       from: node.from, to: node.from, tag: `line:${classes}`,
-      deco: active
-        ? Decoration.line({
-            class: classes,
-            attributes: { "data-omd-h": headingClass.slice(-1) },
-          })
-        : Decoration.line({ class: classes }),
+      deco: active ? lineDecos.active : lineDecos.plain,
     })
 
     const cursor = node.node.cursor()
@@ -104,11 +138,10 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
           if (line.from > node.from) {
             const to = Math.min(state.doc.length, line.to + 1)
             out.push({
-              from: line.from, to, tag: "replace:HeaderMark",
-              deco: Decoration.replace({ block: true }),
+              from: line.from, to, tag: "replace:HeaderMark", deco: DECO_REPLACE_BLOCK,
             })
           } else {
-            out.push({ from: cursor.from, to: end, tag: "replace:HeaderMark", deco: Decoration.replace({}) })
+            out.push({ from: cursor.from, to: end, tag: "replace:HeaderMark", deco: DECO_REPLACE_EMPTY })
           }
         }
       } while (cursor.nextSibling())
@@ -191,8 +224,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       const parts = escapeParts(node.node)
       if (!parts || cursorInside(state, node.from, node.to)) return
       out.push({
-        from: parts.markerFrom, to: parts.markerTo, tag: "replace:EscapeMark",
-        deco: Decoration.replace({}),
+        from: parts.markerFrom, to: parts.markerTo, tag: "replace:EscapeMark", deco: DECO_REPLACE_EMPTY,
       })
       return
     }
@@ -201,18 +233,17 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
       if (!parts || cursorInside(state, node.from, node.to)) return
       // HardBreak 站点（marker + 换行）见 build.ts isAtomicSpec：该 tag 永不原子化。
       out.push({
-        from: parts.markerFrom, to: parts.markerTo, tag: "replace:HardBreakMark",
-        deco: Decoration.replace({}),
+        from: parts.markerFrom, to: parts.markerTo, tag: "replace:HardBreakMark", deco: DECO_REPLACE_EMPTY,
       })
       return
     }
     case "FootnoteReference": {
       if (!cursorInside(state, node.from, node.to)) {
-        out.push({ from: node.from, to: node.from + 2, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
-        out.push({ from: node.to - 1, to: node.to, tag: "replace:FootnoteMark", deco: Decoration.replace({}) })
+        out.push({ from: node.from, to: node.from + 2, tag: "replace:FootnoteMark", deco: DECO_REPLACE_EMPTY })
+        out.push({ from: node.to - 1, to: node.to, tag: "replace:FootnoteMark", deco: DECO_REPLACE_EMPTY })
       }
       out.push({ from: node.from, to: node.to, tag: "mark:omd-footnote",
-                 deco: Decoration.mark({ class: "omd-footnote" }) })
+                 deco: markDeco("omd-footnote") })
       return
     }
   }

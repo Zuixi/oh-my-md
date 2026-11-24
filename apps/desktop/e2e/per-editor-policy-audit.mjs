@@ -1,4 +1,4 @@
-import { chromium } from "@playwright/test"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const PORT = process.env.PW_PORT ?? "9420"
 const CHANNEL = process.env.PW_CHANNEL ?? "chrome"
@@ -107,8 +107,7 @@ function failedGates(gates) {
   return failed
 }
 
-const browser = await chromium.launch({ channel: CHANNEL })
-try {
+await withManagedChromium({ channel: CHANNEL }, async browser => {
   const modes = {}
   for (const mode of MODES) {
     modes[mode] = await measureMode(browser, mode)
@@ -141,6 +140,4 @@ try {
   }
   console.log(JSON.stringify(report, null, 2))
   if (failed.length > 0) process.exitCode = 1
-} finally {
-  await browser.close()
-}
+})

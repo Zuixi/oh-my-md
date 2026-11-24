@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   editorPerformancePolicy, performancePolicyExtension,
   SAFE_PERFORMANCE_POLICY, STANDARD_PERFORMANCE_POLICY,
+  WINDOWED_LIVE_MIN_LINES, WINDOWED_PERFORMANCE_POLICY,
 } from "@omd/engine"
 import { createDocumentScaleRegistry } from "../src/documentScaleRegistry"
 import {
@@ -95,5 +96,55 @@ describe("editor scale policy applier", () => {
     // Second application is a no-op: the facet already matches, so no reconfigure.
     expect(view.state).toBe(afterFirst)
     expect(afterFirst.doc).toBe(baseline.doc)
+  })
+
+  // The materialize tick uses `refresh`: a document that grows into the windowed
+  // tier must pick up the tighter policy immediately, without a notice/stats
+  // round trip (that would re-render the app on every 250 ms materialize).
+  it("refreshes a view that grows into the windowed tier without notifying", () => {
+    const { apply, notices, requestStats } = makeApplier()
+    const view = makeView("small")
+    apply(view as unknown as EditorView, 1)
+    expect(editorPerformancePolicy(view.state)).toEqual(STANDARD_PERFORMANCE_POLICY)
+    const noticeCount = notices.length
+    const statsCalls = requestStats.mock.calls.length
+
+    view.state = EditorState.create({
+      doc: bigDoc(WINDOWED_LIVE_MIN_LINES + 1),
+      extensions: [performancePolicyExtension(STANDARD_PERFORMANCE_POLICY)],
+    })
+    apply.refresh(view as unknown as EditorView, 1)
+
+    expect(editorPerformancePolicy(view.state)).toEqual(WINDOWED_PERFORMANCE_POLICY)
+    expect(notices.length).toBe(noticeCount)
+    expect(requestStats.mock.calls.length).toBe(statsCalls)
+
+    // Safe mode is user-visible: crossing it still reports the notice.
+    view.state = EditorState.create({
+      doc: bigDoc(THRESHOLDS.safeModeLines + 1),
+      extensions: [performancePolicyExtension(WINDOWED_PERFORMANCE_POLICY)],
+    })
+    apply.refresh(view as unknown as EditorView, 1)
+    expect(editorPerformancePolicy(view.state)).toEqual(SAFE_PERFORMANCE_POLICY)
+    expect(notices[notices.length - 1]).toMatchObject({ sessionId: 1, safeMode: true })
+    expect(requestStats.mock.calls.length).toBe(statsCalls + 1)
+  })
+
+  it("keeps an unchanged refresh render-free and tolerates a missing view", () => {
+    const { apply, notices, requestStats } = makeApplier()
+    const view = makeView(bigDoc(10))
+    apply(view as unknown as EditorView, 1)
+    const state = view.state
+    const noticeCount = notices.length
+    const statsCalls = requestStats.mock.calls.length
+
+    apply.refresh(view as unknown as EditorView, 1)
+    expect(view.state).toBe(state)
+    expect(notices.length).toBe(noticeCount)
+    expect(requestStats.mock.calls.length).toBe(statsCalls)
+
+    apply.refresh(undefined, 1)
+    expect(view.state).toBe(state)
+    expect(notices.length).toBe(noticeCount)
   })
 })

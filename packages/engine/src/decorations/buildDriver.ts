@@ -8,12 +8,13 @@ import {
   livePruneOutside,
   mergeRanges,
 } from "./build"
+import { safeModeRenderingEnabled } from "../safeModeRendering"
 import {
-  LIVE_PRUNE_MARGIN_CHARS,
-  LIVE_WINDOW_CHARS,
-  safeModeRenderingEnabled,
-} from "../safeModeRendering"
-import { editorPerformancePolicy } from "../performancePolicy"
+  editorPerformancePolicy,
+  performancePruneMarginChars,
+  performanceWindowChars,
+} from "../performancePolicy"
+import { outsideAllRegions } from "./ranges"
 
 // 分片驱动（Task 2）：livePreviewField 只同步构建光标附近的种子区间，其余记入
 // LiveDeco.pending。本插件在微任务/idle 回调里逐片 dispatch liveBuildChunk 消耗
@@ -24,17 +25,21 @@ import { editorPerformancePolicy } from "../performancePolicy"
 //      挑「距视口最近的 pending 区间」、从靠视口一端切 ≤LIVE_BUILD_CHUNK_CHARS 一片，
 //      按墙钟预算 LIVE_BUILD_SLICE_MS 连续构建若干片后重新调度让出主线程。
 //   3. 安全模式窗口化（Task 3，safeModeRenderingEnabled() 开启）：不再排空到全量
-//      —— idle 循环只构建「构建窗口」（视口 ± LIVE_WINDOW_CHARS）内的 pending，
+//      —— idle 循环只构建「构建窗口」（视口 ± 策略窗口半径）内的 pending，
 //      窗口外的留在 pending 待滚动进入；每次视口/文档/选区变化后的首帧通道同时
-//      dispatch livePruneOutside：完全落在「裁剪窗口」（构建窗口再叠
-//      LIVE_PRUNE_MARGIN_CHARS 迟滞裕量）外的已建装饰归还 pending，滚回时重建。
+//      dispatch livePruneOutside：完全落在「裁剪窗口」（构建窗口再叠迟滞裕量）
+//      外的已建装饰归还 pending，滚回时重建。
 //      装饰内存与每笔编辑的映射成本都以窗口为界。开关关闭时行为与 Task 2 完全一致。
+//      半径来自 per-view 策略：显式 `liveWindowChars` / `livePruneMarginChars`，
+//      缺省回退遗留全局常量（LIVE_WINDOW_CHARS / LIVE_PRUNE_MARGIN_CHARS）。
 // 禁止在 ViewPlugin.update 内直接 dispatch（CodeMirror 限制）——所有 dispatch 都经
 // 微任务/idle 回调。视口变化无需取消在途回调：每片都用最新 view.visibleRanges 重选。
 
 // 单次 idle 回调的墙钟工作预算（ms）。每片构建成本随内容密度波动，按墙钟切片比
 // 按片数切片更能守住帧节奏；预算内至少构建一片，保证驱动总有进度。
-export const LIVE_BUILD_SLICE_MS = 24
+// 8 ms keeps a slice inside both a 120 Hz (8.3 ms) and a 60 Hz (16.6 ms) frame
+// budget; the first-block/chunk policy, not this budget, guarantees progress.
+export const LIVE_BUILD_SLICE_MS = 8
 
 // requestIdleCallback 的超时兜底：主线程持续繁忙时也保证最低调度频率。
 export const LIVE_IDLE_TIMEOUT_MS = 200
@@ -101,14 +106,35 @@ export function pendingInWindow(pending: ClosedRange[], window: ClosedRange[]): 
   return clipped
 }
 
-// 闭区间 [from, to] 是否完全落在所有窗口区域之外（与任一区域相交即算窗口内）。
-// 裁剪门槛用：specs 按 from 有序，但多段窗口存在间隙，O(1) 首尾包络检查会漏掉
-// 间隙内的装饰，这里按装饰逐个精确判定（安全模式下 specs 以窗口为界，代价有界）。
-function outsideAllRegions(from: number, to: number, regions: ClosedRange[]): boolean {
-  for (const region of regions) {
-    if (from <= region.to && to >= region.from) return false
-  }
-  return true
+// Predicate lives in `./ranges` so the field's keep/filter uses the same one.
+//
+// The prune gate used to run `outsideAllRegions` per spec (an O(specs) scan on
+// every keystroke / cursor move). `specs` is `compareDecoSpecs`-sorted (position
+// first) and `pruneWindow` is `mergeRanges` output (ascending, disjoint, and
+// non-adjacent), which buys two O(1) decisions. Both are exact — every other case
+// falls back to the per-spec scan, so the signal matches
+// `specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))`:
+//   1. A spec ending before the first region (or starting after the last one) is
+//      outside no matter how many regions sit in between.
+//   2. For a single region (the steady state: one viewport) the position order also
+//      disproves the rest — `specs[0].from >= W.from` means every `to >= from >=
+//      W.from` (nothing entirely before), and `specs[last].from <= W.to` bounds the
+//      whole list's `from` (nothing entirely after). With several regions the gaps
+//      inside `[first.from, last.to]` still hide outside specs, so those fall back.
+function anySpecOutsideWindow(
+  specs: readonly ClosedRange[],
+  pruneWindow: readonly ClosedRange[],
+): boolean {
+  // No window at all: `outsideAllRegions` against zero regions is true for every spec.
+  if (pruneWindow.length === 0) return specs.length > 0
+  if (specs.length === 0) return false
+  const first = specs[0]
+  const last = specs[specs.length - 1]
+  const windowFrom = pruneWindow[0].from
+  const windowTo = pruneWindow[pruneWindow.length - 1].to
+  if (first.to < windowFrom || last.from > windowTo) return true
+  if (pruneWindow.length === 1 && first.from >= windowFrom && last.from <= windowTo) return false
+  return specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))
 }
 
 // 点到闭区间集的最小距离（点在区间内为 0，否则为到最近端点的间隔）。
@@ -182,9 +208,13 @@ class LiveBuildDriver {
   // 无布局测试宿主用「stub visibleRanges + 触发一笔交易」模拟。
   private windowDirty = true
   private lastWindowed: boolean
+  private lastWindowChars: number
+  private lastPruneMarginChars: number
 
   constructor(private readonly view: EditorView) {
     this.lastWindowed = this.windowed(view.state)
+    this.lastWindowChars = this.windowChars(view.state)
+    this.lastPruneMarginChars = this.pruneMarginChars(view.state)
     this.arm()
   }
 
@@ -201,6 +231,20 @@ class LiveBuildDriver {
       this.idleScheduled = false
       this.windowDirty = true
     }
+    // Policy switch between two windowed presets (SAFE ↔ WINDOWED): the radius
+    // changed, so the cached build window must be recomputed and re-pruned even
+    // though pending never changed. Queued idle work targets the old radius, so
+    // cancel it and arm a fresh first pass.
+    const windowChars = this.windowChars(update.state)
+    const pruneMarginChars = this.pruneMarginChars(update.state)
+    if (windowChars !== this.lastWindowChars || pruneMarginChars !== this.lastPruneMarginChars) {
+      this.cancelIdle?.()
+      this.cancelIdle = null
+      this.idleScheduled = false
+      if (isWindowed) this.windowDirty = true
+    }
+    this.lastWindowChars = windowChars
+    this.lastPruneMarginChars = pruneMarginChars
     if (isWindowed && (update.viewportChanged || update.docChanged || update.selectionSet)) {
       this.windowDirty = true
     }
@@ -210,6 +254,16 @@ class LiveBuildDriver {
   private windowed(state: EditorState = this.view.state): boolean {
     const policy = editorPerformancePolicy(state)
     return policy ? policy.windowLiveDecorations : safeModeRenderingEnabled()
+  }
+
+  // 构建窗口半径：显式策略可收紧（WINDOWED_PERFORMANCE_POLICY = ±32k），缺省
+  // 回退遗留全局常量（LIVE_WINDOW_CHARS = ±262k）。
+  private windowChars(state: EditorState = this.view.state): number {
+    return performanceWindowChars(editorPerformancePolicy(state))
+  }
+
+  private pruneMarginChars(state: EditorState = this.view.state): number {
+    return performancePruneMarginChars(editorPerformancePolicy(state))
   }
 
   destroy() {
@@ -237,10 +291,10 @@ class LiveBuildDriver {
     queueMicrotask(() => this.firstPass())
   }
 
-  // 构建窗口：可见段 ± LIVE_WINDOW_CHARS。窗口化下 idle 循环与首帧通道的构建
+  // 构建窗口：可见段 ± 策略窗口半径。窗口化下 idle 循环与首帧通道的构建
   // 范围都以此为界（首帧通道取 pending∩可见区，天然在窗口内）。
   private buildWindow(): ClosedRange[] {
-    return expandedRegions(this.view, LIVE_WINDOW_CHARS)
+    return expandedRegions(this.view, this.windowChars())
   }
 
   private firstPass() {
@@ -268,8 +322,8 @@ class LiveBuildDriver {
   // 窗口外装饰的归还信号」。pending 为空也照走 —— 排空后滚到远处时，已建装饰
   // 全在窗口外，裁剪是唯一的窗口维护动作。裁剪窗口比构建窗口多
   // LIVE_PRUNE_MARGIN_CHARS（迟滞）：恰好建在窗口边缘的装饰不会因视口小幅往返
-  // 在「构建 ↔ 裁剪」间抖动。裁剪门槛逐装饰精确判定（见 outsideAllRegions），
-  // 无活时不 dispatch（避免每帧空交易）。
+  // 在「构建 ↔ 裁剪」间抖动。裁剪门槛先走 O(1) 位置序判定，其余回退到逐装饰
+  // 精确扫描（见 anySpecOutsideWindow）；无活时不 dispatch（避免每帧空交易）。
   private windowedFirstPass(live: LiveDeco) {
     // 先挂 idle 调度再 dispatch（与非窗口化路径同构）：scheduleIdleSlice 自门槛，
     // 构建窗口内无待建 pending 时不挂。
@@ -278,8 +332,8 @@ class LiveBuildDriver {
     const chunks = visibleChunks(live.pending, visibleRegions(this.view))
     for (const chunk of chunks) effects.push(liveBuildChunk.of(chunk))
     const pruneWindow = expandedRegions(
-      this.view, LIVE_WINDOW_CHARS + LIVE_PRUNE_MARGIN_CHARS)
-    if (live.specs.some(spec => outsideAllRegions(spec.from, spec.to, pruneWindow))) {
+      this.view, this.windowChars() + this.pruneMarginChars())
+    if (anySpecOutsideWindow(live.specs, pruneWindow)) {
       effects.push(livePruneOutside.of(pruneWindow))
     }
     if (effects.length > 0) {

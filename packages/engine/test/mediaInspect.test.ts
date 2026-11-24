@@ -272,11 +272,16 @@ describe("media inspection (ImageWidget & MermaidWidget)", () => {
 
     const first = new ImageWidget("hero.png", "Hero", "resolved://hero.png")
     const img1 = first.toDOM(fakeView) as HTMLImageElement
-    expect(img1.decoding).toBe("async")
-    Object.defineProperty(img1, "naturalWidth", { value: 1200, configurable: true })
-    Object.defineProperty(img1, "naturalHeight", { value: 600, configurable: true })
-    img1.onload?.(new Event("load"))
-    expect(measures).toBe(1)
+    document.body.appendChild(img1)
+    try {
+      expect(img1.decoding).toBe("async")
+      Object.defineProperty(img1, "naturalWidth", { value: 1200, configurable: true })
+      Object.defineProperty(img1, "naturalHeight", { value: 600, configurable: true })
+      img1.onload?.(new Event("load"))
+      expect(measures).toBe(1)
+    } finally {
+      img1.remove()
+    }
 
     const second = new ImageWidget("hero.png", "Hero", "resolved://hero.png")
     const img2 = second.toDOM(fakeView) as HTMLImageElement

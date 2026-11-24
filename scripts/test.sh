@@ -18,7 +18,9 @@ pnpm test
 echo "==> desktop (tsc + vitest)"
 pnpm --filter @omd/desktop test
 
-echo "==> rust (cargo test)"
+echo "==> rust (cargo fmt + clippy + test)"
+cargo fmt --all --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 echo "==> tests OK"

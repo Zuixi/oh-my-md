@@ -446,13 +446,10 @@ click, so the wrong window executes the command (and each window's
 
 The fix pattern is pinning the listener's own label:
 `listen(event, handler, { target: { kind: "AnyLabel", label: getCurrentWindow().label } })`
-— wrapped as `listenTarget()` in `desktopServices.ts`. Exactly three
-listeners must stay scoped: `listenSessionFlush`, `listenMenu`, and
-`listenOpenFile`, matching the three Rust `emit_to` sites
-(`session-flush`, `menu-command`, `open-file`). Broadcast `emit` (e.g.
-`workspace-changed` from `watcher.rs`) still reaches `AnyLabel` listeners —
-that is why `listenWorkspaceChange` safely keeps the default Any target:
-every window needs watcher events. Any new Rust `emit_to` needs its JS
+— wrapped as `listenTarget()` in `desktopServices.ts`. All four window-scoped
+listeners must stay scoped: `listenSessionFlush`, `listenMenu`, `listenOpenFile`,
+and `listenWorkspaceChange`, matching the four Rust `emit_to` sites
+(`session-flush`, `menu-command`, `open-file`, `workspace-changed`). Any new Rust `emit_to` needs its JS
 listener registered through `listenTarget()`, or it will work perfectly
 with one window and cross-talk the moment a second one opens.
 
@@ -611,3 +608,171 @@ WebView2, Linux WebKitGTK), so the document must be self-contained and determini
   `WINDOWS_ADDITIONAL_BROWSER_ARGS`. Omit them and the second environment fails while Tauri
   still registers the window: `url()`/`size()`/`with_webview()` all return
   `FailedToReceiveMessage`, and a custom-protocol export page never reports ready.
+
+## Zero-churn typing: the shell must not subscribe to document text (2026-11)
+
+`App` used to keep `const [doc, setDoc] = useState("")` and update it from the 250 ms
+materializer, so every keystroke re-rendered TopBar, FileTree, OutlinePanel, and every modal
+even though only the status bar reads the text. The fix is architectural, not a `memo`:
+
+- `documentStore.ts` owns `workspace`, `docs`, `docVersions`, `dirtyTabIds`,
+  `saveStateByTab`, and `normalizationByTab` outside React. The shell subscribes only to
+  workspace / dirty ids / save states / normalization; text is read by the components that
+  render it (`useActiveTabDoc`, `useDocVersion`, `useDocumentStats`).
+- `dirtyTabIds` must keep the **same array reference** while an already-dirty tab keeps
+  changing. `useSyncExternalStore` bails out on `Object.is`, so a rebuilt array (even with
+  equal contents) re-renders the whole shell. `test/documentStore.test.ts` asserts reference
+  identity; `test/App.renderPerf.test.tsx` asserts zero TopBar renders across ten
+  materialized edits on an already-dirty tab.
+- Anything derived from the whole document (stats, find match count, the conflict diff) is
+  computed inside its own component or through a getter polled while its panel is open. Put
+  it back in `App` and the invariant silently dies — there is no runtime error, only jank.
+- `App` must stay under the root 500-line target with **no** `module-size-baseline.json`
+  entry; `check-module-size.mjs` fails on an obsolete allowance (`<= 800`), so shrinking the
+  shell without removing its baseline line fails the quality gate.
+
+## `export default function App(props: AppProps = {})` breaks `createElement` typing (2026-11)
+
+`test/appHarness.ts` renders with `createElement(App, {...})`, not JSX. Giving the **parameter
+a default** (`props: AppProps = {}`, or a defaulted destructuring pattern) makes React's
+`createElement` overloads infer the props type as `{}`, and every caller fails with
+`Object literal may only specify known properties, and 'services' does not exist in type
+'Attributes'` — while `tsc -p tsconfig.json` (src only) stays green, so the failure only shows
+up in `tsconfig.test.json`. Keep the parameter required and all fields optional: `<App />` and
+`createElement(App, {...})` both work, and `App()` with no argument is not a supported call.
+
+## Hot Exit is a normal quit, not a crash (2026-11)
+
+The session shard is the window's own record of what was open; recovery records are crash
+safety. Treating them as one flow produced two bugs: untitled dirty tabs vanished on quit, and
+the next launch asked "restore unsaved drafts?" for work the user had simply closed — Cancel
+then deleted it. Now a quit flush writes every dirty buffer and records `hotExitTabs`
+(ordered `{kind, path, recoveryKey}`) plus `activeTabIndex` in the shard; restore rebuilds the
+tabs in that exact order, adopts each buffer against its disk baseline, and returns the
+recovery keys it claimed so the crash prompt only sees real orphans. Two traps:
+
+- `extractSessionState(ws)` with no dirty-key map must keep emitting exactly
+  `{ folder, openPaths, activePath }`; adding `hotExitTabs: []` breaks every legacy assertion
+  and older readers. The map (`dirtyRecoveryKeysFor`) is passed only by the flush and the
+  debounced shard write.
+- A dirty buffer adopted onto a file tab whose file is missing must degrade to an untitled
+  tab, never to a dropped buffer; and a claimed draft is re-armed under the tab's own
+  `recoveryKey` before its source record is deleted, or a crash right after restore loses it.
+
+## A React `autoFocus` inside a Dialog steals the opener (2026-11)
+
+`Dialog` records `document.activeElement` when it opens so it can hand focus back on close.
+React applies `autoFocus` during the commit phase — before any effect runs — so an input with
+`autoFocus` inside the dialog is already focused when the opener is captured: the dialog then
+"restores" focus to an unmounted input and the real trigger keeps nothing. The palette and
+quick-open inputs therefore carry no `autoFocus`; initial focus belongs to `Dialog`
+(`initialFocusRef` → `[autofocus]` → first focusable). Same class of bug exists in the Tab
+trap: the focusable selector is OR-ed, so every clause needs its own
+`:not([tabindex="-1"])` — `button:not(:disabled)` alone puts the palette's roving option rows
+back into the Tab cycle.
+
+## Chromium applies `inert` at style resolution, not synchronously (2026-11)
+
+Background `inert` is the correct way to take the shell out of the tab/hit-test order while a
+modal is open, but removing the attribute and calling `opener.focus()` in the same task can
+drop the focus call when the opener lives inside the region that was inert (topbar, sidebar):
+Blink recomputes inertness when styles are resolved, i.e. after the task. `Dialog` therefore
+retries once on `requestAnimationFrame` when `document.activeElement` did not become the
+opener, and skips the retry when the node is detached or still inside an `[inert]` subtree.
+The happy-dom unit test still sees the synchronous restore (no layout engine, no retry).
+
+## `manualChunks` patterns must match resolved ids, not export-map specifiers (2026-11)
+
+`shiki/langs/cpp.mjs` resolves to `…/node_modules/shiki/dist/langs/cpp.mjs`, so a rule written
+against `/shiki/langs/` never fires and every grammar lands in `vendor-shiki-core` — a 3.4 MB
+chunk (verified by probing `manualChunks` ids during a build). Match both spellings
+(`/shiki/(dist/)?langs/`, `@shikijs/langs`) and keep the same discipline for the other lazy
+families: `@codemirror/lang-*`, `@codemirror/legacy-modes`, the per-language `@lezer/*`
+grammars, and KaTeX's `?inline` fonts. `viteChunks.ts` is the single owner of that routing and
+`test/viteChunks.test.ts` pins it; the eager chunks (`index`, `vendor-react`,
+`vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) stay under the 700 kB budget while the
+lazy `cpp` grammar sits just under `chunkSizeWarningLimit`.
+
+## E2E teardown: a piped-out driver leaves Chromium groups behind (2026-11)
+
+`playwright test` owns browser and web-server teardown only while its own event loop is alive.
+End the driver first — `pnpm test:e2e | head` (SIGPIPE → EPIPE), Ctrl-C, `kill`, an IDE stop
+button — and `finally { await browser.close() }` never runs. The orphans are easy to miss
+because none of them share one parent:
+
+- the browser process is its own group leader (Playwright launches Chromium detached), so the
+  terminal's process group kill misses it entirely;
+- `chrome_crashpad_handler` reparents to PID 1 in a **different** PGID than the browser, so
+  even a correct `kill(-browserPgid)` leaves it behind;
+- GPU / network / renderer helpers and `vite` keep running, so the next run finds its port busy.
+
+Evidence on 2026-11: a mid-run SIGTERM to an unsupervised driver left a `Google Chrome` group
+plus `chrome_crashpad_handler --database=<tmp>/playwright_chromiumdev_profile-*/Crashpad` with
+`PPID=1`.
+
+Every run now carries two pieces of identity, created by `e2e/processReaper.mjs`:
+
+1. `--omd-e2e-run=<uuid>` on the Chromium command line (`launchOptions.args` in
+   `playwright.config.ts`, read from `OMD_PW_RUN_ID`; audits pass it through
+   `withManagedChromium`).
+2. A private `runTmpDir` exported as `TMPDIR`/`TMP`/`TEMP`, so Chromium's temp profile and the
+   crashpad `--database=` path contain this exact string.
+
+`reapRunProcessesSync` matches on those two plus the root PID/PGID, then walks the closure
+(children of a matched process, members of a matched group). It is **synchronous** on purpose:
+`process.on("exit")` cannot await, so the reaper must run ps → SIGTERM → poll → SIGKILL in one
+turn (`Atomics.wait` for the poll delay, never a busy loop).
+
+Traps this cost real debugging:
+
+- **Never match by executable name.** `pkill chrome` / `pkill -f Chromium` kills the developer's
+  system Chrome, `chrome-devtools` MCP sessions and unrelated Electron apps (WorkBuddy, Slack).
+  The tag and the temp dir are the only safe identities; keep them machine-unique per run.
+- **realpath the temp dir.** `mkdtempSync` returns `/var/folders/...` on macOS while `ps` and
+  Chromium report `/private/var/folders/...`; the string comparison then silently never matches
+  the crashpad row, which is exactly the process that leaks.
+- **Do not signal the runner.** `selfPid`, `parentPid`, their PGIDs and PID 1 are protected
+  inputs to `selectReapTargets`; without them the closure (a Vitest worker's group holds the
+  reaper) can kill the test run itself. `/sbin/launchd` and the parent's PGID are also why
+  `runE2eSupervised.mjs` never passes an unrelated group as `rootPid`.
+- **Zombies look alive.** A synchronous reap blocks the event loop, so a child that already died
+  is still listed as `<defunct>` until Node collects it; without filtering those rows every
+  teardown burns the full grace period (1.5 s) and ends in a pointless SIGKILL.
+- **`node -e <code> --flag` is not valid.** Node parses the flag as its own option (`bad
+  option`); simulated Chrome command lines need `node -e <code> -- --flag`.
+- **Vite must be started without a wrapper.** The `webServer` command is
+  `node ./node_modules/vite/bin/vite.js …`; `pnpm dev` adds another process between Playwright
+  and the server that a group kill has to infer.
+
+`test/e2eProcessSupervisor.test.ts` is the guard: pure selection cases plus two real-OS cases
+(SIGTERM → 143, closed stdout pipe → 141) that assert all spawned processes are gone and the
+temp directory is removed. Keep them process-based — a mocked reaper proves nothing here.
+
+## A ref initialized to a no-op must be assigned at the composition root
+
+`App` passes many per-render functions to once-created coordinators through
+`useRef`. `expandToPathRef` was created as `async () => {}` and never assigned,
+so every open path silently skipped revealing its ancestors in the tree. An
+unassigned ref is a success-shaped no-op: it type-checks, tests that don't
+observe the side effect stay green, and the feature is simply absent. Assign it
+next to the other `*Ref.current = …` lines and cover the observable effect
+(`test/App.quickOpen.test.tsx` asserts the ancestor directory is listed).
+
+## The live-view budget is enforced after every `ensureViews`, not only activation
+
+`MAX_LIVE_EDITOR_VIEWS` is a property of the registry, but eviction used to run
+only in `activateTab`. `newTab`, `openPath(..., inNewTab)`, recovery adoption
+and Hot Exit restore all commit a new workspace and then `ensureViews()` mounts
+a view, so opening N files kept N live CodeMirror views until an existing tab
+was clicked. Call `tabs.evictOverBudget()` in the `[tabs]` effect right after
+`ensureViews()` (the activation call stays). Regression:
+`test/appTabsCloseAndSwitch.test.ts` — "evicts after non-activation mounts".
+
+## A once-per-mount controller must survive StrictMode's cleanup
+
+`outlineController` is created with `useState` and subscribes to the store at
+construction. The mount-effect cleanup called `dispose()`, which unsubscribed;
+React StrictMode's setup → cleanup → setup then left the panel updating only on
+explicit refreshes. Give such controllers a `reset()` that re-subscribes (the
+materializer already has one) and call it at the top of the mount effect.
+Regression: `test/outlineController.test.ts`.

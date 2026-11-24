@@ -70,7 +70,19 @@ describe("Tauri frontend security configuration", () => {
     expect(csp).toContain("default-src 'self'")
     expect(csp).toContain("script-src 'self'")
     expect(csp).toContain("img-src 'self' asset: http://asset.localhost data: https:")
-    expect(csp).toContain("connect-src ipc: http://ipc.localhost ws:")
+    // Production loads from tauri://localhost; the Vite dev server talks over
+    // the same IPC channel, so no websocket source belongs in the shipped CSP.
+    expect(csp).toContain("connect-src ipc: http://ipc.localhost")
+    expect(csp).not.toContain("ws:")
+    // Remote content must not be able to re-interpret the document.
+    for (const directive of [
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+    ]) {
+      expect(csp).toContain(directive)
+    }
   })
 
   it("configures the exact HTTPS Pages stable endpoint and shipped public key", () => {
@@ -151,6 +163,19 @@ describe("Tauri frontend security configuration", () => {
 
     expect(config.app.security.assetProtocol.enable).toBe(true)
     expect(config.app.security.assetProtocol.scope).toEqual([])
+  })
+
+  it("ships bundle metadata every installer format needs", () => {
+    // `publisher` and `shortDescription` land in the NSIS/MSI/deb/rpm metadata;
+    // `category` is the macOS App Store category and the freedesktop section.
+    // `tauri::generate_context!()` rejects an unknown category at build time.
+    const config = readJson("../src-tauri/tauri.conf.json") as {
+      bundle: { publisher?: string; category?: string; shortDescription?: string }
+    }
+
+    expect(config.bundle.publisher).toBe("oh-my-md Contributors")
+    expect(config.bundle.category).toBe("DeveloperTool")
+    expect(config.bundle.shortDescription).toBe("Fast, source-faithful Markdown editor")
   })
 })
 

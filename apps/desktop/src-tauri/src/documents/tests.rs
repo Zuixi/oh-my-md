@@ -953,7 +953,7 @@ fn metadata_required_xattr_failure_reports_metadata_failed_and_keeps_the_target(
     xattr::set(&file, "com.apple.metadata:_kMDItemUserTags", b"tag").unwrap();
     let absent = file.parent().unwrap().join("absent.tmp");
     assert!(matches!(
-        copy_metadata(&file, &absent),
+        save::copy_metadata(&file, &absent),
         Err(DocumentError::MetadataFailed(_))
     ));
     assert_eq!(fs::read_to_string(&file).unwrap(), "original");

@@ -860,7 +860,7 @@ describe("App product shell", () => {
     harness.renderApp()
     fireEvent.click(screen.getByRole("button", { name: "+" }))
     await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
-    expect(screen.getAllByRole("button", { name: /unnamed/ }).length).toBeGreaterThan(1)
+    expect(screen.getAllByRole("tab", { name: /unnamed/ }).length).toBeGreaterThan(1)
   })
 
   it("opens the command palette on Cmd+K and runs a command", async () => {
@@ -1080,7 +1080,7 @@ describe("App product shell", () => {
     })
     fireEvent.keyDown(screen.getByPlaceholderText("Run a command…"), { key: "Enter" })
     await waitFor(() => expect(screen.getByText("readme.md")).toBeTruthy())
-    fireEvent.click(screen.getByRole("button", { name: "drafts" }))
+    fireEvent.click(screen.getByRole("treeitem", { name: "drafts" }))
     await waitFor(() => expect(screen.getByText("idea.md")).toBeTruthy())
     expect(screen.getByText("readme.md")).toBeTruthy()
     expect(screen.queryByRole("button", { name: ".." })).toBeNull()
@@ -1176,7 +1176,7 @@ describe("App product shell", () => {
     act(() => send?.("new"))
     await waitFor(() => expect(editor.create).toHaveBeenCalledTimes(2))
     act(() => send?.("close"))
-    await waitFor(() => expect(screen.getAllByRole("button", { name: /unnamed/ })).toHaveLength(1))
+    await waitFor(() => expect(screen.getAllByRole("tab", { name: /unnamed/ })).toHaveLength(1))
   })
 
   it("remembers opened files and reopens them from the File menu", async () => {

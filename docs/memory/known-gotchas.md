@@ -21,6 +21,10 @@
 - **Block widget geometry can desync CM's heightmap** — async widgets need a sync placeholder plus a field refresh; no vertical margins on block DOM; identity before `eq()`; opaque replaces quantize `posAtCoords`.
 - **Block widgets must declare `estimatedHeight`** — CM estimates unknown-height blocks at one line, over-drawing the viewport on scroll (table-doc jank); estimates live in `widgetHeights.ts` with a test + bench guard.
 - **Incremental spec mapping must mirror `RangeSet.map`'s collapse rule** — a collapsed `mark:`/`replace:` spec must be dropped, or `deco.size !== specs.length` forever and the next rebuild throws; only `line:` decorations survive zero length.
+- **The document end needs an inclusive dirty boundary** — `expandRange`'s half-open `endLine.to + 1` is clamped to `doc.length`, so without `ranges.ts::docEndOwned` a zero-length spec at the very end (a collapsed closing fence whose lines were deleted) never enters a removal range and survives every rebuild.
+- **A blank-line edit must not widen the rebuild to the whole document** — `expandRange` resolves a gap position to the `Document` node, so climbing "to the enclosing block" rebuilt every spec on every keystroke (66–81 ms on 4 800 paragraphs); skip root widening, the line range already covers a gap.
+- **Per-keystroke spec bookkeeping must stay O(n)** — `decorations/specIndex.ts` (prefix/suffix fast map, cursor partition, binary-search dedup, two-pointer merge) plus a dirty-envelope bound on `RangeSet.update`'s filter; keying/sorting all 57 000 specs per keystroke is the ~10x regression `perfGate.test.ts` blocks.
+- **Windowing is scale-based, not always-on** — `WINDOWED_PERFORMANCE_POLICY` (above 2 000 lines or 100 KiB) shrinks the build window to ±32 768 chars; `SAFE_PERFORMANCE_POLICY` keeps the legacy 262 144 / 32 768 radii plus the block budget. Never read the legacy constants when a per-view policy exists.
 - **Decoration rebuilds must preserve equivalent widget identity** — CM's heightmap treats a Decoration identity change as height-relevant and resets measured heights to the estimate (scroll rollback/thumb drift); `build.ts` reuses `eq`-equal dropped specs, guarded by `specIdentity.test.ts`.
 - **Structure and appearance live in different packages** — a green engine test does not prove the desktop looks right.
 - **Ordered-list preview numbers are written back to the source** — the rewrite must stay revertible; never gate reversibility on a "first pass" flag; merge rules per batch kind.
@@ -80,9 +84,18 @@
 - **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
 - **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
 - **`coordsAtPos` throws inside `ViewPlugin.update`** — layout reads are illegal during an update; position overlays in `requestMeasure` (read coords / write DOM separately) or the toolbar silently never appears while happy-dom tests stay green.
+- **Empty `text/plain` is not an empty clipboard** — image-only HTML must take the structured path; `plainText === ""` is not `document.blocks.length === 0`.
+- **Front-matter stats must mirror the parser's line rule** — `\n---` prefix matching miscounts `----`, `---text`, and unclosed blocks.
+- **Fence language tokens keep the author's case** — compare `toLowerCase()` for `mermaid`, or preview and export disagree.
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
+- **An unassigned no-op ref silently drops a side effect** — `expandToPathRef` was never wired; assign coordinator refs next to the other `*Ref.current = …` lines.
+- **The live-view budget is enforced after every `ensureViews`** — eviction in `activateTab` alone lets new/open/restore tabs grow the live set.
+- **A once-per-mount controller must survive StrictMode cleanup** — give it `reset()` (outline) like the materializer's.
+- **The React shell must not subscribe to document text** — `DocumentStore` + `dirtyTabIds` reference identity are what keep typing from re-rendering the shell; a rebuilt (equal) array re-renders everything. See [gotchas-desktop](./gotchas-desktop.md).
+- **`App(props: AppProps = {})` breaks `createElement` typing** — a defaulted parameter makes React infer `{}`, so harness callers fail in `tsconfig.test.json` while `src` type-checks.
+- **Hot Exit rides the session shard, not the crash prompt** — quit writes `hotExitTabs` + `activeTabIndex`; restore claims those recovery keys so `confirmRestore` only sees real orphans.
 - **High-DPI export must self-contain images/KaTeX and scale at capture** — `asset:` URLs and `prefers-color-scheme` do not survive offscreen renderers; never upscale 1x bitmaps. See [gotchas-desktop](./gotchas-desktop.md).
 
 - **Right-click paste on macOS deletes extra lines** — dispatch from a saved `posAtCoords` position, and register the desktop paste handler before engine rich paste so HTML-bearing clipboards cannot bypass it.
@@ -102,6 +115,9 @@
 - **Path identity normalizes separators and `\\?\` prefixes — for Windows forms only** — use `samePath`/`pathWithinDir`/`baseName`; keep the raw form in tree keys (native `parentDir`), rebase canonicalized create/rename results (`plainPath` + `rebaseToDir`; reuse only an *exactly spelled* parent, else rebuild from the caller's dir — also fixes macOS/Linux symlinks), and never treat POSIX backslash as a separator or feed a normalized dir into `childrenByPath`/`expanded`.
 - **`revealItemInDir` fails on forward-slash Windows paths** — `\\?\C:\…` + UI `/` separators → `//?/C:/…`, which the plugin cannot simplify and the Shell cannot parse; restore `\` at the call site.
 - **Bounded waits on the save queue** — `awaitWithTimeout`; the save chain keeps running after a timeout.
+- **A React `autoFocus` inside a `Dialog` steals the opener** — capture-at-effect then restores focus to an unmounted input; the dialog owns initial focus, and every focusable-selector clause needs `:not([tabindex="-1"])`.
+- **Chromium applies `inert` at style resolution** — a synchronous `opener.focus()` right after clearing it can be dropped; retry once on the next frame.
+- **`manualChunks` must match resolved ids** — `shiki/langs/*` resolves to `shiki/dist/langs/*`; a specifier-based pattern misses it and collapses every grammar into one 3.4 MB chunk. See [gotchas-desktop](./gotchas-desktop.md).
 - **Stock `drawSelection` extends line ends to the content edge** — the vendored `tightSelection.ts` is the only selection layer; re-diff it on every `@codemirror/view` bump (guard test enforces).
 - **`highlightActiveLine` paints nothing but is load-bearing** — focus mode needs the class; overrides need more classes than the base theme (it is injected later); `.omd-codeblock.cm-activeLine` must repaint.
 - **`contentRect` is the border box** — `.cm-content` padding (16/24) breaks borrowed geometry formulas; `documentTop` excludes padding; `defaultLineHeight` is a default, not a row pitch.
@@ -114,9 +130,16 @@
 - **Non-`main` windows must never call `restoreDraft()`** — the mount-flow `windowScope.isMainWindow()` branch keeps a fresh editor window from hijacking the main window's recovery record.
 - **File-tree rename moves a draft's recovery key** — content-only dedup can skip the new write; keep the old record until the new-key draft is durable, including when a directory rename retargets open tabs.
 - **`localStorage` is shared across same-origin webviews** — `STORAGE_KEY_SESSION` is a last-writer-wins fallback only; the Rust per-window shard is the truth.
+- **A piped-out E2E driver orphans Chromium process groups** — `pnpm test:e2e | head`, Ctrl-C or a kill ends Node before Playwright's teardown; the browser owns its own PGID and `chrome_crashpad_handler` sits in a third one, so only a run-tagged/temp-dir-matched reaper finds them. See [gotchas-desktop](./gotchas-desktop.md).
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
+- **Document/export IPC paths are not authorization** — document commands only record a grant after IO; auxiliary sinks must check for one or pin their own shape.
+- **Non-regular files must fail before a buffered read** — `/dev/zero`/FIFOs need `is_file()` after canonicalization.
+- **A completed window-close flush round can poison the next quit** — clear the stale `flushed` flag when editor windows survive.
+- **Diagnostics/export artifacts need their own path contract** — absolute, extension, symlink, atomic staging, `spawn_blocking`.
+- **Snapshot stamp + write is one critical section** — otherwise concurrent snapshots clobber a restore point.
+- **One readiness deadline per export host** — macOS's 5 s literal diverged from the shared 20 s constant.
 - **Guarded save is double-compare + atomic replace, not strict CAS** — document the residual race, never "CAS".
 - **Expected version binds to the resolved path** — a retargeted symlink is `PathChangedConflict`, never a silent identity switch.
 - **Missing-file publish uses a same-filesystem hard link** — crash can leave a temp alias; directory-fsync failure is a durability warning, not an error.
@@ -132,6 +155,11 @@
 - **Capability `windows` is label-matched with glob support** — a new window label not covered by any pattern (e.g. `editor-*`) fails every invoke at runtime while TS tests stay green.
 - **Menu events carry no window identity** — route through the registry MRU (`menu.rs` `focused_label`); zero windows means the command is dropped.
 - **FlushGate rounds are counting** — one global deadline over the target set; `ack` carries the calling window label and non-target acks are ignored; empty targets complete immediately.
+- **Only editor windows may join window bookkeeping** — export render hosts (`omd-export-*`) have no IPC capability and no flush listener; classifying them as editor windows let `CloseRequested` `prevent_close()` a window whose flush could never be acked (2 s stall per export, plus a bogus `remove_session_shard`). Filter with `windows::is_editor_window_label` in flush targets, `ExitRequested`, menu routing, and focus/destroyed handlers.
+- **A prevented close must be queued, not dropped** — `FlushGate` records mid-round window closes and app exits (`queue_window_close` / `queue_app_exit`) and every round's finish drains them; a restart stages `mark_restart_flushed` so its `ExitRequested` is not re-flushed and re-exited.
+- **Restored window bounds are logical, not physical** — `outer_position`/`inner_size` report physical pixels while builder `position`/`inner_size` take logical ones; persisting the raw numbers doubled every window on 2x displays. `window_bounds.rs` records the unit (`logical`), migrates legacy shards, and clamps an offscreen placement back onto a connected monitor.
+- **Filesystem authorization belongs to a window, not the process** — `auth_scope.rs` keys grants by window label and revokes on `Destroyed`; listing/search/quick-open/mutations require a workspace root grant, while version history accepts a workspace root **or** that window's grant on the single document it opened/saved.
+- **Export documents are hash-pinned, never `'unsafe-inline'`** — the only allowed script is `EXPORT_READY_SCRIPT`, pinned by its SHA-256 in `export_host.rs` and in `EXPORT_NATIVE_CSP_META`; `crossLayerConstants.test.ts` recomputes the digest, so editing the script without updating both hosts fails the build.
 - **Session shards drop on window close, survive app exit** — removal runs in the CloseRequested finisher under `SessionFileLock`; a crash may restore a window closed after its last flush (accepted).
 - **A restart can outrun an async settings write** — settings persist fire-and-forget; a "restart to apply" path must await the latest save (`trackSettingsSave`) and treat a fallback-only write as failure, or the new process reads the old file and the toggle silently does nothing.
 - **`AppHandle::restart()` skips exit events** — use `request_restart()`; the bare form skips `ExitRequested`/`Exit`, so `session end clean=true` is never written and the next launch reports an abnormal exit.
@@ -164,18 +192,28 @@ The ownership contract is now:
   server also owns stopping it.
 - Concurrent worktrees use different `PW_PORT` values. An occupied port is a
   useful failure, not a reason to reuse an unknown server.
-- Standalone browser audits require an externally managed Vite server: start it
-  on a dedicated `PW_PORT`, retain its PID/command handle, and stop that exact
-  process after the audit. The audit itself requires `browser.close()` in
-  `finally`, so normal failures still release Chrome.
+- Standalone browser audits launch through `withManagedChromium()`
+  (`apps/desktop/e2e/browserLifecycle.mjs`), which closes the browser in a
+  `finally` *and* reaps the run on signal, exit and broken pipe.
 
-No in-process cleanup can run after an unconditional kill or IDE crash. In
-that case, inspect listeners and command lines, then stop only the confirmed
-PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
+Ownership of the process tree needs one more layer, because a `finally` block
+never runs when the driver itself is ended: `pnpm test:e2e | head` (SIGPIPE →
+EPIPE), Ctrl-C, `kill`, or an IDE stop button leave the Chromium process group,
+`chrome_crashpad_handler` (reparented to PID 1 in its own group) and the Vite
+child alive. `apps/desktop/scripts/runE2eSupervised.mjs` now runs the Playwright
+CLI in its own process group with an `--omd-e2e-run=<uuid>` tag and a private
+temp dir, and reaps that group synchronously on every exit path
+(`apps/desktop/e2e/processReaper.mjs`); `test/e2eProcessSupervisor.test.ts`
+proves it with real processes for SIGTERM (143) and a closed stdout pipe (141).
+
+No in-process cleanup can run after an unconditional kill (SIGKILL) or an IDE
+crash. In that case, inspect listeners and command lines, then stop only the
+confirmed PID. On Windows, use `Get-NetTCPConnection` and `Get-CimInstance
 Win32_Process`; on macOS/Linux, use `lsof -i :<port>` and `ps`. Never kill all
 `chrome`/`node` processes by name: e2e deliberately uses the installed Chrome
 channel, and automation flags are also used by legitimate MCP browser
-sessions.
+sessions. The reaper matches only the run tag, the run temp directory and the
+root PID/PGID — never an executable name.
 
 ## Tauri updater signing keys and macOS targets are exact contracts
 

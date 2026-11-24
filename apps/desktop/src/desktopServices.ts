@@ -219,8 +219,18 @@ export interface DesktopServices {
     contents: string,
     expected: ExpectedDocumentVersion,
   ) => Promise<SaveDocumentResult>
-  readFile: (path: string) => Promise<string>
-  writeFile: (path: string, contents: string) => Promise<void>
+  /** Reads a user-picked custom CSS file (Rust `read_custom_css`). */
+  readCustomCss?: (path: string) => Promise<string>
+  /** Writes a finished standalone HTML export (Rust `write_exported_html`). */
+  writeExportedHtml?: (path: string, contents: string) => Promise<void>
+  /**
+   * @deprecated Legacy unrestricted file pair. Kept only so existing test
+   * doubles keep type-checking; production services never wire them to a
+   * general-purpose Rust file command.
+   */
+  readFile?: (path: string) => Promise<string>
+  /** @deprecated See `readFile`. */
+  writeFile?: (path: string, contents: string) => Promise<void>
   revealInFinder?: (path: string) => Promise<void>
   createMarkdown?: (dir: string, name: string) => Promise<string>
   createDir?: (dir: string, name: string) => Promise<string>
@@ -310,10 +320,10 @@ function isDocumentErrorCode(code: string): code is DocumentErrorCode {
 
 /**
  * Registration target for window-scoped events. Rust emits `menu-command`,
- * `open-file`, and the session-flush event with `emit_to(<this window>)`;
- * the JS `listen()` default (`{ kind: "Any" })` would ALSO receive every
- * other window's targeted events, so each listener must pin its own label.
- * Broadcast `emit`s (e.g. `workspace-changed`) still reach AnyLabel listeners.
+ * `open-file`, `workspace-changed`, and the session-flush event with
+ * `emit_to(<this window>)`; the JS `listen()` default (`{ kind: "Any" }`)
+ * would ALSO receive every other window's targeted events, so each listener
+ * must pin its own label.
  */
 function listenTarget(): { kind: "AnyLabel"; label: string } {
   return { kind: "AnyLabel", label: getCurrentWindow().label }
@@ -385,9 +395,15 @@ export const defaultServices: DesktopServices = {
   },
   saveDocument: (path, contents, expected) =>
     invokeDocument<SaveDocumentResult>("save_document", { path, contents, expected }),
-  readFile: (path) => invoke<string>("read_file", { path }),
+  readCustomCss: (path) => invoke<string>("read_custom_css", { path }),
+  writeExportedHtml: async (path, contents) => {
+    await invoke("write_exported_html", { path, contents })
+  },
+  // Legacy names delegate to the scoped commands instead of a general-purpose
+  // file API, so even a stale caller cannot read or write arbitrary paths.
+  readFile: (path) => invoke<string>("read_custom_css", { path }),
   writeFile: async (path, contents) => {
-    await invoke("write_file", { path, contents })
+    await invoke("write_exported_html", { path, contents })
   },
   revealInFinder: async path => {
     // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).
@@ -621,7 +637,11 @@ export const defaultServices: DesktopServices = {
     return () => { void pending.then(unlisten => unlisten()) }
   },
   listenWorkspaceChange: handler => {
-    const pending = listen<string[]>("workspace-changed", event => handler(event.payload))
+    const pending = listen<string[]>(
+      "workspace-changed",
+      event => handler(event.payload),
+      { target: listenTarget() },
+    )
     return () => { void pending.then(unlisten => unlisten()) }
   },
   watchPaths: async paths => {

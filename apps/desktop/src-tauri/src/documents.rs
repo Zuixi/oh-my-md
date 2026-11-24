@@ -12,7 +12,7 @@ pub(crate) use coordinator::resolve_path_key;
 pub use coordinator::DocumentCoordinator;
 pub(crate) use save::guarded_save;
 #[cfg(test)]
-pub(crate) use save::{copy_metadata, guarded_save_with_hook, sync_parent};
+pub(crate) use save::{guarded_save_with_hook, sync_parent};
 
 const FINGERPRINT_PREFIX: &str = "v1:";
 
@@ -347,6 +347,7 @@ fn stat_document_blocking(path: &str) -> Result<DocumentStat, DocumentError> {
         path_buf
     };
     let metadata = std::fs::metadata(&target).map_err(|error| map_read_io_error(&target, error))?;
+    require_regular_file(&metadata, &target)?;
     Ok(DocumentStat::Existing {
         requested_path,
         size_bytes: metadata.len(),
@@ -429,6 +430,7 @@ pub(crate) fn read_document_version_cached(
     let resolved_path = path_to_string(&resolved)?;
     let metadata =
         std::fs::metadata(&resolved).map_err(|error| map_read_io_error(&path_buf, error))?;
+    require_regular_file(&metadata, &path_buf)?;
     let Some((mtime_ns, size)) = stat_cache_key(&metadata) else {
         // 拿不到可靠 mtime：不查缓存也不回填，退化为现行整读。
         let version = probe_version_uncached(&resolved, &resolved_path, &path_buf)?;
@@ -483,7 +485,10 @@ fn probe_version_uncached(
     resolved_path: &str,
     error_path: &Path,
 ) -> Result<DocumentVersion, DocumentError> {
-    let bytes = std::fs::read(resolved).map_err(|error| map_read_io_error(error_path, error))?;
+    let (mut file, _metadata) = open_regular_document(resolved, error_path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| map_read_io_error(error_path, error))?;
     Ok(DocumentVersion {
         resolved_path: resolved_path.to_owned(),
         fingerprint: fingerprint(&bytes),
@@ -506,9 +511,30 @@ where
     }
 }
 
+/// A successful read/save extends the calling window's version-history scope to
+/// that exact document file. Standalone files (opened outside any workspace
+/// folder) then get snapshots too, while arbitrary paths stay unauthorized.
+fn authorize_opened_document(window_label: &str, requested: &str, resolved: &str) {
+    for path in [requested, resolved] {
+        if let Err(error) =
+            crate::auth_scope::authorize_document_file(window_label, Path::new(path))
+        {
+            log::warn!("document authorization failed: {error}");
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn read_document(path: String) -> Result<DiskSnapshot, DocumentError> {
-    spawn_blocking_document(move || read_document_blocking(&path)).await
+pub async fn read_document(
+    window: tauri::WebviewWindow,
+    path: String,
+) -> Result<DiskSnapshot, DocumentError> {
+    let requested = path.clone();
+    let snapshot = spawn_blocking_document(move || read_document_blocking(&path)).await?;
+    if let DiskSnapshot::Existing { version, .. } = &snapshot {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -521,15 +547,21 @@ pub async fn stat_document(path: String) -> Result<DocumentStat, DocumentError> 
 /// frontend can reuse the existing snapshot pipeline once assembly finishes.
 #[tauri::command]
 pub async fn read_document_streaming(
+    window: tauri::WebviewWindow,
     path: String,
     on_chunk: tauri::ipc::Channel<OpenStreamEvent>,
 ) -> Result<DocumentOpenStream, DocumentError> {
-    spawn_blocking_document(move || {
+    let requested = path.clone();
+    let opened = spawn_blocking_document(move || {
         read_document_streaming_blocking(&path, OPEN_CHUNK_BYTES, &|event| {
             let _ = on_chunk.send(event);
         })
     })
-    .await
+    .await?;
+    if let DocumentOpenStream::Existing { version, .. } = &opened {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(opened)
 }
 
 pub(crate) fn read_document_streaming_blocking(
@@ -555,12 +587,8 @@ pub(crate) fn read_document_streaming_blocking(
         Err(error) => return Err(map_read_io_error(&path_buf, error)),
     };
     let resolved_path = path_to_string(&resolved)?;
-    let mut file =
-        std::fs::File::open(&resolved).map_err(|error| map_read_io_error(&path_buf, error))?;
-    let byte_length = file
-        .metadata()
-        .map_err(|error| map_read_io_error(&path_buf, error))?
-        .len();
+    let (mut file, file_metadata) = open_regular_document(&resolved, &path_buf)?;
+    let byte_length = file_metadata.len();
 
     let mut hasher = blake3::Hasher::new();
     let mut newline_count: u64 = 0;
@@ -644,12 +672,20 @@ pub async fn read_document_version(
 #[tauri::command]
 pub async fn save_document(
     coordinator: tauri::State<'_, DocumentCoordinator>,
+    window: tauri::WebviewWindow,
     path: String,
     contents: String,
     expected: ExpectedDocumentVersion,
 ) -> Result<SaveDocumentResult, DocumentError> {
     let coordinator = coordinator.inner().clone();
-    spawn_blocking_document(move || guarded_save(&coordinator, &path, &contents, &expected)).await
+    let requested = path.clone();
+    let saved =
+        spawn_blocking_document(move || guarded_save(&coordinator, &path, &contents, &expected))
+            .await?;
+    if let SaveDocumentResult::Saved { version, .. } = &saved {
+        authorize_opened_document(window.label(), &requested, &version.resolved_path);
+    }
+    Ok(saved)
 }
 
 fn probe_disk_raw(path: &Path) -> Result<RawDiskProbe, DocumentError> {
@@ -670,12 +706,40 @@ fn probe_disk_raw(path: &Path) -> Result<RawDiskProbe, DocumentError> {
         Err(error) => return Err(map_read_io_error(path, error)),
     };
     let resolved_path = path_to_string(&resolved)?;
-    let bytes = std::fs::read(&resolved).map_err(|error| map_read_io_error(path, error))?;
+    let (mut file, _metadata) = open_regular_document(&resolved, path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| map_read_io_error(path, error))?;
     Ok(RawDiskProbe::Existing {
         requested_path,
         resolved_path,
         bytes,
         node_is_symlink,
+    })
+}
+
+fn require_regular_file(metadata: &std::fs::Metadata, path: &Path) -> Result<(), DocumentError> {
+    if metadata.is_file() {
+        return Ok(());
+    }
+    eprintln!("[documents] rejected non-regular file: path={path:?}");
+    Err(read_failed("document path is not a regular file"))
+}
+
+/// Opens a regular document file without blocking on POSIX FIFOs or racing a
+/// separate `metadata` + `read`. Character devices (`/dev/zero`), FIFOs,
+/// sockets, and directories are rejected before any buffering starts.
+fn open_regular_document(
+    resolved: &Path,
+    error_path: &Path,
+) -> Result<(std::fs::File, std::fs::Metadata), DocumentError> {
+    crate::scoped_io::open_regular_file(resolved).map_err(|error| {
+        if error.kind() == io::ErrorKind::InvalidInput {
+            eprintln!("[documents] rejected non-regular file: path={error_path:?}");
+            read_failed("document path is not a regular file")
+        } else {
+            map_read_io_error(error_path, error)
+        }
     })
 }
 
@@ -708,6 +772,9 @@ fn map_read_io_error(path: &Path, error: io::Error) -> DocumentError {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "documents/tests_regular_file.rs"]
+mod tests_regular_file;
 
 #[cfg(test)]
 #[path = "documents/save_logging_tests.rs"]

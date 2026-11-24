@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
+import { Dialog } from "./Dialog"
 import { useT } from "./i18n"
 import { relativeToDir } from "./workspace"
+import { useListboxNavigation } from "./useListboxNavigation"
 
 /** Files shown per query; keeps the rendered list bounded on huge folders. */
 const MAX_RENDERED = 200
@@ -19,7 +21,6 @@ export function QuickOpenModal(props: {
 }) {
   const t = useT()
   const [query, setQuery] = useState("")
-  const [active, setActive] = useState(0)
 
   const q = query.trim().toLowerCase()
   const matches = useMemo(() => {
@@ -33,14 +34,16 @@ export function QuickOpenModal(props: {
     }))
   }, [props.files, props.folder, q])
 
-  useEffect(() => { setActive(0) }, [q])
-
-  function choose(index: number): boolean {
-    const match = matches[index]
-    if (!match) return false
-    props.onChoose(match.path)
-    return true
-  }
+  const { active, setActive, activeId, onKeyDown } = useListboxNavigation({
+    count: matches.length,
+    resetKey: q,
+    onChoose: index => {
+      const match = matches[index]
+      if (match) props.onChoose(match.path)
+    },
+    onClose: props.onClose,
+    itemId: index => `quick-open-option-${index}`,
+  })
 
   const note = props.loading
     ? t("quickOpen.loading")
@@ -50,56 +53,53 @@ export function QuickOpenModal(props: {
         ? t("quickOpen.truncated")
         : ""
 
+  // Mounted only while open, so the dialog effect runs once per open. Initial
+  // focus belongs to `Dialog` (the first focusable is the input); a React
+  // `autoFocus` here would run during commit and race the opener capture.
   return (
-    <div className="palette-backdrop" onClick={props.onClose}>
-      <div className="palette" onClick={event => event.stopPropagation()}>
-        <input
-          autoFocus
-          className="palette-input"
-          aria-label={t("quickOpen.placeholder")}
-          placeholder={t("quickOpen.placeholder")}
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === "Escape") {
-              event.preventDefault()
-              props.onClose()
-              return
-            }
-            if (event.key === "ArrowDown") {
-              event.preventDefault()
-              setActive(value => Math.min(value + 1, matches.length - 1))
-              return
-            }
-            if (event.key === "ArrowUp") {
-              event.preventDefault()
-              setActive(value => Math.max(value - 1, 0))
-              return
-            }
-            if (event.key === "Enter") {
-              event.preventDefault()
-              if (choose(active)) props.onClose()
-            }
-          }}
-        />
-        <ul>
-          {matches.map((match, index) => (
-            <li key={match.path}>
-              <button
-                type="button"
-                className={index === active ? "omd-quick-open-active" : undefined}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => {
-                  if (choose(index)) props.onClose()
-                }}
-              >
-                {match.display}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p className="omd-quick-open-note" role="status">{note}</p>
-      </div>
-    </div>
+    <Dialog
+      isOpen={true}
+      onClose={props.onClose}
+      backdropClassName="palette-backdrop"
+      className="palette"
+      ariaLabel={t("quickOpen.placeholder")}
+    >
+      <input
+        className="palette-input"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls="quick-open-list"
+        aria-activedescendant={activeId}
+        aria-autocomplete="list"
+        aria-label={t("quickOpen.placeholder")}
+        placeholder={t("quickOpen.placeholder")}
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <ul id="quick-open-list" role="listbox">
+        {matches.map((match, index) => (
+          <li key={match.path} role="presentation">
+            <button
+              type="button"
+              id={`quick-open-option-${index}`}
+              role="option"
+              // Focus stays on the combobox input so Tab never walks the rows.
+              tabIndex={-1}
+              aria-selected={index === active}
+              className={index === active ? "omd-quick-open-active" : undefined}
+              onMouseEnter={() => setActive(index)}
+              onClick={() => {
+                props.onChoose(match.path)
+                props.onClose()
+              }}
+            >
+              {match.display}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="omd-quick-open-note" role="status">{note}</p>
+    </Dialog>
   )
 }

@@ -763,3 +763,31 @@ fn bundle_keeps_the_rotation_reason_when_logging_was_on() {
         "previous session outcome unknown (no markers in range)"
     );
 }
+
+#[test]
+fn diagnostics_target_pins_the_artifact_shape() {
+    assert!(diagnostics_target(Path::new("relative.zip")).is_err());
+    assert!(diagnostics_target(Path::new("/tmp/../escape.zip")).is_err());
+    assert!(diagnostics_target(Path::new("/tmp/bundle.tar")).is_err());
+
+    let dir = tempfile::tempdir().unwrap();
+    let without_extension = dir.path().join("support");
+    assert_eq!(
+        diagnostics_target(&without_extension).unwrap(),
+        dir.path().join("support.zip")
+    );
+    let directory = dir.path().join("folder.zip");
+    std::fs::create_dir(&directory).unwrap();
+    assert!(diagnostics_target(&directory).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn diagnostics_target_rejects_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.zip");
+    std::fs::write(&real, b"x").unwrap();
+    let link = dir.path().join("link.zip");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(diagnostics_target(&link).is_err());
+}

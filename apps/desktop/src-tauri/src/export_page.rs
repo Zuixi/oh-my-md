@@ -83,6 +83,8 @@ pub struct NativePage {
     pub margin_left_in: f64,
     #[allow(dead_code)]
     pub print_backgrounds: bool,
+    // Read on macOS/Windows; WebKitGTK on Linux exposes no native header/footer print-chrome API.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub header_footer: bool,
 }
 

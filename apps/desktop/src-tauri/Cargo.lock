@@ -2787,6 +2787,7 @@ dependencies = [
  "block2",
  "cairo-rs",
  "dirs",
+ "getrandom 0.2.17",
  "gtk",
  "ignore",
  "javascriptcore-rs",

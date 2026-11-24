@@ -1,0 +1,4 @@
+# Default owners for everything in this repository.
+# Kept intentionally broad: oh-my-md is maintained by a single maintainer, and a
+# path-by-path split would silently rot as modules move between engine/desktop/Rust.
+* @zuixi

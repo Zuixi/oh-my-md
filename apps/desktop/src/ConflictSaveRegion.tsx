@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { EditorView } from "@codemirror/view"
 import {
   CONFLICT_ACTION_LABELS,
@@ -21,7 +21,13 @@ export interface ConflictSaveRegionProps {
   readonly activeTabId: number
   readonly activeSaveState: DocumentSaveState
   readonly saveErrorCode?: DocumentErrorCode
+  /** Static snapshot; ignored when `getLocalContents` is provided. */
   readonly localContents: string
+  /**
+   * Live reader for the tab's text. The shell no longer re-renders per
+   * materialized keystroke, so an open diff polls this instead.
+   */
+  readonly getLocalContents?: () => string
   readonly diffOpenTabId: number | null
   readonly diffRefreshed: boolean
   readonly conflictFocusToken: number
@@ -37,24 +43,32 @@ export function ConflictSaveRegion(props: ConflictSaveRegionProps) {
   const showBanner = (props.bannerKind === "conflict" || props.bannerKind === "saveFailed")
     && conflictModel !== null
 
-  const [debouncedLocal, setDebouncedLocal] = useState(props.localContents)
+  const readLocal = useCallback(
+    () => props.getLocalContents?.() ?? props.localContents,
+    [props.getLocalContents, props.localContents],
+  )
+  const [debouncedLocal, setDebouncedLocal] = useState(readLocal)
   const diffOpen = props.diffOpenTabId === props.activeTabId
   const disk = diskSnapshotFromDivergence(props.activeSaveState.divergence)
   const prevFingerprintRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!diffOpen) return
-    setDebouncedLocal(props.localContents)
-  }, [props.diffOpenTabId, props.activeTabId])
+    setDebouncedLocal(readLocal())
+  }, [props.diffOpenTabId, props.activeTabId, readLocal])
 
   useEffect(() => {
     if (!diffOpen) return
-    const timer = window.setTimeout(
-      () => setDebouncedLocal(props.localContents),
-      DIFF_RECOMPUTE_MS,
-    )
-    return () => window.clearTimeout(timer)
-  }, [props.localContents, diffOpen])
+    const timer = window.setTimeout(() => setDebouncedLocal(readLocal()), DIFF_RECOMPUTE_MS)
+    // Without a live reader the parent's re-renders carry new contents; with one
+    // the panel polls, so the diff follows typing without a shell re-render.
+    if (!props.getLocalContents) return () => window.clearTimeout(timer)
+    const interval = window.setInterval(() => setDebouncedLocal(readLocal()), DIFF_RECOMPUTE_MS)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearInterval(interval)
+    }
+  }, [props.localContents, diffOpen, readLocal, props.getLocalContents])
 
   useEffect(() => {
     if (!diffOpen || !disk) {

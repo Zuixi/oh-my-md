@@ -55,8 +55,8 @@ describe("export command gating", () => {
     fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true })
 
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Export Image" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export PDF" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export Image" })).toBeTruthy()
   })
 
   it("offers PDF on Windows in both the File menu and the palette", () => {
@@ -69,7 +69,7 @@ describe("export command gating", () => {
     fireEvent.click(screen.getByRole("button", { name: "File" }))
     fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true })
 
-    expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export PDF" })).toBeTruthy()
   })
 
   it("offers PDF, HTML, and PNG export on Linux", () => {
@@ -83,8 +83,8 @@ describe("export command gating", () => {
     fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true })
 
     expect(screen.getByPlaceholderText("Run a command…")).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Export PDF" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Export Image" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Export HTML" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export PDF" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export Image" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Export HTML" })).toBeTruthy()
   })
 })

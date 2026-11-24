@@ -8,16 +8,18 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use tauri::{Emitter, Manager};
 
-/// Persisted window geometry captured at session-save time for restore.
-/// Fields are single words today, but the camelCase attribute plus the
-/// serialization test pin the wire shape for any future multi-word field.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowBounds {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
+pub use crate::window_bounds::WindowBounds;
+
+/// Label prefix of the offscreen render windows the Windows/Linux exporters
+/// build. They host one export document, have no IPC capability, and even
+/// less of a session to flush — so they must never take part in editor-window
+/// bookkeeping (focus MRU, flush rounds, session shards, menu targeting).
+pub const EXPORT_WINDOW_PREFIX: &str = "omd-export-";
+
+/// Editor windows are every window that is not an export render host. Labels
+/// are `main` and `editor-N`; anything else the runtime reports is aux.
+pub fn is_editor_window_label(label: &str) -> bool {
+    !label.starts_with(EXPORT_WINDOW_PREFIX)
 }
 
 /// Per-window mirror of what the frontend last flushed. Routing decisions
@@ -159,7 +161,7 @@ pub fn pick_window<'a>(registry: &'a WindowRegistry, path: &str) -> Option<&'a s
                 .filter(|p| parent_dir(p).as_deref() == Some(dir))
                 .count() as i32;
         }
-        if best.map_or(true, |(_, s)| score > s) {
+        if best.is_none_or(|(_, s)| score > s) {
             best = Some((label.as_str(), score));
         }
     }
@@ -275,10 +277,11 @@ pub fn create_editor_window<R: tauri::Runtime>(
         builder = builder.additional_browser_args(args);
     }
     match opts.bounds {
+        // The builder takes logical pixels; `builder_geometry` migrates a
+        // legacy physical shard and clamps an offscreen placement first.
         Some(b) => {
-            builder = builder
-                .position(b.x as f64, b.y as f64)
-                .inner_size(b.width as f64, b.height as f64);
+            let (x, y, width, height) = crate::window_bounds::builder_geometry(app, b);
+            builder = builder.position(x, y).inner_size(width, height);
         }
         None => builder = builder.inner_size(800.0, 600.0),
     }
@@ -406,6 +409,16 @@ mod tests {
             open_paths: paths.iter().map(|s| s.to_string()).collect(),
             folder: folder.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn only_non_export_labels_count_as_editor_windows() {
+        assert!(is_editor_window_label("main"));
+        assert!(is_editor_window_label("editor-12"));
+        assert!(!is_editor_window_label(
+            "omd-export-00112233445566778899aabbccddeeff"
+        ));
+        assert!(!is_editor_window_label(EXPORT_WINDOW_PREFIX));
     }
 
     #[test]

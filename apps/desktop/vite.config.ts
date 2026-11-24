@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { CHUNK_SIZE_WARNING_LIMIT, vendorChunkFor } from "./viteChunks";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -13,8 +14,16 @@ export default defineConfig(async () => ({
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
   // 2. this is a desktop app loaded from local disk, not a web page, so the
-  //    web-oriented 500 kB default chunk budget does not apply
-  build: { chunkSizeWarningLimit: 1200 },
+  //    web-oriented 500 kB default chunk budget does not apply. The limit is
+  //    still a real gate: it is above the largest eager vendor chunk and below
+  //    the largest lazy chunks (Shiki grammars, Mermaid), so an eager-graph
+  //    regression is loud while on-demand chunks stay unimpeded.
+  build: {
+    chunkSizeWarningLimit: CHUNK_SIZE_WARNING_LIMIT,
+    rollupOptions: {
+      output: { manualChunks: vendorChunkFor },
+    },
+  },
   // 3. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 9420,

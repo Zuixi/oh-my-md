@@ -1,6 +1,8 @@
+import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import type { EditorState, Line } from "@codemirror/state"
 import { Prec } from "@codemirror/state"
 import { BlockType, EditorView, keymap, type Command } from "@codemirror/view"
+import type { SyntaxNode } from "@lezer/common"
 import { openRenderedTableCell } from "../decorations/widgets/tableCellEdit"
 import { tableDirectEditEnabled } from "../decorations/widgets/table"
 import { blockPrefixOf } from "../format/blockPrefix"
@@ -9,31 +11,108 @@ import { cellAt, tableAt } from "../tables/navigate"
 import { isTableSourceRevealed } from "../tables/sourceReveal"
 
 /**
- * ↑/↓ 逐行进入渲染块。CM 的垂直移动对非文本块（block widget）是整块跳过
- * （posAtCoords 的 scanY 路径把 widget 块整体让开 —— discuss.codemirror.net/t/9491，
- * 作者建议自定义箭头命令覆盖）。非表格块进入即触发 blockSelected → widget
- * 卸载显源码，与鼠标点击同一条路径；离开后 widget 重新挂载。未展开源码的表格
- * 改为打开格子会话，文档选区停在 `table.from`。
- * Shift+↑/↓ 不拦截：跨块扩展选区应“盖过”渲染块（见 blockSelectionOverlay），
- * 而不是进源码。
+ * ArrowUp/ArrowDown line-by-line entry into rendered block widgets.
+ *
+ * CodeMirror's vertical motion skips non-text block widgets as a unit (`posAtCoords`
+ * `scanY` steps around widget blocks; see discuss.codemirror.net/t/9491). Entering a
+ * non-table block moves the caret inside `[from, to]`, triggering `blockSelected` to
+ * unmount the widget and reveal source on the same path as clicking; leaving remounts
+ * the widget. Entering a rendered GFM table opens an in-cell edit session with the
+ * document selection parked on `table.from`.
+ *
+ * Shift+ArrowUp/Down is intentionally not intercepted: extending a selection across a
+ * block covers the rendered widget (`blockSelectionOverlay`) rather than revealing source.
  */
 
-// 首行围栏：```ts / ~~~py / $$（含 0-3 缩进；info 串不得含 ` ~）
-const OPEN_FENCE = /^\s{0,3}(?:(?:`{3,}|~{3,})[^`~]*|\$\$)\s*$/
-// 末行围栏：闭合 ``` / ~~~ / $$（无内容）
-const CLOSE_FENCE = /^\s{0,3}(?:`{3,}|~{3,}|\${2,})\s*$/
+const FENCED_BLOCKS = new Set(["FencedCode", "MathBlock", "FrontMatter"])
 
-/** 行块前缀（引用/列表标记 + 后随空白）宽度；无前缀的行是 0。引用内的围栏行
- * 文本要先去掉它才认得出围栏，落点也要落在内容起点 —— 落在行首等于落进
- * QuoteMark 里，标记会因此展开、光标行露出裸 `> `（见 format/blockPrefix.ts）。 */
+// Fallback fence patterns used only when the incremental syntax tree has not reached `blockTo`.
+// CommonMark §4.5 forbids backticks in backtick fence info strings (tilde is allowed, e.g.
+// `title="~/app.ts"`), while tilde fence info strings allow both backticks and tildes.
+const FALLBACK_OPEN_BACKTICK_FENCE = /^\s{0,3}`{3,}[^`]*$/
+const FALLBACK_OPEN_TILDE_FENCE = /^\s{0,3}~{3,}.*$/
+const FALLBACK_OPEN_MATH_FENCE = /^\s{0,3}\$\$\s*$/
+const FALLBACK_CLOSE_FENCE = /^\s{0,3}(?:`{3,}|~{3,}|\$\$)\s*$/
+const FALLBACK_FRONT_MATTER_FENCE = /^---\s*$/
+
+/**
+ * Width of any leading quote/list prefix (mark + trailing space) on `line`, or 0.
+ * Fence detection strips this prefix first, and the landing offset sits past it:
+ * landing at `line.from` inside a `QuoteMark` would unfold the raw `> ` marker.
+ */
 function prefixWidth(state: EditorState, line: Line): number {
   return blockPrefixOf(state, line)?.text.length ?? 0
 }
 
-/** 行内块边界 → 进入落点。向下落在第一个内容行（首行是围栏则跳过；表格首行是
- * 表头内容，不跳）；向上落在最后一个内容行（末行是闭合围栏则跳过）。
- * 单行退化块（---、$$x$$）：落回块首（边界含端，blockSelected 仍判块内）。
- * 引用/列表内的块与外部完全同构：围栏判定去掉行块前缀，落点再归到内容起点。 */
+function findFencedBlock(state: EditorState, blockFrom: number, blockTo: number): SyntaxNode | null {
+  if (!syntaxTreeAvailable(state, blockTo)) return null
+  let cur: SyntaxNode | null = syntaxTree(state).resolveInner(blockFrom, 1)
+  while (cur) {
+    if (cur.from === blockFrom && cur.to === blockTo && FENCED_BLOCKS.has(cur.name)) return cur
+    cur = cur.parent
+  }
+  return null
+}
+
+function hasClosingMarkAfter(node: SyntaxNode, markName: string, afterPos: number): SyntaxNode | null {
+  let found: SyntaxNode | null = null
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === markName && child.from > afterPos) found = child
+  }
+  return found
+}
+
+function fenceLineSkips(
+  state: EditorState,
+  blockFrom: number,
+  blockTo: number,
+  first: Line,
+  last: Line,
+): { skipFirst: boolean; skipLast: boolean } {
+  const node = findFencedBlock(state, blockFrom, blockTo)
+  if (node) {
+    if (node.name === "FencedCode") {
+      return {
+        skipFirst: true,
+        skipLast: hasClosingMarkAfter(node, "CodeMark", first.to) !== null,
+      }
+    }
+    if (node.name === "FrontMatter") {
+      return {
+        skipFirst: true,
+        skipLast: hasClosingMarkAfter(node, "FrontMatterMark", first.to) !== null,
+      }
+    }
+    if (node.name === "MathBlock") {
+      const openMark = node.firstChild?.name === "MathMark" ? node.firstChild : null
+      const skipFirst = openMark !== null
+        && state.doc.sliceString(openMark.to, first.to).trim() === ""
+      const closeMark = hasClosingMarkAfter(node, "MathMark", first.to)
+      const skipLast = closeMark !== null
+        && closeMark.from >= last.from
+        && state.doc.sliceString(last.from + prefixWidth(state, last), closeMark.from).trim() === ""
+      return { skipFirst, skipLast }
+    }
+  }
+  const firstText = first.text.slice(prefixWidth(state, first))
+  const lastText = last.text.slice(prefixWidth(state, last))
+  const isFrontMatter = blockFrom === 0 && FALLBACK_FRONT_MATTER_FENCE.test(firstText)
+  const skipFirst = isFrontMatter
+    || FALLBACK_OPEN_BACKTICK_FENCE.test(firstText)
+    || FALLBACK_OPEN_TILDE_FENCE.test(firstText)
+    || FALLBACK_OPEN_MATH_FENCE.test(firstText)
+  const skipLast = (isFrontMatter && FALLBACK_FRONT_MATTER_FENCE.test(lastText))
+    || FALLBACK_CLOSE_FENCE.test(lastText)
+  return { skipFirst, skipLast }
+}
+
+/**
+ * Maps a rendered block's `[blockFrom, blockTo]` bounds to its keyboard entry offset.
+ * Downward entry lands on the first content line (skipping a pure opening fence line,
+ * while keeping table header rows); upward entry lands on the last content line
+ * (skipping a real closing fence line, never an unclosed content line).
+ * Single-line blocks (`---`, `$$x$$`) land on the block start so `blockSelected` holds.
+ */
 export function blockEntryPosition(
   state: EditorState,
   blockFrom: number,
@@ -41,17 +120,14 @@ export function blockEntryPosition(
   dir: 1 | -1,
 ): number {
   const first = state.doc.lineAt(blockFrom)
-  const last = state.doc.lineAt(blockTo - 1)
-  const firstText = first.text.slice(prefixWidth(state, first))
-  const lastText = last.text.slice(prefixWidth(state, last))
+  const last = state.doc.lineAt(Math.max(blockFrom, blockTo - 1))
+  const { skipFirst, skipLast } = last.number > first.number
+    ? fenceLineSkips(state, blockFrom, blockTo, first, last)
+    : { skipFirst: false, skipLast: false }
   let pos: number
   if (dir === 1) {
-    if (last.number > first.number && OPEN_FENCE.test(firstText)) {
-      pos = Math.min(first.to + 1, blockTo)
-    } else {
-      pos = Math.min(first.from, blockTo)
-    }
-  } else if (last.number > first.number && CLOSE_FENCE.test(lastText)) {
+    pos = skipFirst ? Math.min(first.to + 1, blockTo) : Math.min(first.from, blockTo)
+  } else if (skipLast) {
     pos = state.doc.lineAt(last.from - 1).from
   } else {
     pos = last.from
@@ -60,20 +136,19 @@ export function blockEntryPosition(
   return line.from + prefixWidth(state, line)
 }
 
-// 段落和渲染块之间通常隔一个空行。空行本身不是目标，继续探到下一块；
-// 探到有内容的文本行就停，交给普通逐行移动。
+// Paragraphs and rendered blocks are commonly separated by blank lines. Probe across
+// blank lines to reach the adjacent widget block; stop immediately on non-empty text.
 const BLANK_LINE_PROBES = 4
 
-// 光标行相邻的目标块（向下 = 光标下方第一个块；向上 = 光标上方第一个块）。
-// BlockInfo.type !== Text 即 widget 块（HeightMap 的 Widget/BlockWidget 类型）。
+// Adjacent widget block in direction `dir` (`BlockInfo.type !== Text` covers Widget/BlockWidget).
 function adjacentWidgetBlock(view: EditorView, dir: 1 | -1): { from: number; to: number } | null {
   const head = view.state.selection.main.head
   const here = view.lineBlockAt(head)
   const rect = view.coordsAtPos(head)
   const line = view.defaultLineHeight
   const half = line / 2
-  // elementAtHeight 的 y 相对文档顶。无布局宿主会给出不落在当前行上的坐标，
-  // 那种结果改用高度图：半行越过当前行，和 rect.bottom + 半行 同一落点。
+  // `elementAtHeight` uses document-top-relative `y`. Layout-free hosts return rects
+  // outside the current line block; fall back to the height map (`± half` past the line).
   const edge = rect ? (dir === 1 ? rect.bottom : rect.top) - view.documentTop : null
   const rectOnThisLine = edge !== null && edge >= here.top && edge <= here.top + here.height
   let y = rectOnThisLine
@@ -132,9 +207,9 @@ function enterBlock(dir: 1 | -1): Command {
 }
 
 /**
- * Prec.highest：与 caretClamp 的 ↑/↓ 同为 Prec.high 时，先注册的 caretClamp 会先跑
- * `cursorLineDown` 并整块跳过 widget。提到 highest 后，进入命令先决定是否进块；
- * 返回 false 时钳制命令仍然逐行移动。仅 Live 模式挂载（livePreviewCompartment）。
+ * `Prec.highest` runs ahead of `caretClamp` (`Prec.high`), whose `cursorLineDown`
+ * would otherwise skip the entire widget block first. Returning `false` delegates
+ * back to normal clamped vertical motion. Mounted only in Live mode.
  */
 export const blockMotionKeymap = Prec.highest(keymap.of([
   { key: "ArrowDown", run: enterBlock(1) },

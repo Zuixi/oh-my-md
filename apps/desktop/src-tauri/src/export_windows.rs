@@ -120,10 +120,10 @@ fn clip_height_css(probe: &Probe) -> f64 {
 /// (16,383 device px). When a long note at 2x/3x exceeds that height, step
 /// down the capture scale smoothly so the full document renders in one PNG
 /// instead of being clipped by the GPU texture limit and rejected as truncated.
+/// The policy itself lives on `ExportSpec` so every backend and the unit tests
+/// share exactly one formula.
 fn effective_capture_scale(spec: &ExportSpec, probe: &Probe) -> f64 {
-    let height = clip_height_css(probe).max(1.0);
-    let max_dim = f64::from(crate::export::EXPORT_MAX_DEVICE_DIMENSION);
-    (max_dim / height).min(spec.scale).max(0.25)
+    spec.effective_gpu_capture_scale(clip_height_css(probe)).0
 }
 
 fn expected_device_width(spec: &ExportSpec, probe: &Probe) -> u32 {

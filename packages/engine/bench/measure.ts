@@ -14,7 +14,12 @@ import {
 } from "../src/decorations/build"
 import { setLivePreview } from "../src/modes/livePreview"
 import { documentStats } from "../src/stats"
-import { LIVE_PRUNE_MARGIN_CHARS, LIVE_WINDOW_CHARS } from "../src/safeModeRendering"
+import {
+  editorPerformancePolicy,
+  performancePruneMarginChars,
+  performanceWindowChars,
+  type EditorPerformancePolicy,
+} from "../src/performancePolicy"
 import { nearestChunk, pendingInWindow } from "../src/decorations/buildDriver"
 
 export const TYPING_P95_BUDGET_MS = 16
@@ -47,8 +52,8 @@ function percentile(sorted: number[], p: number): number {
   return sorted[Math.max(0, idx)]
 }
 
-function baseState(doc: string): EditorState {
-  return EditorState.create({ doc, extensions: editorExtensions() })
+function baseState(doc: string, policy?: EditorPerformancePolicy | null): EditorState {
+  return EditorState.create({ doc, extensions: editorExtensions({ performancePolicy: policy ?? null }) })
 }
 
 export interface TypingViewOptions {
@@ -58,15 +63,20 @@ export interface TypingViewOptions {
    * 排空范围 = 当前树已覆盖的区间：与 tree:"steady" 合用时即「生产 ParseWindow
    * 已消化完」的稳态，不会把树推到 doc.length。 */
   drain?: boolean
-  /** 安全模式窗口化稳态（见 syncSafeWindowReady）。 */
+  /** 窗口化稳态（见 syncWindowReady）：配合 policy 的窗口半径落位。 */
   safeWindow?: boolean
+  /** Per-view engine policy (defaults to the legacy module globals). */
+  policy?: EditorPerformancePolicy | null
+  /** 初始光标位置（窗口化稳态需要落在已构建窗口内，否则测的是窗口外逐键）。 */
+  caret?: number
 }
 
 /** measureTyping 的准备段（挂 view + 解析到请求的树范围 + 可选 drain/safeWindow）。
  * 调用方负责 `view.destroy()` 并移除其父容器（`view.dom.parentElement`）。 */
 export function prepareTypingView(doc: string, opts: TypingViewOptions): EditorView {
-  let state = baseState(doc)
+  let state = baseState(doc, opts.policy)
   if (opts.mode === "source") state = state.update(setLivePreview(false)).state
+  if (opts.caret !== undefined) state = state.update({ selection: { anchor: opts.caret } }).state
   const parent = document.createElement("div")
   document.body.appendChild(parent)
   const view = new EditorView({ state, parent })
@@ -75,7 +85,7 @@ export function prepareTypingView(doc: string, opts: TypingViewOptions): EditorV
   if (opts.drain) drainPendingLiveBuild(view)
   // 窗口化稳态：生产由 liveBuildDriver 的微任务/idle 通道推进，而 bench 的同步
   // 度量循环期间那些回调不会运行 —— 同步落位等价稳态后再逐键。
-  if (opts.safeWindow) syncSafeWindowReady(view)
+  if (opts.safeWindow) syncWindowReady(view)
   return view
 }
 
@@ -89,20 +99,7 @@ export function prepareTypingView(doc: string, opts: TypingViewOptions): EditorV
  *   （apps/desktop/test/crossLayerNoFullTree.test.ts 护栏）。 */
 export function measureTyping(
   doc: string,
-  opts: {
-    keystrokes?: number
-    mode?: "live" | "source"
-    tree?: "steady" | "complete"
-    /** 安全模式窗口化稳态（Task 3，需 mode:"live"）：逐键前先把「窗口内已建、
-     * 窗口外归还 pending」落位（见 syncSafeWindowReady），度量窗口为界的
-     * 每键装饰映射成本。 */
-    safeWindow?: boolean
-    /** 逐键前同步排空当前树的 pending（见 prepareTypingView）；tree:"steady" 即
-     * 生产 ParseWindow 消化完的稳态。 */
-    drain?: boolean
-    /** 逐键起点（默认文档中点，保持既有基准不变）。 */
-    caret?: number
-  } = {},
+  opts: TypingMeasureOptions = {},
 ): TypingLatency {
   const count = opts.keystrokes ?? 200
   const view = prepareTypingView(doc, {
@@ -110,6 +107,8 @@ export function measureTyping(
     tree: opts.tree ?? "steady",
     drain: opts.drain,
     safeWindow: opts.safeWindow,
+    policy: opts.policy,
+    caret: opts.caret,
   })
   const parent = view.dom.parentElement
   let pos = opts.caret ?? Math.floor(doc.length / 2)
@@ -122,6 +121,59 @@ export function measureTyping(
   }
   view.destroy()
   parent?.remove()
+  return latencyOf(samples, count)
+}
+
+/** Per-keystroke options of `measureTyping` / `measureTypingWithMicrotasks`. */
+export interface TypingMeasureOptions {
+  keystrokes?: number
+  mode?: "live" | "source"
+  tree?: "steady" | "complete"
+  /** 窗口化稳态（需 mode:"live"）：逐键前先把「窗口内已建、窗口外归还 pending」
+   * 落位（见 syncWindowReady），度量窗口为界的每键装饰映射成本。 */
+  safeWindow?: boolean
+  /** 逐键前同步排空当前树的 pending（见 prepareTypingView）；tree:"steady" 即
+   * 生产 ParseWindow 消化完的稳态。 */
+  drain?: boolean
+  /** 逐键起点（默认文档中点，保持既有基准不变）。 */
+  caret?: number
+  /** Per-view engine policy (windowed presets shrink the build window). */
+  policy?: EditorPerformancePolicy | null
+}
+
+/** `measureTyping` plus a microtask checkpoint after every keystroke: state fields and view
+ * plugins that defer work (ordered-list renumbering runs in a microtask, block widgets dispatch
+ * from one) settle inside the sample, so the number covers what the host actually pays per
+ * keystroke instead of only the synchronous dispatch return. */
+export async function measureTypingWithMicrotasks(
+  doc: string,
+  opts: TypingMeasureOptions = {},
+): Promise<TypingLatency> {
+  const count = opts.keystrokes ?? 200
+  const view = prepareTypingView(doc, {
+    mode: opts.mode ?? "live",
+    tree: opts.tree ?? "steady",
+    drain: opts.drain,
+    safeWindow: opts.safeWindow,
+    policy: opts.policy,
+    caret: opts.caret,
+  })
+  const parent = view.dom.parentElement
+  let pos = opts.caret ?? Math.floor(doc.length / 2)
+  const samples: number[] = []
+  for (let i = 0; i < count; i++) {
+    const t0 = performance.now()
+    view.dispatch({ changes: { from: pos, insert: "字" }, selection: { anchor: pos + 1 } })
+    await Promise.resolve()
+    samples.push(performance.now() - t0)
+    pos += 1
+  }
+  view.destroy()
+  parent?.remove()
+  return latencyOf(samples, count)
+}
+
+function latencyOf(samples: number[], count: number): TypingLatency {
   const sorted = [...samples].sort((a, b) => a - b)
   return { p50Ms: percentile(sorted, 50), p95Ms: percentile(sorted, 95), samples: count }
 }
@@ -205,20 +257,23 @@ export function measureLiveToggleMs(doc: string): LiveToggleLatency {
   }
 }
 
-/** 安全模式窗口化稳态的确定性就绪（bench 专用）：同步复刻 liveBuildDriver 的
- * 收敛稳态 —— windowedFirstPass（可见区分片）叠加 idle 分片循环把构建窗口内
- * pending 排空后的净效果：pending∩构建窗口（可见段 ± LIVE_WINDOW_CHARS）按
- * LIVE_BUILD_CHUNK_CHARS 切片并入同一笔 liveBuildChunk 交易，并随交易 dispatch
- * livePruneOutside（裁剪窗口 = 构建窗口再叠 LIVE_PRUNE_MARGIN_CHARS 迟滞；驱动
- * 仅在确有窗口外装饰时附带该 effect，此处直接携带，无窗口外装饰时为无活 no-op）。
+/** 窗口化稳态的确定性就绪（bench 专用）：同步复刻 liveBuildDriver 的收敛稳态
+ * —— windowedFirstPass（可见区分片）叠加 idle 分片循环把构建窗口内 pending 排空
+ * 后的净效果：pending∩构建窗口（可见段 ± 策略窗口半径，缺省 LIVE_WINDOW_CHARS）
+ * 按 LIVE_BUILD_CHUNK_CHARS 切片并入同一笔 liveBuildChunk 交易，并随交易 dispatch
+ * livePruneOutside（裁剪窗口 = 构建窗口再叠策略的 LIVE_PRUNE_MARGIN_CHARS 迟滞；
+ * 驱动仅在确有窗口外装饰时附带该 effect，此处直接携带，无窗口外装饰时无活）。
  * bench 的同步度量循环期间微任务/idle 回调不会运行（驱动无法推进），故由本函数
  * 直接落位稳态；窗口算式与 buildDriver 同构（可见段先 mergeRanges 归并再外扩，
  * 避免多段可见区产出重叠分片；无布局宿主可见段退化为文档头小段，确定性）。
  * 树只覆盖 steady 区间：窗口内树未及的部分收不到 specs、仅移出 pending，
  * 与驱动路径行为一致。 */
-export function syncSafeWindowReady(view: EditorView): void {
+export function syncWindowReady(view: EditorView): void {
   const live = view.state.field(livePreviewField, false)
   if (!live) return
+  const policy = editorPerformancePolicy(view.state)
+  const windowChars = performanceWindowChars(policy)
+  const pruneMarginChars = performancePruneMarginChars(policy)
   const length = view.state.doc.length
   const clamp = (n: number) => Math.max(0, Math.min(length, n))
   const ranges = view.visibleRanges
@@ -230,7 +285,7 @@ export function syncSafeWindowReady(view: EditorView): void {
     to: clamp(region.to + margin),
   })))
   const effects: StateEffect<unknown>[] = []
-  for (const region of expand(LIVE_WINDOW_CHARS)) {
+  for (const region of expand(windowChars)) {
     for (const range of live.pending) {
       const from = Math.max(range.from, region.from)
       const to = Math.min(range.to, region.to)
@@ -239,7 +294,7 @@ export function syncSafeWindowReady(view: EditorView): void {
       }
     }
   }
-  effects.push(livePruneOutside.of(expand(LIVE_WINDOW_CHARS + LIVE_PRUNE_MARGIN_CHARS)))
+  effects.push(livePruneOutside.of(expand(windowChars + pruneMarginChars)))
   view.dispatch({ effects })
 }
 

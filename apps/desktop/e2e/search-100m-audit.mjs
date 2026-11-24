@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs"
-import { chromium } from "@playwright/test"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const EVIDENCE_PATH = "/tmp/omd-search-audit.json"
 const PORT = process.env.PW_PORT ?? "9420"
@@ -96,8 +96,7 @@ function checksFor(scenario, expectation) {
   return checks
 }
 
-const browser = await chromium.launch({ channel: CHANNEL })
-try {
+await withManagedChromium({ channel: CHANNEL }, async browser => {
   const scenarios = []
   for (const expectation of FIXTURES) {
     const scenario = await measureScenario(browser, expectation.name)
@@ -132,6 +131,4 @@ try {
   console.log(json)
 
   if (failed.length > 0) process.exitCode = 1
-} finally {
-  await browser.close()
-}
+})

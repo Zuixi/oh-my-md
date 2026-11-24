@@ -30,7 +30,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -41,7 +40,7 @@ describe("TopBar", () => {
       />,
     )
 
-    const tabs = screen.getAllByRole("button", { name: /alpha\.md|beta\.md|unnamed/ })
+    const tabs = screen.getAllByRole("tab", { name: /alpha\.md|beta\.md|unnamed/ })
     expect(tabs).toHaveLength(3)
 
     const activeTab = tabs[0]
@@ -58,7 +57,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -69,7 +67,7 @@ describe("TopBar", () => {
       />,
     )
 
-    const tabs = screen.getAllByRole("button", { name: /alpha\.md|beta\.md|unnamed/ })
+    const tabs = screen.getAllByRole("tab", { name: /alpha\.md|beta\.md|unnamed/ })
     fireEvent.click(tabs[1])
     expect(onFocusTab).toHaveBeenCalledWith(2)
 
@@ -89,7 +87,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={true}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[1, 2]}
@@ -109,7 +106,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/users/me/project"
         filePath="/users/me/project/docs/guide.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -130,7 +126,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -152,7 +147,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -173,7 +167,6 @@ describe("TopBar", () => {
       <TopBar
         workspace="/notes"
         filePath="/notes/alpha.md"
-        dirty={false}
         tabs={sampleTabs}
         activeId={1}
         dirtyIds={[]}
@@ -197,7 +190,6 @@ describe("TopBar", () => {
         <TopBar
           workspace="/notes"
           filePath="/notes/alpha.md"
-          dirty={false}
           tabs={sampleTabs}
           activeId={1}
           dirtyIds={[]}
@@ -223,7 +215,6 @@ describe("TopBar", () => {
         <TopBar
           workspace="/notes"
           filePath="/notes/alpha.md"
-          dirty={false}
           tabs={sampleTabs}
           activeId={1}
           dirtyIds={[]}

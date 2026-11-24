@@ -49,7 +49,6 @@ describe("TopBar conflict badge", () => {
       <TopBar
         workspace={null}
         filePath={null}
-        dirty={false}
         tabs={[createFileSession(1, "/notes/a.md", "body", version)]}
         activeId={1}
         dirtyIds={[]}

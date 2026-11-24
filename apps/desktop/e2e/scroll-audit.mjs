@@ -1,15 +1,14 @@
 // 量化「估算总高 vs 实测总高」偏差（thumb 对齐问题的直接来源）。
 // 文档经 dispatch 注入（220KB 走 URL 会被 dev server 拒绝）。
 // 先起 vite dev server（PW_PORT，默认 9420；调用方负责关闭），再运行本脚本。
-import { chromium } from "@playwright/test"
 import { readFileSync } from "node:fs"
+import { withManagedChromium } from "./browserLifecycle.mjs"
 
 const file = process.argv[2] ?? "E:/journal/demo-docs/01-认知与学习.md"
 const doc = readFileSync(file, "utf8")
 const port = Number.parseInt(process.env.PW_PORT ?? "", 10) || 9420
 
-const browser = await chromium.launch({ channel: process.env.PW_CHANNEL ?? "chrome" })
-try {
+await withManagedChromium({ channel: process.env.PW_CHANNEL ?? "chrome" }, async browser => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   await page.goto(`http://127.0.0.1:${port}/e2e/harness.html`)
   await page.waitForSelector(".cm-content", { timeout: 30000 })
@@ -49,6 +48,4 @@ try {
     finalContentHeight: Math.round(final.contentHeight),
     underestimate: `${((1 - initial.contentHeight / final.contentHeight) * 100).toFixed(1)}%`,
   }, null, 2))
-} finally {
-  await browser.close().catch(() => {})
-}
+})

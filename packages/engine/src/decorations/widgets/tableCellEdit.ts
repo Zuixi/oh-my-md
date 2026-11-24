@@ -1,6 +1,7 @@
 import type { SyntaxNode } from "@lezer/common"
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
-import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
+import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
+import { cellHtmlBreakTag, cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
 import { getTableEditSession } from "../../tables/directEdit"
 import { cellAt, type TableContext } from "../../tables/navigate"
 import { isTableShownAsSource } from "../../tables/sourceReveal"
@@ -228,6 +229,7 @@ function placeCaret(root: HTMLElement, caret: number): void {
   caretEl.setAttribute("aria-hidden", "true")
   const spans = [...root.querySelectorAll<HTMLElement>("[data-from]")]
   for (const span of spans) {
+    if (span.tagName === "BR" || span.tagName === "HR" || span.tagName === "IMG") continue
     const from = Number(span.dataset.from)
     const to = Number(span.dataset.to)
     if (caret > from && caret < to) {
@@ -289,6 +291,26 @@ function renderNode(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx): void
   if (REVEAL_WHOLE.has(node.name)) {
     renderFolded(parent, node, ctx)
     return
+  }
+  // Rendered cells and HTML export project `<br>`/`<hr>` as elements (`parseCell`).
+  // Keep them rendered as elements while typing on either side (including boundary
+  // offsets `caret === node.from` and `caret === node.to`), and reveal the raw tag
+  // only when the caret steps strictly inside `(node.from, node.to)` so `placeCaret`
+  // splits text rather than destroying a void element.
+  if (node.name === "HTMLTag") {
+    const raw = ctx.source.slice(node.from, node.to)
+    const tag = cellHtmlBreakTag(raw)
+    if (tag) {
+      if (ctx.caret > node.from && ctx.caret < node.to) {
+        appendText(parent, raw, node.from, node.to)
+        return
+      }
+      const element = document.createElement(tag)
+      element.dataset.from = String(node.from)
+      element.dataset.to = String(node.to)
+      parent.appendChild(element)
+      return
+    }
   }
   if (node.firstChild) {
     renderChildren(parent, node, ctx, node.to)
@@ -486,12 +508,17 @@ function caretInsideUnrevealedTable(view: EditorView) {
   if (state.readOnly) return null
   const selection = state.selection.main
   if (!selection.empty || getTableEditSession(state)) return null
-  const hit = cellAt(state, selection.head)
-  if (!hit) return null
-  const { from, to } = hit.table
-  if (selection.head <= from || selection.head > to) return null
-  if (isTableShownAsSource(state, from, to)) return null
-  return hit
+  // Cheap `Table` node probe before `cellAt`, which builds `TableData` (one
+  // `sliceString` per cell) on every keystroke: a caret outside any table, on the
+  // table's start boundary or in a source-revealed table is decidable from the node.
+  // `side = -1` also catches the `head === Table.to` end boundary that `side = 1`
+  // skips, which the checks below treat as inside the table.
+  if (!syntaxTreeAvailable(state, Math.min(selection.head + 1, state.doc.length))) return null
+  let table: SyntaxNode | null = syntaxTree(state).resolveInner(selection.head, -1)
+  while (table && table.name !== "Table") table = table.parent
+  if (!table || selection.head <= table.from || selection.head > table.to) return null
+  if (isTableShownAsSource(state, table.from, table.to)) return null
+  return cellAt(state, selection.head)
 }
 
 /** Next frame after an in-table caret closed the session: reopen with the click opener and park on `table.from`. */

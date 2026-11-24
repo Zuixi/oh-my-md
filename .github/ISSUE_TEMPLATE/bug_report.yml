@@ -1,0 +1,105 @@
+name: Bug report
+description: Report a reproducible defect in oh-my-md
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make oh-my-md trustworthy. Please keep one bug per
+        report: a minimal, reproducible case is worth more than a long list of
+        symptoms.
+
+        **Security issues belong elsewhere.** Do not report vulnerabilities
+        here — follow [SECURITY.md](../blob/main/SECURITY.md) and use a private
+        GitHub Security Advisory instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: oh-my-md version
+      description: Shown in **Settings → About**, or in the title bar footer.
+      placeholder: "0.1.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11
+        - Windows 10
+        - Linux (X11)
+        - Linux (Wayland)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version and desktop environment
+      description: Version numbers matter — e.g. `macOS 15.3`, `Windows 11 24H2`, `Ubuntu 24.04 / GNOME 46`.
+      placeholder: "macOS 15.3"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact keystrokes, file states, and dialogs. Numbered steps that always reproduce beat a description.
+      placeholder: |
+        1. Open a file containing …
+        2. Put the caret on line …
+        3. Press ⌘E
+        4. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error text, or a screenshot/screencast.
+    validations:
+      required: true
+
+  - type: textarea
+    id: document
+    attributes:
+      label: Minimal document
+      description: |
+        Paste the smallest Markdown file that reproduces the problem (redact
+        anything private — the shape of the syntax matters, not the content).
+        Fenced code blocks keep it readable.
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: diagnostics
+    attributes:
+      label: Opt-in diagnostics
+      description: |
+        Diagnostic logging is **off by default**. To attach a bundle: enable
+        **Settings → Logging**, reproduce the bug, then use
+        **Help → Export Diagnostics…**. The bundle contains redacted log lines
+        only — never document contents, snapshots, or signing keys. Attach the
+        `.zip` to this report, or leave this unchecked and describe the
+        behavior instead.
+      options:
+        - label: I attached a redacted diagnostics bundle (`Help → Export Diagnostics…`).
+          required: false
+        - label: I checked that the bundle does not contain private document text before attaching.
+          required: false

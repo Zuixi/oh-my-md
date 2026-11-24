@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, type RenderResult } from "@testing-library/react"
-import { createElement } from "react"
+import { createElement, StrictMode } from "react"
 import { expect, vi, type Mock } from "vitest"
 import type { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
@@ -120,7 +120,7 @@ export interface AppHarness {
   readonly services: HarnessServices
   seedFile: (path: string, contents: string) => void
   disk: (path: string) => DiskFixture
-  renderApp: (props?: { autosaveMs?: number; watchMs?: number; docMaterializeMs?: number; logUpdateFailure?: (failure: UpdateFailureKind) => void }) => RenderResult
+  renderApp: (props?: { autosaveMs?: number; watchMs?: number; docMaterializeMs?: number; logUpdateFailure?: (failure: UpdateFailureKind) => void; strict?: boolean }) => RenderResult
   editorForTab: (tabId: number) => FakeEditorHandle
   allEditors: () => readonly FakeEditorHandle[]
   activateTab: (tabId: number) => void
@@ -613,7 +613,8 @@ export function createAppHarness(editor: EditorMock): AppHarness {
       context.watchMs = props.watchMs ?? NO_WATCH_MS
       context.docMaterializeMs = props.docMaterializeMs ?? 0
       context.logUpdateFailure = props.logUpdateFailure ?? null
-      context.rendered = render(appElement(context, context.watchMs))
+      const element = appElement(context, context.watchMs)
+      context.rendered = render(props.strict ? createElement(StrictMode, null, element) : element)
       lastMountedApp = context.rendered
       return context.rendered
     },

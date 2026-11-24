@@ -163,6 +163,19 @@ Rules:
 - `updateLiveDecorations` reuses the dropped spec object when a rebuilt spec has the same `tag`/`from`/`to` and `oldWidget.eq(newWidget)` (`build.ts`, `removedByKey` pass). Decoration identity preserved ⇒ no height-relevant change ⇒ height map untouched.
 - Reuse is equivalence-gated on widgets only: non-widget decorations (line/mark/inline replace) churn harmlessly (`compareRange` is a no-op for the height map), and a widget whose inputs changed (`eq` false — edited cell text, changed label) must rotate to a new instance so CM refreshes DOM.
 - `test/specIdentity.test.ts` guards both directions: `measureBlockWidget` keeps the instance identical (and `view.contentHeight` stable); a content edit rotates it.
+
+## The document end needs an inclusive dirty boundary
+
+Verified 2026-10-05 by the seeded property suite (`test/propertyInvariants.test.ts`, seed `54` = `0x6f6d9a`, step 3): start from a closed ```` ```ts ```` fence, delete everything after the first two lines, and the preview kept a zero-length `replace:CloseFence` decoration at the end of a now **unterminated** fence. A fresh `buildLiveDecorations` on the same state had none, so the incremental field had drifted from the full rebuild — the exact class of bug the suite exists to catch.
+
+The cause is the documented half-open removal convention. `expandRange` ends a dirty range at `endLine.to + 1` (the next line's `from`) and `ranges.intersects` is half-open for non-empty ranges, so a point decoration sitting exactly at `range.to` counts as **clean** — that is what keeps the next line's `line:omd-blockquote-N`. At the document end there is no next line: `endLine.to + 1` is clamped to `doc.length`, so a zero-length spec left at `length` was never inside any removal range and survived every later rebuild.
+
+Rules:
+
+- `ranges.ts::docEndOwned` (the closed-interval algebra module, next to `intersects`) extends a dirty range that reaches `doc.length` by one; `build.ts::updateLiveDecorations` feeds the result to both `collectDecorationSpecs` and the removal envelope (`specKept`, `RangeSet.update`'s `filterFrom`/`filterTo`, `reconcileSpecs`). Collection output is unchanged (no spec can start past `length`); only the removal side gains the point at the end.
+- Empty ranges (`from === to`, the trailing empty line) stay closed — `intersects`' point branch already owns that line.
+- Never "fix" this by making the overlap check closed: that drops the following line's point decorations and brings back the nested-quote bar loss documented above.
+- Regression coverage: `test/propertyInvariants.test.ts` (150 seeded documents × 5 random insert/delete steps, compared byte-for-byte against `buildLiveDecorations` on every step).
 - Estimate calibration matters too: with identity reuse, the estimate→measured correction happens exactly once per block (first draw), so a well-calibrated estimate makes even that one-time correction small. Calibration tooling: `apps/desktop/e2e/calibrate-heights.mjs` (block heights in real Chromium) and `apps/desktop/e2e/scroll-audit.mjs` (`估算总高 vs 全文测量后的实际总高` on a real document — the direct thumb-desync metric). Residual error is inherent: never-drawn regions are estimated, so dragging the thumb into them lands within ~2% and converges as CM measures.
 
 ## Structure and appearance live in different packages
@@ -340,51 +353,106 @@ create/reconfigure builds only the cursor seed (`LIVE_SEED_RADIUS_LINES` /
 `LIVE_SEED_RADIUS_CHARS` around the selection, `packages/engine/src/decorations/build.ts`);
 everything else lands in `LiveDeco.pending` and is drained progressively by
 `decorations/buildDriver.ts` (viewport-first microtask pass, then idle slices
-dispatching `liveBuildChunk`). Over-scale documents add **windowing**
-(`src/safeModeRendering.ts`): only pending inside the build window
-(`visibleRanges ± LIVE_WINDOW_CHARS`) is ever built, and after viewport/doc/
-selection changes `livePruneOutside` returns decorations outside the prune
-window back to pending. Consequence: at any moment decorations far from the
-viewport may legitimately be absent. Production code must never assume a
-decoration exists outside the viewport window (or that `pending` is empty).
-Tests that need a complete build must use the exported `drainPendingLiveBuild`
-helper — the synchronous test-only drain (production must never call it; same
-guard family as `crossLayerNoFullTree.test.ts`).
+dispatching `liveBuildChunk`). Medium/large documents add **windowing**
+(`performancePolicy.ts`): `WINDOWED_PERFORMANCE_POLICY` builds only pending inside
+`visibleRanges ± liveWindowChars` (32 768) and returns decorations outside
+`buildWindow + livePruneMarginChars` (16 384) to pending; `SAFE_PERFORMANCE_POLICY`
+keeps the legacy 262 144 / 32 768 radii plus the block render budget, and a `null`
+policy falls back to the `safeModeRendering.ts` global. Consequence: at any moment
+decorations far from the viewport may legitimately be absent. Production code must
+never assume a decoration exists outside the viewport window (or that `pending` is
+empty). Tests that need a complete build must use the exported
+`drainPendingLiveBuild` helper — the synchronous test-only drain (production must
+never call it; same guard family as `crossLayerNoFullTree.test.ts`).
 
-## 逐键基准有三种口径，不能互相替代
+## `expandRange` must not widen to the `Document` node
 
-`bench/measure.ts::measureTyping` 的 `{ tree, drain }` 组合是三个**不同**问题，报告时
-必须写明是哪一种（`prepareTypingView` 就是这段准备逻辑的导出形态，`measureTyping`
-只计时 dispatch 循环）：
+`build.ts::expandRange` turns a changed position into a syntax-safe rebuild range
+by climbing from `tree.resolve(pos)` to the enclosing top-level block. When the
+position sits in a **blank line between blocks** (paragraph gap, trailing empty
+line), `resolve` returns the `Document` node itself; climbing "to the enclosing
+block" then widened the rebuild range to the whole document, so every keystroke
+in a formatted paragraph rebuilt all decorations. Measured on the 4 800-paragraph
+document (72 000 specs): 66–81 ms per keystroke in the `board.md` §11.1 probe.
+The fixed rule: `if (node.parent === null) continue` — a gap has no enclosing block,
+the line-based range already covers it (blank lines emit no decorations). The
+new-state expansion still widens to the block that now contains the edit, so
+paragraph-splitting/joining deletions stay covered. Guarded by
+`test/incremental.test.ts` (incremental vs fresh rebuild parity) and
+`bench/perfGate.test.ts` (the full-tree budget only holds while this stays true).
 
-| 口径 | 组合 | 回答的问题 |
+## The incremental spec update must not key 57 000 specs per keystroke
+
+The `specs` array holds one entry per decoration (72 000 on the 4 800-paragraph
+gate document). Doing the obvious thing per keystroke — `map` every spec, build a
+`Set` of `tag:from:to` strings, `sort` the retained+rebuilt array — is O(n log n)
+with ~n string allocations and dominated the 66–81 ms cliff just like the
+`expandRange` trap above. `decorations/specIndex.ts` owns the O(n) shape:
+
+- `mapSpecsFast` clones only the specs that straddle a change; the prefix is
+  reused by reference, the suffix shifts by `changes.newLength - changes.length`
+  without `mapPos` calls, and the three sorted runs are merged instead of sorted
+  (a crossing spec can move its start before the prefix tip, so a plain concat is
+  not enough).
+- `partitionSpecs` walks the removal ranges with a monotonic cursor and only
+  allocates keys for the (few) removed specs.
+- dedup against the retained list is a binary search on `from`
+  (`retainedHasSpec`), and the final list is a two-pointer merge.
+- `RangeSet.update` gets `filterFrom`/`filterTo` (the dirty envelope) whenever no
+  prune window is active, so untouched B-tree chunks are copied without walking
+  their ranges. Never pass a pruned filter to that bounded window: `keep` failure
+  for a pruned spec is not bounded by the dirty ranges.
+
+The load-bearing check is `next.deco.size === next.specs.length`; if a future
+change breaks the partition/filter agreement, the field repairs from `specs`
+instead of shipping a drifted RangeSet.
+
+## Typing benchmarks have three distinct shapes — never compare across them
+
+`bench/measure.ts::measureTyping`'s `{ tree, drain }` combination answers three
+**different** questions, and a report must state which one it used
+(`prepareTypingView` is the exported preparation half; `measureTyping` only times
+the dispatch loop):
+
+| Shape | Combination | Question it answers |
 |---|---|---|
-| 种子后立刻打字 | `tree:"steady"`（默认） | 挂载/切 Live 后 pending 还满着时的最坏瞬时成本 |
-| 生产窗口已消化 | `tree:"steady", drain:true` | 用户停留一瞬后逐键面对的稳态（树仍在 ParseWindow，未推到 `doc.length`） |
-| 全树 + 全量装饰 | `tree:"complete", drain:true` | 绝对上限参考；生产禁止制造该状态，**永不作为优化门禁** |
+| Type right after the seed | `tree:"steady"` (default) | Worst immediate cost while `pending` is still full, i.e. just after mount / Live toggle |
+| Production window drained | `tree:"steady", drain:true` | Steady state after the user pauses (tree still in ParseWindow, never pushed to `doc.length`) |
+| Full tree + full decoration set | `tree:"complete", drain:true` | Upper bound reference; production must not create this state, **never** used as an optimization gate |
 
-本机实测（`makeBenchmarkDoc` 档位，2026-10-27，happy-dom 无布局，含增量重解析，
-不含 layout/paint；两轮完整 bench 的采样区间）。三档 steady drained 统一从
-`bench/typing.bench.ts::STEADY_DRAINED_CARET = 50_000` 起笔：
+Local numbers (`makeBenchmarkDoc` tiers, 2026-10-27, happy-dom without layout,
+including incremental reparse and excluding layout/paint; range over two full
+bench runs). All three steady-drained tiers start at
+`bench/typing.bench.ts::STEADY_DRAINED_CARET = 50_000`:
 
-| 用例 | p50 | p95 |
+| Case | p50 | p95 |
 |---|---|---|
-| steady drained 10k（175k 字符） | 8.03–8.88ms | 9.37–11.51ms |
-| steady drained 30k（531k 字符） | 7.98–9.34ms | 9.10–11.81ms |
-| steady drained 50k（899k 字符） | 8.08–9.06ms | 8.97–11.14ms |
-| complete drained 10k（worst case，无预算） | 12.15–13.38ms | 13.81–17.48ms |
+| steady drained 10k (175k chars) | 8.03–8.88ms | 9.37–11.51ms |
+| steady drained 30k (531k chars) | 7.98–9.34ms | 9.10–11.81ms |
+| steady drained 50k (899k chars) | 8.08–9.06ms | 8.97–11.14ms |
+| complete drained 10k (worst case, no budget) | 12.15–13.38ms | 13.81–17.48ms |
 
-**起点必须落在已 materialize 的区间内，否则三档不可比。** 树只解析到
-`viewport.to + 100000`（happy-dom 无布局 ⇒ 约前 10 万字符），而 `measureTyping` 的默认
-起点是 `doc.length / 2`：10k 档（175k 字符）的中点还在解析窗口内，30k/50k 的中点已经在
-窗口外。只改 `drain` 不改起点时量到的「30k/50k 比 10k 快好几倍」，测的是**窗口外**的一次
-编辑（那里没有装饰要映射），不是同一稳态。固定同一 `caret` 后三档都在同一个 materialized
-生产窗口内编辑，数字基本持平（p50 8–9ms、p95 9–12ms，区间重叠）；剩下的差异只能归因于
-文档/解析器状态，而不是「窗口外的活」。
+**The caret must start inside the materialized range or the tiers are not
+comparable.** The tree only parses to `viewport.to + 100000` (happy-dom without
+layout ⇒ roughly the first 100k characters) while `measureTyping` defaults to
+`doc.length / 2`: the 10k midpoint is still inside the parse window, the 30k/50k
+midpoints are outside it. Changing only `drain` therefore measured one edit
+**outside** the window (no decorations to map) and looked several times faster
+than the 10k tier. With a shared `caret` all three tiers edit inside the same
+materialized production window and the numbers coincide (p50 8–9ms, p95 9–12ms,
+overlapping ranges); the residual difference is document/parser state, not
+"work outside the window".
 
-门禁（本计划 Task 1，只用修正后的 steady drained 30k p95）：两轮最大 11.81ms，
-≪ `TYPING_P95_BUDGET_MS`(16ms) ⇒ **不做 always-on windowing**；complete-tree 数字再差
-也不触发生产改动。
+Windowing policy (PERF-01/PERF-03, `performancePolicy.ts`): **not** always-on —
+`WINDOWED_PERFORMANCE_POLICY` applies above `WINDOWED_LIVE_MIN_LINES` (2 000) or
+`WINDOWED_LIVE_MIN_BYTES` (100 KiB), `SAFE_PERFORMANCE_POLICY` above the
+safe-mode thresholds. The blocking gate is
+`pnpm --filter @omd/engine perf:gate` (`bench/perfGate.test.ts`, own config, one
+worker): 4 800-paragraph formatted prose full-tree drained p50 < 10 / p95 < 16ms,
+the same document windowed p50 < 5 / p95 < 12ms, a ~1.3 MB windowed document
+p50 < 8 / p95 < 16ms, and the 2 000-item ordered-list build < 50ms. Budgets are
+multiplied by an in-process calibration factor clamped to [1, 4] so a slower CI
+runner gets headroom without being able to hide the ~10x O(N) regression.
 
 ## `documentStats` 用一条全局 Unicode 词法正则，别回到逐字符测试
 
@@ -1373,3 +1441,29 @@ on every later transaction. `mapSpec` now drops a spec when `from > to`, or when
 `from === to` and the tag is not `line:`. Regression:
 `test/progressive.test.ts` — "drops specs whose range collapsed instead of
 drifting from the RangeSet".
+
+## Empty `text/plain` is not an empty clipboard
+
+`planSmartPaste`'s plain fast path used `plainText === ""` as "nothing to
+insert". An image-only clipboard has no text flavor, so the semantic document
+(and the image asset the desktop had already written) was discarded and an
+empty string was dispatched. The guard must be `document.blocks.length === 0`:
+structure can exist with zero visible text. Regression:
+`test/smartPaste.test.ts` — "keeps an image-only clipboard with no plain text
+on the structured path".
+
+## Front-matter stats must mirror the parser's line rule
+
+`documentStats` is often given only a string, so it re-detects front matter
+without a tree. Matching `\n---` as a prefix is wrong: `parse/frontMatter.ts`
+opens/closes on a line whose `trimEnd()` is exactly `---` and lets an unclosed
+block swallow the document. `----` and `---text` used to be counted as prose.
+Keep the line scanner and its parity test in `test/stats.test.ts` aligned with
+the Lezer config.
+
+## Fence language tokens keep the author's case
+
+`parseFenceInfo` preserves `Mermaid`/`PYTHON`; Shiki and export resolve
+case-insensitively. Compare `langToken.toLowerCase()` (or a single derived
+flag) for special renderers, or the same fence is a diagram on export and an
+unknown code block in preview. Regression: `test/blockwidgets.test.ts`.

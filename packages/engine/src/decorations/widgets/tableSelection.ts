@@ -1,6 +1,6 @@
 import type { StateEffect } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
-import { cellLanguage } from "../../parse/cell"
+import { CELL_HIDDEN_NODES, cellHtmlBreakTag, cellLanguage } from "../../parse/cell"
 import { decodeHtmlEntity } from "../../parse/entities"
 import { escapeParts } from "../../semantic/breaks"
 import { imageParts } from "../../semantic/image"
@@ -110,11 +110,6 @@ function alignVisibleGlyphs(source: string, visible: string): VisibleGlyph[] {
   return glyphs
 }
 
-const HIDDEN_MARK_NODES = new Set([
-  "EmphasisMark", "StrikethroughMark", "HighlightMark", "UnderlineMark", "KbdMark",
-  "LinkMark", "CodeMark", "MathMark", "HeaderMark", "ListMark", "QuoteMark",
-  "TaskMarker", "URL", "CodeInfo", "TableDelimiter", "RiseMark",
-])
 
 /**
  * Source spans hidden or replaced by the cell projection (`parseCell`): syntax marks, link
@@ -128,7 +123,7 @@ function unspellableSpans(source: string): readonly (readonly [number, number])[
   // The cell parser owns what counts as an entity/shortcode; never re-detect the syntax here.
   cellLanguage().parser.parse(source).iterate({
     enter: node => {
-      if (HIDDEN_MARK_NODES.has(node.name) || node.name === "Emoji") {
+      if (CELL_HIDDEN_NODES.has(node.name) || node.name === "Emoji") {
         spans.push([node.from, node.to])
         return
       }
@@ -153,7 +148,7 @@ function unspellableSpans(source: string): readonly (readonly [number, number])[
         spans.push([node.from, node.to])
         return
       }
-      if (node.name === "HTMLTag" && /^<(br|hr)\s*\/?>/i.test(source.slice(node.from, node.to))) {
+      if (node.name === "HTMLTag" && cellHtmlBreakTag(source.slice(node.from, node.to)) !== null) {
         spans.push([node.from, node.to])
       }
     },

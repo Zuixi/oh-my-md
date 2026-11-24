@@ -1,3 +1,9 @@
+> **Implementation status (2026-11):** this is the original v1 design rationale, not the
+> current scope. The AI layer was explicitly dropped from 1.0 (see `README.md`), Windows and
+> Linux are first-class targets, and the repo now has real-browser E2E plus a Rust-owned
+> per-window authorization layer. For current contracts use `README.md`, `AGENTS.md`, and the
+> dated specs under this directory.
+
 # oh-my-md 设计文档
 
 一个对标 Typora 的开源桌面 Markdown 编辑器。

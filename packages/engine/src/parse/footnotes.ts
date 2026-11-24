@@ -1,4 +1,5 @@
 import type { MarkdownConfig } from "@lezer/markdown"
+import { lineDepth } from "./lineDepth"
 import {
   CHAR_CARET,
   CHAR_CLOSE_BRACKET,
@@ -31,7 +32,7 @@ export const Footnotes: MarkdownConfig = {
       let to = cx.lineStart + line.text.length
       // Consume continuation lines indented >= 4 (same loop shape as IndentedCode;
       // Line.depth exists at runtime but is missing from the public typings)
-      while (cx.nextLine() && (line as unknown as { depth: number }).depth >= cx.depth) {
+      while (cx.nextLine() && lineDepth(line) >= cx.depth) {
         if (line.pos == line.text.length || line.indent < line.baseIndent + 4) break
         const cFrom = cx.lineStart + line.findColumn(line.baseIndent + 4)
         to = cx.lineStart + line.text.length

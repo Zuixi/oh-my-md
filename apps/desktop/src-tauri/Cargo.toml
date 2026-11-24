@@ -1,8 +1,10 @@
 [package]
 name = "omd"
 version = "0.1.5"
-description = "A Tauri App"
-authors = ["you"]
+description = "Cross-platform Markdown editor with CodeMirror 6 live preview"
+authors = ["zuixi"]
+license = "Apache-2.0"
+repository = "https://github.com/Zuixi/oh-my-md"
 edition = "2021"
 # `cargo run` picks the app, not the `export-smoke` helper binary.
 default-run = "omd"
@@ -42,6 +44,9 @@ log = "0.4"
 base64 = "0.23.1"
 blake3 = "1"
 dirs = "6"
+# Export protocol tokens must be unguessable; 0.2.17 is already in Cargo.lock
+# through another dependency, so this adds no new transitive crates.
+getrandom = "0.2"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["time", "macros"] }
 thiserror = "2"
