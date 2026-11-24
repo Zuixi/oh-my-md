@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@codemirror/language": "^6.10.0",
+    "@codemirror/language": "^6.13.1",
     "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
     "@testing-library/react": "^16.3.2",
