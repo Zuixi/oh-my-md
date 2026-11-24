@@ -30,7 +30,7 @@
     "@lezer/highlight": "^1.2.0",
     "@lezer/markdown": "^1.4.0",
     "katex": "^0.18.4",
-    "mermaid": "^11.16.1",
+    "mermaid": "^12.3.0",
     "shiki": "^4.4.3"
   },
   "devDependencies": {
