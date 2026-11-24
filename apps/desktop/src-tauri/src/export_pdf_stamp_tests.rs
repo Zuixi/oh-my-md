@@ -60,6 +60,33 @@ fn enabled_setup(title: &str) -> PageSetup {
     PageSetup::from_dto(dto).expect("valid setup")
 }
 
+/// Everything the stamp appends to the original bytes, as lossy text.
+fn stamped_appendix(title: &str) -> String {
+    let original = two_page_fixture();
+    let stamped = stamp_header_footer_if_enabled(original.clone(), &enabled_setup(title));
+    assert_eq!(&stamped[..original.len()], original.as_slice());
+    String::from_utf8_lossy(&stamped[original.len()..]).into_owned()
+}
+
+/// `Tj` operand of the last text the stamp draws, i.e. page 2's header.
+fn last_operand(appended: &str) -> &str {
+    let end = appended.rfind(" Tj\n").expect("a Tj operand");
+    let start = appended[..end].rfind('\n').expect("operand line start") + 1;
+    &appended[start..end]
+}
+
+/// Centered header baseline `x` of the last stamp, in points.
+fn header_x_pt(appended: &str) -> f64 {
+    let end = appended.rfind(" Td\n").expect("a Td operator");
+    let start = appended[..end].rfind('\n').expect("Td line start") + 1;
+    appended[start..end]
+        .split_whitespace()
+        .next()
+        .expect("x coordinate")
+        .parse()
+        .expect("numeric x")
+}
+
 #[test]
 fn returns_original_bytes_when_header_footer_disabled() {
     let original = two_page_fixture();
@@ -169,6 +196,59 @@ fn encodes_cjk_header_titles_with_cid_type0_utf16be_hex() {
         appended.contains("<4E2D6587680798980020004E006F007400650073> Tj"),
         "{appended}"
     );
+}
+
+#[test]
+fn keeps_win_ansi_accented_and_typographic_titles_on_helvetica_with_octal_escapes() {
+    let appended = stamped_appendix("Café — Résumé “2026”");
+
+    assert!(
+        appended.contains("(Caf\\351 \\227 R\\351sum\\351 \\2232026\\224) Tj"),
+        "{appended}"
+    );
+    assert!(appended.contains("/BaseFont /Helvetica"), "{appended}");
+    // A CP1252 title must not drag a CID font into the revision.
+    assert!(!appended.contains("/STSong-Light"), "{appended}");
+    assert!(!appended.contains("/OmdF2"), "{appended}");
+}
+
+#[test]
+fn selects_japanese_and_korean_cid_fonts_by_script() {
+    let japanese = stamped_appendix("日本語の設計");
+    assert!(japanese.contains("/BaseFont /HeiseiMin-W3"), "{japanese}");
+    assert!(japanese.contains("/Encoding /UniJIS-UCS2-H"), "{japanese}");
+    assert!(!japanese.contains("/STSong-Light"), "{japanese}");
+
+    let korean = stamped_appendix("한국어 문서");
+    assert!(korean.contains("/BaseFont /HYSMyeongJo-Medium"), "{korean}");
+    assert!(korean.contains("/Encoding /UniKS-UCS2-H"), "{korean}");
+}
+
+#[test]
+fn replaces_astral_emoji_without_emitting_utf16_surrogate_halves() {
+    let cjk = stamped_appendix("Release 🚀 中文");
+    assert!(last_operand(&cjk).contains("00B7"), "{cjk}");
+    assert!(!cjk.contains("D83D") && !cjk.contains("DE80"), "{cjk}");
+
+    // The replacement dot is CP1252 0xB7, so this title keeps Helvetica.
+    let latin = stamped_appendix("Release 🚀 v1");
+    assert_eq!(last_operand(&latin), "(Release \\267 v1)");
+    assert!(latin.contains("/BaseFont /Helvetica"), "{latin}");
+}
+
+#[test]
+fn measures_full_width_cjk_at_one_em_for_truncation_and_centering() {
+    let long = stamped_appendix(&"中文标题".repeat(20));
+    let truncated = last_operand(&long);
+    assert!(truncated.ends_with("002E002E002E>"), "{truncated}");
+    // One em per glyph: the 80 full-width characters cannot fit the usable
+    // width and the ellipsis terminates a line far shorter than the narrow-glyph
+    // budget the Latin advance would have allowed.
+    assert!(truncated.len() / 4 < 80, "{truncated}");
+
+    let wide = header_x_pt(&stamped_appendix("中文标题测试一二三四"));
+    let narrow = header_x_pt(&stamped_appendix("ABCDEFGHIJ"));
+    assert!(wide < narrow, "wide {wide} vs narrow {narrow}");
 }
 
 #[test]

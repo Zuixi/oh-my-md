@@ -14,37 +14,20 @@
 use crate::export::export_page::{self, PageSetup};
 use std::collections::BTreeMap;
 
+/// Measuring, encoding and font choice are pure string work, so they live in
+/// their own module; this file owns the PDF object tree.
+#[path = "export_pdf_text.rs"]
+mod export_pdf_text;
+
+use export_pdf_text::{
+    header_footer_texts, sanitize_stamp_text, stamp_content, CjkScript, HeaderFontPlan, PageBoxPt,
+    CJK_FONT, LATIN_FONT, LATIN_FONT_OBJECT,
+};
+
 /// A 8 mm top/bottom margin is the smallest one that still leaves room for
 /// print chrome inside the margin.
 const MIN_STAMP_MARGIN_TENTHS: i32 = 80;
-const STAMP_FONT_PT: f64 = 8.5;
-const STAMP_GRAY: f64 = 0.42;
-/// Helvetica advances ~0.52 em per glyph for mixed prose; exact metrics need
-/// the font program and this only positions one short line.
-const CHAR_WIDTH_EM: f64 = 0.52;
-const FOOTER_BASELINE_RATIO: f64 = 0.42;
-const HEADER_BASELINE_RATIO: f64 = 0.58;
-const MIN_FOOTER_BASELINE_PT: f64 = 10.0;
-const MIN_HEADER_BASELINE_PT: f64 = 12.0;
-const MIN_USABLE_WIDTH_PT: f64 = 72.0;
 const MAX_PAGE_TREE_DEPTH: usize = 32;
-const LATIN_FONT: &str = "/OmdF1";
-/// Adobe's standard Simplified-Chinese CID font: every CJK-capable viewer
-/// substitutes it, so a Unicode title needs no embedded font program.
-const CJK_FONT: &str = "/OmdF2";
-const LATIN_FONT_OBJECT: &str =
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PageBoxPt {
-    /// Oriented paper box and margins, in PDF points.
-    pub width_pt: f64,
-    pub height_pt: f64,
-    pub top_pt: f64,
-    pub right_pt: f64,
-    pub bottom_pt: f64,
-    pub left_pt: f64,
-}
 
 pub(crate) fn stamp_header_footer_if_enabled(bytes: Vec<u8>, page: &PageSetup) -> Vec<u8> {
     if !page.header_footer {
@@ -52,7 +35,10 @@ pub(crate) fn stamp_header_footer_if_enabled(bytes: Vec<u8>, page: &PageSetup) -
     }
     let (width_pt, height_pt) = export_page::page_points(page);
     let (top_pt, right_pt, bottom_pt, left_pt) = export_page::margin_points(page);
-    let draw_header = !page.header_title.is_empty() && page.margin_top >= MIN_STAMP_MARGIN_TENTHS;
+    // Sanitize before measuring: the title that is measured, truncated and
+    // encoded must be the exact string that is drawn.
+    let title = sanitize_stamp_text(page.header_title.trim());
+    let draw_header = !title.is_empty() && page.margin_top >= MIN_STAMP_MARGIN_TENTHS;
     let draw_footer = page.margin_bottom >= MIN_STAMP_MARGIN_TENTHS;
     if !draw_header && !draw_footer {
         return bytes;
@@ -65,13 +51,7 @@ pub(crate) fn stamp_header_footer_if_enabled(bytes: Vec<u8>, page: &PageSetup) -
         bottom_pt,
         left_pt,
     };
-    match try_stamp(
-        &bytes,
-        &page.header_title,
-        draw_header,
-        draw_footer,
-        page_box,
-    ) {
+    match try_stamp(&bytes, &title, draw_header, draw_footer, page_box) {
         Some(stamped) => stamped,
         None => {
             log::warn!("skipping Linux PDF header/footer stamp: unsupported PDF structure");
@@ -113,7 +93,17 @@ fn try_stamp(
     let mut revision = Revision::new(bytes, size.max(highest + 1));
     let latin_font = revision.reserve();
     revision.object(latin_font, LATIN_FONT_OBJECT);
-    let cjk_font = (draw_header && !title.is_ascii()).then(|| revision.cjk_font());
+    let plan = if draw_header {
+        HeaderFontPlan::for_title(title)
+    } else {
+        HeaderFontPlan::WinAnsi
+    };
+    // Only a title outside CP1252 appends a CID font: every other revision
+    // stays as small as the objects it must add.
+    let cjk_font = match plan {
+        HeaderFontPlan::WinAnsi => None,
+        HeaderFontPlan::Cjk(script) => Some(revision.cjk_font(script)),
+    };
     let fonts = match cjk_font {
         Some(cjk) => format!("{LATIN_FONT} {latin_font} 0 R {CJK_FONT} {cjk} 0 R"),
         None => format!("{LATIN_FONT} {latin_font} 0 R"),
@@ -124,7 +114,7 @@ fn try_stamp(
             page,
             header_footer_texts(draw_header, draw_footer, title, index, pages.len()),
             page_box,
-            cjk_font.is_some(),
+            plan,
         )?;
     }
     Some(editor.revision.finish(
@@ -132,20 +122,6 @@ fn try_stamp(
         info.as_deref(),
         prev_xref,
     ))
-}
-
-/// Header and footer text for page `index`, with the page number already
-/// formatted the way every PDF reader shows it.
-fn header_footer_texts(
-    draw_header: bool,
-    draw_footer: bool,
-    title: &str,
-    index: usize,
-    total: usize,
-) -> (Option<String>, Option<String>) {
-    let header = draw_header.then(|| title.to_string());
-    let footer = draw_footer.then(|| format!("{} / {total}", index + 1));
-    (header, footer)
 }
 
 /// Allocates the appended objects for one page: the two content streams, the
@@ -174,7 +150,7 @@ impl<'a> Editor<'a> {
         page: &PageRef,
         texts: (Option<String>, Option<String>),
         page_box: PageBoxPt,
-        cjk: bool,
+        plan: HeaderFontPlan,
     ) -> Option<()> {
         let dict = self.table.dict(page.id)?;
         let contents = contents(dict)?;
@@ -184,7 +160,7 @@ impl<'a> Editor<'a> {
         self.revision.stream(prep, "q\n");
         let stamp = self.revision.reserve();
         self.revision
-            .stream(stamp, &stamp_content(texts, page.media, page_box, cjk));
+            .stream(stamp, &stamp_content(texts, page.media, page_box, plan)?);
         let refs: String = contents
             .refs
             .iter()
@@ -383,79 +359,6 @@ fn rebuild(
     Some(out)
 }
 
-/// `Q` restores the state the page's own content left behind, then `q … Q`
-/// draws in clean default user space.
-fn stamp_content(
-    (header, footer): (Option<String>, Option<String>),
-    media: (f64, f64, f64, f64),
-    page_box: PageBoxPt,
-    cjk: bool,
-) -> String {
-    let (x0, y0, x1, y1) = media;
-    let mut out = String::from("Q\nq\n");
-    if let Some(footer) = footer {
-        let x = (x1 - page_box.right_pt - text_width(&footer)).max(x0 + page_box.left_pt);
-        let y = y0 + (page_box.bottom_pt * FOOTER_BASELINE_RATIO).max(MIN_FOOTER_BASELINE_PT);
-        out.push_str(&show_text(LATIN_FONT, x, y, &literal(&footer)));
-    }
-    if let Some(header) = header {
-        let usable = (x1 - x0 - page_box.left_pt - page_box.right_pt).max(MIN_USABLE_WIDTH_PT);
-        let title = truncate(&header, usable);
-        let x = x0 + page_box.left_pt + ((usable - text_width(&title)).max(0.0) / 2.0);
-        let y = y1 - (page_box.top_pt * HEADER_BASELINE_RATIO).max(MIN_HEADER_BASELINE_PT);
-        let (font, text) = if cjk {
-            (CJK_FONT, ucs2_hex(&title))
-        } else {
-            (LATIN_FONT, literal(&title))
-        };
-        out.push_str(&show_text(font, x, y, &text));
-    }
-    out.push_str("Q\n");
-    out
-}
-
-fn show_text(font: &str, x: f64, y: f64, text: &str) -> String {
-    format!("BT\n{font} {STAMP_FONT_PT} Tf\n{STAMP_GRAY} g\n{x:.2} {y:.2} Td\n{text} Tj\nET\n")
-}
-
-fn text_width(text: &str) -> f64 {
-    text.chars().count() as f64 * STAMP_FONT_PT * CHAR_WIDTH_EM
-}
-
-/// Cut at a character boundary so the title cannot run into the right margin.
-fn truncate(text: &str, usable_pt: f64) -> String {
-    let room = (usable_pt / (STAMP_FONT_PT * CHAR_WIDTH_EM))
-        .floor()
-        .max(1.0) as usize;
-    text.chars().take(room).collect()
-}
-
-/// PDF literal string: `\`, `(` and `)` are the only characters WinAnsi text
-/// needs escaped.
-fn literal(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 4);
-    for ch in text.chars() {
-        if matches!(ch, '\\' | '(' | ')') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    format!("({out})")
-}
-
-/// `UniGB-UCS2-H` is a big-endian UCS-2 CMap, so the hex string holds raw code
-/// units. No `FEFF` BOM: it would draw a stray glyph and be copied into every
-/// text selection.
-fn ucs2_hex(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() * 4 + 2);
-    out.push('<');
-    for unit in text.encode_utf16() {
-        out.push_str(&format!("{unit:04X}"));
-    }
-    out.push('>');
-    out
-}
-
 /// Appended objects and the incremental `xref`/`trailer` pair, written onto a
 /// copy of the input: the original bytes are never mutated.
 struct Revision {
@@ -498,22 +401,12 @@ impl Revision {
         );
     }
 
-    /// Type0 font over the standard descendant CIDFont.
-    fn cjk_font(&mut self) -> u32 {
+    /// `Type0` font over the standard descendant `CIDFontType0` for `script`.
+    fn cjk_font(&mut self, script: CjkScript) -> u32 {
         let descendant = self.reserve();
-        self.object(
-            descendant,
-            "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light \
-             /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> >>",
-        );
+        self.object(descendant, &script.descendant_font_dict());
         let type0 = self.reserve();
-        self.object(
-            type0,
-            &format!(
-                "<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light \
-                 /Encoding /UniGB-UCS2-H /DescendantFonts [ {descendant} 0 R ] >>"
-            ),
-        );
+        self.object(type0, &script.type0_font_dict(descendant));
         type0
     }
 
