@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use tauri::Manager;
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 /// Extensions the open picker offers: the same list the engine treats as
 /// documents.
@@ -85,6 +85,64 @@ fn default_path_parts(default_path: &str) -> (Option<PathBuf>, String) {
     (None, default_path.to_string())
 }
 
+/// Resolves the real save target once the OS dialog has closed.
+///
+/// The native save dialog only checks the name it returned; when a missing
+/// suffix is appended afterwards (`roadmap` -> `roadmap.md`, `report` ->
+/// `report.pdf`) the actual target may already exist and the OS never asked
+/// about it. `confirm_overwrite` is the only interactive step and must not run
+/// when the dialog's own answer already covered the path.
+fn resolve_picked_save_target<F>(
+    picked: &Path,
+    final_path: PathBuf,
+    confirm_overwrite: F,
+) -> Result<Option<PathBuf>, String>
+where
+    F: FnOnce(&Path) -> bool,
+{
+    match std::fs::symlink_metadata(&final_path) {
+        // Absent target: there is nothing to overwrite.
+        Err(_) => Ok(Some(final_path)),
+        // A directory can never be replaced by a save, and a project folder
+        // named like the document must not be offered as "Replace".
+        Ok(metadata) if metadata.is_dir() => Err("target path is a directory".into()),
+        // Same name the OS dialog just confirmed; prompting again is noise.
+        Ok(_) if final_path.as_path() == picked => Ok(Some(final_path)),
+        Ok(_) => {
+            if confirm_overwrite(&final_path) {
+                Ok(Some(final_path))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Asks the user to replace a file that only exists because a suffix was
+/// appended after the OS save dialog closed.
+fn confirm_appended_overwrite(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    final_path: &Path,
+) -> bool {
+    let file_name = final_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| final_path.to_string_lossy().into_owned());
+    app.dialog()
+        .message(format!(
+            "\"{file_name}\" already exists. Do you want to replace it?"
+        ))
+        .title("Confirm Overwrite")
+        .parent(window)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Replace".to_string(),
+            "Cancel".to_string(),
+        ))
+        .blocking_show()
+}
+
 #[tauri::command]
 pub async fn pick_open_markdown(
     app: tauri::AppHandle,
@@ -118,21 +176,30 @@ pub async fn pick_save_markdown(
     let label = filter_label.unwrap_or_else(|| "Markdown".to_string());
     let window_label = window.label().to_string();
     let picked = pick_with_dialog(move || {
-        app.dialog()
+        let picked = app
+            .dialog()
             .file()
             .set_parent(&window)
             .add_filter(label, &[MARKDOWN_SAVE_EXTENSION])
-            .blocking_save_file()
-            .map(|file| file.into_path().map_err(|error| error.to_string()))
+            .blocking_save_file()?;
+        let picked = match picked.into_path().map_err(|error| error.to_string()) {
+            Ok(path) => path,
+            Err(error) => return Some(Err(error)),
+        };
+        // Ensure the save target always carries a Markdown extension (including
+        // dotted stems like `release-v1.0` -> `release-v1.0.md`) and never grants
+        // an arbitrary non-Markdown file. The appended suffix can collide with a
+        // file the dialog never showed, so the overwrite decision happens here,
+        // before any authorization grant is recorded.
+        let final_path = ensure_markdown_save_extension(&picked);
+        Some(resolve_picked_save_target(&picked, final_path, |target| {
+            confirm_appended_overwrite(&app, &window, target)
+        }))
     })
     .await?;
-    let Some(path) = picked else {
+    let Some(final_path) = picked.flatten() else {
         return Ok(None);
     };
-    // Ensure the save target always carries a Markdown extension (including
-    // dotted stems like `release-v1.0` -> `release-v1.0.md`) and never grants
-    // an arbitrary non-Markdown file.
-    let final_path = ensure_markdown_save_extension(&path);
     crate::auth_scope::authorize_document_file(&window_label, &final_path)?;
     Ok(Some(final_path.to_string_lossy().into_owned()))
 }
@@ -215,15 +282,22 @@ pub async fn pick_export_path(
             }
             builder = builder.set_file_name(file_name);
         }
-        builder
-            .blocking_save_file()
-            .map(|file| file.into_path().map_err(|error| error.to_string()))
+        let picked = builder.blocking_save_file()?;
+        let picked = match picked.into_path().map_err(|error| error.to_string()) {
+            Ok(path) => path,
+            Err(error) => return Some(Err(error)),
+        };
+        // The appended export extension can land on an existing file the dialog
+        // never warned about; confirm before authorizing the export target.
+        let final_path = ensure_export_extension(&picked, extension);
+        Some(resolve_picked_save_target(&picked, final_path, |target| {
+            confirm_appended_overwrite(&app, &window, target)
+        }))
     })
     .await?;
-    let Some(path) = picked else {
+    let Some(final_path) = picked.flatten() else {
         return Ok(None);
     };
-    let final_path = ensure_export_extension(&path, extension);
     crate::auth_scope::authorize_export_target(&window_label, &final_path)?;
     Ok(Some(final_path.to_string_lossy().into_owned()))
 }
@@ -278,6 +352,73 @@ mod tests {
             ensure_markdown_save_extension(Path::new("/notes/readme.markdown")),
             PathBuf::from("/notes/readme.markdown")
         );
+    }
+
+    #[test]
+    fn unchanged_and_absent_targets_are_never_prompted() {
+        let directory = tempfile::tempdir().unwrap();
+        let existing = directory.path().join("roadmap.md");
+        std::fs::write(&existing, "# roadmap").unwrap();
+
+        // The OS save dialog already confirmed the name it returned.
+        let mut prompts = 0;
+        let resolved = resolve_picked_save_target(&existing, existing.clone(), |_| {
+            prompts += 1;
+            false
+        });
+        assert_eq!(resolved.unwrap(), Some(existing));
+        assert_eq!(prompts, 0, "the picked name must not prompt twice");
+
+        // An appended suffix that does not exist yet overwrites nothing.
+        let absent = directory.path().join("fresh.md");
+        let picked = directory.path().join("fresh");
+        let mut prompts = 0;
+        let resolved = resolve_picked_save_target(&picked, absent.clone(), |_| {
+            prompts += 1;
+            false
+        });
+        assert_eq!(resolved.unwrap(), Some(absent));
+        assert_eq!(prompts, 0, "a missing target has nothing to confirm");
+    }
+
+    #[test]
+    fn an_appended_suffix_overwriting_an_existing_file_needs_confirmation() {
+        let directory = tempfile::tempdir().unwrap();
+        let final_path = directory.path().join("roadmap.md");
+        std::fs::write(&final_path, "# old roadmap").unwrap();
+        let picked = directory.path().join("roadmap");
+
+        let mut confirmed: Vec<PathBuf> = Vec::new();
+        let declined = resolve_picked_save_target(&picked, final_path.clone(), |target| {
+            confirmed.push(target.to_path_buf());
+            false
+        });
+        assert_eq!(declined.unwrap(), None);
+        assert_eq!(confirmed, vec![final_path.clone()]);
+
+        let mut prompts = 0;
+        let accepted = resolve_picked_save_target(&picked, final_path.clone(), |_| {
+            prompts += 1;
+            true
+        });
+        assert_eq!(accepted.unwrap(), Some(final_path));
+        assert_eq!(prompts, 1);
+    }
+
+    #[test]
+    fn an_existing_directory_target_fails_without_prompting() {
+        let directory = tempfile::tempdir().unwrap();
+        let existing_dir = directory.path().join("report.pdf");
+        std::fs::create_dir_all(&existing_dir).unwrap();
+        let picked = directory.path().join("report");
+
+        let mut prompts = 0;
+        let resolved = resolve_picked_save_target(&picked, existing_dir, |_| {
+            prompts += 1;
+            true
+        });
+        assert!(resolved.is_err());
+        assert_eq!(prompts, 0, "a directory target must never be offered");
     }
 
     #[test]

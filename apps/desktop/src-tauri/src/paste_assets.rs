@@ -62,11 +62,14 @@ pub(crate) struct PasteAssetState(Mutex<PasteAssetStateInner>);
 
 #[tauri::command]
 pub(crate) async fn write_paste_assets(
+    app: tauri::AppHandle,
     state: tauri::State<'_, PasteAssetState>,
     window: tauri::WebviewWindow,
     document_path: String,
     assets: Vec<PasteAssetWrite>,
 ) -> Result<PasteAssetBatch, String> {
+    use tauri::Manager;
+
     // Pasted bytes land in `assets/` next to the document, so the document must
     // be a file this window already opened or saved — a pasted image must never
     // become a way to create files next to an arbitrary path.
@@ -75,12 +78,24 @@ pub(crate) async fn write_paste_assets(
         std::path::Path::new(&document_path),
     )?;
     let registered_document_path = PathBuf::from(&document_path);
-    let batch = tauri::async_runtime::spawn_blocking(move || {
-        write_paste_assets_impl(Path::new(&document_path), assets)
-    })
-    .await
-    .map_err(|error| format!("paste asset task failed: {error}"))??;
-    if let Some(batch_id) = &batch.0.batch_id {
+    let (batch, written_paths, canonical_assets_dir) =
+        tauri::async_runtime::spawn_blocking(move || {
+            write_paste_assets_impl(Path::new(&document_path), assets)
+        })
+        .await
+        .map_err(|error| format!("paste asset task failed: {error}"))??;
+    // A standalone document reaches this command before `assets/` exists, so the
+    // validated canonical directory is registered before serving it back.
+    if let Some(assets_dir) = canonical_assets_dir {
+        let scope = app.asset_protocol_scope();
+        if let Err(error) = scope.allow_directory(&assets_dir, true) {
+            for path in &written_paths {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(format!("failed to allow image assets directory: {error}"));
+        }
+    }
+    if let Some(batch_id) = &batch.batch_id {
         state
             .0
             .lock()
@@ -90,11 +105,11 @@ pub(crate) async fn write_paste_assets(
                 batch_id.clone(),
                 PendingBatch {
                     document_path: registered_document_path,
-                    paths: batch.1.clone(),
+                    paths: written_paths,
                 },
             );
     }
-    Ok(batch.0)
+    Ok(batch)
 }
 
 #[tauri::command]
@@ -178,7 +193,7 @@ fn finish_batch(
 fn write_paste_assets_impl(
     document_path: &Path,
     assets: Vec<PasteAssetWrite>,
-) -> Result<(PasteAssetBatch, Vec<PathBuf>), String> {
+) -> Result<(PasteAssetBatch, Vec<PathBuf>, Option<PathBuf>), String> {
     validate_document_path(document_path)?;
     let mut seen = std::collections::HashSet::new();
     if assets
@@ -200,6 +215,8 @@ fn write_paste_assets_impl(
         }
     }
     if valid.is_empty() {
+        // Nothing was written, so no directory was created and nothing needs an
+        // asset-scope grant.
         return Ok((
             PasteAssetBatch {
                 batch_id: None,
@@ -207,6 +224,7 @@ fn write_paste_assets_impl(
                 failures,
             },
             Vec::new(),
+            None,
         ));
     }
 
@@ -217,7 +235,7 @@ fn write_paste_assets_impl(
     std::fs::create_dir_all(&assets_dir)
         .map_err(|error| format!("failed to create image assets directory: {error}"))?;
     reject_symlink_directory(&assets_dir)?;
-    validate_assets_directory(&assets_dir, document_path)?;
+    let canonical_assets_dir = validate_assets_directory(&assets_dir, document_path)?;
 
     let mut paths = Vec::new();
     let mut items = Vec::new();
@@ -267,6 +285,7 @@ fn write_paste_assets_impl(
             failures,
         },
         paths,
+        Some(canonical_assets_dir),
     ))
 }
 
@@ -320,7 +339,9 @@ fn reject_symlink_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_assets_directory(assets_dir: &Path, document_path: &Path) -> Result<(), String> {
+/// Validates `<doc_dir>/assets` and returns its canonical form, so callers never
+/// register an unvalidated (symlinked or escaping) path with the asset protocol.
+fn validate_assets_directory(assets_dir: &Path, document_path: &Path) -> Result<PathBuf, String> {
     let document_dir = document_path
         .parent()
         .ok_or_else(|| "document path must have a parent directory".to_string())?;
@@ -331,7 +352,7 @@ fn validate_assets_directory(assets_dir: &Path, document_path: &Path) -> Result<
     if canonical_assets_dir != canonical_document_dir.join(ASSETS_DIR_NAME) {
         return Err("image assets directory resolves outside the document directory".into());
     }
-    Ok(())
+    Ok(canonical_assets_dir)
 }
 
 #[cfg(test)]
@@ -361,7 +382,7 @@ mod tests {
         let document = directory.path().join("document.md");
         std::fs::write(&document, "# document").unwrap();
         let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nbody");
-        let (batch, paths) = write_paste_assets_impl(
+        let (batch, paths, canonical_assets_dir) = write_paste_assets_impl(
             &document,
             vec![
                 PasteAssetWrite {
@@ -384,6 +405,48 @@ mod tests {
         assert!(batch.items[0].relative_path.starts_with("assets/pasted-"));
         assert_eq!(paths.len(), 1);
         assert!(paths[0].exists());
+        assert!(canonical_assets_dir.is_some());
+    }
+
+    #[test]
+    fn first_paste_creates_and_returns_the_assets_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let document = directory.path().join("standalone.md");
+        std::fs::write(&document, "# standalone").unwrap();
+        let assets_dir = directory.path().join(ASSETS_DIR_NAME);
+        // An all-invalid batch creates no directory and grants no scope.
+        let (rejected, rejected_paths, canonical_assets_dir) = write_paste_assets_impl(
+            &document,
+            vec![PasteAssetWrite {
+                key: "bad".into(),
+                mime: "image/png".into(),
+                base64: base64::engine::general_purpose::STANDARD.encode(b"not a png"),
+            }],
+        )
+        .unwrap();
+        assert!(rejected.batch_id.is_none());
+        assert!(rejected_paths.is_empty());
+        assert_eq!(canonical_assets_dir, None);
+        assert!(!assets_dir.exists());
+
+        let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nbody");
+        let (batch, paths, canonical_assets_dir) = write_paste_assets_impl(
+            &document,
+            vec![PasteAssetWrite {
+                key: "first".into(),
+                mime: "image/png".into(),
+                base64: png,
+            }],
+        )
+        .unwrap();
+        assert!(batch.batch_id.is_some());
+        assert_eq!(paths.len(), 1);
+        assert!(assets_dir.is_dir());
+        // Only the canonical directory may reach the asset protocol scope.
+        let dir = directory.path();
+        let expected = std::fs::canonicalize(dir).unwrap().join(ASSETS_DIR_NAME);
+        assert!(expected.is_dir());
+        assert_eq!(canonical_assets_dir.as_deref(), Some(expected.as_path()));
     }
 
     #[test]
