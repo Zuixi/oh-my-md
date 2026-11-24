@@ -38,7 +38,7 @@
     "@codemirror/language": "^6.10.0",
     "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.3",
     "@types/node": "^26.2.0",
     "@types/react": "^19.1.8",
