@@ -8,6 +8,7 @@
 
 use crate::export::{
     ExportFormat, ExportSpec, ExportWarning, Probe, RenderOutput, EXPORT_READY_TIMEOUT_MS,
+    EXPORT_READY_TIMEOUT_SECS,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,14 +28,14 @@ impl ExportProtocolState {
     fn insert(&self, token: &str, html: Vec<u8>) {
         self.documents
             .lock()
-            .expect("export protocol state poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(token.to_owned(), html);
     }
 
     fn remove(&self, token: &str) {
         self.documents
             .lock()
-            .expect("export protocol state poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(token);
     }
 }
@@ -79,7 +80,7 @@ pub fn serve<R: Runtime>(
         .state::<ExportProtocolState>()
         .documents
         .lock()
-        .expect("export protocol state poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(token)
         .cloned();
     match body {
@@ -166,12 +167,19 @@ fn build_window(
     {
         builder = builder.additional_browser_args(super::WINDOWS_ADDITIONAL_BROWSER_ARGS);
     }
-    builder.build().map_err(|error| error.to_string())?;
+    let built = builder.build().map_err(|error| error.to_string())?;
     // `build` may hand back a detached handle before the runtime stores the
     // registered window. Re-resolve from the manager so later `with_webview`
-    // and URL messages target the registered instance.
-    app.get_webview_window(label)
-        .ok_or_else(|| format!("export window {label} was not registered"))
+    // and URL messages target the registered instance. If registration failed,
+    // close the window we just created: an orphaned offscreen host is excluded
+    // from every editor-window cleanup path and would live until process exit.
+    match app.get_webview_window(label) {
+        Some(window) => Ok(window),
+        None => {
+            let _ = built.close();
+            Err(format!("export window {label} was not registered"))
+        }
+    }
 }
 
 /// Parse the JSON emitted by `PROBE_SCRIPT`. WebView2 wraps the expression
@@ -209,7 +217,9 @@ pub(crate) fn parse_probe(raw: &str) -> Result<Option<Probe>, String> {
 fn partial_warning(probe: &Probe) -> Option<ExportWarning> {
     probe.incomplete.then(|| ExportWarning {
         code: "partial-render".into(),
-        detail: Some("the export page did not finish loading fonts or images within 5 s".into()),
+        detail: Some(format!(
+            "the export page did not finish loading fonts or images within {EXPORT_READY_TIMEOUT_SECS} s"
+        )),
     })
 }
 

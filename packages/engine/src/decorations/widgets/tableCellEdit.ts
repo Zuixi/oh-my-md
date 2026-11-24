@@ -1,7 +1,7 @@
 import type { SyntaxNode } from "@lezer/common"
 import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view"
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
-import { cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
+import { cellHtmlBreakTag, cellLanguage, decodeShieldedPipes, type CellParseOptions } from "../../parse/cell"
 import { getTableEditSession } from "../../tables/directEdit"
 import { cellAt, type TableContext } from "../../tables/navigate"
 import { isTableShownAsSource } from "../../tables/sourceReveal"
@@ -229,6 +229,7 @@ function placeCaret(root: HTMLElement, caret: number): void {
   caretEl.setAttribute("aria-hidden", "true")
   const spans = [...root.querySelectorAll<HTMLElement>("[data-from]")]
   for (const span of spans) {
+    if (span.tagName === "BR" || span.tagName === "HR" || span.tagName === "IMG") continue
     const from = Number(span.dataset.from)
     const to = Number(span.dataset.to)
     if (caret > from && caret < to) {
@@ -290,6 +291,26 @@ function renderNode(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx): void
   if (REVEAL_WHOLE.has(node.name)) {
     renderFolded(parent, node, ctx)
     return
+  }
+  // Rendered cells and HTML export project `<br>`/`<hr>` as elements (`parseCell`).
+  // Keep them rendered as elements while typing on either side (including boundary
+  // offsets `caret === node.from` and `caret === node.to`), and reveal the raw tag
+  // only when the caret steps strictly inside `(node.from, node.to)` so `placeCaret`
+  // splits text rather than destroying a void element.
+  if (node.name === "HTMLTag") {
+    const raw = ctx.source.slice(node.from, node.to)
+    const tag = cellHtmlBreakTag(raw)
+    if (tag) {
+      if (ctx.caret > node.from && ctx.caret < node.to) {
+        appendText(parent, raw, node.from, node.to)
+        return
+      }
+      const element = document.createElement(tag)
+      element.dataset.from = String(node.from)
+      element.dataset.to = String(node.to)
+      parent.appendChild(element)
+      return
+    }
   }
   if (node.firstChild) {
     renderChildren(parent, node, ctx, node.to)

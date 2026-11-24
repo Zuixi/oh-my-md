@@ -1,7 +1,35 @@
 import type { EditorState } from "@codemirror/state"
-import type { Decoration } from "@codemirror/view"
+import { Decoration } from "@codemirror/view"
 
 export interface DecoSpec { from: number; to: number; tag: string; deco: Decoration }
+
+// Hoisted stateless decorations: dirty-range rebuilds push one spec per folded mark
+// or styled line, so allocating fresh plain `Decoration.replace` / `Decoration.line`
+// instances per node is pure churn. Widget replaces remain per-instance.
+export const REPLACE_MARK = Decoration.replace({})
+export const REPLACE_BLOCK = Decoration.replace({ block: true })
+
+const LINE_DECOS = new Map<string, Decoration>()
+
+/** Cached `Decoration.line` per CSS class (list depth keeps its inline attribute style). */
+export function lineDeco(cssClass: string): Decoration {
+  const cached = LINE_DECOS.get(cssClass)
+  if (cached) return cached
+  const created = Decoration.line({ class: cssClass })
+  LINE_DECOS.set(cssClass, created)
+  return created
+}
+
+/** Appends one `line:` spec per `lineAt` line across the closed range `[from, to]`. */
+export function styleLines(
+  state: EditorState, out: DecoSpec[], from: number, to: number, tag: string, cssClass: string,
+): void {
+  for (let pos = from; pos <= to; ) {
+    const line = state.doc.lineAt(pos)
+    out.push({ from: line.from, to: line.from, tag, deco: lineDeco(cssClass) })
+    pos = line.to + 1
+  }
+}
 
 // 分工模型（路线 A，对齐 Typora）：装饰性标记（成对强调 `**`、标题 `#`、列表符）
 // 永不因光标进入而展开 —— 点击/移动光标只是定位，行宽不抖动。标记的增删改走
@@ -11,16 +39,6 @@ export interface DecoSpec { from: number; to: number; tag: string; deco: Decorat
 // 的其它文本上不展开 —— 行级展开曾是点击闪烁的根源（软换行下一段=一行，点段
 // 落任意文本都会把整段链接裸奔成 [text](url)）。且必须在节点整体级判定一次，
 // 逐子节点判定会产出 `[text](` 半展开残缺态（光标在文字里时不在 URL span 内）。
-// nearCursor 仅剩一个合法用途：空行密度（build.ts）—— 那里的判定单位本来就是
-// “行”（光标自己的空行保持全高）。
-export function nearCursor(state: EditorState, from: number, to: number) {
-  const sel = state.selection.main
-  if (!sel.empty) return false
-  const cursorLine = state.doc.lineAt(sel.head)
-  // The mark is on the same line as the cursor if their ranges overlap.
-  return cursorLine.from <= to && cursorLine.to >= from
-}
-
 // Collapsed caret within [from, to) — start-boundary inclusive: typing the
 // closing fence/mark leaves the caret exactly at `to`, which is "past" the
 // mark (content side). Use this for quote markers and other marks that stay

@@ -141,6 +141,23 @@ describe("planSmartPaste: structured candidate", () => {
     })
   })
 
+  it("keeps an image-only clipboard with no plain text on the structured path", () => {
+    // Real image clipboards often carry no text/plain at all. The empty plain
+    // candidate used to win before the semantic blocks were consulted, which
+    // inserted nothing while the desktop had already written the asset.
+    const prepared = plain('<p><img src="data:image/png;base64,AAAA" alt=""></p>', "")
+    expect(prepared.isSingleImageOnly).toBe(true)
+    const key = prepared.assets[0].key
+    const plan = planSmartPaste(
+      prepared,
+      makeState(""),
+      { from: 0, to: 0 },
+      new Map([[key, "assets/pic.png"]]),
+    )
+    expect(plan.kind).toBe("markdown")
+    expect(plan.text).toBe("![](assets/pic.png)")
+  })
+
   it("resolves an asset from the supplied map", () => {
     const prepared = plain('<p><img src="data:image/png;base64,AAAA" alt="pic"></p>', "pic")
     const key = prepared.assets[0].key

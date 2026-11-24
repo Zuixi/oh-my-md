@@ -4,9 +4,13 @@ const WORD =
 // Leading YAML front matter is metadata, not prose — excluded from counts.
 // Same ambiguity as any CommonMark parser: a stray hr pair at the doc start
 // also matches, which is the accepted price of the heuristic.
-const FRONT_MATTER_LF = "---\n"
-const FRONT_MATTER_CRLF = "---\r\n"
-const FRONT_MATTER_CLOSE = "\n---"
+/** A fence line is `---` plus optional trailing whitespace, with no leading
+ * whitespace — the same check `parse/frontMatter.ts` makes on a Lezer line. */
+function isFrontMatterFence(text: string, from: number, to: number): boolean {
+  let end = to
+  while (end > from && TRIM_WHITESPACE_CODES.has(text.charCodeAt(end - 1))) end -= 1
+  return end - from === 3 && text.startsWith("---", from)
+}
 
 /**
  * Every code unit `String.prototype.trim` strips (WhiteSpace + LineTerminator,
@@ -25,21 +29,29 @@ export interface DocumentStats {
 }
 
 /**
- * End of the leading front-matter block, or `0` when there is none. Mirrors
- * `/^---\r?\n[\s\S]*?\r?\n---\r?\n?/`: the first `\n---` after the opening
- * fence closes the block, and an optional `\r?\n?` is consumed after it.
+ * End of the leading front-matter block, or `0` when there is none.
+ *
+ * This must agree with `parse/frontMatter.ts`: the block opens only on the
+ * first line whose trimmed end is exactly `---`, closes on the next such line,
+ * and an unclosed block swallows the whole document. A prefix match such as
+ * `\n---` would close on `----` or `---text`, counting metadata as prose.
  */
 function frontMatterEnd(text: string): number {
-  const openEnd = text.startsWith(FRONT_MATTER_CRLF) ? FRONT_MATTER_CRLF.length
-    : text.startsWith(FRONT_MATTER_LF) ? FRONT_MATTER_LF.length
-    : 0
-  if (openEnd === 0) return 0
-  const close = text.indexOf(FRONT_MATTER_CLOSE, openEnd)
-  if (close < 0) return 0
-  let end = close + FRONT_MATTER_CLOSE.length
-  if (text.charCodeAt(end) === 0x0d) end += 1
-  if (text.charCodeAt(end) === 0x0a) end += 1
-  return end
+  let lineStart = 0
+  let first = true
+  for (;;) {
+    const newline = text.indexOf("\n", lineStart)
+    const lineEnd = newline < 0 ? text.length : newline
+    const fence = isFrontMatterFence(text, lineStart, lineEnd)
+    if (first) {
+      if (!fence) return 0
+      first = false
+    } else if (fence) {
+      return newline < 0 ? text.length : newline + 1
+    }
+    if (newline < 0) return text.length
+    lineStart = newline + 1
+  }
 }
 
 /**

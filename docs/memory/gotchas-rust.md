@@ -403,3 +403,57 @@ the cross-layer key: `crossLayerConstants.test.ts` pins the Rust
 `LOGGING_GENERATION_SETTINGS_KEY` string and asserts the TS `DEFAULT_SETTINGS`
 key set contains it. Sanitization is total (non-integer → 0), so a hand-edited
 settings file degrades to "no generation known", never to a parse failure.
+
+## Document/export IPC paths are not authorization
+
+`read_document`, `read_document_streaming`, `read_document_version`,
+`stat_document`, and `save_document` accept any absolute path and only *record*
+a file grant after a successful IO (the frontend got the path from a native
+dialog or the OS). That is the app's trust model, but it means the document
+commands are a general read/replace surface for a compromised webview, exactly
+what `scoped_io` removed `read_file`/`write_file` for. Do not describe them as
+authorized. Closing this needs Rust-owned dialogs/OS-open grants that record
+consent before the path reaches the webview; until then, every auxiliary sink
+(`allow_document_assets`, export, diagnostics) must check for an existing grant
+or pin its own shape. `allow_document_assets` now calls
+`authorized_document_directory` before widening recursive asset scope.
+
+## Non-regular files must fail before a buffered read
+
+`fs::read` on `/dev/zero` never terminates and a FIFO blocks a blocking-pool
+worker forever. `probe_disk_raw`, streaming open, stat, and version probes all
+require `metadata.is_file()` after canonicalization (following symlinks to
+regular files stays legal). Regression:
+`documents/tests_regular_file.rs`.
+
+## A completed window-close flush round poisons the next quit
+
+Every `FlushGate::begin` round sets `flushed`, including single-window closes
+while other editor windows survive. `ExitRequested` calls `prevent_exit()`
+before `consume_flushed()`, so the next ⌘Q consumed the stale flag, returned,
+and neither flushed nor exited. Clear the flag in the close round's finisher
+when editor windows remain; only the last-window handoff may keep it.
+
+## Diagnostics and export artifacts need their own path contract
+
+`export_diagnostics` used `File::create(path)` with no absolute/extension/
+symlink check and no atomic replace; a crash left a truncated zip and a stray
+invoke could truncate an unrelated file. Validate the shape (absolute, no
+traversal, `.zip`, no symlink/dir, existing parent) and stage+persist the zip.
+`export_preview` now also requires an absolute target and rejects symlinks, and
+its up-to-32-MiB atomic write runs on `spawn_blocking`, not a runtime worker.
+
+## Snapshot stamp + write is one critical section
+
+`next_snapshot_stamp` and `atomic_write` were not atomic together: two
+concurrent snapshots for the same file could pick the same millisecond and the
+second replaced the first restore point. `workspace/snapshots.rs` holds one
+`SNAPSHOT_WRITE_LOCK` around both, and reads at most `MAX + 1` bytes so a file
+growing past the cap is rejected instead of buffered.
+
+## One readiness deadline per export host
+
+The macOS WebKit host waited a hardcoded 5 s for `__omdExportReady` while
+Windows/Linux used the shared 20 s constant (and the warning text said 5 s).
+Both now derive from `EXPORT_READY_TIMEOUT_SECS`; the native test asserts
+parity instead of pinning 5.

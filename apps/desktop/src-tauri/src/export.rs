@@ -301,19 +301,29 @@ pub(crate) mod platform;
 #[tauri::command]
 pub async fn cancel_export(app: tauri::AppHandle, request_id: String) {
     let state = app.state::<self::export_cancel::ExportCancelState>();
-    if state.cancel(&request_id) {
+    if state.cancel(&request_id) != self::export_cancel::CancelOutcome::PreRegistered {
         return;
     }
     // The user can click Cancel while the frontend is still dispatching
-    // `export_preview`. If that command never reaches us, drop the pre-created
-    // entry rather than leaking it; an active export finishes far sooner than
-    // this grace period.
+    // `export_preview`. If that command never claims the entry, sweep it after
+    // 60 s; claimed entries are owned exclusively by `export_preview`.
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         app.state::<self::export_cancel::ExportCancelState>()
-            .remove(&request_id);
+            .remove_unclaimed(&request_id);
     });
+}
+
+struct ExportCancelGuard<'a> {
+    state: &'a self::export_cancel::ExportCancelState,
+    request_id: &'a str,
+}
+
+impl Drop for ExportCancelGuard<'_> {
+    fn drop(&mut self) {
+        self.state.remove(self.request_id);
+    }
 }
 
 // Eight parameters because the list *is* the IPC wire contract: collapsing it
@@ -335,19 +345,30 @@ pub async fn export_preview(
     let page = export_page::PageSetup::from_dto(page)?;
     let target = validate_export(&path, fmt, &html)?;
     let styled = styled_export_html(&html, &page);
+    if !self::export_cancel::valid_request_id(&request_id) {
+        return Err("invalid export request id".into());
+    }
     let state = app.state::<self::export_cancel::ExportCancelState>();
-    let cancel = state.token(&request_id);
+    let Some(cancel) = state.token(&request_id) else {
+        return Err("too many pending exports".into());
+    };
+    let _cancel_guard = ExportCancelGuard {
+        state: state.inner(),
+        request_id: &request_id,
+    };
     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-        state.remove(&request_id);
         return Err(self::export_cancel::EXPORT_CANCELLED.into());
     }
-    let result = platform::render(app.clone(), styled, spec, fmt, cancel.clone(), page).await;
-    state.remove(&request_id);
-    let output = result?;
+    let output = platform::render(app.clone(), styled, spec, fmt, cancel.clone(), page).await?;
     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(self::export_cancel::EXPORT_CANCELLED.into());
     }
-    crate::atomic_write(&target, &output.bytes)?;
+    // Up to 32 MiB plus fsync and a parent fsync: never on the runtime worker.
+    let bytes = output.bytes;
+    let write_target = target.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::atomic_write(&write_target, &bytes))
+        .await
+        .map_err(|error| format!("export write task failed: {error}"))??;
     // Boundary: the export artifact reached the disk. The path is logged
     // through the structured field so the diagnostics redactor can find it.
     log::info!("export ok {}", crate::logging::path_field(&target));
@@ -378,14 +399,25 @@ pub(crate) const PROBE_SCRIPT: &str = r#"JSON.stringify({
 
 fn reject_export_path(path: &str, format: ExportFormat) -> Result<PathBuf, String> {
     let target = Path::new(path);
+    // Same contract as `scoped_io::write_exported_html`: the save dialog always
+    // returns an absolute path, and `atomic_write` stages its temp file in the
+    // parent directory (a relative path would resolve against the process CWD).
+    if !target.is_absolute() {
+        return Err("export path must be absolute".into());
+    }
     if target
         .components()
         .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
     {
         return Err("path must not contain traversal".into());
     }
-    if target.is_dir() {
-        return Err("export path must be a file, not a directory".into());
+    if let Ok(existing) = std::fs::symlink_metadata(target) {
+        if existing.file_type().is_symlink() {
+            return Err("export path must not be a symlink".into());
+        }
+        if existing.is_dir() {
+            return Err("export path must be a file, not a directory".into());
+        }
     }
     let extension = target.extension().and_then(|extension| extension.to_str());
     match extension {

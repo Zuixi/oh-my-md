@@ -26,6 +26,7 @@ import {
 import { updateRestartReadiness } from "./updateRestartReadiness"
 import { RELEASES_URL, STARTUP_UPDATE_CHECK_MS, windowsSetupAssetUrl } from "./constants"
 import { flushLogs } from "./logging"
+import { getGlobalLogger } from "./logger"
 import { initLocale, t as localeT } from "./i18n"
 import { isMainWindow } from "./windowScope"
 import { isWindows } from "./platform"
@@ -59,6 +60,8 @@ export interface AppLifecycleHost {
   readonly applyAutoPair: (next: AutoPairOptions) => void
   readonly adoptRecovery: (draft: RecoveryDraft) => number | null
   readonly isOpening: () => boolean
+  /** Re-arms controllers a previous StrictMode cleanup disposed. */
+  readonly resetDisposed: () => void
   /** Tears down everything else this mount owns (autosave, outline, open). */
   readonly dispose: () => void
 }
@@ -75,6 +78,7 @@ export function useAppLifecycleEffects(host: AppLifecycleHost): void {
 
   useEffect(() => {
     host.mountedRef.current = true
+    host.resetDisposed()
     views.materializer.reset()
     views.ensureViews()
     if (!startupStartedRef.current) {
@@ -178,6 +182,10 @@ export function useAppLifecycleEffects(host: AppLifecycleHost): void {
   const tabs = store.getWorkspace().tabs
   useEffect(() => {
     views.ensureViews()
+    // `ensureViews` materializes every newly mounted tab (new tab, open path,
+    // restore). Activation is not the only way the live set grows, so the
+    // budget has to be enforced here as well as in `activateTab`.
+    host.tabs.evictOverBudget()
   }, [tabs])
 
   const folder = store.getWorkspace().folder
@@ -192,8 +200,14 @@ export function useAppLifecycleEffects(host: AppLifecycleHost): void {
       const save = services.saveSessionState?.(state) ?? Promise.resolve()
       sessionSaveInFlightRef.current = save
       // Local catch: a failed save is absorbed here so the in-flight promise
-      // cannot become an unhandled rejection (the flush side has its own guard).
-      void save.catch(() => {})
+      // cannot become an unhandled rejection (the flush side has its own guard),
+      // but it is still logged once rather than disappearing.
+      void save.catch(error => {
+        getGlobalLogger().warn(
+          "session",
+          `debounced session save failed: ${error instanceof Error ? error.message : "unknown"}`,
+        )
+      })
     }, SESSION_SAVE_DEBOUNCE_MS)
     return () => {
       if (sessionSaveTimerRef.current) window.clearTimeout(sessionSaveTimerRef.current)

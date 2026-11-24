@@ -60,6 +60,36 @@ impl PureWatchSets {
         all.dedup();
         all
     }
+
+    /// Routes a coalesced batch of changed paths to only the windows whose
+    /// watched set covers each path (component-wise prefix match so `/notes-2`
+    /// never leaks into a window watching `/notes`).
+    pub fn deliveries_for(&self, batch: &[PathBuf]) -> Vec<(String, Vec<String>)> {
+        let mut out = Vec::new();
+        for (window, watched) in &self.per_window {
+            let mut seen = HashSet::new();
+            let paths: Vec<String> = batch
+                .iter()
+                .filter(|path| {
+                    watched
+                        .iter()
+                        .any(|root| path.starts_with(root) || root.starts_with(path))
+                })
+                .filter_map(|path| {
+                    let text = path.to_string_lossy().into_owned();
+                    if seen.insert(text.clone()) {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !paths.is_empty() {
+                out.push((window.clone(), paths));
+            }
+        }
+        out
+    }
 }
 
 pub fn install(app: &AppHandle) {
@@ -96,20 +126,15 @@ fn spawn_event_loop(app: AppHandle, receiver: Receiver<PathBuf>) {
                 batch.push(path);
             }
         }
-        let mut seen = HashSet::new();
-        let paths: Vec<String> = batch
-            .into_iter()
-            .filter_map(|path| {
-                let text = path.to_string_lossy().into_owned();
-                if seen.insert(text.clone()) {
-                    Some(text)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if !paths.is_empty() {
-            let _ = app.emit(WORKSPACE_CHANGED_EVENT, paths);
+        let deliveries = {
+            let state_guard = app.state::<Mutex<WatcherState>>();
+            let Ok(state) = state_guard.lock() else {
+                continue;
+            };
+            state.sets.deliveries_for(&batch)
+        };
+        for (label, paths) in deliveries {
+            let _ = app.emit_to(&label, WORKSPACE_CHANGED_EVENT, paths);
         }
     });
 }
@@ -262,5 +287,33 @@ mod tests {
         // the guard is per command input and every invoke is a single window.
         assert_eq!(state.per_window["main"].len(), MAX_WATCHED_PATHS);
         assert_eq!(state.union().len(), MAX_WATCHED_PATHS + 1);
+    }
+
+    #[test]
+    fn deliveries_route_events_only_to_windows_watching_that_path() {
+        let mut state = PureWatchSets::default();
+        state.set("main", vec![p("/notes")]);
+        state.set("editor-2", vec![p("/notes-2"), p("/solo/doc.md")]);
+
+        let deliveries = state.deliveries_for(&[
+            p("/notes/a.md"),
+            p("/notes/a.md"),
+            p("/notes-2/b.md"),
+            p("/solo/doc.md"),
+            p("/unrelated/c.md"),
+        ]);
+        let by_window: HashMap<String, Vec<String>> = deliveries.into_iter().collect();
+        assert_eq!(
+            by_window.get("main"),
+            Some(&vec!["/notes/a.md".to_string()]),
+            "/notes-2 must not match /notes"
+        );
+        assert_eq!(
+            by_window.get("editor-2"),
+            Some(&vec![
+                "/notes-2/b.md".to_string(),
+                "/solo/doc.md".to_string(),
+            ])
+        );
     }
 }

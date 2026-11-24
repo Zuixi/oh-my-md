@@ -187,12 +187,42 @@ fn is_inside_root(scope: &str, canonical: &Path) -> bool {
     })
 }
 
+/// Resolves a watch target only when it already exists and belongs to this
+/// window's workspace roots or opened/saved document files.
+pub fn authorized_watch_path(window_label: &str, path: &Path) -> Option<PathBuf> {
+    reject_traversal(path).ok()?;
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let scopes = scopes();
+    let auth = scopes.get(window_label)?;
+    let inside_root = auth
+        .roots
+        .iter()
+        .any(|root| canonical == *root || canonical.starts_with(root));
+    if inside_root || auth.files.contains(&canonical) {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
 /// Workspace root for `allow_workspace_dir`: absolute, no traversal, existing
 /// directory.
 pub(crate) fn workspace_directory(path: &Path) -> Result<PathBuf, String> {
     absolute_path(path)
         .map_err(|_| "workspace path must be an absolute path without traversal".to_string())?;
     std::fs::canonicalize(path).map_err(|e| format!("failed to resolve workspace directory: {e}"))
+}
+
+/// Asset scope is recursive and the asset protocol serves files back to the
+/// webview, so only a document this window already opened/saved (or one inside
+/// its workspace root) may widen it. Without this check any absolute path would
+/// grant `allow_directory(parent, recursive)`.
+pub fn authorized_document_directory(
+    window_label: Option<&str>,
+    document_path: &Path,
+) -> Result<PathBuf, String> {
+    assert_file_or_workspace_authorized(window_label, document_path)?;
+    document_directory_for_assets(document_path)
 }
 
 /// Directory that holds a document's assets (and that the asset protocol needs
@@ -322,5 +352,41 @@ mod tests {
         assert!(document_directory_for_assets(Path::new("relative/document.md")).is_err());
         assert!(document_directory_for_assets(&directory.join("../document.md")).is_err());
         std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn authorized_watch_path_restricts_watches_to_window_scope() {
+        let workspace = tmp("watch-ws");
+        let outside = tmp("watch-outside");
+        let inside_doc = workspace.join("a.md");
+        let standalone_doc = outside.join("solo.md");
+        let sibling_doc = outside.join("other.md");
+        std::fs::write(&inside_doc, "a").unwrap();
+        std::fs::write(&standalone_doc, "b").unwrap();
+        std::fs::write(&sibling_doc, "c").unwrap();
+
+        authorize_workspace_root("watch-w1", &workspace).unwrap();
+        authorize_document_file("watch-w1", &standalone_doc).unwrap();
+
+        assert_eq!(
+            authorized_watch_path("watch-w1", &workspace),
+            Some(std::fs::canonicalize(&workspace).unwrap())
+        );
+        assert_eq!(
+            authorized_watch_path("watch-w1", &inside_doc),
+            Some(std::fs::canonicalize(&inside_doc).unwrap())
+        );
+        assert_eq!(
+            authorized_watch_path("watch-w1", &standalone_doc),
+            Some(std::fs::canonicalize(&standalone_doc).unwrap())
+        );
+        assert_eq!(authorized_watch_path("watch-w1", &outside), None);
+        assert_eq!(authorized_watch_path("watch-w1", &sibling_doc), None);
+        assert_eq!(authorized_watch_path("watch-w2", &workspace), None);
+
+        revoke_window("watch-w1");
+        assert_eq!(authorized_watch_path("watch-w1", &workspace), None);
+        std::fs::remove_dir_all(workspace).ok();
+        std::fs::remove_dir_all(outside).ok();
     }
 }

@@ -223,3 +223,22 @@ fn windows_browser_args_match_the_main_window_config() {
         Some(WINDOWS_ADDITIONAL_BROWSER_ARGS)
     );
 }
+
+#[test]
+fn validate_export_requires_an_absolute_path() {
+    let html = "<p>hi</p>";
+    assert!(validate_export("out/relative.pdf", ExportFormat::Pdf, html).is_err());
+    assert!(validate_export("out", ExportFormat::Png, html).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_export_rejects_a_symlink_target() {
+    let html = "<p>hi</p>";
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.pdf");
+    std::fs::write(&real, b"old").unwrap();
+    let link = dir.path().join("link.pdf");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(validate_export(link.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
+}

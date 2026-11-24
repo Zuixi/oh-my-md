@@ -190,6 +190,10 @@ pub(super) fn print_pdf(
     let op = unsafe { webview.printOperationWithPrintInfo(&print_info) };
     op.setShowsPrintPanel(false);
     op.setShowsProgressPanel(false);
+    let header_title = &delegate.page_setup().header_title;
+    if !header_title.is_empty() {
+        op.setJobTitle(Some(&NSString::from_str(header_title)));
+    }
 
     let run_delegate = PrintRunDelegate::create(
         mtm,

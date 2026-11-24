@@ -8,7 +8,7 @@
 import { useEffect, useRef } from "react"
 import type { DesktopServices } from "./desktopServices"
 import type { EditorSession } from "./session"
-import { sessionPath } from "./session"
+import { sessionContentLoaded, sessionPath } from "./session"
 import { emptyFileTree, setChildren, type FileTreeModel, type TreeEntry } from "./fileTreeState"
 import { pathWithinDir } from "./workspace"
 
@@ -42,6 +42,16 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
   latest.current = host
   const { services, watchMs, folder, tabs, searchOpen } = host
   const pollInFlightRef = useRef(false)
+  // Share one authorization promise per folder so `listDir` and `watchPaths`
+  // both wait for `allowWorkspaceDir` without issuing duplicate IPC calls.
+  const folderAuthRef = useRef<{ folder: string; ready: Promise<void> } | null>(null)
+
+  const ensureFolderAuthorized = (targetFolder: string): Promise<void> => {
+    if (folderAuthRef.current?.folder === targetFolder) return folderAuthRef.current.ready
+    const ready = Promise.resolve(services.allowWorkspaceDir?.(targetFolder)).catch(() => {})
+    folderAuthRef.current = { folder: targetFolder, ready }
+    return ready
+  }
 
   // Poll rounds overlap on Windows (recursive folder watch + per-file watch);
   // one in-flight round is enough for every consumer.
@@ -57,7 +67,7 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
     const listDir = services.listDir
     latest.current.commitTree(emptyFileTree())
     // Authorize first: list_dir only serves directories this window was granted.
-    void Promise.resolve(services.allowWorkspaceDir?.(folder)).then(() => listDir(folder)).then(entries => {
+    void ensureFolderAuthorized(folder).then(() => listDir(folder)).then(entries => {
       if (cancelled) return
       latest.current.treeActions.clearTreeError(folder)
       latest.current.commitTree(setChildren(emptyFileTree(), folder, entries))
@@ -96,15 +106,27 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
     })
   }, [services])
 
-  // Keep Rust's watch set in sync with the folder and open files outside it.
+  // Keep Rust's watch set in sync with the folder and loaded open files outside it.
+  // Wait for the folder grant first so `watch_paths` sees the authorized workspace root.
   useEffect(() => {
-    if (!services.watchPaths) return
+    const watchPaths = services.watchPaths
+    if (!watchPaths) return
+    let cancelled = false
     const paths = new Set<string>()
     if (folder) paths.add(folder)
     for (const tab of tabs) {
+      if (!sessionContentLoaded(tab)) continue
       const path = sessionPath(tab)
       if (path && (!folder || !pathWithinDir(path, folder))) paths.add(path)
     }
-    void services.watchPaths([...paths])
+    const targetPaths = [...paths]
+    if (!folder) {
+      void watchPaths(targetPaths)
+      return
+    }
+    void ensureFolderAuthorized(folder).then(() => {
+      if (!cancelled) void watchPaths(targetPaths)
+    })
+    return () => { cancelled = true }
   }, [folder, tabs, services])
 }

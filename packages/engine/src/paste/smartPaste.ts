@@ -123,7 +123,11 @@ function canUsePlainCandidate(
   state: EditorState,
   pos: number,
 ): boolean {
-  if (plainText === "") return true
+  // Empty visible text is not the same as an empty document. An image-only (or
+  // otherwise structure-only) clipboard has no text/plain payload, but its
+  // semantic blocks still carry the content; taking the plain path would insert
+  // nothing and leave the already-written asset unreferenced.
+  if (plainText === "") return document.blocks.length === 0
   if (document.blocks.some(block => block.type !== "paragraph" || !block.children.every(isPlainInline))) {
     return false
   }

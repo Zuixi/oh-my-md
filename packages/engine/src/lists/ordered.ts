@@ -14,6 +14,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view"
 import { safeModeRenderingEnabled } from "../safeModeRendering"
 import { editorPerformancePolicy } from "../performancePolicy"
 import { suppressOrderedRenumberForTableEdit, isTableSessionRestore } from "../tables/directEdit"
+import { mergeRanges } from "../decorations/ranges"
 
 export interface OrderedMarkChange {
   from: number
@@ -357,23 +358,6 @@ export function rejectOrderedListNormalization(
   }
 }
 
-// Range merging (same semantics as decorations/build.ts::mergeRanges: ascending, overlapping or
-// adjacent ranges collapse). Inlined because lists/ cannot depend back on decorations/ (blocks.ts
-// already depends on this module's orderedLabel, which would close a cycle). A list straddling two
-// ranges that still are not adjacent can be entered twice; dedupeMarkChanges drops the repeats.
-function mergeRenumberRanges(ranges: OrderedRenumberRange[]): OrderedRenumberRange[] {
-  const sorted = ranges
-    .filter(range => range.from <= range.to)
-    .sort((a, b) => a.from - b.from || a.to - b.to)
-  const merged: { from: number; to: number }[] = []
-  for (const range of sorted) {
-    const previous = merged[merged.length - 1]
-    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to)
-    else merged.push({ ...range })
-  }
-  return merged
-}
-
 // Visible anchors: CM's half-open [from, to) endpoints participate as positions unchanged (unlike
 // buildDriver.visibleRegions, which closes them to [from, to-1]); an empty viewport falls back to
 // the caret, because the type contract does not promise a non-empty list.
@@ -480,7 +464,7 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
       captured.push({ from: fromB, to: toB })
     })
     this.scanPlan = {
-      changed: mergeRenumberRanges([
+      changed: mergeRanges([
         ...this.scanPlan.changed.map(range => mapRenumberRange(range, update.changes)),
         ...captured,
       ]),
@@ -537,7 +521,7 @@ export const orderedRenumber = ViewPlugin.fromClass(class {
     margin: number,
   ): OrderedRenumberRange[] {
     const length = this.view.state.doc.length
-    return mergeRenumberRanges(ranges.map(range => ({
+    return mergeRanges(ranges.map(range => ({
       from: Math.max(0, range.from - margin),
       to: Math.min(length, range.to + margin),
     })))

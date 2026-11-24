@@ -5,8 +5,9 @@ import {
   type Transaction,
 } from "@codemirror/state"
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
-import type { Parser, SyntaxNode, Tree } from "@lezer/common"
+import type { Parser, Tree } from "@lezer/common"
 import { markdownLanguageSupport } from "../parse/markdown"
+import { destinationOf, titleOf } from "./inlineText"
 
 /** The bounded text reader a semantic accessor is given. */
 export interface MarkdownSlice {
@@ -69,22 +70,6 @@ function normalizeLabel(raw: string): string {
   return label.trim().replace(/\s+/g, " ").toLowerCase()
 }
 
-function destinationOf(raw: string): string {
-  const text = raw.trim()
-  return text.length >= 2 && text.startsWith("<") && text.endsWith(">") ? text.slice(1, -1) : text
-}
-
-function titleOf(node: SyntaxNode, slice: SliceFn): string | null {
-  const title = node.getChild("LinkTitle")
-  if (!title) return null
-  const raw = slice(title.from, title.to).trim()
-  if (raw.length < 2) return raw || null
-  const open = raw[0]
-  const close = open === "(" ? ")" : open
-  if ((open === '"' || open === "'" || open === "(") && raw.endsWith(close)) return raw.slice(1, -1)
-  return raw
-}
-
 /**
  * The extent we may read without forcing the parser: the committed tree is a
  * prefix of the document, and pulling the parser forward here would make every
@@ -126,7 +111,7 @@ function collectDefinitions(tree: Tree, range: Range, slice: SliceFn): Definitio
         to: node.to,
         label: key,
         href: destinationOf(slice(url.from, url.to)),
-        title: titleOf(node.node, slice),
+        title: titleOf(node.node.getChild("LinkTitle"), { sliceString: slice }),
       })
       return false
     },

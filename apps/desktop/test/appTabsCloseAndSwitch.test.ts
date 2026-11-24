@@ -4,7 +4,7 @@ import { createTabLifecycle, type TabLifecycleDeps } from "../src/appTabs"
 import { createDocumentMaterializer, type DocumentMaterializer } from "../src/documentMaterializer"
 import { createDocumentScaleRegistry } from "../src/documentScaleRegistry"
 import { createDocumentStore, type DocumentStore } from "../src/documentStore"
-import { createEditorRegistry } from "../src/editorRegistry"
+import { MAX_LIVE_EDITOR_VIEWS, createEditorRegistry } from "../src/editorRegistry"
 import { createSession, lazyFileSession, type EditorSession } from "../src/session"
 import { createWorkspace, type Workspace } from "../src/workspace"
 import type { DocumentViews } from "../src/documentViews"
@@ -167,6 +167,20 @@ function evictAllBut(harness: Harness, keepTabId: number): void {
     maxLiveViews: 1,
   })
 }
+
+describe("live view budget", () => {
+  it("evicts after non-activation mounts, not only on tab activation", () => {
+    const tabs = Array.from({ length: MAX_LIVE_EDITOR_VIEWS + 2 }, (_, index) => createSession(index + 1))
+    const harness = makeHarness({ tabs, activeId: tabs[tabs.length - 1].id })
+    for (const tab of tabs) harness.mountView(tab.id, "")
+    expect(harness.registry.views().size).toBe(MAX_LIVE_EDITOR_VIEWS + 2)
+
+    harness.lifecycle.evictOverBudget()
+
+    expect(harness.registry.views().size).toBe(MAX_LIVE_EDITOR_VIEWS)
+    expect(harness.registry.getView(tabs[tabs.length - 1].id)).toBeDefined()
+  })
+})
 
 describe("closing the active tab", () => {
   it("revives the LRU-evicted neighbor instead of activating a viewless tab", () => {

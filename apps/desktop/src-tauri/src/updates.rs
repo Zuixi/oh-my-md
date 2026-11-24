@@ -213,10 +213,6 @@ pub(crate) async fn prepare_update_restart(app: tauri::AppHandle) -> PrepareUpda
     .await
     .unwrap_or(PrepareUpdateRestartResult::TimedOut);
 
-    // This round kept the app running, so it must not leave the one-shot
-    // "already flushed" marker behind — otherwise the next ordinary quit
-    // would skip its own flush and lose the session snapshot.
-    gate.consume_flushed();
     // A quit that arrived while this round was in flight was queued; run it
     // now that the round finished instead of leaving it waiting forever.
     crate::app_lifecycle::drain_flush_followup(&app);

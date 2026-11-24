@@ -446,13 +446,10 @@ click, so the wrong window executes the command (and each window's
 
 The fix pattern is pinning the listener's own label:
 `listen(event, handler, { target: { kind: "AnyLabel", label: getCurrentWindow().label } })`
-— wrapped as `listenTarget()` in `desktopServices.ts`. Exactly three
-listeners must stay scoped: `listenSessionFlush`, `listenMenu`, and
-`listenOpenFile`, matching the three Rust `emit_to` sites
-(`session-flush`, `menu-command`, `open-file`). Broadcast `emit` (e.g.
-`workspace-changed` from `watcher.rs`) still reaches `AnyLabel` listeners —
-that is why `listenWorkspaceChange` safely keeps the default Any target:
-every window needs watcher events. Any new Rust `emit_to` needs its JS
+— wrapped as `listenTarget()` in `desktopServices.ts`. All four window-scoped
+listeners must stay scoped: `listenSessionFlush`, `listenMenu`, `listenOpenFile`,
+and `listenWorkspaceChange`, matching the four Rust `emit_to` sites
+(`session-flush`, `menu-command`, `open-file`, `workspace-changed`). Any new Rust `emit_to` needs its JS
 listener registered through `listenTarget()`, or it will work perfectly
 with one window and cross-talk the moment a second one opens.
 
@@ -750,3 +747,32 @@ Traps this cost real debugging:
 `test/e2eProcessSupervisor.test.ts` is the guard: pure selection cases plus two real-OS cases
 (SIGTERM → 143, closed stdout pipe → 141) that assert all spawned processes are gone and the
 temp directory is removed. Keep them process-based — a mocked reaper proves nothing here.
+
+## A ref initialized to a no-op must be assigned at the composition root
+
+`App` passes many per-render functions to once-created coordinators through
+`useRef`. `expandToPathRef` was created as `async () => {}` and never assigned,
+so every open path silently skipped revealing its ancestors in the tree. An
+unassigned ref is a success-shaped no-op: it type-checks, tests that don't
+observe the side effect stay green, and the feature is simply absent. Assign it
+next to the other `*Ref.current = …` lines and cover the observable effect
+(`test/App.quickOpen.test.tsx` asserts the ancestor directory is listed).
+
+## The live-view budget is enforced after every `ensureViews`, not only activation
+
+`MAX_LIVE_EDITOR_VIEWS` is a property of the registry, but eviction used to run
+only in `activateTab`. `newTab`, `openPath(..., inNewTab)`, recovery adoption
+and Hot Exit restore all commit a new workspace and then `ensureViews()` mounts
+a view, so opening N files kept N live CodeMirror views until an existing tab
+was clicked. Call `tabs.evictOverBudget()` in the `[tabs]` effect right after
+`ensureViews()` (the activation call stays). Regression:
+`test/appTabsCloseAndSwitch.test.ts` — "evicts after non-activation mounts".
+
+## A once-per-mount controller must survive StrictMode's cleanup
+
+`outlineController` is created with `useState` and subscribes to the store at
+construction. The mount-effect cleanup called `dispose()`, which unsubscribed;
+React StrictMode's setup → cleanup → setup then left the panel updating only on
+explicit refreshes. Give such controllers a `reset()` that re-subscribes (the
+materializer already has one) and call it at the top of the mount effect.
+Regression: `test/outlineController.test.ts`.

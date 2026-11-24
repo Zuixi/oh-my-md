@@ -1,4 +1,5 @@
 import type { MarkdownConfig, MarkdownParser } from "@lezer/markdown"
+import { lineDepth } from "./lineDepth"
 import { CHAR_BACKSLASH, CHAR_DOLLAR, CHAR_NEWLINE, CHAR_SPACE } from "./chars"
 import { isEscaped } from "./scan"
 
@@ -36,7 +37,7 @@ export const Math: MarkdownConfig = {
       }
       // 多行：吞到以 $$ 结尾的行（含该行）
       // Line.depth 运行时存在但类型缺失（同 footnotes.ts 的 cast）
-      while (cx.nextLine() && (line as unknown as { depth: number }).depth >= cx.depth) {
+      while (cx.nextLine() && lineDepth(line) >= cx.depth) {
         to = cx.lineStart + line.text.length
         const trimmed = line.text.trimEnd()
         if (trimmed.endsWith("$$")) {

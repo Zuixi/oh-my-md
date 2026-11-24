@@ -71,11 +71,21 @@ export function decodeShieldedPipes(text: string): string {
 }
 
 // 语法标记节点本身不渲染，只用于在遍历时定位真正的文本内容。
-const SKIPPED = new Set([
+export const CELL_HIDDEN_NODES: ReadonlySet<string> = new Set([
   "EmphasisMark", "StrikethroughMark", "HighlightMark", "UnderlineMark", "KbdMark",
   "LinkMark", "CodeMark", "MathMark", "HeaderMark", "ListMark", "QuoteMark",
   "TaskMarker", "URL", "CodeInfo", "TableDelimiter", "RiseMark",
 ])
+
+const HTML_BR_TAG_RE = /^<br\s*\/?>$/i
+const HTML_HR_TAG_RE = /^<hr\s*\/?>$/i
+
+/** Recognizes standalone `<br>` / `<hr>` HTML tags rendered as break/rule elements inside table cells. */
+export function cellHtmlBreakTag(raw: string): "br" | "hr" | null {
+  if (HTML_BR_TAG_RE.test(raw)) return "br"
+  if (HTML_HR_TAG_RE.test(raw)) return "hr"
+  return null
+}
 
 // 取首尾一对 mark 之间的内容，兼容 `` ` `` / `` `` ` `` `` 等不同宽度。
 function betweenMarks(node: SyntaxNode, src: string, markName: string): string {
@@ -150,8 +160,8 @@ function cellChild(node: SyntaxNode, src: string, ctx: CellContext): CellNode | 
     }
     case "HTMLTag": {
       const raw = src.slice(node.from, node.to)
-      if (/^<br\s*\/?>/i.test(raw)) return { type: "br" }
-      if (/^<hr\s*\/?>/i.test(raw)) return { type: "hr" }
+      const breakTag = cellHtmlBreakTag(raw)
+      if (breakTag) return { type: breakTag }
       return { type: "text", text: raw }
     }
     case "BulletList": return { type: "ul", children: cellChildren(node, src, ctx) }
@@ -171,7 +181,7 @@ function cellChild(node: SyntaxNode, src: string, ctx: CellContext): CellNode | 
     case "SetextHeading1": case "SetextHeading2":
       return { type: "strong", children: trimOuterText(cellChildren(node, src, ctx)) }
   }
-  if (SKIPPED.has(node.name)) return null
+  if (CELL_HIDDEN_NODES.has(node.name)) return null
   return { type: "text", text: src.slice(node.from, node.to) }
 }
 

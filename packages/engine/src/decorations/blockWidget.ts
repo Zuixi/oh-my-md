@@ -1,5 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view"
-import type { EditorState, StateEffect } from "@codemirror/state"
+import type { StateEffect } from "@codemirror/state"
 import {
   deferBlockRender, dropPendingBlockRender, type PendingRender, withinRenderBudget,
 } from "./renderBudget"
@@ -47,10 +47,7 @@ export function applyBlockEmbed(el: HTMLElement, embed: BlockEmbed): void {
 // 边界算块内（root cause C）：敲完 closing fence 光标恰停在 node.to，
 // 若算块外，widget 会在打字中途吞掉整块、光标被卡死在边界。
 // 光标彻底离开块后才渲染 widget（Typora 行为）。
-export function blockSelected(state: EditorState, from: number, to: number) {
-  const { from: sf, to: st } = state.selection.main
-  return sf <= to && st >= from && !(sf <= from && st >= to)
-}
+export { blockSelected } from "./blockSelection"
 
 // 统一块 widget 生命周期：创建(src) → toDOM/renderInto(可异步)
 // → eq 按 src/embed 比较（文本和嵌套位置均未变时不重渲染） → 点击任意处把光标放进

@@ -158,8 +158,11 @@ export async function restoreSavedSession(
           }
           firstTabOpened = true
           activeTabId = updated.id
-        } catch {
-          /* skip unreadable files */
+        } catch (error) {
+          getGlobalLogger().warn(
+            "session",
+            `skipped unreadable session tab ${pathField(path)}: ${error instanceof Error ? error.message : "unknown"}`,
+          )
         }
       }
 
@@ -170,8 +173,13 @@ export async function restoreSavedSession(
         host.syncDoc(host.getContents(active.id), active.id)
       }
     }
-  } catch {
-    /* tolerate session restore failure */
+  } catch (error) {
+    // Restoring a partial session is acceptable; losing the whole shard
+    // silently is not. The caller still opens an empty workspace.
+    getGlobalLogger().warn(
+      "session",
+      `session restore failed: ${error instanceof Error ? error.message : "unknown"}`,
+    )
   }
   return claimedRecoveryKeys
 }

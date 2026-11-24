@@ -320,10 +320,10 @@ function isDocumentErrorCode(code: string): code is DocumentErrorCode {
 
 /**
  * Registration target for window-scoped events. Rust emits `menu-command`,
- * `open-file`, and the session-flush event with `emit_to(<this window>)`;
- * the JS `listen()` default (`{ kind: "Any" })` would ALSO receive every
- * other window's targeted events, so each listener must pin its own label.
- * Broadcast `emit`s (e.g. `workspace-changed`) still reach AnyLabel listeners.
+ * `open-file`, `workspace-changed`, and the session-flush event with
+ * `emit_to(<this window>)`; the JS `listen()` default (`{ kind: "Any" }`)
+ * would ALSO receive every other window's targeted events, so each listener
+ * must pin its own label.
  */
 function listenTarget(): { kind: "AnyLabel"; label: string } {
   return { kind: "AnyLabel", label: getCurrentWindow().label }
@@ -637,7 +637,11 @@ export const defaultServices: DesktopServices = {
     return () => { void pending.then(unlisten => unlisten()) }
   },
   listenWorkspaceChange: handler => {
-    const pending = listen<string[]>("workspace-changed", event => handler(event.payload))
+    const pending = listen<string[]>(
+      "workspace-changed",
+      event => handler(event.payload),
+      { target: listenTarget() },
+    )
     return () => { void pending.then(unlisten => unlisten()) }
   },
   watchPaths: async paths => {

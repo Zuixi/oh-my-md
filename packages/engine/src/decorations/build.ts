@@ -24,7 +24,7 @@ import { revealTableSource } from "../tables/sourceReveal"
 import { editorReferenceContext } from "../semantic/references"
 import { collectOrderedListLabels } from "../lists/ordered"
 
-export { nearCursor, type DecoSpec } from "./types"
+export { type DecoSpec } from "./types"
 export { mergeRanges } from "./ranges"
 
 // 大文档（50MB 级）全量装饰同步构建会冻结数秒 —— live 预览改为渐进：
@@ -80,7 +80,7 @@ export function collectDecorationSpecs(state: EditorState, from: number, to: num
 //   Rule 3 — 行首原子（from === line.from）与跨行原子（to > line.to）不进原子区间：
 //     skipAtomsForSelection 对指针选区端点做循环外推，这两类原子让外推跨过换行符、
 //     级联高亮下一行（“点击选中连带下一行”）。行首标记退出后不会产生不可见光标：
-//     nearCursor 的行级显源码会把整行展开（自愈路径）。
+//     行级显源码会把整行展开（自愈路径）。
 //   Rule 4 — 硬换行 marker（行末 `\` / 行末空格）不进原子区间：它紧贴换行符结束，
 //     skipAtoms 会把「行末」的光标位推过换行符，表现为点击行末/← 落到下一行、
 //     拖选连带下一行。显式按 tag 排除，不靠 Rule 3 的边界算术。

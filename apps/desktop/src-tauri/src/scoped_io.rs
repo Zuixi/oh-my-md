@@ -23,6 +23,61 @@ pub async fn read_custom_css(path: String) -> Result<String, String> {
         .map_err(|error| format!("read task failed: {error}"))?
 }
 
+/// Opens `path` only if it is a regular file, without blocking on POSIX FIFOs.
+///
+/// A plain `File::open` on a writerless named pipe (`mkfifo`) blocks forever
+/// inside `open(2)` before `file.metadata()` can run, whereas checking
+/// `fs::metadata` before `File::open` has a swap window. Opening with
+/// `O_NONBLOCK` on Unix returns immediately, `fstat` validates the open fd, and
+/// `fcntl` clears `O_NONBLOCK` before returning the handle to callers.
+pub(crate) fn open_regular_file(
+    path: &Path,
+) -> std::io::Result<(std::fs::File, std::fs::Metadata)> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path is not a regular file",
+            ));
+        }
+        // Clear O_NONBLOCK on the verified regular-file descriptor.
+        let fd = file.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags >= 0 {
+            let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) };
+        }
+        Ok((file, metadata))
+    }
+    #[cfg(not(unix))]
+    {
+        let pre = std::fs::metadata(path)?;
+        if !pre.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path is not a regular file",
+            ));
+        }
+        let file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path is not a regular file",
+            ));
+        }
+        Ok((file, metadata))
+    }
+}
+
 fn read_custom_css_impl(path: &str) -> Result<String, String> {
     let target = Path::new(path);
     validate_target(target)?;
@@ -37,11 +92,13 @@ fn read_custom_css_impl(path: &str) -> Result<String, String> {
     if !has_extension(&canonical, &[CSS_EXTENSION]) {
         return Err("custom CSS target must use a .css extension".into());
     }
-    let mut file = std::fs::File::open(&canonical).map_err(|e| e.to_string())?;
-    let metadata = file.metadata().map_err(|e| e.to_string())?;
-    if !metadata.is_file() {
-        return Err("custom CSS path is not a regular file".into());
-    }
+    let (file, metadata) = open_regular_file(&canonical).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidInput {
+            "custom CSS path is not a regular file".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
     if metadata.len() > MAX_CUSTOM_CSS_BYTES {
         return Err(format!(
             "custom CSS exceeds the {} byte size limit",
@@ -49,8 +106,15 @@ fn read_custom_css_impl(path: &str) -> Result<String, String> {
         ));
     }
     let mut contents = String::new();
-    file.read_to_string(&mut contents)
+    file.take(MAX_CUSTOM_CSS_BYTES + 1)
+        .read_to_string(&mut contents)
         .map_err(|e| e.to_string())?;
+    if contents.len() as u64 > MAX_CUSTOM_CSS_BYTES {
+        return Err(format!(
+            "custom CSS exceeds the {} byte size limit",
+            MAX_CUSTOM_CSS_BYTES
+        ));
+    }
     Ok(contents)
 }
 
@@ -96,7 +160,7 @@ fn write_exported_html_impl(path: &str, contents: String) -> Result<(), String> 
 
 /// Absolute path with no `.`/`..` components. The save dialog already returns
 /// such a path, so anything else is a caller bug or an injection attempt.
-fn validate_target(target: &Path) -> Result<(), String> {
+pub(crate) fn validate_target(target: &Path) -> Result<(), String> {
     if !target.is_absolute() {
         return Err("path must be absolute".into());
     }
@@ -109,7 +173,7 @@ fn validate_target(target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn has_extension(target: &Path, allowed: &[&str]) -> bool {
+pub(crate) fn has_extension(target: &Path, allowed: &[&str]) -> bool {
     target
         .extension()
         .and_then(|extension| extension.to_str())
@@ -280,6 +344,22 @@ mod tests {
 
         assert!(error.contains("symlink"), "unexpected error: {error}");
         assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_css_rejects_writerless_fifo_without_blocking() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tmp("css-fifo");
+        let fifo = dir.join("pipe.css");
+        let c_path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        let error = read_custom_css_impl(&path_string(&fifo)).unwrap_err();
+        assert!(error.contains("regular file"), "unexpected error: {error}");
         fs::remove_dir_all(dir).ok();
     }
 }

@@ -96,6 +96,11 @@ pnpm verify                                                        # full test +
 - Prefer `const` over `let` and early returns over `else` branches.
 - Add comments for non-obvious invariants and browser/OS quirks, not for obvious control flow.
 
+### Language
+- **English is the source language for documentation and code comments.** All new or modified Markdown/AGENTS/README/spec text and source comments (TS/TSX/Rust/CSS/Python) must be written in English, so search, review, and agent context stay consistent.
+- **Do not mass-translate unrelated files.** Translate the section you are already editing; leave untouched non-English text for a dedicated cleanup. New files must be English from the start.
+- **Localized user-facing content is exempt:** `README-zh.md`, Chinese guides under `docs/guides/`, i18n message tables, and user-visible UI copy stay in their target language. Chinese text quoted as data, fixtures, or test inputs is also exempt.
+
 ### Operational Safety
 - Inspect the working-tree diff before editing. Preserve unrelated WIP, including changes in files you touch; never switch branches, stash, revert, or clean up someone else's work without permission.
 - **Isolate parallel feature branches in `.worktrees/<name>`** when working concurrently so you never switch branches, stash, or revert unrelated WIP in the main checkout.

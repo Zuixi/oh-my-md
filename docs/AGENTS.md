@@ -16,6 +16,7 @@
 | Implementation steps / task breakdown                            | `superpowers/plans/`                         |
 | Known traps (index) and the per-domain `gotchas-*.md` deep files  | `memory/known-gotchas.md`                    |
 | Pre-release manual verification matrix                          | `manual-qa.md`                               |
+| Current implementation status (done / partial / not started)     | `process/implementation-status.md`           |
 | User-visible shortcuts / operations                             | `guides/`                                    |
 | Optional local competitor / benchmark notes                     | `competitors/` (untracked; may not exist)    |
 | A bug that spans multiple domains                               | Root `AGENTS.md`, then every affected guide  |
@@ -30,6 +31,7 @@ Still not sure? Read the directory map below.
 | `superpowers/plans/`          | Dated implementation plans with task breakdown     | Executing an approved feature (multi-step)         | A spec is approved; before coding                     |
 | `memory/known-gotchas.md`     | One-line trap index; deep entries in `gotchas-engine/desktop/rust.md` | Symptoms match a known trap               | You discover a trap that is reusable, not one-off     |
 | `manual-qa.md`                | Release verification checklist                     | Before a release / interaction-sensitive change    | User-visible behavior or the release matrix changes   |
+| `process/`                    | Living implementation status and deviations        | Planning the next batch / reviewing a merge        | A PR or batch changes state                           |
 | `guides/`                     | User-facing documentation                          | Explaining behavior to users                       | User-visible operations change                        |
 | `competitors/`                | Optional, untracked competitor analysis             | The local directory exists and the task needs it    | Explicitly requested local analysis only              |
 
@@ -50,6 +52,7 @@ Still not sure? Read the directory map below.
 - **`competitors/` is local-only.** It is matched by `.gitignore`
   (`docs/competitors/`) and may not exist. Create or use it only when explicitly
   requested; never commit or push its contents.
+- **Language:** new or edited documentation must be written in English; localized user-facing docs are exempt. See the root `AGENTS.md` §Code & Module Style → Language.
 - **Do not duplicate.** If the content already exists elsewhere (domain
   `AGENTS.md`, root `AGENTS.md`, README), link to it instead of restating it.
 - **CHANGELOG and README update at release time.** Run `pnpm release:changelog`

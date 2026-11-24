@@ -44,6 +44,15 @@ describe("front matter", () => {
     expect(t).toContain("line:omd-front-matter")
   })
 
+  it("treats an indented line-1 rule as a thematic break, not front matter", () => {
+    const doc = "  ---\n\nbody\n"
+    const t = tags(doc)
+    expect(t).not.toContain("widget:block:front-matter")
+    expect(t).not.toContain("line:omd-front-matter")
+    expect(t).toContain("widget:block:hr")
+    expect(documentStats(doc)).toEqual({ words: 1, chars: "---\n\nbody".length })
+  })
+
   it("keeps outline and stats free of front matter content", () => {
     const state = makeState("---\n# not a heading\n---\n\n# real\n")
     expect(collectOutline(state).map(item => item.text)).toEqual(["real"])

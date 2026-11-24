@@ -1441,3 +1441,29 @@ on every later transaction. `mapSpec` now drops a spec when `from > to`, or when
 `from === to` and the tag is not `line:`. Regression:
 `test/progressive.test.ts` — "drops specs whose range collapsed instead of
 drifting from the RangeSet".
+
+## Empty `text/plain` is not an empty clipboard
+
+`planSmartPaste`'s plain fast path used `plainText === ""` as "nothing to
+insert". An image-only clipboard has no text flavor, so the semantic document
+(and the image asset the desktop had already written) was discarded and an
+empty string was dispatched. The guard must be `document.blocks.length === 0`:
+structure can exist with zero visible text. Regression:
+`test/smartPaste.test.ts` — "keeps an image-only clipboard with no plain text
+on the structured path".
+
+## Front-matter stats must mirror the parser's line rule
+
+`documentStats` is often given only a string, so it re-detects front matter
+without a tree. Matching `\n---` as a prefix is wrong: `parse/frontMatter.ts`
+opens/closes on a line whose `trimEnd()` is exactly `---` and lets an unclosed
+block swallow the document. `----` and `---text` used to be counted as prose.
+Keep the line scanner and its parity test in `test/stats.test.ts` aligned with
+the Lezer config.
+
+## Fence language tokens keep the author's case
+
+`parseFenceInfo` preserves `Mermaid`/`PYTHON`; Shiki and export resolve
+case-insensitively. Compare `langToken.toLowerCase()` (or a single derived
+flag) for special renderers, or the same fence is a diagram on export and an
+unknown code block in preview. Regression: `test/blockwidgets.test.ts`.

@@ -66,6 +66,8 @@ function openFolderHarness() {
 describe("quick open", () => {
   it("opens via ⌘P, filters, and opens the chosen file", async () => {
     const harness = openFolderHarness()
+    const listDir = vi.fn(async () => [])
+    harness.services.listDir = listDir
     harness.renderApp()
     // Session restore must finish so the workspace folder is set before ⌘P.
     await waitFor(() => {
@@ -81,6 +83,11 @@ describe("quick open", () => {
 
     await waitFor(() => {
       expectPathShown("/notes/sub/beta.md")
+    })
+    // `openPath` must reveal the opened file: the ancestor directory is listed
+    // (and therefore expanded) through the coordinator's expandToPath ref.
+    await waitFor(() => {
+      expect(listDir).toHaveBeenCalledWith("/notes/sub")
     })
   })
 

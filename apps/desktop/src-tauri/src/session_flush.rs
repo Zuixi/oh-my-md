@@ -11,7 +11,6 @@
 //! in the app.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,7 +36,6 @@ pub enum FlushOutcome {
 #[derive(Default)]
 pub struct FlushGate {
     round: Arc<(Mutex<Option<Round>>, Condvar)>,
-    flushed: Arc<AtomicBool>,
     queued: Mutex<FlushQueue>,
     restart_flushed: Mutex<Option<Instant>>,
 }
@@ -93,7 +91,6 @@ impl FlushGate {
             *guard = Some(round);
         }
         let state = Arc::clone(&self.round);
-        let flushed = Arc::clone(&self.flushed);
         std::thread::spawn(move || {
             let (lock, cond) = &*state;
             let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -116,7 +113,6 @@ impl FlushGate {
             };
             *guard = None;
             drop(guard);
-            flushed.store(true, Ordering::Release);
             finish(outcome);
         });
         true
@@ -142,13 +138,6 @@ impl FlushGate {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_some()
-    }
-
-    /// One-shot pass-through flag: consumed by the ExitRequested handler
-    /// right after a window-path flush tore the last window down, so the
-    /// follow-up exit request is allowed through without re-flushing.
-    pub fn consume_flushed(&self) -> bool {
-        self.flushed.swap(false, Ordering::AcqRel)
     }
 
     /// Records that a restart staged its own flush. `ExitRequested` then lets
@@ -300,22 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn flushed_flag_is_consumed_once() {
-        let gate = FlushGate::default();
-        let (done_tx, done_rx) = mpsc::channel();
-        let targets = vec!["main".into()];
-        assert!(
-            gate.begin(Duration::from_secs(5), &targets, move |outcome| {
-                let _ = done_tx.send(outcome);
-            })
-        );
-        gate.ack("main");
-        assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
-        assert!(gate.consume_flushed());
-        assert!(!gate.consume_flushed());
-    }
-
-    #[test]
     fn ack_without_pending_round_is_noop() {
         let gate = FlushGate::default();
         gate.ack("main");
@@ -390,10 +363,10 @@ mod tests {
     }
 
     #[test]
-    fn update_round_outcome_is_observable_and_marker_clears_before_next_quit() {
+    fn update_round_outcome_is_observable_and_allows_subsequent_quit_rounds() {
         // Mirrors prepare_update_restart: the update command runs its own
-        // round, observes Acknowledged, keeps the app running, and clears the
-        // round's one-shot marker so a later ordinary quit still flushes.
+        // round, observes Acknowledged, keeps the app running, and leaves the
+        // gate clean so a later ordinary quit still runs its own flush round.
         let gate = FlushGate::default();
         let (done_tx, done_rx) = mpsc::channel();
         let targets = vec!["main".into()];
@@ -404,7 +377,14 @@ mod tests {
         );
         gate.ack("main");
         assert_eq!(await_finish(done_rx), FlushOutcome::Acknowledged);
-        assert!(gate.consume_flushed());
-        assert!(!gate.consume_flushed());
+        assert!(!gate.in_progress());
+        let (quit_tx, quit_rx) = mpsc::channel();
+        assert!(
+            gate.begin(Duration::from_secs(5), &targets, move |outcome| {
+                let _ = quit_tx.send(outcome);
+            })
+        );
+        gate.ack("main");
+        assert_eq!(await_finish(quit_rx), FlushOutcome::Acknowledged);
     }
 }

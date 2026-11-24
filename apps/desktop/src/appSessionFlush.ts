@@ -3,6 +3,7 @@ import type { RecoveryWriter } from "./recoveryWriter"
 import { recoveryKey, sessionDirty, sessionPath } from "./session"
 import { extractSessionState } from "./sessionRestore"
 import type { Workspace } from "./workspace"
+import { getGlobalLogger } from "./logger"
 
 export interface SessionFlushHost {
   readonly services: DesktopServices
@@ -75,8 +76,10 @@ export function installSessionFlush(host: SessionFlushHost): () => void {
       await services.saveSessionState?.(
         extractSessionState(host.getWorkspace(), dirtyRecoveryKeys),
       )
-    } catch {
-      // A failed write must still ack: otherwise Rust waits out its timeout.
+    } catch (error) {
+      // A failed write must still ack (Rust waits on it), but the layout loss
+      // must not be invisible: dirty content already has recovery records.
+      getGlobalLogger().warn("session", `session flush failed: ${error instanceof Error ? error.message : "unknown"}`)
     } finally {
       await host.flushLogs()
       await services.sessionFlushAck?.()

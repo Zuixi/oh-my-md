@@ -59,8 +59,11 @@ fn rasterize_pdf_to_png_rejects_non_pdf() {
 }
 
 #[test]
-fn ready_timeout_is_five_seconds() {
-    assert_eq!(READY_TIMEOUT, Duration::from_secs(5));
+fn ready_timeout_matches_the_shared_cross_platform_deadline() {
+    assert_eq!(
+        READY_TIMEOUT,
+        Duration::from_secs(EXPORT_READY_TIMEOUT_SECS)
+    );
 }
 
 #[test]

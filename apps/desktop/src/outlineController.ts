@@ -62,6 +62,8 @@ export interface OutlineController {
   readonly scheduleHoverClose: () => void
   readonly closeHover: () => void
   readonly dispose: () => void
+  /** Re-attaches after a StrictMode cleanup disposed the controller. */
+  readonly reset: () => void
 }
 
 export function createOutlineController(input: {
@@ -143,14 +145,19 @@ export function createOutlineController(input: {
 
   // The store is the edit signal: a version bump (content change) or an active
   // tab change are the only things that can invalidate the panel.
-  const unsubscribe = store.subscribe(() => {
-    const tabId = store.getWorkspace().activeId
-    const version = store.getDocVersion(tabId)
-    if (tabId === lastTabId && version === lastVersion) return
-    lastTabId = tabId
-    lastVersion = version
-    scheduleRefresh()
-  })
+  let unsubscribe: (() => void) | null = null
+  const attachStore = (): void => {
+    unsubscribe?.()
+    unsubscribe = store.subscribe(() => {
+      const tabId = store.getWorkspace().activeId
+      const version = store.getDocVersion(tabId)
+      if (tabId === lastTabId && version === lastVersion) return
+      lastTabId = tabId
+      lastVersion = version
+      scheduleRefresh()
+    })
+  }
+  attachStore()
 
   const cancelHoverTimer = (): void => {
     if (hoverTimer !== null) window.clearTimeout(hoverTimer)
@@ -191,11 +198,19 @@ export function createOutlineController(input: {
       setHoverOpen(false)
     },
     dispose: () => {
-      unsubscribe()
+      unsubscribe?.()
+      unsubscribe = null
       cancelHoverTimer()
       if (debounceTimer !== null) window.clearTimeout(debounceTimer)
+      debounceTimer = null
       fillToken += 1
-      listeners.clear()
+    },
+    reset: () => {
+      if (unsubscribe !== null) return
+      lastTabId = store.getWorkspace().activeId
+      lastVersion = store.getDocVersion(lastTabId)
+      attachStore()
+      if (panelOpen) scheduleRefresh()
     },
   }
 }

@@ -47,6 +47,28 @@ describe("renderEditableCell", () => {
     root.remove()
   })
 
+  it("projects <br>/<hr> tags as elements while editing on either side, and reveals raw source only strictly inside the tag", () => {
+    const root = mount()
+    const source = "a<br>b<hr>c"
+    // At boundary offsets (`a|<br>b` = 1 and `a<br>|b` = 5), `<br>`/`<hr>` remain elements.
+    for (const caret of [0, 1, 5, 6, 10, source.length]) {
+      renderEditableCell(root, source, caret)
+      expect(root.querySelector("br")).toBeTruthy()
+      expect(root.querySelector("hr")).toBeTruthy()
+      expect(root.querySelector(".omd-table-caret")).toBeTruthy()
+      expect(root.textContent).toBe("abc")
+    }
+    // Stepping strictly inside `<br>` (`a<|br>b` = 2) unfolds `<br>` into editable text
+    // with the caret placed inside it instead of destroying the `<br>` void element.
+    renderEditableCell(root, source, 2)
+    expect(root.querySelector("br")).toBeNull()
+    expect(root.querySelector("hr")).toBeTruthy()
+    expect(root.textContent).toBe("a<br>bc")
+    expect(root.querySelector(".omd-table-caret")?.previousSibling?.textContent).toBe("<")
+    expect(root.querySelector(".omd-table-caret")?.nextSibling?.textContent).toBe("br>")
+    root.remove()
+  })
+
   it("keeps emphasis folded with the markers hidden", () => {
     const root = mount()
     renderEditableCell(root, "**bold**", 3)

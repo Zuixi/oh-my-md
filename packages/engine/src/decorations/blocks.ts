@@ -1,21 +1,24 @@
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common"
 import type { EditorState } from "@codemirror/state"
 import { Decoration } from "@codemirror/view"
-import { cursorInside, type DecoSpec } from "./types"
+import {
+  cursorInside,
+  lineDeco,
+  REPLACE_MARK,
+  styleLines,
+  type DecoSpec,
+} from "./types"
 import { CheckboxWidget, BulletWidget, OrderedWidget, HrWidget, FrontMatterWidget } from "./widgets"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
+import { foldFenceMark, styleCodeblockLines, styleFencedCode } from "./fencedCode"
 import { TableWidget, tableDirectEditEnabled } from "./widgets/table"
 import { createComplexTableWidget } from "./widgets/complexTable"
 import { parseComplexTableBlock } from "../parse/complexTable"
 import { tableDataFromNode } from "../tables/model"
 import { isTableShownAsSource } from "../tables/sourceReveal"
 import { imageResolver } from "./widgets/image"
-import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MathBlockWidget } from "./widgets/math"
-import { MermaidWidget } from "./widgets/mermaid"
 import { orderedLabel } from "../lists/ordered"
-import { parseFenceInfo } from "../fenceInfo"
-import { blockPrefixOf } from "../format/blockPrefix"
 import { editorReferenceContext } from "../semantic/references"
 
 const MAX_QUOTE_DEPTH = 4
@@ -25,23 +28,7 @@ const MAX_QUOTE_DEPTH = 4
 const HTML_TABLE_PROBE_CHARS = 64
 const HTML_TABLE_PROBE_RE = /^\s*<table[\s>]/i
 
-// Hoisted stateless decorations: a dirty-range rebuild pushes one spec per list mark,
-// fence marker and styled line, so allocating a fresh plain `Decoration.replace` /
-// `Decoration.line` for each of them is pure churn — the values are immutable and
-// shared by class. Widget replaces stay per-instance: their payload is the identity.
-const REPLACE_MARK = Decoration.replace({})
-const REPLACE_BLOCK = Decoration.replace({ block: true })
 const BULLET_WIDGET = new BulletWidget()
-const LINE_DECOS = new Map<string, Decoration>()
-
-/** One `Decoration.line` per CSS class (list depth keeps its inline attribute style). */
-function lineDeco(cssClass: string): Decoration {
-  const cached = LINE_DECOS.get(cssClass)
-  if (cached) return cached
-  const created = Decoration.line({ class: cssClass })
-  LINE_DECOS.set(cssClass, created)
-  return created
-}
 
 // Folds a line-leading syntax mark ('[^id]:') plus its trailing space unless the
 // caret is inside the mark itself — same span granularity as the inline reveal
@@ -94,14 +81,6 @@ function childQuoteCoversLine(blockquote: SyntaxNode, lineFrom: number, lineTo: 
   return false
 }
 
-function fencedCodeSource(node: SyntaxNode, state: EditorState): string {
-  const parts: string[] = []
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "CodeText") parts.push(state.doc.sliceString(child.from, child.to))
-  }
-  return parts.join("")
-}
-
 function listDepth(node: SyntaxNode): number {
   let depth = 0
   for (let parent = node.parent; parent; parent = parent.parent) {
@@ -140,102 +119,9 @@ function listDepthLine(cssClass: string, depth: number): Decoration {
   return Decoration.line({ class: cssClass, attributes: { style: `--omd-list-depth: ${depth}` } })
 }
 
-/** One `line:` spec per `lineAt` line of the closed range [from, to]. */
-function styleLines(
-  state: EditorState, out: DecoSpec[], from: number, to: number, tag: string, cssClass: string,
-): void {
-  for (let pos = from; pos <= to; ) {
-    const line = state.doc.lineAt(pos)
-    out.push({ from: line.from, to: line.from, tag, deco: lineDeco(cssClass) })
-    pos = line.to + 1
-  }
-}
-
-function styleCodeblockLines(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
-  styleLines(state, out, node.from, node.to, "line:omd-codeblock", "omd-codeblock")
-}
-
-// 编辑态代码块装饰：开头围栏行整行替换为 CodeChromeWidget（标题/语言可提交），
-// 内容行加行号与容器类（首/末行负责圆角收边），两个围栏行都是 Setext 式跨行
-// 块替换（含换行）。光标落在任一围栏行上时该围栏保持裸文本可编辑 ——
-// 否则光标会被藏进不可见区域。
-function styleEditingCodeblock(
-  node: SyntaxNodeRef,
-  state: EditorState,
-  out: DecoSpec[],
-  langToken: string,
-  title: string,
-  embed: BlockEmbed,
-) {
-  const doc = state.doc
-  const sel = state.selection.main
-  const overlaps = (from: number, to: number) => sel.from <= to && sel.to >= from
-  const openLine = doc.lineAt(node.from)
-  // 尾围栏用真实闭合 CodeMark 定位：未闭合围栏吞到文档末尾（CommonMark），
-  // 拿 node.to 所在行当尾围栏会把最后一行代码整行折叠吞掉。
-  let closeMark: SyntaxNode | null = null
-  for (let child = node.node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "CodeMark" && child.from > openLine.to) closeMark = child
-  }
-  const closeLine = closeMark ? doc.lineAt(closeMark.from) : null
-  const firstContent = openLine.number + 1
-  const lastContent = closeLine ? closeLine.number - 1 : doc.lineAt(node.to).number
-
-  // 头部必须 block 替换：行内替换只换文字，围栏行仍保留正文行高的 strut，
-  // 在头部与首行内容之间漏出一条无背景空带（用户实测的“断档”）。block 替换
-  // 让 builder 把 widget 独立成行框（行高 = widget 高度）。范围不含换行 ——
-  // 含换行会吞掉下一行的行装饰（CM 把 to 边界归入替换块，首行行号丢失）。
-  if ((closeLine || firstContent <= lastContent) && !overlaps(openLine.from, openLine.to)) {
-    out.push({
-      from: openLine.from, to: openLine.to, tag: "widget:block:code-chrome",
-      deco: Decoration.replace({ widget: new CodeChromeWidget(langToken, title, undefined, embed), block: true }),
-    })
-  }
-  for (let number = firstContent; number <= lastContent; number++) {
-    const line = doc.line(number)
-    // 引用内围栏的内容行：`> ` 前缀是 FencedCode 的子节点，而本分支会让 walker
-    // 跳过整棵 FencedCode 子树（返回 true），不在这里补折叠，编辑态就会露出裸
-    // `> `（渲染态由 CodeWidget 整体替换，所以只有编辑态暴露）。折叠范围与
-    // foldQuoteMark 一致：标记 + 后随一个空格，光标进入该范围时按 Route A 展开。
-    // Outside a quote there is no prefix to fold, and `blockPrefixOf` runs a
-    // `syntaxTree.iterate` per line — skip it entirely on the typing hot path.
-    if (embed.quoteDepth > 0) {
-      const prefix = blockPrefixOf(state, line)
-      for (const mark of prefix?.marks ?? []) {
-        if (mark.kind !== "quote" || cursorInside(state, mark.from, mark.to)) continue
-        out.push({ from: mark.from, to: mark.to, tag: "replace:QuoteMark", deco: REPLACE_MARK })
-      }
-    }
-    out.push({
-      from: line.from, to: line.from, tag: "line:omd-codeblock", deco: lineDeco("omd-codeblock"),
-    })
-    out.push({
-      from: line.from, to: line.from, tag: "line:omd-codeblock-num", deco: lineDeco("omd-codeblock-num"),
-    })
-    if (number === firstContent) {
-      out.push({
-        from: line.from, to: line.from, tag: "line:omd-codeblock-num-first",
-        deco: lineDeco("omd-codeblock-num-first"),
-      })
-    }
-    if (number === lastContent) {
-      out.push({
-        from: line.from, to: line.from, tag: "line:omd-codeblock-num-last",
-        deco: lineDeco("omd-codeblock-num-last"),
-      })
-    }
-  }
-  if (closeLine && !overlaps(closeLine.from, closeLine.to)) {
-    out.push({
-      from: closeLine.from, to: Math.min(doc.length, closeLine.to + 1),
-      tag: "replace:CloseFence", deco: REPLACE_BLOCK,
-    })
-  }
-}
-
-// 显式展开后的源码态表格：整表保持可编辑的 Markdown 源码，但按行给出
-// 等宽 + 底色 + 行级的表头/分隔行标记，让管道符纵向对齐 —— 不做任何行内折叠，
-// 否则 `**`/`|` 的半渲染让源码网格变成“半个预览”。
+// Explicit source-mode table: keep editable Markdown source with monospace line
+// styling and header/delimiter markers so pipes stay vertically aligned without
+// folding inline markers inside cells.
 function styleTableSource(
   node: { from: number; to: number },
   state: EditorState,
@@ -253,80 +139,6 @@ function styleTableSource(
       from: delim.from, to: delim.from, tag: "line:omd-table-src-delim", deco: lineDeco("omd-table-src-delim"),
     })
   }
-}
-
-function foldFenceMark(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[], name: string) {
-  if (cursorInside(state, node.from, node.to)) return
-  out.push({
-    from: node.from, to: node.to, tag: `replace:${name}`, deco: REPLACE_MARK,
-  })
-}
-
-function styleFencedCode(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]): boolean {
-  const infoNode = node.node.getChild("CodeInfo")
-  const infoRaw = infoNode ? state.doc.sliceString(infoNode.from, infoNode.to) : ""
-  const { lang: langToken, title } = parseFenceInfo(infoRaw)
-  const embed = blockEmbed(node.node)
-
-  // 未闭合围栏正在输入（FencedCode 只有 opening 行且光标在其上）：保持纯文本。
-  // 围栏行一旦被解析就立即灰底/挂 widget，用户观感是“``` 还没按 Enter 就渲染了”
-  // （Typora 在 Enter 前不呈现块）。Enter 的闭合补全见 format/fences.ts，成块后
-  // 走下方常规分支（光标在内 → 源码行样式，光标离开 → widget）。
-  const singleLine = state.doc.lineAt(node.from).number === state.doc.lineAt(node.to).number
-  const selected = blockSelected(state, node.from, node.to)
-  if (singleLine && selected) {
-    return true
-  }
-
-  // mermaid 与 lang-code 同一编辑模型：光标进入块 → 卸载成源码行。✎/wrap 点击、
-  // ↑/↓ 进块派发的光标都依赖 blockSelected 门控触发卸载；缺门控时光标会落入被
-  // replace 隐藏的源码区（✎ 点击"无效"、打字盲改）。
-  // `fencedCodeSource` only runs on the two widget branches: the editing branches
-  // must not slice a large code body on every keystroke inside it.
-  if (langToken === "mermaid" && !selected) {
-    out.push({
-      from: node.from, to: node.to, tag: "widget:block:mermaid",
-      deco: Decoration.replace({
-        widget: new MermaidWidget(fencedCodeSource(node.node, state), node.from, embed), block: true,
-      }),
-    })
-    return true
-  }
-  // 编辑态（Typora 观感）：chrome 常驻在开头围栏行上、内容行带行号与容器样式、
-  // 尾围栏折叠 —— 代码仍是原生 CM 行（b9dec44 的编辑模型不变）。这一分支必须排在
-  // 语言/引用判断之前：旧顺序里 `!langToken` 先返回，无语言块永远拿不到 chrome，
-  // 用户只能手敲源码才能加语言（同一段代码在光标进出时还会换一套 DOM）。
-  // mermaid 保持朴素源码行（其渲染态无 chrome，两态一致）。
-  if (selected) {
-    if (langToken !== "mermaid") {
-      styleEditingCodeblock(node, state, out, langToken, title, embed)
-    } else {
-      styleCodeblockLines(node, state, out)
-    }
-    return true
-  }
-  // 无语言块渲染态保持行样式：没有 Shiki 输出可展示，折叠成块反而丢掉行号基线。
-  if (!langToken) {
-    styleCodeblockLines(node, state, out)
-    return false
-  }
-  // 引用内的语言块与引用外同一路径：embed 已带 omd-blockquote-N，引用条由 widget
-  // 容器自己画（与表格/公式/mermaid 相同的既有模型；旧代码把引用内 lang 块降级成
-  // 行样式，同样的 Markdown 只因外面套了 `> ` 就没有高亮）。
-  out.push({
-    from: node.from, to: node.to, tag: "widget:block:code",
-    deco: Decoration.replace({
-      widget: new CodeWidget({
-        src: fencedCodeSource(node.node, state),
-        pos: node.from,
-        lang: langToken,
-        title,
-        embed,
-      }),
-      block: true,
-    }),
-  })
-  return true
 }
 
 function styleBlockquote(node: SyntaxNodeRef, state: EditorState, out: DecoSpec[]) {
@@ -419,7 +231,7 @@ export function blockRules(
 ): boolean {
   switch (node.name) {
     case "ListMark": { styleListMark(node, state, out, labelFor); break }
-    case "FencedCode": return styleFencedCode(node, state, out)
+    case "FencedCode": return styleFencedCode(node, state, out, blockEmbed(node.node))
     case "CodeMark": {
       if (node.node.parent?.name === "FencedCode")
         foldFenceMark(node, state, out, "CodeMark")

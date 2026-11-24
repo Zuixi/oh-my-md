@@ -44,11 +44,11 @@ async fn watch_paths(
     // watcher reconciles to the union of all windows' sets.
     let label = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
-        // Missing paths are skipped: watching is best-effort hinting, and a file
-        // may legitimately not exist yet (fresh tab about to save its first copy).
+        // Missing or unauthorized paths are skipped: watching is best-effort
+        // hinting, and a window may only watch its own workspace roots or open files.
         let canonical: Vec<PathBuf> = paths
             .iter()
-            .filter_map(|path| std::fs::canonicalize(path).ok())
+            .filter_map(|path| auth_scope::authorized_watch_path(&label, Path::new(path)))
             .collect();
         watcher::set_watched_paths(&app, &label, &canonical)
     })
@@ -392,7 +392,7 @@ async fn allow_document_assets(
     use tauri::Manager;
 
     let document = Path::new(&document_path);
-    let directory = auth_scope::document_directory_for_assets(document)?;
+    let directory = auth_scope::authorized_document_directory(Some(window.label()), document)?;
     app.asset_protocol_scope()
         .allow_directory(directory, true)
         .map_err(|e| format!("failed to allow document assets: {e}"))?;
@@ -826,15 +826,6 @@ pub fn run() {
                     return;
                 }
                 api.prevent_exit();
-                // `flushed` is one-shot from a completed flush round and can
-                // be stale: with >=2 live windows, closing ONE of them
-                // completes its round and sets the flag while the app lives
-                // on. Only honor the flag on the designed handoff — the close
-                // round destroyed the LAST window, so this re-entrant exit
-                // sees no editor windows left (checked above).
-                if gate.consume_flushed() {
-                    return;
-                }
                 // A quit that arrives mid-round is recorded, not dropped, and
                 // the round's finish drains it.
                 app_lifecycle::drive_app_exit(app);

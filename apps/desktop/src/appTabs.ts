@@ -56,6 +56,8 @@ export interface TabLifecycleDeps {
 
 export interface TabLifecycle {
   readonly activateTab: (id: number) => void
+  /** Enforces `MAX_LIVE_EDITOR_VIEWS` after any path that added/activated tabs. */
+  readonly evictOverBudget: (activeTabId?: number) => void
   readonly loadLazyTab: (lazy: EditorSession) => Promise<void>
   readonly loadDraftTarget: (path: string) => Promise<void>
   readonly mountNewTab: (tabId: number) => void
@@ -75,6 +77,18 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
     return store.getWorkspace().tabs.find(tab => tab.id === id)
   }
 
+  function evictOverBudget(activeTabId = store.getWorkspace().activeId): void {
+    registry.evictOverBudget({
+      activeTabId,
+      isEvictable: tabId => !store.isTabDirty(tabId)
+        && store.getNormalizationByTab()[tabId] === undefined,
+      flush: (tabId, contents) => {
+        store.setTabDoc(tabId, contents)
+        store.bumpDocVersion(tabId)
+      },
+    })
+  }
+
   function activateTab(id: number): void {
     const activeBefore = store.getActiveSession()
     // Leaving a tab only needs materialization when edits are still pending.
@@ -88,15 +102,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
     registry.setActiveView(id)
     // Bound the live set: past the budget, the least recently activated clean
     // background tab is released (its text already lives in the store).
-    registry.evictOverBudget({
-      activeTabId: id,
-      isEvictable: tabId => !store.isTabDirty(tabId)
-        && store.getNormalizationByTab()[tabId] === undefined,
-      flush: (tabId, contents) => {
-        store.setTabDoc(tabId, contents)
-        store.bumpDocVersion(tabId)
-      },
-    })
+    evictOverBudget(id)
     const tab = tabById(id)
     if (tab && !sessionContentLoaded(tab)) {
       void loadLazyTab(tab)
@@ -275,6 +281,7 @@ export function createTabLifecycle(deps: TabLifecycleDeps): TabLifecycle {
 
   return {
     activateTab,
+    evictOverBudget,
     loadLazyTab,
     loadDraftTarget,
     mountNewTab,

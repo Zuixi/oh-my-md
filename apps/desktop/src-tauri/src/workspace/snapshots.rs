@@ -8,7 +8,9 @@
 
 use serde::Serialize;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::auth_scope::assert_file_or_workspace_authorized;
 
@@ -18,6 +20,13 @@ use super::{config_dir, MAX_SNAPSHOTS_PER_FILE};
 /// version history into a disk-space amplifier, so larger documents keep none
 /// and the caller reports why.
 pub const MAX_SNAPSHOT_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// `next_snapshot_stamp` plus the write must be one critical section: two
+/// concurrent snapshots for the same file otherwise choose the same
+/// millisecond stamp and the second atomically replaces the first restore
+/// point. Snapshot writes are background, bounded copies, so one lock is
+/// simpler than a per-document map.
+static SNAPSHOT_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Total ceiling for one document's snapshot directory. Rotation evicts the
 /// oldest entries until both this and [`MAX_SNAPSHOTS_PER_FILE`] fit.
@@ -135,7 +144,17 @@ fn rotate_snapshots(dir: &Path) -> Result<(), String> {
 }
 
 fn write_snapshot(dir: &Path, millis: u128, source: &Path) -> Result<(), String> {
-    let byte_length = fs::metadata(source).map_err(|e| e.to_string())?.len();
+    let _guard = SNAPSHOT_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (mut file, metadata) = crate::scoped_io::open_regular_file(source).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidInput {
+            "snapshot source is not a file".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
+    let byte_length = metadata.len();
     if byte_length > MAX_SNAPSHOT_FILE_BYTES {
         return Err(format!(
             "document exceeds the {} MiB version snapshot limit",
@@ -143,7 +162,19 @@ fn write_snapshot(dir: &Path, millis: u128, source: &Path) -> Result<(), String>
         ));
     }
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let bytes = fs::read(source).map_err(|e| e.to_string())?;
+    // A document can grow between the metadata check and the read. Read one
+    // byte past the cap so an oversized file is rejected instead of buffered.
+    let mut bytes = Vec::with_capacity(byte_length.min(MAX_SNAPSHOT_FILE_BYTES) as usize);
+    file.by_ref()
+        .take(MAX_SNAPSHOT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_SNAPSHOT_FILE_BYTES {
+        return Err(format!(
+            "document exceeds the {} MiB version snapshot limit",
+            MAX_SNAPSHOT_FILE_BYTES / MIB
+        ));
+    }
     let target = dir.join(format!(
         "{}.{SNAPSHOT_EXTENSION}",
         next_snapshot_stamp(dir, millis)
@@ -429,6 +460,33 @@ mod tests {
         // and renamed, never written in place.
         assert_eq!(snapshot_names(&dir), vec!["42.md".to_string()]);
         assert_eq!(fs::read_to_string(dir.join("42.md")).unwrap(), "content");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn concurrent_snapshots_for_the_same_millisecond_do_not_clobber() {
+        let root = tmp("concurrent");
+        let src = root.join("doc.md");
+        fs::write(&src, "content").unwrap();
+        let dir = root.join("snaps");
+
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let dir = dir.clone();
+                let src = src.clone();
+                std::thread::spawn(move || write_snapshot(&dir, 100, &src).unwrap())
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Stamp allocation and the write share one critical section, so the
+        // second writer steps to 101 instead of atomically replacing 100.
+        assert_eq!(
+            snapshot_names(&dir),
+            vec!["100.md".to_string(), "101.md".to_string()]
+        );
         fs::remove_dir_all(root).ok();
     }
 

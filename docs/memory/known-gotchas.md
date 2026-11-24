@@ -84,9 +84,15 @@
 - **`EditorView.inputHandler` returning `true` is `preventDefault`** — the facet already holds `lang-html`'s `autoCloseTags` at index 0, and `from`/`to` cover only the main range; intercept with `changeByRange` over every range or multi-cursor input is dropped.
 - **`resolveInner` lies when the tree is not parsed to the caret** — marker gating must fail safe with `syntaxTreeAvailable` (suppress when unknown), never guess an ancestor.
 - **`coordsAtPos` throws inside `ViewPlugin.update`** — layout reads are illegal during an update; position overlays in `requestMeasure` (read coords / write DOM separately) or the toolbar silently never appears while happy-dom tests stay green.
+- **Empty `text/plain` is not an empty clipboard** — image-only HTML must take the structured path; `plainText === ""` is not `document.blocks.length === 0`.
+- **Front-matter stats must mirror the parser's line rule** — `\n---` prefix matching miscounts `----`, `---text`, and unclosed blocks.
+- **Fence language tokens keep the author's case** — compare `toLowerCase()` for `mermaid`, or preview and export disagree.
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
+- **An unassigned no-op ref silently drops a side effect** — `expandToPathRef` was never wired; assign coordinator refs next to the other `*Ref.current = …` lines.
+- **The live-view budget is enforced after every `ensureViews`** — eviction in `activateTab` alone lets new/open/restore tabs grow the live set.
+- **A once-per-mount controller must survive StrictMode cleanup** — give it `reset()` (outline) like the materializer's.
 - **The React shell must not subscribe to document text** — `DocumentStore` + `dirtyTabIds` reference identity are what keep typing from re-rendering the shell; a rebuilt (equal) array re-renders everything. See [gotchas-desktop](./gotchas-desktop.md).
 - **`App(props: AppProps = {})` breaks `createElement` typing** — a defaulted parameter makes React infer `{}`, so harness callers fail in `tsconfig.test.json` while `src` type-checks.
 - **Hot Exit rides the session shard, not the crash prompt** — quit writes `hotExitTabs` + `activeTabIndex`; restore claims those recovery keys so `confirmRestore` only sees real orphans.
@@ -128,6 +134,12 @@
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
+- **Document/export IPC paths are not authorization** — document commands only record a grant after IO; auxiliary sinks must check for one or pin their own shape.
+- **Non-regular files must fail before a buffered read** — `/dev/zero`/FIFOs need `is_file()` after canonicalization.
+- **A completed window-close flush round can poison the next quit** — clear the stale `flushed` flag when editor windows survive.
+- **Diagnostics/export artifacts need their own path contract** — absolute, extension, symlink, atomic staging, `spawn_blocking`.
+- **Snapshot stamp + write is one critical section** — otherwise concurrent snapshots clobber a restore point.
+- **One readiness deadline per export host** — macOS's 5 s literal diverged from the shared 20 s constant.
 - **Guarded save is double-compare + atomic replace, not strict CAS** — document the residual race, never "CAS".
 - **Expected version binds to the resolved path** — a retargeted symlink is `PathChangedConflict`, never a silent identity switch.
 - **Missing-file publish uses a same-filesystem hard link** — crash can leave a temp alias; directory-fsync failure is a durability warning, not an error.

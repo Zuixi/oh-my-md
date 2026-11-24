@@ -25,7 +25,7 @@ export interface CellSlot {
  * "在表内"（blockWidget.ts::blockSelected）。边界上退回 `side = -1`（向后看）再试一次，
  * 让查询层与装饰层对"在表内"的判定一致。
  */
-function tableNodeAt(state: EditorState, pos: number): SyntaxNode | null {
+export function tableNodeAt(state: EditorState, pos: number): SyntaxNode | null {
   const tree = syntaxTree(state)
   const walk = (side: -1 | 1) => {
     let node: SyntaxNode | null = tree.resolveInner(pos, side)

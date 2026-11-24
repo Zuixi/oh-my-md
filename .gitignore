@@ -57,14 +57,7 @@ src-tauri/gen/
 *.njsproj
 *.sln
 *.swp
-.cursor/*
-.vscode/
-!.cursor/hooks/
-!.cursor/hooks/**
-!.cursor/hooks.json
-!.cursor/rules/
-!.cursor/rules/**
-
+.cursor/
 
 # Tools / Local state
 .pi/
@@ -80,3 +73,8 @@ docs/competitors/
 
 # Benchmarks
 packages/engine/bench/.last-run.json
+
+.plan
+docs/process/
+solution.md
+board.md
