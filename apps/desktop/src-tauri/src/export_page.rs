@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 const MM_PER_INCH: f64 = 25.4;
-#[cfg(any(test, feature = "export-smoke"))]
+#[cfg(any(target_os = "linux", test, feature = "export-smoke"))]
 const POINTS_PER_INCH: f64 = 72.0;
 
 const PRINT_CONTRACT_JSON: &str =
@@ -338,6 +338,26 @@ pub fn native_page(setup: &PageSetup) -> NativePage {
         print_backgrounds: setup.print_backgrounds,
         header_footer: setup.header_footer,
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn page_points(setup: &PageSetup) -> (f64, f64) {
+    let (width, height) = oriented_tenths(setup);
+    (
+        f64::from(width) / 10.0 * POINTS_PER_INCH / MM_PER_INCH,
+        f64::from(height) / 10.0 * POINTS_PER_INCH / MM_PER_INCH,
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn margin_points(setup: &PageSetup) -> (f64, f64, f64, f64) {
+    let to_pt = |tenths: i32| f64::from(tenths) / 10.0 * POINTS_PER_INCH / MM_PER_INCH;
+    (
+        to_pt(setup.margin_top),
+        to_pt(setup.margin_right),
+        to_pt(setup.margin_bottom),
+        to_pt(setup.margin_left),
+    )
 }
 
 #[cfg(any(test, feature = "export-smoke"))]

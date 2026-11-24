@@ -18,6 +18,10 @@ mod export_cancel;
 #[path = "export_page.rs"]
 pub(crate) mod export_page;
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "export_pdf_stamp.rs"]
+pub(crate) mod export_pdf_stamp;
+
 // Windows shares one WebView2 user-data directory across windows, so every
 // webview must be created with the same browser arguments. The main window sets
 // these in `tauri.conf.json`; pass the identical list here or WebView2 refuses
