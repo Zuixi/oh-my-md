@@ -34,9 +34,11 @@ describe("CI workflow", () => {
 
   it("keeps a dependency audit job that is visible but advisory", () => {
     const audit = jobBlock("audit", "rust")
-    expect(audit).toContain("pnpm audit --audit-level high")
+    expect(audit).toContain("pnpm audit --prod --audit-level high")
     expect(audit).toContain("cargo audit --manifest-path apps/desktop/src-tauri/Cargo.toml")
-    expect(audit).toContain("continue-on-error: true")
+    // Both audit steps must carry continue-on-error so a JS advisory never
+    // short-circuits cargo audit.
+    expect(audit.match(/continue-on-error:\s*true/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 
   it("keeps the real-browser suite in the desktop gate", () => {

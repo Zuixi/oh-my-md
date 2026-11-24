@@ -19,25 +19,31 @@ fn parse_accepts_pdf_and_png_only() {
 #[test]
 fn validate_export_rejects_traversal_and_mismatched_extension() {
     let html = "<p>hi</p>";
-    assert!(validate_export("/tmp/../etc/x.pdf", ExportFormat::Pdf, html).is_err());
-    assert!(validate_export("/tmp/out.png", ExportFormat::Pdf, html).is_err());
-    assert!(validate_export("/tmp/out.pdf", ExportFormat::Png, html).is_err());
+    let dir = std::env::temp_dir();
+    let traversal = dir.join("..").join("etc").join("x.pdf");
+    let png = dir.join("out.png");
+    let pdf = dir.join("out.pdf");
+    assert!(validate_export(traversal.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
+    assert!(validate_export(png.to_str().unwrap(), ExportFormat::Pdf, html).is_err());
+    assert!(validate_export(pdf.to_str().unwrap(), ExportFormat::Png, html).is_err());
     assert_eq!(
-        validate_export("/tmp/out.pdf", ExportFormat::Pdf, html).unwrap(),
-        PathBuf::from("/tmp/out.pdf")
+        validate_export(pdf.to_str().unwrap(), ExportFormat::Pdf, html).unwrap(),
+        pdf
     );
 }
 
 #[test]
 fn validate_export_appends_png_when_save_dialog_omits_extension() {
     let html = "<p>hi</p>";
+    let base = std::env::temp_dir().join("out");
+    let base_str = base.to_str().unwrap();
     assert_eq!(
-        validate_export("/tmp/out", ExportFormat::Png, html).unwrap(),
-        PathBuf::from("/tmp/out.png")
+        validate_export(base_str, ExportFormat::Png, html).unwrap(),
+        std::env::temp_dir().join("out.png")
     );
     assert_eq!(
-        validate_export("/tmp/out", ExportFormat::Pdf, html).unwrap(),
-        PathBuf::from("/tmp/out.pdf")
+        validate_export(base_str, ExportFormat::Pdf, html).unwrap(),
+        std::env::temp_dir().join("out.pdf")
     );
 }
 

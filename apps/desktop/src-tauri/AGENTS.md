@@ -7,6 +7,7 @@
 
 - Apply the root size policy, including inline tests. Extract command domains into focused modules instead of growing `lib.rs` or `workspace.rs`; keep `lib.rs` focused on setup and `tauri::generate_handler!`.
 - Move large inline test modules into sibling files (follow `src/documents/tests.rs`).
+- **Cross-platform Rust hygiene:** Never hardcode POSIX absolute paths (`"/tmp/..."`) in cross-platform tests — `Path::is_absolute()` is `false` on Windows; use `std::env::temp_dir().join(...)` or `tempfile::tempdir()`. Keep `#[cfg(...)]` visibility symmetric across macOS/Windows/Linux (do not `pub(crate) use` items only called by `#[cfg(target_os = "macos")]` tests, and guard OS-specific unused struct fields with narrow `#[cfg_attr(target_os = "...", allow(dead_code))]`). Guard shared invariants (such as rejecting directories in `replace_existing`) before entering OS-specific fallback branches.
 - Use `cfg!(target_os = "macos")` for runtime checks and `#[cfg(target_os = "macos")]` to exclude platform-specific imports/items from compilation; combine conditions with `any(...)`, not `|`. `export_preview` routes to the platform backend. `export_page.rs` reads the shared PDF page contract from `packages/engine/src/export/printContract.json` and `printRules.css` (default A4 portrait, 16 mm margins, optional Letter, orientation, print backgrounds, header/footer off). CSS `@page` uses the final page box; native print backends (`export_pdf_macos.rs`, `export_pdf_windows.rs`, `export_pdf_linux.rs`) receive portrait paper dimensions plus an orientation flag and keep the PNG height cap out of paginated PDF printing.
 
 ## IPC Contract & Concurrency Rules
@@ -38,6 +39,7 @@
 
 ```sh
 cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 

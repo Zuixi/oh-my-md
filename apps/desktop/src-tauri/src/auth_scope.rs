@@ -328,10 +328,11 @@ mod tests {
 
     #[test]
     fn absolute_path_rejects_relative_and_dot_components() {
-        assert!(absolute_path(Path::new("/tmp/notes")).is_ok());
+        let base = std::env::temp_dir();
+        assert!(absolute_path(&base.join("notes")).is_ok());
         assert!(absolute_path(Path::new("notes")).is_err());
-        assert!(absolute_path(Path::new("/tmp/./notes")).is_err());
-        assert!(absolute_path(Path::new("/tmp/../notes")).is_err());
+        assert!(absolute_path(&base.join(".").join("notes")).is_err());
+        assert!(absolute_path(&base.join("..").join("notes")).is_err());
     }
 
     #[test]

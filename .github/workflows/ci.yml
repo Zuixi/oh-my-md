@@ -141,21 +141,23 @@ jobs:
 
   # Advisories are reported, not enforced (TOOL-01): a freshly published advisory
   # has no fix on the day it lands, so blocking every PR would only teach people
-  # to ignore the job. Failures are visible in the run summary and release prep
-  # must check them before tagging.
+  # to ignore the job. Step-level continue-on-error ensures a JS advisory never
+  # skips `cargo audit`, and `--prod` keeps test-only devDependencies from
+  # drowning out shipped runtime vulnerabilities on every PR.
   audit:
     name: Dependency audit (advisory)
     needs: changes
     if: ${{ needs.changes.outputs.desktop == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-pnpm
-      - name: Audit JavaScript dependencies
-        run: pnpm audit --audit-level high
+      - name: Audit JavaScript production dependencies
+        continue-on-error: true
+        run: pnpm audit --prod --audit-level high
       - name: Audit Rust dependencies
+        continue-on-error: true
         run: |
           cargo install cargo-audit --locked
           cargo audit --manifest-path apps/desktop/src-tauri/Cargo.toml

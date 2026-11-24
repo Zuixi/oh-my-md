@@ -21,7 +21,11 @@ Write-Host "==> desktop (tsc + vitest)"
 pnpm --filter @omd/desktop test
 if ($LASTEXITCODE -ne 0) { throw "desktop tests failed" }
 
-Write-Host "==> rust (cargo test)"
+Write-Host "==> rust (cargo fmt + clippy + test)"
+cargo fmt --all --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+if ($LASTEXITCODE -ne 0) { throw "rust fmt check failed" }
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+if ($LASTEXITCODE -ne 0) { throw "rust clippy failed" }
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw "rust tests failed" }
 
