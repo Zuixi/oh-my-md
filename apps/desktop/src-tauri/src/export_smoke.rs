@@ -88,7 +88,7 @@ async fn smoke(app: tauri::AppHandle) -> Result<String, String> {
     let target_text = target
         .to_str()
         .ok_or_else(|| format!("invalid smoke target path: {}", target.display()))?;
-    super::export_preview(
+    super::export_preview_unchecked(
         app.clone(),
         html,
         target_text.to_owned(),
@@ -125,7 +125,7 @@ async fn print_smoke_pdf(
     page: super::export_page::PageSetupDto,
 ) -> Result<Vec<u8>, String> {
     let target_text = target.to_str().ok_or("invalid PDF smoke target path")?;
-    let warning = super::export_preview(
+    let warning = super::export_preview_unchecked(
         app.clone(),
         html,
         target_text.into(),
@@ -272,7 +272,7 @@ async fn verify_cancel(
         .to_str()
         .ok_or_else(|| format!("invalid cancel target path: {}", target.display()))?
         .to_owned();
-    let task = tauri::async_runtime::spawn(super::export_preview(
+    let task = tauri::async_runtime::spawn(super::export_preview_unchecked(
         app.clone(),
         CANCEL_PROBE_HTML.to_owned(),
         target_text.clone(),

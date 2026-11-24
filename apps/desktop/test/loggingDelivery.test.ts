@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { createLogger, getGlobalLogger, setGlobalLogger, type LogRecord } from "../src/logger"
 
-const { invoke, save } = vi.hoisted(() => ({ invoke: vi.fn(), save: vi.fn() }))
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save }))
 import { defaultServices } from "../src/desktopServices"
 import { exportDiagnostics as exportBundle } from "../src/appDiagnosticsActions"
 import { reportFatal } from "../src/globalErrorHandlers"
@@ -85,8 +84,8 @@ describe("logging delivery ordering", () => {
     const logger = createLogger({ now: () => 0, mirrorToConsole: false, scheduleFlush: () => {}, send })
     setGlobalLogger(logger)
     vi.spyOn(window, "confirm").mockReturnValue(true)
-    save.mockResolvedValue("/tmp/omd-audit.zip")
-    invoke.mockResolvedValue(undefined)
+    invoke.mockImplementation(async (command: string) =>
+      command === "pick_export_path" ? "/tmp/omd-audit.zip" : undefined)
     try {
       logger.warn("ui", "pending failure")
       const exporting = exportBundle(defaultServices)
@@ -108,12 +107,14 @@ describe("logging delivery ordering", () => {
     const logger = createLogger({ now: () => 0, mirrorToConsole: false, scheduleFlush: () => {}, send: async () => { order.push("log delivered") } })
     setGlobalLogger(logger)
     vi.spyOn(window, "confirm").mockReturnValue(true)
-    save.mockResolvedValue("/tmp/omd-audit.zip")
-    invoke.mockImplementation(async (command: string) => { order.push(command) })
+    invoke.mockImplementation(async (command: string) => {
+      order.push(command)
+      return command === "pick_export_path" ? "/tmp/omd-audit.zip" : undefined
+    })
     try {
       logger.warn("ui", "the error the support bundle must contain")
       await exportBundle(defaultServices)
-      expect(order).toEqual(["log delivered", "export_diagnostics"])
+      expect(order).toEqual(["log delivered", "pick_export_path", "export_diagnostics"])
     } finally {
       await logger.flush()
       setGlobalLogger(previous)

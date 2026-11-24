@@ -4,23 +4,34 @@
 //! The previous `read_file`/`write_file` pair accepted any absolute path, so a
 //! compromised webview could read (`~/.ssh/id_rsa`) or atomically replace any
 //! file the user could write. Each command now pins the extension, the shape,
-//! and the size cap of the one file kind it serves.
+//! the size cap, and the per-window grant the native picker recorded.
 
-use std::io::Read;
-use std::path::{Component, Path};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 
 /// Custom CSS is a stylesheet, not a data channel: 1 MiB is far beyond any
-/// hand-written theme and small enough to keep the parse synchronous-ish.
+/// hand-written theme.
 pub const MAX_CUSTOM_CSS_BYTES: u64 = 1024 * 1024;
 
 const CSS_EXTENSION: &str = "css";
 const HTML_EXTENSIONS: [&str; 2] = ["html", "htm"];
 
 #[tauri::command]
-pub async fn read_custom_css(path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_custom_css_impl(&path))
+pub async fn read_custom_css(window: tauri::WebviewWindow, path: String) -> Result<String, String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || read_custom_css_authorized(&label, &path))
         .await
         .map_err(|error| format!("read task failed: {error}"))?
+}
+
+/// Authorization gate plus shape checks, split out so the whole body is testable
+/// without a live webview. Only a path this window picked in the native CSS
+/// dialog (or already persisted in settings) may be read.
+pub(crate) fn read_custom_css_authorized(window_label: &str, path: &str) -> Result<String, String> {
+    let target = Path::new(path);
+    validate_target(target)?;
+    crate::auth_scope::assert_custom_css_authorized(Some(window_label), target)?;
+    read_custom_css_impl(path)
 }
 
 /// Opens `path` only if it is a regular file, without blocking on POSIX FIFOs.
@@ -119,10 +130,30 @@ fn read_custom_css_impl(path: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn write_exported_html(path: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_exported_html_impl(&path, contents))
-        .await
-        .map_err(|error| format!("write task failed: {error}"))?
+pub async fn write_exported_html(
+    window: tauri::WebviewWindow,
+    path: String,
+    contents: String,
+) -> Result<(), String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        write_exported_html_authorized(&label, &path, contents)
+    })
+    .await
+    .map_err(|error| format!("write task failed: {error}"))?
+}
+
+/// Authorization gate for the HTML export write: the destination must be a path
+/// this window picked in the native export dialog.
+pub(crate) fn write_exported_html_authorized(
+    window_label: &str,
+    path: &str,
+    contents: String,
+) -> Result<(), String> {
+    let target = Path::new(path);
+    validate_target(target)?;
+    crate::auth_scope::assert_export_target_authorized(Some(window_label), target)?;
+    write_exported_html_impl(path, contents)
 }
 
 fn write_exported_html_impl(path: &str, contents: String) -> Result<(), String> {
@@ -158,8 +189,8 @@ fn write_exported_html_impl(path: &str, contents: String) -> Result<(), String> 
     crate::atomic_write(target, contents.as_bytes())
 }
 
-/// Absolute path with no `.`/`..` components. The save dialog already returns
-/// such a path, so anything else is a caller bug or an injection attempt.
+/// Absolute path with no `.`/`..` components: the dialogs return exactly that,
+/// so anything else is a caller bug or an injection attempt.
 pub(crate) fn validate_target(target: &Path) -> Result<(), String> {
     if !target.is_absolute() {
         return Err("path must be absolute".into());
@@ -182,6 +213,97 @@ pub(crate) fn has_extension(target: &Path, allowed: &[&str]) -> bool {
                 .iter()
                 .any(|allowed| extension.eq_ignore_ascii_case(allowed))
         })
+}
+
+/// Writes `bytes` through a sibling tempfile and a rename, so a crash can never
+/// leave a half-written document behind. `crate::atomic_write` still resolves.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("failed to create temporary file: {e}"))?;
+    temporary
+        .write_all(bytes)
+        .map_err(|e| format!("failed to write temporary file: {e}"))?;
+    temporary
+        .flush()
+        .map_err(|e| format!("failed to flush temporary file: {e}"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("failed to sync temporary file: {e}"))?;
+    replace_existing(temporary, path)
+        .map_err(|e| format!("failed to atomically replace destination: {e}"))?;
+    // Durability (RUST-06): the rename is only durable once the parent directory
+    // entry is on disk. Best effort — a failure here must never fail a write
+    // that already landed, and Windows cannot open the directory at all.
+    #[cfg(not(windows))]
+    if let Ok(directory) = std::fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
+
+/// Returns io::Error (not a String) so callers that classify by `ErrorKind` —
+/// e.g. save.rs mapping PermissionDenied to the recovery UI — keep the
+/// persist-stage kind. `atomic_write` converts for the user.
+pub(crate) fn replace_existing(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+) -> Result<(), std::io::Error> {
+    match temporary.persist(path) {
+        Ok(_) => Ok(()),
+        Err(first) => {
+            if !cfg!(windows) {
+                return Err(first.error);
+            }
+            // Never rename an existing directory into a backup sibling: the
+            // Windows fallback is strictly for regular files held open by an
+            // indexer or antivirus scanner.
+            if std::fs::symlink_metadata(path)
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false)
+            {
+                return Err(first.error);
+            }
+            // Windows can refuse to rename over a destination another handle
+            // holds (indexer, antivirus); retry via a backup rename so the write
+            // still lands, restoring the original if the retry fails. The backup
+            // is a unique sibling (pid + nanos) so targets differing only by
+            // extension never share one name.
+            let backup = save_backup_path(path);
+            if let Err(rename_error) = std::fs::rename(path, &backup) {
+                return Err(std::io::Error::other(format!(
+                    "failed to atomically replace destination: {} (backup rename failed: {})",
+                    first.error, rename_error
+                )));
+            }
+            match first.file.persist(path) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(retry) => {
+                    let _ = std::fs::rename(&backup, path);
+                    Err(retry.error)
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn save_backup_path(path: &Path) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("doc");
+    // The embedded document name lets `temp_sweep` recognise a backup that is
+    // the last copy of a file a crash left mid-rename.
+    let stamp = format!(".{}-{}", std::process::id(), nanos);
+    path.with_file_name(format!("{stamp}.{name}.omd-save-backup"))
 }
 
 #[cfg(test)]
@@ -300,6 +422,39 @@ mod tests {
 
         assert!(error.contains("directory"), "unexpected error: {error}");
         assert!(!dir.join("absent").exists(), "no directory may be created");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn custom_css_and_export_targets_need_a_picked_path() {
+        let dir = tmp("gate");
+        let css = dir.join("theme.css");
+        let html = dir.join("doc.html");
+        fs::write(&css, ":root{}").unwrap();
+
+        // A perfectly valid path is still refused while ungranted.
+        let error = read_custom_css_authorized("gate-w", &path_string(&css)).unwrap_err();
+        assert!(error.contains("authorized"), "unexpected error: {error}");
+        assert!(write_exported_html_authorized("gate-w", &path_string(&html), "x".into()).is_err());
+        assert!(!html.exists(), "a refused export must not write");
+
+        crate::auth_scope::authorize_custom_css("gate-w", &css).unwrap();
+        crate::auth_scope::authorize_export_target("gate-w", &html).unwrap();
+        assert_eq!(
+            read_custom_css_authorized("gate-w", &path_string(&css)).unwrap(),
+            ":root{}"
+        );
+        write_exported_html_authorized("gate-w", &path_string(&html), "<p>x</p>".into()).unwrap();
+        assert_eq!(fs::read_to_string(&html).unwrap(), "<p>x</p>");
+
+        // Grants are per window and per destination.
+        assert!(read_custom_css_authorized("other-w", &path_string(&css)).is_err());
+        assert!(write_exported_html_authorized(
+            "gate-w",
+            &path_string(&dir.join("other.html")),
+            "x".into()
+        )
+        .is_err());
         fs::remove_dir_all(dir).ok();
     }
 

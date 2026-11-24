@@ -2,15 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { errorMessage, toDocumentCommandError } from "../src/desktopServices"
 import type { LogRecord } from "../src/logger"
 
-const { invoke, revealItemInDir, toast, save } = vi.hoisted(() => ({
+const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
   invoke: vi.fn(),
   revealItemInDir: vi.fn(),
   toast: { error: vi.fn(), success: vi.fn() },
-  save: vi.fn(),
 }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save }))
 vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
@@ -158,13 +156,12 @@ describe("export diagnostics", () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
-    invoke.mockClear()
-    save.mockReset()
+    invoke.mockReset()
   })
 
   it("asks once, names the contents, and always exports collapsed paths", async () => {
-    save.mockResolvedValueOnce("/tmp/omd.zip")
-    invoke.mockResolvedValueOnce(undefined)
+    invoke.mockReset()
+    invoke.mockResolvedValueOnce("/tmp/omd.zip").mockResolvedValueOnce(undefined)
     const confirm = answerNotice(true)
 
     await defaultServices.exportDiagnostics?.()
@@ -178,7 +175,12 @@ describe("export diagnostics", () => {
     expect(confirm.mock.calls[0][0]).toMatch(/diagnostics/i)
     expect(confirm.mock.calls[0][0]).toMatch(/log/i)
     expect(confirm.mock.calls[0][0]).toMatch(/path/i)
-    expect(invoke).toHaveBeenCalledWith("export_diagnostics", {
+    expect(invoke).toHaveBeenNthCalledWith(1, "pick_export_path", {
+      format: "zip",
+      defaultPath: "oh-my-md-diagnostics.zip",
+      filterLabel: expect.any(String),
+    })
+    expect(invoke).toHaveBeenNthCalledWith(2, "export_diagnostics", {
       path: "/tmp/omd.zip",
       includeFullPaths: false,
     })
@@ -191,17 +193,124 @@ describe("export diagnostics", () => {
 
     // No destination is chosen and nothing is invoked: a declined notice must
     // not leave the user holding a save dialog.
-    expect(save).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
   })
 
   it("exports nothing when the save dialog is cancelled", async () => {
-    save.mockResolvedValueOnce(null)
+    invoke.mockResolvedValueOnce(null)
     answerNotice(true)
 
     await defaultServices.exportDiagnostics?.()
 
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith("pick_export_path", {
+      format: "zip",
+      defaultPath: "oh-my-md-diagnostics.zip",
+      filterLabel: expect.any(String),
+    })
+  })
+})
+
+describe("native pickers", () => {
+  afterEach(() => {
+    invoke.mockReset()
+    localStorage.clear()
+  })
+
+  it("runs the open dialog in Rust and returns the picked path", async () => {
+    invoke.mockResolvedValueOnce("/notes/a.md")
+    await expect(defaultServices.pickOpenPath()).resolves.toBe("/notes/a.md")
+    expect(invoke).toHaveBeenCalledWith("pick_open_markdown", { filterLabel: expect.any(String) })
+  })
+
+  it("resolves null when the user cancels, in every picker", async () => {
+    invoke.mockResolvedValue(null)
+    await expect(defaultServices.pickOpenPath()).resolves.toBeNull()
+    await expect(defaultServices.pickSavePath()).resolves.toBeNull()
+    await expect(defaultServices.pickFolder?.()).resolves.toBeNull()
+    await expect(defaultServices.pickCssPath?.()).resolves.toBeNull()
+    await expect(defaultServices.pickExportPath?.("pdf", "/notes/a.md")).resolves.toBeNull()
+  })
+
+  it("asks Rust for the save dialog, the folder picker, and the CSS picker", async () => {
+    invoke.mockResolvedValueOnce("/notes/b.md")
+    await defaultServices.pickSavePath()
+    expect(invoke).toHaveBeenCalledWith("pick_save_markdown", { filterLabel: expect.any(String) })
+
+    invoke.mockResolvedValueOnce("/notes")
+    await defaultServices.pickFolder?.()
+    expect(invoke).toHaveBeenCalledWith("pick_workspace_folder")
+
+    invoke.mockResolvedValueOnce("/notes/theme.css")
+    await defaultServices.pickCssPath?.()
+    expect(invoke).toHaveBeenCalledWith("pick_custom_css", { filterLabel: expect.any(String) })
+  })
+
+  it("hands the export dialog its format, default path, and filter", async () => {
+    invoke.mockResolvedValueOnce("/notes/a.png")
+    await expect(defaultServices.pickExportPath?.("png", "/notes/a.md")).resolves.toBe("/notes/a.png")
+    expect(invoke).toHaveBeenCalledWith("pick_export_path", {
+      format: "png",
+      defaultPath: "/notes/a.png",
+      filterLabel: "PNG",
+    })
+
+    invoke.mockResolvedValueOnce("export.html")
+    await defaultServices.pickExportPath?.("html")
+    expect(invoke).toHaveBeenCalledWith("pick_export_path", {
+      format: "html",
+      defaultPath: "export.html",
+      filterLabel: "HTML",
+    })
+  })
+})
+
+describe("recent files", () => {
+  const LEGACY_KEY = "omd.recent-files"
+
+  afterEach(() => {
+    invoke.mockReset()
+    localStorage.clear()
+  })
+
+  it("reads the persisted list from Rust", async () => {
+    invoke.mockResolvedValueOnce(["/notes/a.md", "/notes/b.md"])
+    await expect(defaultServices.loadRecents?.()).resolves.toEqual(["/notes/a.md", "/notes/b.md"])
+    expect(invoke).toHaveBeenCalledWith("get_recent_files")
+  })
+
+  it("keeps an authoritative empty answer instead of reviving stored paths", async () => {
+    localStorage.setItem(LEGACY_KEY, JSON.stringify(["/etc/passwd"]))
+    invoke.mockResolvedValueOnce([])
+
+    await expect(defaultServices.loadRecents?.()).resolves.toEqual([])
+    // The stale mirror is gone, so it cannot come back through a later read.
+    expect(localStorage.getItem(LEGACY_KEY)).toBeNull()
+  })
+
+  it("falls back to the legacy list only when the command is unavailable", async () => {
+    localStorage.setItem(LEGACY_KEY, JSON.stringify(["/notes/legacy.md"]))
+    invoke.mockRejectedValueOnce(new Error("command not found"))
+
+    await expect(defaultServices.loadRecents?.()).resolves.toEqual(["/notes/legacy.md"])
+  })
+
+  it("degrades to an empty list when both sources fail", async () => {
+    localStorage.setItem(LEGACY_KEY, "{not json")
+    invoke.mockRejectedValueOnce(new Error("command not found"))
+
+    await expect(defaultServices.loadRecents?.()).resolves.toEqual([])
+  })
+
+  it("persists through Rust and only mirrors on refusal", async () => {
+    invoke.mockResolvedValueOnce(undefined)
+    await defaultServices.saveRecents?.(["/notes/a.md"])
+    expect(invoke).toHaveBeenCalledWith("save_recent_files", { paths: ["/notes/a.md"] })
+    expect(localStorage.getItem(LEGACY_KEY)).toBeNull()
+
+    invoke.mockRejectedValueOnce(new Error("recent path was not authorized"))
+    await defaultServices.saveRecents?.(["/etc/passwd"])
+    expect(localStorage.getItem(LEGACY_KEY)).toBe(JSON.stringify(["/etc/passwd"]))
   })
 })
 

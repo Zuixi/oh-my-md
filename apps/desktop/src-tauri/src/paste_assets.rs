@@ -63,9 +63,17 @@ pub(crate) struct PasteAssetState(Mutex<PasteAssetStateInner>);
 #[tauri::command]
 pub(crate) async fn write_paste_assets(
     state: tauri::State<'_, PasteAssetState>,
+    window: tauri::WebviewWindow,
     document_path: String,
     assets: Vec<PasteAssetWrite>,
 ) -> Result<PasteAssetBatch, String> {
+    // Pasted bytes land in `assets/` next to the document, so the document must
+    // be a file this window already opened or saved — a pasted image must never
+    // become a way to create files next to an arbitrary path.
+    crate::auth_scope::assert_file_or_workspace_authorized(
+        Some(window.label()),
+        std::path::Path::new(&document_path),
+    )?;
     let registered_document_path = PathBuf::from(&document_path);
     let batch = tauri::async_runtime::spawn_blocking(move || {
         write_paste_assets_impl(Path::new(&document_path), assets)

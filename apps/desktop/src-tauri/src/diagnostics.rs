@@ -411,9 +411,12 @@ fn session_json() -> String {
 #[tauri::command]
 pub async fn export_diagnostics(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     path: String,
     include_full_paths: bool,
 ) -> Result<(), String> {
+    let target = diagnostics_target(Path::new(&path))?;
+    crate::auth_scope::assert_export_target_authorized(Some(window.label()), &target)?;
     // Capture everything the zipper needs before leaving the IPC thread: a
     // `tauri::State` guard is not `Send`, and a command must not hold managed
     // state across the await.
@@ -431,7 +434,6 @@ pub async fn export_diagnostics(
     // held across the await, so the facts are cloned out here with the rest of
     // the managed state.
     let previous_session = app.state::<crate::logging::PreviousExitState>().0.clone();
-    let target = PathBuf::from(&path);
 
     // Redacting and hashing every log is IO-bound, and this command runs on the
     // crash path it exists for: spawn_blocking keeps the main thread serving

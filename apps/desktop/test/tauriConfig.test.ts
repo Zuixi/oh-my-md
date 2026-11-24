@@ -51,13 +51,13 @@ function readBmpPixels(relativePath: string): {
 }
 
 describe("Tauri frontend security configuration", () => {
-  it("grants only the dialog operations used by the desktop UI", () => {
+  it("withholds direct dialog plugin permissions so every picker mints its grant in Rust", () => {
     const capability = readJson("../src-tauri/capabilities/default.json") as {
       permissions: string[]
     }
 
-    expect(capability.permissions).toContain("dialog:allow-open")
-    expect(capability.permissions).toContain("dialog:allow-save")
+    expect(capability.permissions).not.toContain("dialog:allow-open")
+    expect(capability.permissions).not.toContain("dialog:allow-save")
     expect(capability.permissions).not.toContain("dialog:default")
   })
 

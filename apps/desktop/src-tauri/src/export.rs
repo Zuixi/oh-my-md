@@ -326,11 +326,36 @@ impl Drop for ExportCancelGuard<'_> {
     }
 }
 
-// Eight parameters because the list *is* the IPC wire contract: collapsing it
-// into a struct would rename every field the frontend sends.
+/// Exports the preview to `path`.
+///
+/// The destination must be a path this window picked in the native export
+/// dialog: without that check any absolute path plus a render payload would be
+/// an unrestricted write. The render itself lives in `export_preview_unchecked`
+/// so the feature-gated smoke binary can drive it without a webview.
+// Nine parameters because the list *is* the IPC wire contract: collapsing it
+// into a struct would rename every field the frontend sends. `window` is
+// injected by Tauri, so it is not part of the TypeScript contract.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn export_preview(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    html: String,
+    path: String,
+    format: String,
+    scale: u32,
+    width: u32,
+    request_id: String,
+    page: export_page::PageSetupDto,
+) -> Result<Option<ExportWarning>, String> {
+    let fmt = ExportFormat::parse(&format)?;
+    let target = validate_export(&path, fmt, &html)?;
+    crate::auth_scope::assert_export_target_authorized(Some(window.label()), &target)?;
+    export_preview_unchecked(app, html, path, format, scale, width, request_id, page).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn export_preview_unchecked(
     app: tauri::AppHandle,
     html: String,
     path: String,
