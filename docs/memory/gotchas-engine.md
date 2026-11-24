@@ -1412,6 +1412,17 @@ ephemeron table 边画进图里，但那条边不是强引用。** 按“图上�
   `Map<BlockWidget, HTMLElement>`。它守的是**所有权**（有人手滑改回 `Map` 会立刻红），**不**
   守内存 —— 堆大小依赖 GC 时机，不适合做断言，真实数值只走上面的手动审计。
 
+### 2026-11-24 Follow-up Measurement Across All Five Rich Widget Families (`REM-02`)
+
+`apps/desktop/e2e/widget-memory-audit.mjs` was expanded to release harness globals (`window.__view`, `window.__docText`, `window.__setLivePreview`, and host DOM) after `view.destroy()` and to run two forced-GC (`HeapProfiler.collectGarbage` x2) suites on Chromium `158.0.8127.89` (`darwin arm64`):
+
+1. **`tableFlipChurn` (1,000 caret flips across a 20-row quoted GFM table):**
+   - `baseline`: 5.9 MB (`6,238,368` B) -> `flips100`: 6.8 MB (`7,120,196` B) -> `flips500`: 7.1 MB (`7,465,968` B) -> `flips1000`: 7.5 MB (`7,840,900` B) -> `afterHostRelease`: 7.5 MB (`7,823,008` B, `domBlockWidgets: 0`).
+   - **`afterHostRelease / flips100 = 1.099`** (`+9.9%`, well within the `<= 1.20` threshold).
+2. **`richWidgetCycles` (90 full mount + RAF render + plain-reset rounds across all 5 block widget families = 450 widget mounts/unmounts: GFM table, Complex HTML `rowspan`/`colspan` table, KaTeX display math, Mermaid diagram, and Shiki TypeScript fence):**
+   - `baselineAfterWarmup`: 11.0 MB (`11,541,612` B) -> `cycles15`: 11.8 MB (`12,332,396` B) -> `cycles45`: 12.2 MB (`12,763,744` B) -> `cycles90`: 12.5 MB (`13,063,732` B) -> `afterPlainReset`: 12.4 MB (`13,025,000` B, `domBlockWidgets: 0`) -> `afterHostRelease`: 12.4 MB (`13,004,752` B, `domBlockWidgets: 0`).
+   - **`afterPlainReset / cycles15 = 1.056`** (`+5.6%` sublinear plateau as bounded LRU caches fill, with zero lingering `.omd-block` nodes).
+
 ## Complex Table `HTMLBlock` is a closed Type 6 contract, never general HTML
 
 Why a pasted `<table>` with `rowspan`/`colspan` has four strict invariants across `paste/`, `parse/`, `decorations/`, and `export/`:
