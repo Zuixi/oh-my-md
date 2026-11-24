@@ -17,7 +17,7 @@
     "audit:table-direct-edit-spike": "node e2e/table-direct-edit-memory.mjs"
   },
   "dependencies": {
-    "@codemirror/commands": "^6.7.1",
+    "@codemirror/commands": "^6.11.1",
     "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.36.0",
