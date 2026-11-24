@@ -12,7 +12,7 @@ pub(crate) use coordinator::resolve_path_key;
 pub use coordinator::DocumentCoordinator;
 pub(crate) use save::guarded_save;
 #[cfg(test)]
-pub(crate) use save::{copy_metadata, guarded_save_with_hook, sync_parent};
+pub(crate) use save::{guarded_save_with_hook, sync_parent};
 
 const FINGERPRINT_PREFIX: &str = "v1:";
 
