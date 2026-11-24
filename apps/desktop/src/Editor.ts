@@ -14,6 +14,7 @@ import {
   setAutoPair,
   type AutoPairOptions,
   type EditorPerformancePolicy,
+  type MediaInspectHandler,
   type OrderedListNormalizationNotice,
   type OutlineItem,
 } from "@omd/engine"
@@ -78,6 +79,8 @@ export interface CreateEditorOptions {
   /** Per-editor performance policy (`null` or omitted falls back to legacy globals). */
   performancePolicy?: EditorPerformancePolicy | null
   experimentalTableDirectEdit?: boolean
+  /** Invoked when the user clicks a rendered image or Mermaid diagram to inspect/zoom. */
+  onInspectMedia?: MediaInspectHandler
 }
 
 export function makeImageResolver(
@@ -259,6 +262,7 @@ function createEditorState(
         autoPair: options.autoPair,
         performancePolicy: options.performancePolicy,
         experimentalTableDirectEdit: options.experimentalTableDirectEdit,
+        onInspectMedia: options.onInspectMedia,
       }),
       options.onOpenMarkdownHref ? markdownHrefHandler.of(options.onOpenMarkdownHref) : [],
       options.onOpenExternalHref ? externalHrefHandler.of(options.onOpenExternalHref) : [],

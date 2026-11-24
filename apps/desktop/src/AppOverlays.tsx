@@ -1,9 +1,11 @@
+import type { MediaInspectTarget } from "@omd/engine"
 import { AboutDialog } from "./AboutDialog"
 import { CommandPalette } from "./CommandPalette"
 import type { AppCommand } from "./commands"
 import type { DesktopServices } from "./desktopServices"
 import type { DocumentOpen, QuickOpenState } from "./documentOpen"
 import type { LogStateView } from "./logging"
+import { MediaLightbox } from "./MediaLightbox"
 import { OpeningOverlay } from "./OpeningOverlay"
 import { QuickOpenModal } from "./QuickOpenModal"
 import { SettingsModal } from "./SettingsModal"
@@ -36,6 +38,8 @@ export function AppOverlays(props: {
   readonly onRestartForLogging: () => void
   readonly aboutOpen: boolean
   readonly onCloseAbout: () => void
+  readonly lightboxTarget: MediaInspectTarget | null
+  readonly onCloseLightbox: () => void
 }) {
   const { history } = props
   return (
@@ -86,6 +90,7 @@ export function AppOverlays(props: {
         services={props.services}
         onClose={props.onCloseAbout}
       />
+      <MediaLightbox target={props.lightboxTarget} onClose={props.onCloseLightbox} />
     </>
   )
 }

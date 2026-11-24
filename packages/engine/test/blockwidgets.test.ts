@@ -8,7 +8,7 @@ import { ImageWidget, imageResolver } from "../src/decorations/widgets/image"
 import { CodeWidget, CodeChromeWidget } from "../src/decorations/widgets/code"
 import { TableWidget } from "../src/decorations/widgets/table"
 import type { TableData, TableRowData } from "../src/tables/model"
-import { MermaidWidget } from "../src/decorations/widgets/mermaid"
+import { clearMermaidSvgCacheForTest, MermaidWidget } from "../src/decorations/widgets/mermaid"
 import { MathBlockWidget } from "../src/decorations/widgets/math"
 
 vi.mock("mermaid", () => ({
@@ -409,6 +409,7 @@ describe("block widget pipeline", () => {
   }, 2000)
 
   it("keeps source placeholder without writing Mermaid output after destroy", async () => {
+    clearMermaidSvgCacheForTest()
     const widget = new MermaidWidget("graph TD; A-->B", 0)
     const dom = widget.toDOM({ requestMeasure: () => {} } as never)
     widget.destroy(dom)

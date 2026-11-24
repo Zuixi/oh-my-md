@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Text } from "@codemirror/state"
+import type { MediaInspectTarget } from "@omd/engine"
 import type { EditorStatusStore } from "./editorStatusStore"
 import type { DocumentScaleRegistry } from "./documentScaleRegistry"
 import { createEditorScalePolicyApplier } from "./editorScalePolicy"
@@ -52,6 +53,7 @@ export interface AppWorkspaceRuntimeInput {
   readonly setTransientStatus: (status: string | null) => void
   readonly setOpeningLabel: (label: string | null) => void
   readonly setOpeningProgress: (progress: { bytesRead: number; byteLength: number } | null) => void
+  readonly onInspectMedia?: (target: MediaInspectTarget) => void
 }
 
 export function useAppWorkspaceRuntime(input: AppWorkspaceRuntimeInput) {
@@ -173,6 +175,9 @@ export function useAppWorkspaceRuntime(input: AppWorkspaceRuntimeInput) {
     save: tabId => { void saveFileRef.current(tabId, "autosave") },
   }), [store, documentScaleRegistry])
 
+  const onInspectMediaRef = useRef(input.onInspectMedia)
+  onInspectMediaRef.current = input.onInspectMedia
+
   const materializerRef = useRef<DocumentMaterializer | null>(null)
   const views = useMemo(() => createDocumentViews({
     services,
@@ -195,6 +200,7 @@ export function useAppWorkspaceRuntime(input: AppWorkspaceRuntimeInput) {
     pendingJump: pendingJumpRef,
     pendingFocus: pendingFocusRef,
     materializeDelayMs: docMaterializeMs,
+    onInspectMedia: target => onInspectMediaRef.current?.(target),
   }), [])
   materializerRef.current = views.materializer
 

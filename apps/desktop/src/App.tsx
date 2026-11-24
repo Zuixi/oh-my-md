@@ -30,6 +30,7 @@ import { AppSidebar } from "./AppSidebar"
 import { AppOutlinePanel } from "./AppOutlinePanel"
 import { AppCanvas } from "./AppCanvas"
 import { AppOverlays } from "./AppOverlays"
+import { useMediaLightbox } from "./MediaLightbox"
 import { AppStatusBar } from "./AppStatusBar"
 import { TopBar } from "./TopBar"
 import { visibleRows } from "./fileTreeState"
@@ -88,6 +89,7 @@ export default function App(props: AppProps) {
   const sessionRef = useRef<EditorSession>(store.getActiveSession())
   const session = sessionRef.current
   const activeFilePath = sessionPath(session)
+  const lightbox = useMediaLightbox(workspace.activeId, session.documentId)
 
   // ---- UI state ----------------------------------------------------------
   const chrome = useAppChrome({ services, registry })
@@ -132,6 +134,7 @@ export default function App(props: AppProps) {
     setTransientStatus,
     setOpeningLabel,
     setOpeningProgress,
+    onInspectMedia: lightbox.open,
   })
 
   // ---- document domain --------------------------------------------------
@@ -220,12 +223,14 @@ export default function App(props: AppProps) {
 
   const modalChromeOpenRef = useRef(false)
   modalChromeOpenRef.current =
-    paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen
+    paletteOpen || quickOpenState.open || search.open || settingsOpen || aboutOpen ||
+    lightbox.target !== null
   // Keyboard isolation (UX-01) covers real dialogs only: the search panel is a
   // side panel, so `Cmd+W` keeps closing tabs while it is open.
   const dialogOpenRef = useRef(false)
   dialogOpenRef.current =
-    settingsOpen || aboutOpen || history.state.open || paletteOpen || quickOpenState.open
+    settingsOpen || aboutOpen || history.state.open || paletteOpen || quickOpenState.open ||
+    lightbox.target !== null
   const openingLabelRef = useRef<string | null>(null)
   openingLabelRef.current = openingLabel
   const cancelOpeningRef = useRef(openCoordinator.cancelOpening)
@@ -472,6 +477,8 @@ export default function App(props: AppProps) {
         }}
         aboutOpen={aboutOpen}
         onCloseAbout={() => setAboutOpen(false)}
+        lightboxTarget={lightbox.target}
+        onCloseLightbox={lightbox.close}
       />
     </div>
   )

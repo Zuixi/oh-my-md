@@ -1,8 +1,13 @@
+import { EditorView } from "@codemirror/view"
 import { markdownLanguageSupport } from "./parse/markdown"
 import { emojiCompletion } from "./parse/emojiComplete"
 import { livePreviewCompartment, livePreviewExt, isLivePreview, toggleKeymap } from "./modes/livePreview"
 import { codeSyntaxHighlighting } from "./highlight/codeHighlight"
 import { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+import {
+  mediaInspectHandler,
+  type MediaInspectHandler,
+} from "./decorations/mediaInspect"
 import { tableDirectEditEnabled } from "./decorations/widgets/table"
 import { tableCaretFollower } from "./decorations/widgets/tableCellEdit"
 import { renderBudgetFlush } from "./decorations/renderBudget"
@@ -53,6 +58,11 @@ export {
   EXPORT_READY_SCRIPT_SHA256,
 } from "./export/readyScript"
 export { defaultBroken, imageBrokenLabel, imageResolver } from "./decorations/widgets/image"
+export {
+  mediaInspectHandler,
+  type MediaInspectHandler,
+  type MediaInspectTarget,
+} from "./decorations/mediaInspect"
 export {
   classifyLink,
   headingPositionForAnchor,
@@ -213,6 +223,8 @@ export interface EngineOptions {
   performancePolicy?: EditorPerformancePolicy | null
   /** Cell sessions. Omitted turns them on; pass false to keep source-only table clicks. */
   experimentalTableDirectEdit?: boolean
+  /** Host callback invoked when clicking a rendered image or Mermaid diagram to inspect/zoom. */
+  onInspectMedia?: MediaInspectHandler
 }
 
 export function editorExtensions(options: EngineOptions = {}) {
@@ -273,5 +285,7 @@ export function editorExtensions(options: EngineOptions = {}) {
     toggleKeymap,
     imageResolver.of(options.resolveImageSrc ?? ((s: string) => s)),
     imageBrokenLabel.of(options.imageBrokenLabel ?? defaultBroken),
+    mediaInspectHandler.of(options.onInspectMedia ?? null),
+    ...(options.onInspectMedia ? [EditorView.editorAttributes.of({ "data-omd-media-inspect": "true" })] : []),
   ]
 }

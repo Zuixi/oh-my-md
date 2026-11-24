@@ -10,6 +10,7 @@
  */
 import type { EditorView } from "@codemirror/view"
 import type { Text } from "@codemirror/state"
+import type { MediaInspectTarget } from "@omd/engine"
 import {
   createEditor, resetEditorDocument, setEditorAutoPair, setEditorSpellcheck,
   type CreateEditorOptions, type EditorDocumentUpdate,
@@ -60,6 +61,7 @@ export interface DocumentViewsDeps {
   readonly pendingFocus: { current: boolean }
   /** Pull-based materialization trailing window (0 = synchronous, tests). */
   readonly materializeDelayMs: number
+  readonly onInspectMedia?: (target: MediaInspectTarget) => void
 }
 
 export interface DocumentViews {
@@ -159,6 +161,14 @@ export function createDocumentViews(deps: DocumentViewsDeps): DocumentViews {
     // large documents live, so no forced source mode or extension trimming.
     const readOnly = documentScaleRegistry.isReadOnly(tabId)
     const settings = deps.getSettings()
+    // Stale tab/document/view identities must not publish active UI state: a
+    // background view keeps firing selection/mode updates while hidden.
+    const isActiveBinding = (): boolean => {
+      const workspace = store.getWorkspace()
+      if (workspace.activeId !== tabId) return false
+      const tab = workspace.tabs.find(item => item.id === tabId)
+      return Boolean(tab && tab.documentId === documentId)
+    }
     return {
       // Streaming open passes Text straight through (no whole-string line split).
       doc: docText ?? contents,
@@ -166,20 +176,8 @@ export function createDocumentViews(deps: DocumentViewsDeps): DocumentViews {
       documentId,
       ...pasteOptions(tabId, documentId),
       onDocumentUpdate: handleDocumentUpdate,
-      onModeChange: isLive => {
-        const tab = store.getWorkspace().tabs.find(item => item.id === tabId)
-        if (!tab || tab.documentId !== documentId) return
-        if (store.getWorkspace().activeId !== tabId) return
-        deps.setSourceMode(!isLive)
-      },
-      // Stale tab/document/view identities must not publish active status: a
-      // background view keeps firing selection updates while hidden.
-      onStatusChange: status => {
-        const tab = store.getWorkspace().tabs.find(item => item.id === tabId)
-        if (!tab || tab.documentId !== documentId) return
-        if (store.getWorkspace().activeId !== tabId) return
-        deps.editorStatusStore.publish(status)
-      },
+      onModeChange: isLive => { if (isActiveBinding()) deps.setSourceMode(!isLive) },
+      onStatusChange: status => { if (isActiveBinding()) deps.editorStatusStore.publish(status) },
       onOpenExternalHref: href => { void services.openExternal?.(href) },
       onOpenMarkdownHref: href => {
         const current = activeSessionPath(store.getWorkspace())
@@ -194,6 +192,7 @@ export function createDocumentViews(deps: DocumentViewsDeps): DocumentViews {
       autoPair: settings.autoPair,
       readOnly,
       performancePolicy: documentScaleRegistry.performancePolicy(tabId),
+      onInspectMedia: target => { if (isActiveBinding()) deps.onInspectMedia?.(target) },
     }
   }
 

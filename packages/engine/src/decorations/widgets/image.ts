@@ -1,5 +1,23 @@
 import { Facet } from "@codemirror/state"
 import { EditorView, WidgetType } from "@codemirror/view"
+import { BoundedLru } from "../../cache/boundedLru"
+import { isInspectPointerEvent, mediaInspectHandler, trackInspectClick } from "../mediaInspect"
+
+interface ImageDimensions {
+  readonly width: number
+  readonly height: number
+}
+
+const IMAGE_DIMS_CACHE_MAX_ENTRIES = 512
+const imageDimensionsCache = new BoundedLru<string, ImageDimensions>({
+  maxEntries: IMAGE_DIMS_CACHE_MAX_ENTRIES,
+  maxSize: IMAGE_DIMS_CACHE_MAX_ENTRIES,
+  sizeOf: () => 1,
+})
+
+export function clearImageDimensionsCacheForTest(): void {
+  imageDimensionsCache.clear()
+}
 
 // 引擎不猜路径解析规则（http/data/相对路径/convertFileSrc 都是宿主的事），
 // desktop 通过 facet 注入；缺省原样返回。
@@ -37,9 +55,44 @@ export class ImageWidget extends WidgetType {
     // Async decode keeps the bitmap off the frame CM measures in, so the block height only
     // settles when the image arrives: ask for a re-measure from that callback.
     img.decoding = "async"
+    const cachedDims = imageDimensionsCache.get(this.resolvedSrc)
+    if (cachedDims) {
+      img.width = cachedDims.width
+      img.height = cachedDims.height
+    }
     img.onload = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        imageDimensionsCache.set(this.resolvedSrc, {
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        })
+      }
       if (img.isConnected && typeof view?.requestMeasure === "function") view.requestMeasure()
     }
+    img.addEventListener("mousedown", event => {
+      if (!isInspectPointerEvent(event)) return
+      const handler = view.state?.facet(mediaInspectHandler) ?? null
+      if (!handler) return
+      event.preventDefault()
+      event.stopPropagation()
+      trackInspectClick(event, () => {
+        if (!img.isConnected || !view.dom?.isConnected) return
+        const editSource = view.state.readOnly ? undefined : () => {
+          if (!img.isConnected || !view.dom?.isConnected) return
+          const pos = view.posAtDOM(img)
+          view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
+          view.focus()
+        }
+        handler({
+          kind: "image",
+          src: this.src,
+          resolvedSrc: this.resolvedSrc,
+          alt: this.alt,
+          title: this.title,
+          editSource,
+        })
+      })
+    })
     img.onerror = () => {
       const label = view.state.facet(imageBrokenLabel)(this.src)
       const span = Object.assign(document.createElement("span"), {
