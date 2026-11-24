@@ -106,7 +106,7 @@ objc2-web-kit = { version = "0.3", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
 gtk = "0.18"
-cairo-rs = { version = "0.18", features = ["png"] }
+cairo-rs = { version = "0.22", features = ["png"] }
 javascriptcore-rs = "1.1"
 
 [target.'cfg(windows)'.dependencies]
