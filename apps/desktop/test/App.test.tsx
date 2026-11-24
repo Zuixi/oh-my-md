@@ -1000,7 +1000,7 @@ describe("App product shell", () => {
     harness.renderApp()
     expect(screen.getByText(/Open a folder from the File menu/)).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Open folder" })).toBeNull()
-    expect(screen.getByRole("button", { name: "Search" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: /Search in folder…/ })).toBeTruthy()
     expect(screen.getByText("Outline")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Export HTML" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull()

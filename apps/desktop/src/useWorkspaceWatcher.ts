@@ -32,6 +32,11 @@ export interface WorkspaceWatcherHost {
   readonly pollFileTabs: () => Promise<void>
 }
 
+interface FolderAuthEntry {
+  readonly folder: string
+  readonly ready: Promise<void>
+}
+
 /**
  * `treeActions` is rebuilt on every render but its methods only touch internal
  * refs, so the effects read the latest instance through a ref instead of
@@ -44,14 +49,35 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
   const pollInFlightRef = useRef(false)
   // Share one authorization promise per folder so `listDir` and `watchPaths`
   // both wait for `allowWorkspaceDir` without issuing duplicate IPC calls.
-  const folderAuthRef = useRef<{ folder: string; ready: Promise<void> } | null>(null)
+  const folderAuthRef = useRef<FolderAuthEntry | null>(null)
 
   const ensureFolderAuthorized = (targetFolder: string): Promise<void> => {
-    if (folderAuthRef.current?.folder === targetFolder) return folderAuthRef.current.ready
-    const ready = Promise.resolve(services.allowWorkspaceDir?.(targetFolder)).catch(() => {})
-    folderAuthRef.current = { folder: targetFolder, ready }
-    return ready
+    const cached = folderAuthRef.current
+    if (cached?.folder === targetFolder) return cached.ready
+    const entry: FolderAuthEntry = {
+      folder: targetFolder,
+      // A rejected grant must not stay cached: keeping it would both hide the
+      // error and block every retry until this window is destroyed. Evict only
+      // this attempt, so a newer folder's grant survives.
+      ready: Promise.resolve(services.allowWorkspaceDir?.(targetFolder)).then(
+        () => undefined,
+        error => {
+          if (folderAuthRef.current === entry) folderAuthRef.current = null
+          throw error
+        },
+      ),
+    }
+    folderAuthRef.current = entry
+    return entry.ready
   }
+
+  /** `refreshTree` awaits this before every listing, so each refresh retries a
+   *  grant that failed earlier instead of staying unauthorized for the session. */
+  const authorizedListDir = (
+    targetFolder: string,
+    listDir: (path: string) => Promise<TreeEntry[]>,
+  ) => (dir: string): Promise<TreeEntry[]> =>
+    ensureFolderAuthorized(targetFolder).then(() => listDir(dir))
 
   // Poll rounds overlap on Windows (recursive folder watch + per-file watch);
   // one in-flight round is enough for every consumer.
@@ -81,9 +107,9 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
     // Skip the whole poll while Search replaces the tree: the scan is pure
     // waste and its results are not rendered.
     if (!watchMs || !folder || !services.listDir || searchOpen) return
-    const listDir = services.listDir
+    const refresh = authorizedListDir(folder, services.listDir)
     const timer = window.setInterval(() => {
-      void latest.current.treeActions.refreshTree(listDir)
+      void latest.current.treeActions.refreshTree(refresh)
     }, watchMs)
     return () => window.clearInterval(timer)
   }, [watchMs, folder, services, searchOpen])
@@ -101,7 +127,7 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
       const listDir = services.listDir
       const current = latest.current
       if (listDir && current.folder && !current.searchOpen) {
-        void current.treeActions.refreshTree(listDir)
+        void current.treeActions.refreshTree(authorizedListDir(current.folder, listDir))
       }
     })
   }, [services])
@@ -126,6 +152,12 @@ export function useWorkspaceWatcher(host: WorkspaceWatcherHost): void {
     }
     void ensureFolderAuthorized(folder).then(() => {
       if (!cancelled) void watchPaths(targetPaths)
+    }).catch(() => {
+      // An unauthorized root cannot be watched; watching the files outside it
+      // is still useful, and the rejection must never surface as unhandled.
+      if (cancelled) return
+      const fallback = targetPaths.filter(path => path !== folder)
+      if (fallback.length > 0) void watchPaths(fallback)
     })
     return () => { cancelled = true }
   }, [folder, tabs, services])

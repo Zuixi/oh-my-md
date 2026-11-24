@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach } from "vitest"
 import { MediaLightbox, useMediaLightbox } from "../src/MediaLightbox"
 
+const MERMAID_TARGET = {
+  kind: "mermaid" as const,
+  svg: '<svg id="omd-mmd-9" viewBox="0 0 800 300"><rect width="800" height="300"/></svg>',
+  source: "graph LR; A-->B",
+}
+
 afterEach(() => cleanup())
 
 describe("MediaLightbox", () => {
@@ -107,6 +113,69 @@ describe("MediaLightbox", () => {
     }
   })
 
+  it("keeps the native modal open across parent re-renders with a fresh onClose", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal")
+    const close = vi.spyOn(HTMLDialogElement.prototype, "close")
+    try {
+      const { rerender } = render(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      expect(showModal).toHaveBeenCalledTimes(1)
+
+      // A fresh inline `onClose` identity on every parent render used to tear the
+      // native modal down and rebuild it (losing zoom state, SVG DOM, and focus).
+      rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      expect(showModal).toHaveBeenCalledTimes(1)
+      expect(close).not.toHaveBeenCalled()
+      expect(document.querySelector<HTMLDialogElement>("dialog.media-lightbox")!.open).toBe(true)
+    } finally {
+      showModal.mockRestore()
+      close.mockRestore()
+    }
+  })
+
+  it("moves focus into the dialog and restores it to the opener on close", () => {
+    const opener = document.createElement("button")
+    opener.textContent = "open lightbox"
+    document.body.appendChild(opener)
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+
+    const onClose = vi.fn()
+    const View = (props: { open: boolean }) => (
+      <MediaLightbox target={props.open ? MERMAID_TARGET : null} onClose={onClose} />
+    )
+
+    try {
+      const { rerender } = render(<View open />)
+      const closeBtn = screen.getByLabelText("Close (Esc)")
+      expect(document.activeElement).toBe(closeBtn)
+
+      // Escape closes the native dialog, which reports the close to React.
+      fireEvent.keyDown(document.querySelector("dialog.media-lightbox")!, { key: "Escape" })
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(document.activeElement).toBe(opener)
+
+      rerender(<View open={false} />)
+      expect(document.querySelector("dialog.media-lightbox")).toBeNull()
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      opener.remove()
+    }
+  })
+
+  it("renders the broken state instead of injecting malformed Mermaid SVG", () => {
+    render(
+      <MediaLightbox
+        target={{ kind: "mermaid", svg: "<svg><unclosed", source: "graph LR" }}
+        onClose={() => {}}
+      />,
+    )
+    const broken = document.querySelector(".media-lightbox-broken")
+    expect(broken?.getAttribute("role")).toBe("status")
+    expect(document.querySelector(".media-lightbox-svg-frame")).toBeNull()
+    expect(document.querySelector("dialog.media-lightbox")!.innerHTML).not.toContain("unclosed")
+  })
+
   it("auto-dismisses when active tab or document identity changes (useMediaLightbox)", () => {
     function Host(props: { tabId: number; docId: number }) {
       const lb = useMediaLightbox(props.tabId, props.docId)
@@ -128,6 +197,33 @@ describe("MediaLightbox", () => {
 
     rerender(<Host tabId={2} docId={1} />)
     expect(document.querySelector("dialog.media-lightbox")).toBeNull()
+  })
+
+  it("pans on a two-finger trackpad scroll and keeps Cmd+scroll as a zoom gesture", async () => {
+    render(
+      <MediaLightbox
+        target={{ kind: "image", src: "photo.png", resolvedSrc: "asset://photo.png", alt: "Photo", title: null }}
+        onClose={() => {}}
+      />,
+    )
+
+    const stage = document.querySelector<HTMLElement>(".media-lightbox-stage")!
+    const content = document.querySelector<HTMLElement>(".media-lightbox-content")!
+
+    // Small pixel deltas are a two-finger trackpad scroll: pan, never zoom.
+    fireEvent.wheel(stage, { deltaX: 0, deltaY: -10, clientX: 0, clientY: 0 })
+    // Wheel/wheel-pan writes coalesce into one rAF frame; zoom readout is synchronous.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    expect(screen.getByText("100%")).toBeTruthy()
+    expect(content.style.transform).toContain("translate3d(0px, 10px, 0)")
+
+    // Cmd+scroll zooms even with a small delta. happy-dom's WheelEvent extends
+    // UIEvent (real browsers extend MouseEvent), so `metaKey` must be attached
+    // explicitly to exercise the host's pass-through.
+    const cmdScroll = new WheelEvent("wheel", { deltaY: -10, bubbles: true, cancelable: true })
+    Object.defineProperty(cmdScroll, "metaKey", { value: true })
+    fireEvent(stage, cmdScroll)
+    expect(screen.queryByText("100%")).toBeNull()
   })
 
   it("supports wheel zoom, pointer-drag pan without closing, and backdrop click to close", () => {

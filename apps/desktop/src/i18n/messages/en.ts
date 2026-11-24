@@ -206,7 +206,7 @@ export const en: Record<string, string> = {
   "filetree.title.fallback": "Files",
   "filetree.aria.hideSidebar": "Hide sidebar",
   "filetree.title.hideSidebar": "Hide sidebar ({shortcut})",
-  "filetree.aria.search": "Search",
+  "filetree.aria.search": "Search in folder… {shortcut}",
   "filetree.searchInFolder": "Search in folder…",
   "filetree.kbd.searchShortcut": "{shortcut}",
   "filetree.empty": "Open a folder from the File menu.",

@@ -98,5 +98,5 @@ pub(super) fn print_pdf(window: &WebviewWindow, page: &PageSetup) -> Result<Vec<
     if !bytes.starts_with(b"%PDF-") || !tail.trim_end().ends_with("%%EOF") {
         return Err("WebKitGTK did not produce a valid PDF".into());
     }
-    Ok(bytes)
+    Ok(crate::export::export_pdf_stamp::stamp_header_footer_if_enabled(bytes, page))
 }

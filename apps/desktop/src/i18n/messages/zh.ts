@@ -206,7 +206,7 @@ export const zh: Record<string, string> = {
   "filetree.title.fallback": "文件",
   "filetree.aria.hideSidebar": "隐藏侧边栏",
   "filetree.title.hideSidebar": "隐藏侧边栏（{shortcut}）",
-  "filetree.aria.search": "搜索",
+  "filetree.aria.search": "在文件夹中搜索… {shortcut}",
   "filetree.searchInFolder": "在文件夹中搜索…",
   "filetree.kbd.searchShortcut": "{shortcut}",
   "filetree.empty": "从文件菜单打开文件夹。",

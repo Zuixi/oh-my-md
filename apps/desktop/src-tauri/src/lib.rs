@@ -1,6 +1,7 @@
 mod app_lifecycle;
 mod auth_scope;
 mod diagnostics;
+mod dialogs;
 mod documents;
 pub mod export;
 mod fonts;
@@ -9,6 +10,7 @@ mod log_capture;
 mod logging;
 mod menu;
 mod paste_assets;
+mod recents;
 mod scoped_io;
 mod session_flush;
 mod temp_sweep;
@@ -18,18 +20,34 @@ mod window_bounds;
 mod windows;
 mod workspace;
 
-use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 
-const MAX_RECENT_FILES: usize = 10;
+// `crate::atomic_write` is the call site every module already uses; the
+// implementation lives in `scoped_io` with the other file primitives.
+#[cfg(test)]
+use scoped_io::save_backup_path;
+pub(crate) use scoped_io::{atomic_write, replace_existing};
 
-// Sync commands run on the Rust main thread, so any of them doing IO can stall
-// every later command (and every window's event loop) — see known-gotchas. All
-// IO commands are async + spawn_blocking; the remaining sync commands are
-// memory-only or deliberately main-thread-bound (window/menu mutation).
+pub(crate) const MAX_RECENT_FILES: usize = 10;
+
+// Sync commands run on the Rust main thread, so doing IO in one stalls every
+// later command and every window's loop (known-gotchas). All IO commands are
+// async and go through `blocked`; the remaining sync ones are memory-only or
+// deliberately main-thread-bound (window/menu mutation).
+/// Runs one blocking IO task off the runtime worker.
+async fn blocked<T, F>(name: &str, task: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("{name} task failed: {error}"))?
+}
+
 #[tauri::command]
 async fn watch_paths(
     app: tauri::AppHandle,
@@ -39,13 +57,11 @@ async fn watch_paths(
     if paths.len() > watcher::MAX_WATCHED_PATHS {
         return Err("too many watch paths".into());
     }
-    // The webview is injected from the caller's context, so each window owns
-    // its own watch set without the TS contract changing shape; the OS
-    // watcher reconciles to the union of all windows' sets.
+    // The webview is injected from the caller's context, so each window owns its
+    // own watch set; the OS watcher reconciles to the union of all windows'.
     let label = window.label().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        // Missing or unauthorized paths are skipped: watching is best-effort
-        // hinting, and a window may only watch its own workspace roots or open files.
+    blocked("watch", move || {
+        // Unauthorized paths are skipped: a window may only watch its own scope.
         let canonical: Vec<PathBuf> = paths
             .iter()
             .filter_map(|path| auth_scope::authorized_watch_path(&label, Path::new(path)))
@@ -53,23 +69,17 @@ async fn watch_paths(
         watcher::set_watched_paths(&app, &label, &canonical)
     })
     .await
-    .map_err(|error| format!("watch task failed: {error}"))?
 }
 
 #[tauri::command]
-fn set_recent_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    if paths.len() > MAX_RECENT_FILES {
-        return Err("too many recent files".into());
-    }
-    for path in &paths {
-        if path.is_empty()
-            || Path::new(path)
-                .components()
-                .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-        {
-            return Err("recent path is invalid".into());
-        }
-    }
+fn set_recent_files(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    // The native menu is process-global: `recents` validates that every path is
+    // authorized for this window or already persisted.
+    recents::validate_recent_paths_for_menu(window.label(), &paths)?;
     menu::set_recent_files(&app, &paths).map_err(|e| e.to_string())
 }
 
@@ -79,8 +89,7 @@ fn set_view_menu_state(
     window: tauri::WebviewWindow,
     state: menu::ViewMenuState,
 ) {
-    // Tauri injects the calling webview, so the state is stored against the
-    // window that owns those toggles — zero frontend wiring changes.
+    // Tauri injects the calling webview, so the state lands on its window.
     menu::set_window_view_state(&app, window.label(), state);
 }
 
@@ -121,8 +130,7 @@ pub(crate) fn startup_window_theme(raw_settings: &str) -> Option<tauri::Theme> {
 // so the flush gate must run inline before exiting.
 #[tauri::command]
 fn session_flush_ack(app: tauri::AppHandle, window: tauri::WebviewWindow) {
-    // The webview is injected from the caller's context, so the ack lands on
-    // the window that actually flushed, not a hardcoded label.
+    // The injected webview is the window that actually flushed.
     app.state::<session_flush::FlushGate>().ack(window.label());
 }
 
@@ -137,18 +145,31 @@ fn app_version() -> &'static str {
 #[tauri::command]
 fn create_editor_window(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     initial_paths: Option<Vec<String>>,
 ) -> Result<String, String> {
-    windows::create_editor_window(
+    let paths = initial_paths.unwrap_or_default();
+    let caller = window.label().to_string();
+    // Reject before the window exists so a refused handoff leaves no empty editor
+    // behind; the grants are copied to the new label below.
+    for path in &paths {
+        auth_scope::assert_file_or_workspace_authorized(Some(&caller), Path::new(path))?;
+    }
+    let label = windows::create_editor_window(
         &app,
         &windows::CreateWindowOptions {
             label: None,
-            initial_paths: initial_paths.unwrap_or_default(),
+            initial_paths: Vec::new(),
             bounds: None,
             maximized: false,
         },
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    auth_scope::copy_authorized_files_to_window(&caller, &label, &paths)?;
+    for path in &paths {
+        windows::queue_open_file(&label, path);
+    }
+    Ok(label)
 }
 
 // Every workspace command takes the calling webview and hands its label to
@@ -171,13 +192,8 @@ async fn search_markdown(
     query: String,
     case_sensitive: bool,
 ) -> Result<workspace::SearchResponse, String> {
-    workspace::search_markdown(
-        root,
-        query,
-        case_sensitive,
-        Some(window.label().to_string()),
-    )
-    .await
+    let label = Some(window.label().to_string());
+    workspace::search_markdown(root, query, case_sensitive, label).await
 }
 
 #[tauri::command]
@@ -191,9 +207,8 @@ async fn list_markdown_files(
 #[tauri::command]
 async fn snapshot_document(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::snapshot_document(path, label))
-        .await
-        .map_err(|error| format!("snapshot task failed: {error}"))?
+    let task = move || workspace::snapshot_document(path, label);
+    blocked("snapshot", task).await
 }
 
 #[tauri::command]
@@ -202,9 +217,8 @@ async fn list_snapshots(
     path: String,
 ) -> Result<Vec<workspace::SnapshotEntry>, String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::list_snapshots(path, label))
-        .await
-        .map_err(|error| format!("snapshot listing task failed: {error}"))?
+    let task = move || workspace::list_snapshots(path, label);
+    blocked("snapshot listing", task).await
 }
 
 #[tauri::command]
@@ -214,17 +228,15 @@ async fn read_snapshot(
     file_name: String,
 ) -> Result<String, String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::read_snapshot(path, file_name, label))
-        .await
-        .map_err(|error| format!("snapshot read task failed: {error}"))?
+    let task = move || workspace::read_snapshot(path, file_name, label);
+    blocked("snapshot read", task).await
 }
 
 #[tauri::command]
 async fn clear_snapshots(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::clear_snapshots(path, label))
-        .await
-        .map_err(|error| format!("snapshot clear task failed: {error}"))?
+    let task = move || workspace::clear_snapshots(path, label);
+    blocked("snapshot clear", task).await
 }
 
 #[tauri::command]
@@ -234,9 +246,8 @@ async fn create_markdown(
     name: String,
 ) -> Result<String, String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::create_markdown(dir, name, label))
-        .await
-        .map_err(|error| format!("create markdown task failed: {error}"))?
+    let task = move || workspace::create_markdown(dir, name, label);
+    blocked("create markdown", task).await
 }
 
 #[tauri::command]
@@ -246,9 +257,8 @@ async fn create_dir(
     name: String,
 ) -> Result<String, String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::create_dir(dir, name, label))
-        .await
-        .map_err(|error| format!("create directory task failed: {error}"))?
+    let task = move || workspace::create_dir(dir, name, label);
+    blocked("create directory", task).await
 }
 
 #[tauri::command]
@@ -258,59 +268,90 @@ async fn rename_path(
     to_name: String,
 ) -> Result<String, String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::rename_path(from, to_name, label))
-        .await
-        .map_err(|error| format!("rename path task failed: {error}"))?
+    let task = move || workspace::rename_path(from, to_name, label);
+    blocked("rename path", task).await
 }
 
 #[tauri::command]
 async fn delete_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     let label = Some(window.label().to_string());
-    tauri::async_runtime::spawn_blocking(move || workspace::delete_path(path, label))
-        .await
-        .map_err(|error| format!("delete path task failed: {error}"))?
+    blocked("delete path", move || workspace::delete_path(path, label)).await
 }
 
 #[tauri::command]
-async fn write_recovery(key: String, path: Option<String>, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::write_recovery(key, path, contents))
-        .await
-        .map_err(|error| format!("recovery write task failed: {error}"))?
+async fn write_recovery(
+    window: tauri::WebviewWindow,
+    key: String,
+    path: Option<String>,
+    contents: String,
+) -> Result<(), String> {
+    // A draft records the document it belongs to, and adopting it grants that
+    // path, so an arbitrary path here would launder itself into a grant.
+    if let Some(target) = path.as_deref() {
+        auth_scope::assert_file_or_workspace_authorized(Some(window.label()), Path::new(target))?;
+    }
+    let task = move || workspace::write_recovery(key, path, contents);
+    blocked("recovery write", task).await
 }
 
 #[tauri::command]
-async fn list_recoveries() -> Result<Vec<workspace::RecoveryRecord>, String> {
-    tauri::async_runtime::spawn_blocking(workspace::list_recoveries)
-        .await
-        .map_err(|error| format!("recovery listing task failed: {error}"))?
+async fn list_recoveries(
+    window: tauri::WebviewWindow,
+) -> Result<Vec<workspace::RecoveryRecord>, String> {
+    let label = window.label().to_string();
+    blocked("recovery listing", move || {
+        let records = workspace::list_recoveries()?;
+        // A crash-recovered standalone file has no other grant on this launch.
+        auth_scope::authorize_recovered_paths(
+            &label,
+            records.iter().filter_map(|record| record.path.as_deref()),
+        );
+        Ok(records)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn read_recovery(key: String) -> Result<workspace::RecoveryContents, String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::read_recovery(key))
-        .await
-        .map_err(|error| format!("recovery read task failed: {error}"))?
+async fn read_recovery(
+    window: tauri::WebviewWindow,
+    key: String,
+) -> Result<workspace::RecoveryContents, String> {
+    let label = window.label().to_string();
+    blocked("recovery read", move || {
+        let contents = workspace::read_recovery(key)?;
+        auth_scope::authorize_recovered_paths(&label, contents.path.as_deref());
+        Ok(contents)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn clear_recovery(key: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::clear_recovery(key))
-        .await
-        .map_err(|error| format!("recovery clear task failed: {error}"))?
+    blocked("recovery clear", move || workspace::clear_recovery(key)).await
 }
 
 #[tauri::command]
-async fn get_settings() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(workspace::get_settings)
-        .await
-        .map_err(|error| format!("settings read task failed: {error}"))?
+async fn get_settings(window: tauri::WebviewWindow) -> Result<String, String> {
+    let label = window.label().to_string();
+    blocked("settings read", move || {
+        let raw = workspace::get_settings()?;
+        // The persisted `customCssPath` was picked in an earlier session.
+        auth_scope::authorize_from_settings_json(&label, &raw);
+        Ok(raw)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn save_settings(contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::save_settings(contents))
-        .await
-        .map_err(|error| format!("settings save task failed: {error}"))?
+async fn save_settings(window: tauri::WebviewWindow, contents: String) -> Result<(), String> {
+    let label = window.label().to_string();
+    blocked("settings save", move || {
+        // A `customCssPath` nobody picked must not be persisted into a grant.
+        let existing = workspace::get_settings().unwrap_or_default();
+        auth_scope::validate_settings_json_for_save(&label, &contents, &existing)?;
+        workspace::save_settings(contents)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -319,21 +360,22 @@ async fn get_session_state(
     window: tauri::WebviewWindow,
 ) -> Result<String, String> {
     let label = window.label().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        // The lock closes the atomic-replace gap: without it a read racing a
-        // save's rename could observe a missing file as "no session". The
-        // guard must be acquired inside the closure: a std MutexGuard is not
-        // Send, so it cannot cross the spawn_blocking boundary.
+    blocked("session state read", move || {
+        // The lock closes the atomic-replace gap: a read racing a save's rename
+        // could otherwise see "no session". It is acquired inside the closure
+        // because a std MutexGuard is not Send.
         let lock = app.state::<workspace::SessionFileLock>();
         let _guard = lock.lock();
         get_session_state_impl(&label)
     })
     .await
-    .map_err(|error| format!("session state read task failed: {error}"))?
 }
 
 fn get_session_state_impl(label: &str) -> Result<String, String> {
-    Ok(workspace::session_payload_for(label)?.unwrap_or_else(|| "{}".to_string()))
+    let payload = workspace::session_payload_for(label)?.unwrap_or_else(|| "{}".to_string());
+    // Replaying a shard grants its folder/files to this window.
+    auth_scope::authorize_from_session_json(label, &payload);
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -342,26 +384,29 @@ async fn save_session_state(
     window: tauri::WebviewWindow,
     contents: String,
 ) -> Result<(), String> {
-    // Tauri window getters dispatch to the window's event loop but are
-    // thread-safe; capture the geometry BEFORE spawn_blocking so the shard
-    // records the moment this webview flushed.
+    // Capture the geometry BEFORE spawn_blocking so the shard records the moment
+    // this webview flushed. Logical pixels: the builder reads logical too, so a
+    // 2x display round-trips instead of doubling on every restore.
     let label = window.label().to_string();
-    // Logical pixels: the builder reads logical too, so a 2x display
-    // round-trips instead of doubling on every restore.
     let bounds = window_bounds::capture_window_bounds(&window);
     let maximized = window.is_maximized().unwrap_or(false);
     let save_app = app.clone();
     let save_label = label.clone();
     let save_contents = contents.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocked("session state", move || {
         let lock = save_app.state::<workspace::SessionFileLock>();
         let _guard = lock.lock();
+        // A shard is webview-written JSON: validate under the same lock.
+        let existing = workspace::session_payload_for(&save_label)?;
+        auth_scope::validate_session_json_for_save(
+            &save_label,
+            &save_contents,
+            existing.as_deref(),
+        )?;
         workspace::save_session_shard(&save_label, &save_contents, bounds, maximized)
     })
-    .await
-    .map_err(|error| format!("session state task failed: {error}"))??;
-    // The registry mirror follows the persisted payload so open-file routing
-    // sees each window's latest open paths/folder without an extra round.
+    .await?;
+    // Mirror the payload so open-file routing sees this window's latest state.
     windows::update_meta_from_payload(&app, &label, &contents);
     Ok(())
 }
@@ -372,14 +417,12 @@ async fn allow_workspace_dir(
     window: tauri::WebviewWindow,
     path: String,
 ) -> Result<(), String> {
-    use tauri::Manager;
-
-    // Scope grants are in-memory Mutex updates; async keeps them off the main
-    // thread so openPath never queues behind another sync command.
-    let directory = auth_scope::workspace_directory(Path::new(&path))?;
-    auth_scope::authorize_workspace_root(window.label(), &directory)?;
+    // The path must already be a granted root (or a lone document's own folder):
+    // a webview asking for `/` or `~/.ssh` gets nothing.
+    let (directory, recursive) =
+        auth_scope::authorize_requested_workspace_dir(window.label(), Path::new(&path))?;
     app.asset_protocol_scope()
-        .allow_directory(directory, true)
+        .allow_directory(directory, recursive)
         .map_err(|e| format!("failed to allow workspace directory: {e}"))
 }
 
@@ -389,156 +432,32 @@ async fn allow_document_assets(
     window: tauri::WebviewWindow,
     document_path: String,
 ) -> Result<(), String> {
-    use tauri::Manager;
-
     let document = Path::new(&document_path);
     let directory = auth_scope::authorized_document_directory(Some(window.label()), document)?;
-    app.asset_protocol_scope()
-        .allow_directory(directory, true)
-        .map_err(|e| format!("failed to allow document assets: {e}"))?;
-    // Version history follows the document, not the folder: authorizing this
-    // exact file is what gives standalone (no workspace) files snapshots.
-    if is_markdown_path(document) || document.exists() {
+    if auth_scope::is_document_inside_workspace(Some(window.label()), document) {
+        app.asset_protocol_scope()
+            .allow_directory(&directory, true)
+            .map_err(|e| format!("failed to allow document assets: {e}"))?;
+    } else {
+        // SEC-02: a standalone document must not promote its whole tree. Its
+        // folder is non-recursive; `assets/` is the one recursive exception.
+        app.asset_protocol_scope()
+            .allow_directory(&directory, false)
+            .map_err(|e| format!("failed to allow document assets: {e}"))?;
+        let assets = directory.join("assets");
+        if assets.is_dir() {
+            app.asset_protocol_scope()
+                .allow_directory(assets, true)
+                .map_err(|e| format!("failed to allow document assets: {e}"))?;
+        }
+    }
+    // This grant is what gives a standalone file version history.
+    if documents::is_markdown_path(document) || document.exists() {
         if let Err(error) = auth_scope::authorize_document_file(window.label(), document) {
             log::warn!("document authorization failed: {error}");
         }
     }
     Ok(())
-}
-
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|e| format!("failed to create temporary file: {e}"))?;
-    temporary
-        .write_all(bytes)
-        .map_err(|e| format!("failed to write temporary file: {e}"))?;
-    temporary
-        .flush()
-        .map_err(|e| format!("failed to flush temporary file: {e}"))?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|e| format!("failed to sync temporary file: {e}"))?;
-    replace_existing(temporary, path)
-        .map_err(|e| format!("failed to atomically replace destination: {e}"))?;
-    // Durability (RUST-06): the rename itself is only durable once the parent
-    // directory entry is on disk. Best effort — every platform that matters
-    // for this app either supports it or (Windows) cannot open the directory,
-    // and a failure here must never fail a write that already landed.
-    #[cfg(not(windows))]
-    if let Ok(directory) = std::fs::File::open(parent) {
-        let _ = directory.sync_all();
-    }
-    Ok(())
-}
-
-/// Returns io::Error (not a formatted String) so callers that classify errors
-/// by `ErrorKind` — e.g. save.rs mapping PermissionDenied to the recovery UI —
-/// keep the persist-stage kind. `atomic_write`, which only reports to the user,
-/// converts to String itself.
-pub(crate) fn replace_existing(
-    temporary: tempfile::NamedTempFile,
-    path: &Path,
-) -> Result<(), std::io::Error> {
-    match temporary.persist(path) {
-        Ok(_) => Ok(()),
-        Err(first) => {
-            if !cfg!(windows) {
-                return Err(first.error);
-            }
-            // Never rename an existing directory into a backup sibling: the
-            // Windows fallback is strictly for regular files held open by an
-            // indexer or antivirus scanner.
-            if std::fs::symlink_metadata(path)
-                .map(|meta| meta.is_dir())
-                .unwrap_or(false)
-            {
-                return Err(first.error);
-            }
-            // Windows can refuse to rename over a destination another handle
-            // holds (indexer, antivirus); retry via a backup rename so the
-            // write still lands, restoring the original if the retry fails.
-            // The backup is a unique sibling (pid + nanos, mirroring the
-            // `.omd-save-{pid}-{nanos}.tmp` save temps) so targets differing
-            // only by extension never share one backup name.
-            let backup = save_backup_path(path);
-            if let Err(rename_error) = std::fs::rename(path, &backup) {
-                return Err(std::io::Error::other(format!(
-                    "failed to atomically replace destination: {} (backup rename failed: {})",
-                    first.error, rename_error
-                )));
-            }
-            match first.file.persist(path) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&backup);
-                    Ok(())
-                }
-                Err(retry) => {
-                    let _ = std::fs::rename(&backup, path);
-                    Err(retry.error)
-                }
-            }
-        }
-    }
-}
-
-fn save_backup_path(path: &Path) -> std::path::PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("doc");
-    // The embedded document name lets `temp_sweep` recognise a backup that is
-    // the last copy of a file a crash left mid-rename.
-    let stamp = format!(".{}-{}", std::process::id(), nanos);
-    path.with_file_name(format!("{stamp}.{name}.omd-save-backup"))
-}
-
-fn is_markdown_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("md")
-                || ext.eq_ignore_ascii_case("markdown")
-                || ext.eq_ignore_ascii_case("mdx")
-        })
-}
-
-/// Resolves one raw CLI arg to a canonical markdown path: strips `file://`
-/// and stray quotes, joins relative args against `cwd` (or the process
-/// working directory), and canonicalizes. Non-markdown or unresolvable args
-/// return None. Shared by the launch argv loop and the second-instance
-/// callback; routing the result is the caller's choice.
-fn resolve_open_arg(raw_arg: &str, cwd: Option<&str>) -> Option<String> {
-    let clean = raw_arg
-        .strip_prefix("file://")
-        .unwrap_or(raw_arg)
-        .trim_matches('"');
-    let path = Path::new(clean);
-    let resolved = if path.is_relative() {
-        if let Some(base) = cwd {
-            Path::new(base).join(path)
-        } else if let Ok(base) = std::env::current_dir() {
-            base.join(path)
-        } else {
-            path.to_path_buf()
-        }
-    } else {
-        path.to_path_buf()
-    };
-    if !is_markdown_path(&resolved) {
-        return None;
-    }
-    Some(
-        std::fs::canonicalize(&resolved)
-            .unwrap_or(resolved)
-            .to_string_lossy()
-            .into_owned(),
-    )
 }
 
 /// Drained by the webview after mount: launch-time Opened events can fire
@@ -565,7 +484,7 @@ pub fn run() {
             let mut routed_any = false;
             for arg in argv.iter().skip(1) {
                 if !arg.starts_with('-') {
-                    if let Some(canonical) = resolve_open_arg(arg, Some(&cwd)) {
+                    if let Some(canonical) = windows::resolve_open_arg(arg, Some(&cwd)) {
                         windows::route_open_file(app, &canonical);
                         routed_any = true;
                     }
@@ -606,7 +525,10 @@ pub fn run() {
             // the durable path it drains after mount.
             for arg in std::env::args().skip(1) {
                 if !arg.starts_with('-') {
-                    if let Some(canonical) = resolve_open_arg(&arg, None) {
+                    if let Some(canonical) = windows::resolve_open_arg(&arg, None) {
+                        // The OS opened this file for us: grant it to the startup
+                        // window, which has no dialog history to inherit.
+                        let _ = auth_scope::authorize_document_file("main", Path::new(&canonical));
                         windows::queue_open_file("main", &canonical);
                         let _ = app.emit_to("main", windows::OPEN_FILE_EVENT, &canonical);
                     }
@@ -717,6 +639,17 @@ pub fn run() {
                     watcher::drop_window_watches(app, window.label());
                     menu::drop_window_state(app, window.label());
                 }
+                tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+                    // Native drops are a trusted origin: the user dragged these
+                    // onto this window, so grant before the webview handler runs.
+                    for path in paths {
+                        if path.is_dir() {
+                            let _ = auth_scope::authorize_workspace_root(window.label(), path);
+                        } else if documents::is_markdown_path(path) {
+                            let _ = auth_scope::authorize_document_file(window.label(), path);
+                        }
+                    }
+                }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     // Red X / Cmd+W: the webview's 1s debounced session save
                     // would be torn down with the window, so flush first and
@@ -780,7 +713,14 @@ pub fn run() {
             menu::set_menu_locale,
             export::export_preview,
             export::cancel_export,
-            fonts::list_system_fonts
+            fonts::list_system_fonts,
+            dialogs::pick_open_markdown,
+            dialogs::pick_save_markdown,
+            dialogs::pick_workspace_folder,
+            dialogs::pick_custom_css,
+            dialogs::pick_export_path,
+            recents::get_recent_files,
+            recents::save_recent_files
         ])
         .manage(paste_assets::PasteAssetState::default())
         .build(export::app_context::context())
@@ -793,7 +733,7 @@ pub fn run() {
                     let Ok(path) = url.to_file_path() else {
                         continue;
                     };
-                    if !is_markdown_path(&path) {
+                    if !documents::is_markdown_path(&path) {
                         continue;
                     }
                     windows::route_open_file(app, &path.to_string_lossy());

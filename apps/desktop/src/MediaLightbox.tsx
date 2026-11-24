@@ -81,6 +81,10 @@ function MediaLightboxDialog(props: {
   const rawId = useId()
   const svgPrefix = useMemo(() => `omd-lb-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [rawId])
   const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   const stageRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -152,15 +156,31 @@ function MediaLightboxDialog(props: {
     return { scale: fitScale(size.width, size.height, vp.width, vp.height, maxAuto), x: 0, y: 0 }
   }, [target.kind, viewportSize])
 
-  // Open native modal <dialog> and keep Escape/close synced with React state.
+  // Open the native modal <dialog> exactly once per mount and keep Escape/close
+  // synced with React state. `onClose` is read through a ref: a parent re-render
+  // with a fresh callback identity must not close and reopen the modal (which
+  // would drop the SVG DOM, the transform, and focus).
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
+    // Captured before `showModal()` moves focus into the top layer.
+    openerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
     if (!dialog.open) {
       if (typeof dialog.showModal === "function") dialog.showModal()
       else dialog.setAttribute("open", "")
     }
-    const handleClose = () => onClose()
+    closeBtnRef.current?.focus()
+    const restoreOpenerFocus = () => {
+      const opener = openerRef.current
+      openerRef.current = null
+      if (opener?.isConnected) opener.focus()
+    }
+    const handleClose = () => {
+      onCloseRef.current()
+      restoreOpenerFocus()
+    }
     dialog.addEventListener("close", handleClose)
     return () => {
       dialog.removeEventListener("close", handleClose)
@@ -176,8 +196,9 @@ function MediaLightboxDialog(props: {
         if (typeof dialog.close === "function") dialog.close()
         else dialog.removeAttribute("open")
       }
+      restoreOpenerFocus()
     }
-  }, [onClose])
+  }, [])
 
   // Initialize intrinsic dimensions and fit transform for Mermaid or already-cached images.
   useEffect(() => {
@@ -233,6 +254,7 @@ function MediaLightboxDialog(props: {
           deltaX: Number.isFinite(event.deltaX) ? event.deltaX : 0,
           deltaY: Number.isFinite(event.deltaY) ? event.deltaY : 0,
           ctrlKey: Boolean(event.ctrlKey),
+          metaKey: Boolean(event.metaKey),
           deltaMode: Number.isFinite(event.deltaMode) ? event.deltaMode : 0,
         },
         focalX,
@@ -443,7 +465,7 @@ function MediaLightboxDialog(props: {
             type="button"
             className="media-lightbox-btn media-lightbox-zoom-readout"
             onClick={resetFit}
-            aria-label={t("lightbox.fit")}
+            aria-label={`${zoomUi.percent}% · ${t("lightbox.fit")}`}
             title={t("lightbox.fit")}
           >
             {zoomUi.percent}%
@@ -500,11 +522,11 @@ function MediaLightboxDialog(props: {
           ) : null}
           <button
             type="button"
+            ref={closeBtnRef}
             className="media-lightbox-btn media-lightbox-close"
             onClick={closeDialog}
             aria-label={t("lightbox.close")}
             title={t("lightbox.close")}
-            autoFocus
           >
             <X size={16} aria-hidden="true" />
           </button>
@@ -549,12 +571,17 @@ function MediaLightboxDialog(props: {
                 onError={() => setImgState("error")}
               />
             )
-          ) : (
+          ) : preparedSvg && preparedSvg.markup !== "" ? (
             <div
               className="media-lightbox-svg-frame"
-              // Mermaid renders with securityLevel: "strict"; SVG is sanitized by Mermaid itself.
-              dangerouslySetInnerHTML={{ __html: preparedSvg?.markup ?? target.svg }}
+              // Sanitized (and id-namespaced) by `prepareLightboxSvg`; a rejected
+              // SVG yields empty markup and renders the broken state below.
+              dangerouslySetInnerHTML={{ __html: preparedSvg.markup }}
             />
+          ) : (
+            <div className="media-lightbox-broken" role="status">
+              {t("lightbox.mermaidTitle")}
+            </div>
           )}
         </div>
       </div>

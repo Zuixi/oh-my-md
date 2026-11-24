@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use tauri::{Emitter, Manager};
 
@@ -302,6 +303,13 @@ pub fn create_editor_window<R: tauri::Runtime>(
             .register(&label);
     }
     for path in &opts.initial_paths {
+        // The new window's own scope starts empty: the path the caller handed
+        // over must be granted here, or the tab it opens could never be read.
+        if let Err(error) =
+            crate::auth_scope::authorize_document_file(&label, std::path::Path::new(path))
+        {
+            log::warn!("initial open authorization failed: {error}");
+        }
         queue_open_file(&label, path);
     }
     Ok(label)
@@ -325,6 +333,15 @@ pub fn route_open_file(app: &tauri::AppHandle, path: &str) {
         Some(window) => {
             let _ = window.show();
             let _ = window.set_focus();
+            // OS open / single-instance / drag-drop routed a path the user did
+            // not pick through this window's dialog, so the grant happens here,
+            // on the trusted Rust side.
+            if let Err(error) = crate::auth_scope::authorize_document_file(
+                window.label(),
+                std::path::Path::new(path),
+            ) {
+                log::warn!("open-file authorization failed: {error}");
+            }
             queue_open_file(window.label(), path);
             let _ = app.emit_to(window.label(), OPEN_FILE_EVENT, path);
         }
@@ -358,6 +375,39 @@ pub fn ensure_window(app: &tauri::AppHandle) {
     } else {
         let _ = create_editor_window(app, &CreateWindowOptions::default());
     }
+}
+
+/// Resolves one raw CLI arg to a canonical markdown path: strips `file://`
+/// and stray quotes, joins relative args against `cwd` (or the process
+/// working directory), and canonicalizes. Non-markdown or unresolvable args
+/// return None. Shared by the launch argv loop and the second-instance
+/// callback; routing the result is the caller's choice.
+pub(crate) fn resolve_open_arg(raw_arg: &str, cwd: Option<&str>) -> Option<String> {
+    let clean = raw_arg
+        .strip_prefix("file://")
+        .unwrap_or(raw_arg)
+        .trim_matches('"');
+    let path = Path::new(clean);
+    let resolved = if path.is_relative() {
+        if let Some(base) = cwd {
+            Path::new(base).join(path)
+        } else if let Ok(base) = std::env::current_dir() {
+            base.join(path)
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+    if !crate::documents::is_markdown_path(&resolved) {
+        return None;
+    }
+    Some(
+        std::fs::canonicalize(&resolved)
+            .unwrap_or(resolved)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[cfg(test)]

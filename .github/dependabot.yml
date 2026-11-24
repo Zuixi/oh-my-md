@@ -6,3 +6,15 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+  # pnpm workspace dependencies, resolved through pnpm-lock.yaml at the root.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+  # Rust crates for the Tauri host (Cargo.toml / Cargo.lock).
+  - package-ecosystem: cargo
+    directory: "/apps/desktop/src-tauri"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10

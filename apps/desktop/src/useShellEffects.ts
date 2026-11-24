@@ -109,9 +109,28 @@ export function useShellEffects(host: ShellEffectsHost): void {
     })
   }, [services, sourceMode, sidebarOpen, outlineOpen, typewriter, focusMode])
 
+  // Test doubles answer synchronously (the previous contract), production reads
+  // the persisted list over IPC, so both shapes are accepted: the sync path must
+  // not lose a tick, and the async path must merge, not clobber, anything
+  // remembered while it was in flight.
   useEffect(() => {
-    host.recentsRef.current = services.loadRecents?.() ?? []
-    void services.setRecentMenu?.(host.recentsRef.current)
+    let cancelled = false
+    const loaded = services.loadRecents?.() ?? []
+    if (Array.isArray(loaded)) {
+      host.recentsRef.current = loaded
+      void services.setRecentMenu?.(loaded)
+      return
+    }
+    void Promise.resolve(loaded).then(result => {
+      if (cancelled) return
+      const paths = Array.isArray(result) ? result : []
+      const merged = host.recentsRef.current.length === 0
+        ? paths
+        : [...host.recentsRef.current, ...paths.filter(path => !host.recentsRef.current.includes(path))].slice(0, 10)
+      host.recentsRef.current = merged
+      void services.setRecentMenu?.(merged)
+    }).catch(() => {})
+    return () => { cancelled = true }
   }, [services])
 }
 

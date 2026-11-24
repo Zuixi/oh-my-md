@@ -1,7 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { open, save } from "@tauri-apps/plugin-dialog"
 import { toast } from "react-toastify"
 import type { Text } from "@codemirror/state"
 import { exportSaveOptions } from "./exportPath"
@@ -9,7 +8,6 @@ import { notifyExportProgress } from "./exportProgressToast"
 import { parseRecents } from "./recents"
 import {
   LOG_FRONTEND_COMMAND,
-  MARKDOWN_EXTENSIONS,
   SESSION_FLUSH_EVENT,
   STORAGE_KEY_RECENTS,
   STORAGE_KEY_SESSION,
@@ -236,8 +234,8 @@ export interface DesktopServices {
   createDir?: (dir: string, name: string) => Promise<string>
   renamePath?: (from: string, toName: string) => Promise<string>
   deletePath?: (path: string) => Promise<void>
-  loadRecents?: () => string[]
-  saveRecents?: (paths: string[]) => void
+  loadRecents?: () => string[] | Promise<string[]>
+  saveRecents?: (paths: string[]) => void | Promise<void>
   setRecentMenu?: (paths: string[]) => Promise<void>
   setViewMenuState?: (state: ViewMenuState) => Promise<void>
   exportDiagnostics?: () => Promise<void>
@@ -355,32 +353,25 @@ async function invokeDocument<T>(command: string, args: Record<string, unknown>)
   }
 }
 
-async function pickPath(kind: "file" | "folder" | "save", extensions: string[]): Promise<string | null> {
-  if (kind === "folder") {
-    const path = await open({ directory: true })
-    return typeof path === "string" ? path : null
-  }
-  if (kind === "save") {
-    const path = await save({ filters: [{ name: t("dialog.filter.file"), extensions }] })
-    return typeof path === "string" ? path : null
-  }
-  const path = await open({ filters: [{ name: t("dialog.filter.files"), extensions }] })
-  return typeof path === "string" ? path : null
-}
-
 /** Spec 2026-08-20 toast notifications: error toasts linger so failure detail is readable; success toasts are transient. */
 const ERROR_TOAST_AUTO_CLOSE_MS = 8000
 const SUCCESS_TOAST_AUTO_CLOSE_MS = 3000
 
 export const defaultServices: DesktopServices = {
-  pickOpenPath: () => pickPath("file", [...MARKDOWN_EXTENSIONS]),
-  pickSavePath: () => pickPath("save", ["md"]),
-  pickFolder: () => pickPath("folder", []),
+  // Every picker runs in Rust: the chosen path is the only trusted origin for a
+  // per-window filesystem grant, so the webview must not be the one reporting it.
+  pickOpenPath: () => invoke<string | null>("pick_open_markdown", { filterLabel: t("dialog.filter.files") }),
+  pickSavePath: () => invoke<string | null>("pick_save_markdown", { filterLabel: t("dialog.filter.file") }),
+  pickFolder: () => invoke<string | null>("pick_workspace_folder"),
   pickExportPath: async (format = "html", sourcePath) => {
-    const path = await save(exportSaveOptions(format, sourcePath))
-    return typeof path === "string" ? path : null
+    const options = exportSaveOptions(format, sourcePath)
+    return invoke<string | null>("pick_export_path", {
+      format,
+      defaultPath: options.defaultPath,
+      filterLabel: options.filters[0]?.name ?? format.toUpperCase(),
+    })
   },
-  pickCssPath: () => pickPath("file", ["css"]),
+  pickCssPath: () => invoke<string | null>("pick_custom_css", { filterLabel: t("dialog.filter.files") }),
   readDocument: path => invokeDocument<DiskSnapshot>("read_document", { path }),
   readDocumentVersion: path =>
     invokeDocument<ExpectedDocumentVersion>("read_document_version", { path }),
@@ -438,15 +429,34 @@ export const defaultServices: DesktopServices = {
   cancelExport: async requestId => {
     await invoke("cancel_export", { requestId })
   },
-  loadRecents: () => {
+  // Recents live in `config_dir/recents.json` so Rust can validate them. The
+  // legacy `localStorage` list is read only when the command itself is
+  // unavailable: a resolved (even empty) answer is authoritative, because
+  // falling back to stored paths would launder entries Rust refused.
+  loadRecents: async () => {
     try {
-      return parseRecents(localStorage.getItem(STORAGE_KEY_RECENTS))
+      const paths = await invoke<string[]>("get_recent_files")
+      // Drop any stale mirror so it can never resurface after this point.
+      try { localStorage.removeItem(STORAGE_KEY_RECENTS) } catch { /* storage unavailable */ }
+      return paths
     } catch {
-      return []
+      try {
+        return parseRecents(localStorage.getItem(STORAGE_KEY_RECENTS))
+      } catch {
+        return []
+      }
     }
   },
-  saveRecents: paths => {
-    localStorage.setItem(STORAGE_KEY_RECENTS, JSON.stringify(paths))
+  saveRecents: async paths => {
+    try {
+      await invoke("save_recent_files", { paths })
+    } catch {
+      try {
+        localStorage.setItem(STORAGE_KEY_RECENTS, JSON.stringify(paths))
+      } catch {
+        // Storage unavailable too: the list is a convenience, not data.
+      }
+    }
   },
   setRecentMenu: async paths => {
     await invoke("set_recent_files", { paths })
@@ -467,7 +477,11 @@ export const defaultServices: DesktopServices = {
     // `include_full_paths` parameter stays in place for that checkbox to drive
     // when it exists.
     if (!window.confirm(t("confirm.exportDiagnostics"))) return
-    const path = await save({ filters: [{ name: t("dialog.filter.diagnostics"), extensions: ["zip"] }] })
+    const path = await invoke<string | null>("pick_export_path", {
+      format: "zip",
+      defaultPath: "oh-my-md-diagnostics.zip",
+      filterLabel: t("dialog.filter.diagnostics"),
+    })
     if (typeof path !== "string") return
     // No logging policy here: flushing the frontend queue before the bundle is
     // written belongs to the *export use case* (`appDiagnosticsActions`), not to

@@ -16,6 +16,20 @@ import {
 const version = { resolvedPath: "/notes/a.md", fingerprint: "v1:aa" } as const
 const nextVersion = { resolvedPath: "/notes/a.md", fingerprint: "v1:bb" } as const
 
+/** Runs `run` while the webview reports `label` as its window label (windowScope
+ *  reads it from the Tauri internals the native host injects). */
+function withWindowLabel<T>(label: string, run: () => T): T {
+  const scoped = window as unknown as { __TAURI_INTERNALS__?: unknown }
+  const previous = scoped.__TAURI_INTERNALS__
+  scoped.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label } } }
+  try {
+    return run()
+  } finally {
+    if (previous === undefined) delete scoped.__TAURI_INTERNALS__
+    else scoped.__TAURI_INTERNALS__ = previous
+  }
+}
+
 describe("EditorSession", () => {
   it("starts clean and becomes dirty when the buffer diverges", () => {
     const session = createFileSession(1, "/notes/a.md", "saved", version)
@@ -121,5 +135,20 @@ describe("EditorSession", () => {
     expect(key.length).toBeLessThanOrEqual(65)
     expect(key).toMatch(/_[0-9a-f]{16}$/)
     expect(recoveryKey(deep)).toBe(key)
+  })
+
+  it("keeps two windows' drafts for the same file apart", () => {
+    // DATA-03: a second editor window on the same path must never share (and so
+    // overwrite or delete) the first window's unsaved draft. The readable slug
+    // stays the path tail; only the hash carries the window label.
+    const session = createFileSession(2, "/notes/shared.md", "body", version)
+    const mainKey = withWindowLabel("main", () => recoveryKey(session))
+    const editorKey = withWindowLabel("editor-2", () => recoveryKey(session))
+    expect(mainKey).toMatch(/^notes_shared_md_[0-9a-f]{16}$/)
+    expect(editorKey).toMatch(/^notes_shared_md_[0-9a-f]{16}$/)
+    expect(mainKey.length).toBeLessThanOrEqual(65)
+    expect(editorKey).not.toBe(mainKey)
+    // Stable within one window, so a save/close round-trip re-derives the key.
+    expect(withWindowLabel("editor-2", () => recoveryKey(session))).toBe(editorKey)
   })
 })

@@ -221,12 +221,12 @@ describe("table pointer gestures", () => {
     // threshold before it commits the cell's source anchor.
     move(10 + TABLE_POINTER_DRIFT_PX + 1, 10)
     release()
-    const head = view.state.selection.main.head
+    const anchor = view.state.selection.main.anchor
     const headerCell = table.data.header.cells[0]
     if (!headerCell) throw new Error("expected a header cell")
     // No layout in this DOM: the anchor is still a real source boundary of the pressed cell.
-    expect(head).toBeGreaterThanOrEqual(table.from + headerCell.from)
-    expect(head).toBeLessThanOrEqual(table.from + headerCell.to)
+    expect(anchor).toBeGreaterThanOrEqual(table.from + headerCell.from)
+    expect(anchor).toBeLessThanOrEqual(table.from + headerCell.to)
     expect(view.state.doc.toString()).toBe(TABLE)
     expect(view.dom.querySelector(".omd-table-src")).not.toBeNull()
     cleanup()

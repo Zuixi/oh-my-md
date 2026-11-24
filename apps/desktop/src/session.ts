@@ -145,6 +145,13 @@ const RECOVERY_KEY_SLUG_MAX = 48
  * other's drafts; cross-run reuse is intentional, because the next launch's
  * untitled tab is exactly the tab that draft belongs to.
  *
+ * A named tab carries the window label in the *hash* only: two windows may hold
+ * the same file (`main` and `editor-1` both on `/notes/shared.md`), and a shared
+ * key would let one window's save or close delete the other's unsaved draft.
+ * The readable slug stays the path tail so records stay identifiable, and the
+ * envelope keeps the exact path, so adoption and the legacy-key migration in
+ * `appSessionInit` still match a draft written before the label was hashed.
+ *
  * The key must also be a *portable file name*: it is written inside the app's
  * recovery directory on Windows, macOS, and Linux alike. A lossy sanitizer was
  * not enough — two paths differing only in a replaced character (`a b.md` vs
@@ -157,8 +164,12 @@ const RECOVERY_KEY_SLUG_MAX = 48
  */
 export function recoveryKey(session: EditorSession): string {
   const path = sessionPath(session)
-  const identity = path ?? `untitled_${currentWindowLabel()}_${session.id}`
-  return `${recoveryKeySlug(identity)}_${recoveryKeyHash(identity)}`
+  const label = currentWindowLabel()
+  if (path === null) {
+    const identity = `untitled_${label}_${session.id}`
+    return `${recoveryKeySlug(identity)}_${recoveryKeyHash(identity)}`
+  }
+  return `${recoveryKeySlug(path)}_${recoveryKeyHash(`${label}:${path}`)}`
 }
 
 /** Readable, filename-safe tail of the identity (never a Windows device name

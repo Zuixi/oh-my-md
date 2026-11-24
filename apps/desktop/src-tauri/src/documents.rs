@@ -1,18 +1,22 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
 
 mod coordinator;
 mod save;
+mod version_cache;
 
 pub(crate) use coordinator::resolve_path_key;
 pub use coordinator::DocumentCoordinator;
 pub(crate) use save::guarded_save;
 #[cfg(test)]
 pub(crate) use save::{guarded_save_with_hook, sync_parent};
+pub(crate) use version_cache::read_document_version_cached;
+pub use version_cache::DocumentVersionCache;
+// `documents/tests.rs` exercises the keying rule directly, so the pure pieces
+// stay reachable through this module exactly as they were before the split.
+#[cfg(test)]
+pub(crate) use version_cache::{stat_cache_key, version_stat_matches, CachedVersionStat};
 
 const FINGERPRINT_PREFIX: &str = "v1:";
 
@@ -226,6 +230,17 @@ pub(crate) fn validate_requested(path: &str) -> Result<PathBuf, DocumentError> {
     Ok(path_buf)
 }
 
+/// Whether `path` is a Markdown document (the only kind this app opens).
+pub(crate) fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md")
+                || ext.eq_ignore_ascii_case("markdown")
+                || ext.eq_ignore_ascii_case("mdx")
+        })
+}
+
 pub(crate) fn compare_expected(
     expected: &ExpectedDocumentVersion,
     probe: &DiskProbe,
@@ -354,147 +369,6 @@ fn stat_document_blocking(path: &str) -> Result<DocumentStat, DocumentError> {
     })
 }
 
-/// stat 优先版本探测缓存（Spec 05b §14.9 后续项）：后台 poll / watcher 每
-/// 轮都会探测每个打开的 tab，若每次都整读 + blake3，50MB 文件会持续产生
-/// IO 与分配压力。缓存按「请求路径 → (mtime_ns, size, version)」记录上次
-/// 探测结果：stat 的 (mtime_ns, size) 与缓存一致 → 直接返回缓存的
-/// DocumentVersion（不读文件）；不一致 → 现行整读 + blake3 后回填。
-/// 没有 TTL / 显式失效——stat 一致性即契约。已接受的残余风险：粗 mtime
-/// 粒度的文件系统（如 HFS+ 的 1s）上，同一时间戳内的同尺寸外部写入会漏检，
-/// 直到下一次 stat 变化才可见（APFS/ext4/NTFS 均为纳秒/100ns 粒度）；
-/// 同理，符号链接改指到 (mtime_ns, size) 恰好完全相同的另一文件也会漏检。
-#[derive(Clone, Default)]
-pub struct DocumentVersionCache {
-    entries: Arc<Mutex<HashMap<PathBuf, CachedVersionStat>>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CachedVersionStat {
-    mtime_ns: u64,
-    size: u64,
-    version: DocumentVersion,
-}
-
-/// 从目标元数据提取缓存判定键 (mtime_ns, size)。`modified()` 不可用的平台
-/// 返回 None：缓存旁路，退回整读。
-fn stat_cache_key(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
-    let mtime_ns = metadata
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        // 早于 UNIX_EPOCH 的怪异时间戳按 0 处理：两个不同的 pre-epoch mtime
-        // 会塌缩成同一键，size 再相等时将误命中缓存（拿到旧版本）而非多读。
-        .unwrap_or(0);
-    Some((mtime_ns, metadata.len()))
-}
-
-/// 纯判定：磁盘 stat 与缓存条目是否一致（mtime_ns 与 size 都相等）。
-fn version_stat_matches(entry: &CachedVersionStat, mtime_ns: u64, size: u64) -> bool {
-    entry.mtime_ns == mtime_ns && entry.size == size
-}
-
-fn evict_cached_version(cache: &DocumentVersionCache, path: &Path) {
-    let mut entries = cache
-        .entries
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    entries.remove(path);
-}
-
-pub(crate) fn read_document_version_cached(
-    cache: &DocumentVersionCache,
-    path: &str,
-) -> Result<ExpectedDocumentVersion, DocumentError> {
-    let path_buf = validate_requested(path)?;
-    // 存在性/符号链接判定与 probe_disk_raw 一致；额外要求先取目标元数据
-    // 做 stat 命中判断。文件缺失是正常答案，同时清掉缓存条目（文件删了
-    // 条目就该走，避免跨大量文件无界增长）。
-    let node_metadata = match std::fs::symlink_metadata(&path_buf) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            evict_cached_version(cache, &path_buf);
-            return Ok(ExpectedDocumentVersion::Missing);
-        }
-        Err(error) => return Err(map_read_io_error(&path_buf, error)),
-    };
-    let node_is_symlink = node_metadata.file_type().is_symlink();
-    let resolved = match std::fs::canonicalize(&path_buf) {
-        Ok(resolved) => resolved,
-        Err(error) if error.kind() == io::ErrorKind::NotFound && node_is_symlink => {
-            evict_cached_version(cache, &path_buf);
-            return Err(read_failed("symbolic link target is missing"));
-        }
-        Err(error) => return Err(map_read_io_error(&path_buf, error)),
-    };
-    let resolved_path = path_to_string(&resolved)?;
-    let metadata =
-        std::fs::metadata(&resolved).map_err(|error| map_read_io_error(&path_buf, error))?;
-    require_regular_file(&metadata, &path_buf)?;
-    let Some((mtime_ns, size)) = stat_cache_key(&metadata) else {
-        // 拿不到可靠 mtime：不查缓存也不回填，退化为现行整读。
-        let version = probe_version_uncached(&resolved, &resolved_path, &path_buf)?;
-        return Ok(ExpectedDocumentVersion::Existing { version });
-    };
-
-    // 命中路径：锁内只查表 + 克隆，不做任何 IO。stat 之后文件才被改写的
-    // 窗口由下一轮探测的 stat 不匹配兜底。
-    {
-        let entries = cache
-            .entries
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(entry) = entries.get(&path_buf) {
-            if version_stat_matches(entry, mtime_ns, size) {
-                return Ok(ExpectedDocumentVersion::Existing {
-                    version: entry.version.clone(),
-                });
-            }
-        }
-    }
-
-    // 未命中：整读 + blake3。两个并发探测可能同时走到这里——重复读是幂等
-    // 的，各自回填经自身 stat 校验的配对，无害。
-    let version = probe_version_uncached(&resolved, &resolved_path, &path_buf)?;
-    // 读后 re-stat（double-check）：只有读前读后 stat 一致才回填。读到一半
-    // 被外部改写时 (stat → version) 配对不可信，宁可下次多读一次也不缓存
-    // 错配条目（错配只可能导致多余 miss，不会导致错误 hit）。
-    if let Ok(after) = std::fs::metadata(&resolved) {
-        if let Some((mtime_ns_after, size_after)) = stat_cache_key(&after) {
-            if mtime_ns_after == mtime_ns && size_after == size {
-                let mut entries = cache
-                    .entries
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                entries.insert(
-                    path_buf,
-                    CachedVersionStat {
-                        mtime_ns,
-                        size,
-                        version: version.clone(),
-                    },
-                );
-            }
-        }
-    }
-    Ok(ExpectedDocumentVersion::Existing { version })
-}
-
-fn probe_version_uncached(
-    resolved: &Path,
-    resolved_path: &str,
-    error_path: &Path,
-) -> Result<DocumentVersion, DocumentError> {
-    let (mut file, _metadata) = open_regular_document(resolved, error_path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| map_read_io_error(error_path, error))?;
-    Ok(DocumentVersion {
-        resolved_path: resolved_path.to_owned(),
-        fingerprint: fingerprint(&bytes),
-    })
-}
-
 pub(crate) async fn spawn_blocking_document<T, F>(task: F) -> Result<T, DocumentError>
 where
     F: FnOnce() -> Result<T, DocumentError> + Send + 'static,
@@ -524,11 +398,24 @@ fn authorize_opened_document(window_label: &str, requested: &str, resolved: &str
     }
 }
 
+/// Authorization gate every document command runs before touching the disk.
+///
+/// Reads and writes both take this path: without it a compromised webview could
+/// read `~/.ssh/id_rsa` or atomically replace any file the user can write, which
+/// is exactly what the per-window scope exists to prevent.
+pub(crate) fn authorize_document_ipc(window_label: &str, path: &str) -> Result<(), DocumentError> {
+    let path_buf = validate_requested(path)?;
+    crate::auth_scope::assert_file_or_workspace_authorized(Some(window_label), &path_buf)
+        .map_err(DocumentError::PermissionDenied)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn read_document(
     window: tauri::WebviewWindow,
     path: String,
 ) -> Result<DiskSnapshot, DocumentError> {
+    authorize_document_ipc(window.label(), &path)?;
     let requested = path.clone();
     let snapshot = spawn_blocking_document(move || read_document_blocking(&path)).await?;
     if let DiskSnapshot::Existing { version, .. } = &snapshot {
@@ -538,7 +425,11 @@ pub async fn read_document(
 }
 
 #[tauri::command]
-pub async fn stat_document(path: String) -> Result<DocumentStat, DocumentError> {
+pub async fn stat_document(
+    window: tauri::WebviewWindow,
+    path: String,
+) -> Result<DocumentStat, DocumentError> {
+    authorize_document_ipc(window.label(), &path)?;
     spawn_blocking_document(move || stat_document_blocking(&path)).await
 }
 
@@ -551,6 +442,7 @@ pub async fn read_document_streaming(
     path: String,
     on_chunk: tauri::ipc::Channel<OpenStreamEvent>,
 ) -> Result<DocumentOpenStream, DocumentError> {
+    authorize_document_ipc(window.label(), &path)?;
     let requested = path.clone();
     let opened = spawn_blocking_document(move || {
         read_document_streaming_blocking(&path, OPEN_CHUNK_BYTES, &|event| {
@@ -663,8 +555,10 @@ pub(crate) fn read_document_streaming_blocking(
 #[tauri::command]
 pub async fn read_document_version(
     version_cache: tauri::State<'_, DocumentVersionCache>,
+    window: tauri::WebviewWindow,
     path: String,
 ) -> Result<ExpectedDocumentVersion, DocumentError> {
+    authorize_document_ipc(window.label(), &path)?;
     let version_cache = version_cache.inner().clone();
     spawn_blocking_document(move || read_document_version_cached(&version_cache, &path)).await
 }
@@ -677,6 +571,7 @@ pub async fn save_document(
     contents: String,
     expected: ExpectedDocumentVersion,
 ) -> Result<SaveDocumentResult, DocumentError> {
+    authorize_document_ipc(window.label(), &path)?;
     let coordinator = coordinator.inner().clone();
     let requested = path.clone();
     let saved =
@@ -772,6 +667,9 @@ fn map_read_io_error(path: &Path, error: io::Error) -> DocumentError {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "documents/tests_auth.rs"]
+mod tests_auth;
 #[cfg(test)]
 #[path = "documents/tests_regular_file.rs"]
 mod tests_regular_file;

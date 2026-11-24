@@ -10,6 +10,10 @@ const SETUP_RUST_ACTION = readFileSync(
   resolve(process.cwd(), "..", "..", ".github", "actions", "setup-rust", "action.yml"),
   "utf8",
 ).replace(/\r\n/g, "\n")
+const DEPENDABOT = readFileSync(
+  resolve(process.cwd(), "..", "..", ".github", "dependabot.yml"),
+  "utf8",
+).replace(/\r\n/g, "\n")
 
 function jobBlock(name: string, nextName?: string): string {
   // Anchor on the newline: `  rust:` also occurs inside the indented
@@ -20,6 +24,13 @@ function jobBlock(name: string, nextName?: string): string {
     ? WORKFLOW.indexOf(`\n  ${nextName}:\n`, start + 1) + 1
     : WORKFLOW.length
   return WORKFLOW.slice(start, end < 0 ? WORKFLOW.length : end)
+}
+
+function dependabotUpdates(ecosystem: string): string {
+  const start = DEPENDABOT.indexOf(`- package-ecosystem: ${ecosystem}\n`)
+  if (start < 0) throw new Error(`missing ${ecosystem} dependabot rule`)
+  const end = DEPENDABOT.indexOf("- package-ecosystem:", start + 1)
+  return DEPENDABOT.slice(start, end < 0 ? DEPENDABOT.length : end)
 }
 
 describe("release workflow", () => {
@@ -113,6 +124,46 @@ describe("release workflow", () => {
     expect(WORKFLOW).toContain("CHANGELOG.md")
     expect(WORKFLOW).toContain("xattr -cr /Applications/oh-my-md.app")
     expect(WORKFLOW).toContain("SHA256SUMS.txt")
+  })
+
+  it("extracts the tagged CHANGELOG section into the draft release notes", () => {
+    const publish = jobBlock("publish")
+    const extract = publish.indexOf("node scripts/extract-release-notes.mjs")
+    const draft = publish.indexOf("softprops/action-gh-release@")
+
+    expect(extract).toBeGreaterThan(-1)
+    expect(draft).toBeGreaterThan(extract)
+    expect(publish).toContain("id: release_notes")
+    expect(publish).toContain('--tag "${{ github.ref_name }}"')
+    expect(publish).toContain("--changelog CHANGELOG.md")
+    expect(publish).toContain('--github-output "$GITHUB_OUTPUT"')
+
+    // The extracted body is substituted under the existing heading; a hardcoded
+    // body would silently detach the release page from the changelog.
+    const body = WORKFLOW.slice(
+      WORKFLOW.indexOf("          body: |"),
+      WORKFLOW.indexOf("          files: release-assets/*"),
+    )
+    const notesOutput = "            ${{ steps.release_notes.outputs.changelog }}"
+    expect(body).toContain(`## What changed\n\n${notesOutput}`)
+  })
+
+  it("tracks GitHub Actions, npm/pnpm, and Cargo updates with Dependabot", () => {
+    // Weekly bots are the only continuous vulnerability tracker for the pinned
+    // actions and the two lockfile ecosystems.
+    const actions = dependabotUpdates("github-actions")
+    expect(actions).toContain('directory: "/"')
+    expect(actions).toContain("interval: weekly")
+
+    for (const [ecosystem, directory] of [
+      ["npm", "/"],
+      ["cargo", "/apps/desktop/src-tauri"],
+    ] as const) {
+      const updates = dependabotUpdates(ecosystem)
+      expect(updates).toContain(`directory: "${directory}"`)
+      expect(updates).toContain("interval: weekly")
+      expect(updates).toContain("open-pull-requests-limit: 10")
+    }
   })
 
   it("installs the Linux dependency needed to render SVG app icons", () => {
