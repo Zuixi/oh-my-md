@@ -264,6 +264,14 @@ jobs:
             exit 1
           }
           find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+      - name: Extract release notes from CHANGELOG
+        id: release_notes
+        shell: bash
+        run: |
+          node scripts/extract-release-notes.mjs \
+            --tag "${{ github.ref_name }}" \
+            --changelog CHANGELOG.md \
+            --github-output "$GITHUB_OUTPUT"
       - name: Create Draft Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -272,7 +280,9 @@ jobs:
           body: |
             ## What changed
 
-            See the commit log and [CHANGELOG](https://github.com/Zuixi/oh-my-md/blob/main/CHANGELOG.md) for every change in ${{ github.ref_name }}.
+            ${{ steps.release_notes.outputs.changelog }}
+
+            Full history: [CHANGELOG.md](https://github.com/Zuixi/oh-my-md/blob/main/CHANGELOG.md).
 
             ## Install
 
