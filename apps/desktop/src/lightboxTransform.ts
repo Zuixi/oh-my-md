@@ -153,6 +153,18 @@ export interface PreparedSvg {
   readonly height: number | null
 }
 
+/** Attributes that can carry an internal `#id` reference. `<text>`/`<tspan>`
+ *  content is deliberately absent: a diagram label may read exactly like an id
+ *  and must never be rewritten. */
+const SVG_REFERENCE_ATTRIBUTES = [
+  "href", "xlink:href", "marker-start", "marker-mid", "marker-end", "clip-path",
+  "mask", "fill", "stroke", "filter", "aria-labelledby", "aria-describedby", "style",
+]
+const SVG_DANGEROUS_ELEMENTS = ["script", "iframe", "object", "embed"]
+/** Executable URL schemes a hostile diagram could smuggle through the modal. */
+const SVG_UNSAFE_URL = /^\s*(?:javascript|vbscript|data:text\/html)/i
+const SVG_URL_ATTRIBUTES = new Set(["href", "xlink:href"])
+
 function parseSvgLength(raw: string | null): number | null {
   if (!raw) return null
   const trimmed = raw.trim()
@@ -173,21 +185,74 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+/** Sanitizes one parsed SVG subtree and namespaces its ids in place. */
+function sanitizeSvg(root: Element, idPrefix: string): void {
+  for (const tag of SVG_DANGEROUS_ELEMENTS) {
+    for (const node of [...root.querySelectorAll(tag)]) node.remove()
+  }
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase()
+      if (name.startsWith("on") || (SVG_URL_ATTRIBUTES.has(name) && SVG_UNSAFE_URL.test(attribute.value))) {
+        element.removeAttribute(attribute.name)
+      }
+    }
+  }
+
+  // Collect ids by DOM traversal (never by rewriting serialized text): a label
+  // such as `<text>omd-mmd-1</text>` is content, not a reference.
+  const renamed = new Map<string, string>()
+  const idOwners = [...(root.hasAttribute("id") ? [root] : []), ...root.querySelectorAll("[id]")]
+  for (const element of idOwners) {
+    const oldId = element.getAttribute("id")
+    if (!oldId) continue
+    const newId = `${idPrefix}-${oldId}`
+    renamed.set(oldId, newId)
+    element.setAttribute("id", newId)
+  }
+  if (renamed.size === 0) return
+
+  // One pass over the longest ids first, with an exact id-character boundary so
+  // `omd-mmd-1` never rewrites `omd-mmd-10`.
+  const pattern = new RegExp(
+    `#(${[...renamed.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?![A-Za-z0-9_-])`,
+    "g",
+  )
+  const rewrite = (text: string): string => text.replace(pattern, (match, id: string) => {
+    const next = renamed.get(id)
+    return next ? `#${next}` : match
+  })
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    for (const attribute of SVG_REFERENCE_ATTRIBUTES) {
+      const value = element.getAttribute(attribute)
+      if (value?.includes("#")) element.setAttribute(attribute, rewrite(value))
+    }
+  }
+  for (const style of root.querySelectorAll("style")) {
+    const css = style.textContent
+    if (css?.includes("#")) style.textContent = rewrite(css)
+  }
+}
+
 /**
  * Prepare a Mermaid SVG snapshot for crisp full-screen zoom/pan:
- * - Namespaces the root `id` (with digit-boundary guard so `omd-mmd-1` never
+ * - Rejects markup that cannot be parsed as an SVG document (`markup: ""`), so
+ *   the lightbox renders its broken state instead of injecting raw text.
+ * - Strips scriptable elements, event-handler attributes, and unsafe URL
+ *   schemes before the markup reaches `dangerouslySetInnerHTML`.
+ * - Namespaces every id (with digit-boundary guard so `omd-mmd-1` never
  *   rewrites `omd-mmd-10`) so the modal copy never collides with inline editor defs.
  * - Extracts intrinsic dimensions from `viewBox` (or width/height attributes)
  *   and removes Mermaid's inline `max-width` cap so scaling stays sharp.
  */
 export function prepareLightboxSvg(svgMarkup: string, idPrefix: string): PreparedSvg {
-  if (typeof DOMParser === "undefined") {
-    return { markup: svgMarkup, width: null, height: null }
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
+    return { markup: "", width: null, height: null }
   }
   const doc = new DOMParser().parseFromString(svgMarkup, "image/svg+xml")
   const svg = doc.documentElement
   if (!svg || svg.tagName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) {
-    return { markup: svgMarkup, width: null, height: null }
+    return { markup: "", width: null, height: null }
   }
 
   const vb = parseViewBoxSize(svg.getAttribute("viewBox"))
@@ -207,13 +272,6 @@ export function prepareLightboxSvg(svgMarkup: string, idPrefix: string): Prepare
   if (width !== null) svg.setAttribute("width", String(width))
   if (height !== null) svg.setAttribute("height", String(height))
 
-  const oldId = svg.getAttribute("id")
-  let markup = new XMLSerializer().serializeToString(svg)
-  if (oldId && oldId.length > 0) {
-    const newId = `${idPrefix}-${oldId}`
-    const pattern = new RegExp(`${escapeRegExp(oldId)}(?![0-9])`, "g")
-    markup = markup.replace(pattern, newId)
-  }
-
-  return { markup, width, height }
+  sanitizeSvg(svg, idPrefix)
+  return { markup: new XMLSerializer().serializeToString(svg), width, height }
 }

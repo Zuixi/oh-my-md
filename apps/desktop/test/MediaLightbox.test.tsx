@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach } from "vitest"
 import { MediaLightbox, useMediaLightbox } from "../src/MediaLightbox"
 
+const MERMAID_TARGET = {
+  kind: "mermaid" as const,
+  svg: '<svg id="omd-mmd-9" viewBox="0 0 800 300"><rect width="800" height="300"/></svg>',
+  source: "graph LR; A-->B",
+}
+
 afterEach(() => cleanup())
 
 describe("MediaLightbox", () => {
@@ -105,6 +111,69 @@ describe("MediaLightbox", () => {
     } finally {
       window.removeEventListener("keydown", onWindowKey)
     }
+  })
+
+  it("keeps the native modal open across parent re-renders with a fresh onClose", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal")
+    const close = vi.spyOn(HTMLDialogElement.prototype, "close")
+    try {
+      const { rerender } = render(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      expect(showModal).toHaveBeenCalledTimes(1)
+
+      // A fresh inline `onClose` identity on every parent render used to tear the
+      // native modal down and rebuild it (losing zoom state, SVG DOM, and focus).
+      rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
+      expect(showModal).toHaveBeenCalledTimes(1)
+      expect(close).not.toHaveBeenCalled()
+      expect(document.querySelector<HTMLDialogElement>("dialog.media-lightbox")!.open).toBe(true)
+    } finally {
+      showModal.mockRestore()
+      close.mockRestore()
+    }
+  })
+
+  it("moves focus into the dialog and restores it to the opener on close", () => {
+    const opener = document.createElement("button")
+    opener.textContent = "open lightbox"
+    document.body.appendChild(opener)
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+
+    const onClose = vi.fn()
+    const View = (props: { open: boolean }) => (
+      <MediaLightbox target={props.open ? MERMAID_TARGET : null} onClose={onClose} />
+    )
+
+    try {
+      const { rerender } = render(<View open />)
+      const closeBtn = screen.getByLabelText("Close (Esc)")
+      expect(document.activeElement).toBe(closeBtn)
+
+      // Escape closes the native dialog, which reports the close to React.
+      fireEvent.keyDown(document.querySelector("dialog.media-lightbox")!, { key: "Escape" })
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(document.activeElement).toBe(opener)
+
+      rerender(<View open={false} />)
+      expect(document.querySelector("dialog.media-lightbox")).toBeNull()
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      opener.remove()
+    }
+  })
+
+  it("renders the broken state instead of injecting malformed Mermaid SVG", () => {
+    render(
+      <MediaLightbox
+        target={{ kind: "mermaid", svg: "<svg><unclosed", source: "graph LR" }}
+        onClose={() => {}}
+      />,
+    )
+    const broken = document.querySelector(".media-lightbox-broken")
+    expect(broken?.getAttribute("role")).toBe("status")
+    expect(document.querySelector(".media-lightbox-svg-frame")).toBeNull()
+    expect(document.querySelector("dialog.media-lightbox")!.innerHTML).not.toContain("unclosed")
   })
 
   it("auto-dismisses when active tab or document identity changes (useMediaLightbox)", () => {

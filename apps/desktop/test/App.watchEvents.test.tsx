@@ -4,6 +4,7 @@ import type { EditorView } from "@codemirror/view"
 import type { CreateEditorOptions } from "../src/Editor"
 import type { TreeEntry } from "../src/FileTree"
 import { createAppHarness, resetMountedApps } from "./appHarness"
+import { t } from "../src/i18n"
 
 vi.mock("@omd/engine", async importOriginal => {
   const actual = await importOriginal<typeof import("@omd/engine")>()
@@ -127,5 +128,44 @@ describe("native workspace-change events", () => {
       expect(probeVersion).toHaveBeenCalledWith("/notes/watched.md")
     })
     expect(listDir).toHaveBeenCalled()
+  })
+
+  it("retries a rejected folder authorization on the next workspace change", async () => {
+    const { harness, getChangeHandler, listDir } = folderHarness()
+    // The restored session's own grant succeeds, then every later grant fails —
+    // the tree/watcher effects run right after that first call.
+    let denyGrants = false
+    const allowWorkspaceDir = vi.fn(async () => {
+      if (!denyGrants) {
+        denyGrants = true
+        return
+      }
+      throw new Error("directory not authorized")
+    })
+    harness.services.allowWorkspaceDir = allowWorkspaceDir
+    harness.renderApp()
+
+    await waitFor(() => {
+      expect(harness.services.reportError).toHaveBeenCalledWith(
+        `${t("error.folderListingFailed")}: directory not authorized`,
+      )
+    })
+
+    // Unauthorized: the listing must never be issued for the folder.
+    listDir.mockClear()
+    await act(async () => { await Promise.resolve() })
+    expect(listDir).not.toHaveBeenCalled()
+
+    // The failure is not cached, so the next refresh re-authorizes and lists.
+    denyGrants = false
+    const grantsBefore = allowWorkspaceDir.mock.calls.length
+    await act(async () => {
+      getChangeHandler()!(["/notes/watched.md"])
+    })
+    await waitFor(() => {
+      expect(listDir).toHaveBeenCalledWith("/notes")
+    })
+    expect(allowWorkspaceDir.mock.calls.length).toBeGreaterThan(grantsBefore)
+    expect(allowWorkspaceDir).toHaveBeenLastCalledWith("/notes")
   })
 })

@@ -89,7 +89,7 @@ describe("lightboxTransform", () => {
   })
 
   it("prepares Mermaid SVG by extracting viewBox size, removing max-width, and namespacing ids safely", () => {
-    const raw = '<svg id="omd-mmd-1" style="max-width: 600px;" viewBox="0 0 1200 400"><style>#omd-mmd-1 .node { fill: red; }</style><path marker-end="url(#omd-mmd-1-arrow)"/><text>omd-mmd-10</text></svg>'
+    const raw = '<svg id="omd-mmd-1" style="max-width: 600px;" viewBox="0 0 1200 400"><defs><marker id="omd-mmd-1-arrow"/></defs><style>#omd-mmd-1 .node { fill: red; }</style><path marker-end="url(#omd-mmd-1-arrow)"/><text>omd-mmd-10</text></svg>'
     const prepared = prepareLightboxSvg(raw, "omd-lb-test")
     expect(prepared.width).toBe(1200)
     expect(prepared.height).toBe(400)
@@ -100,12 +100,62 @@ describe("lightboxTransform", () => {
     expect(prepared.markup).toContain("<text>omd-mmd-10</text>")
   })
 
+  it("rewrites ids by DOM traversal, never by matching label text", () => {
+    // `omd-mmd-1` is both the root id and the exact text of a diagram label. Only
+    // the id and its references may change; the label is user content.
+    const raw = [
+      '<svg id="omd-mmd-1" viewBox="0 0 10 10">',
+      '<defs><marker id="omd-mmd-1-arrow"/></defs>',
+      '<style>#omd-mmd-1 .node { fill: red; } #omd-mmd-10 .node { fill: blue; } #omd-mmd-1x .node { fill: green; }</style>',
+      '<path id="omd-mmd-10" marker-end="url(#omd-mmd-1-arrow)" clip-path="url(#omd-mmd-1)" fill="#omd-mmd-1"/>',
+      '<text>omd-mmd-1</text><tspan>omd-mmd-1</tspan>',
+      '</svg>',
+    ].join("")
+    const markup = prepareLightboxSvg(raw, "omd-lb").markup
+    expect(markup).toContain('id="omd-lb-omd-mmd-1"')
+    expect(markup).toContain('id="omd-lb-omd-mmd-1-arrow"')
+    expect(markup).toContain('id="omd-lb-omd-mmd-10"')
+    expect(markup).toContain("#omd-lb-omd-mmd-1 .node")
+    expect(markup).toContain("#omd-lb-omd-mmd-10 .node")
+    expect(markup).toContain("url(#omd-lb-omd-mmd-1-arrow)")
+    expect(markup).toContain("clip-path=\"url(#omd-lb-omd-mmd-1)\"")
+    expect(markup).toContain('fill="#omd-lb-omd-mmd-1"')
+    // Boundary guard: a longer id sharing the prefix (and an id-like token that
+    // is not an element id) is left exactly as-is.
+    expect(markup).toContain("#omd-mmd-1x .node")
+    expect(markup).toContain("<text>omd-mmd-1</text>")
+    expect(markup).toContain("<tspan>omd-mmd-1</tspan>")
+  })
+
+  it("strips scriptable elements, event handlers, and unsafe URLs", () => {
+    const raw = [
+      '<svg id="d" viewBox="0 0 10 10">',
+      '<script>alert(1)</script>',
+      '<iframe src="https://evil.test"/>',
+      '<object data="x"/><embed src="x"/>',
+      '<rect width="10" height="10" onload="alert(1)" onclick="alert(2)"/>',
+      '<a href="javascript:alert(1)"><text>link</text></a>',
+      '<image href="data:text/html;base64,PHNjcmlwdD4="/>',
+      '<use href="#d"/>',
+      '</svg>',
+    ].join("")
+    const markup = prepareLightboxSvg(raw, "omd-lb").markup
+    for (const forbidden of ["<script", "<iframe", "<object", "<embed", "onload", "onclick", "javascript:", "data:text/html"]) {
+      expect(markup).not.toContain(forbidden)
+    }
+    // Safe in-document references survive sanitization.
+    expect(markup).toContain('href="#omd-lb-d"')
+    expect(markup).toContain('id="omd-lb-d"')
+  })
+
   it("falls back cleanly on malformed SVG markup", () => {
-    const malformed = "<not-svg"
-    expect(prepareLightboxSvg(malformed, "prefix")).toEqual({
-      markup: malformed,
-      width: null,
-      height: null,
-    })
+    // Never echo unparsed markup: the lightbox renders its broken state instead.
+    for (const malformed of ["<not-svg", "<svg><unclosed"]) {
+      expect(prepareLightboxSvg(malformed, "prefix")).toEqual({
+        markup: "",
+        width: null,
+        height: null,
+      })
+    }
   })
 })

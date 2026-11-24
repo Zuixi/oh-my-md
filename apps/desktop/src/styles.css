@@ -44,6 +44,16 @@ html[data-theme="light"] {
   /* Shared size for icon tool buttons (sidebar toggle, outline toggle, panel
      collapse/close) so panel chrome stays uniform. */
   --omd-tool-btn-size: 26px;
+  /* Full-screen media lightbox: a dark scrim in both themes, so both blocks
+     carry the same values; the tokens exist so no rule hardcodes them again. */
+  --omd-lightbox-fg: #f3f4f6;
+  --omd-lightbox-backdrop: rgba(10, 12, 16, 0.82);
+  --omd-lightbox-bar-bg: rgba(20, 22, 28, 0.86);
+  --omd-lightbox-bar-border: rgba(255, 255, 255, 0.1);
+  --omd-lightbox-btn-hover: rgba(255, 255, 255, 0.14);
+  --omd-lightbox-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.65);
+  --omd-lightbox-hint-bg: rgba(20, 22, 28, 0.72);
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -80,6 +90,15 @@ html[data-theme="dark"] {
   --omd-cursor: #ffffff;
   --omd-selection-bg: #264f78;
   --omd-selection-bg-unfocused: #3a3d41;
+  /* Same values as light: the lightbox scrim is dark in both themes. */
+  --omd-lightbox-fg: #f3f4f6;
+  --omd-lightbox-backdrop: rgba(10, 12, 16, 0.82);
+  --omd-lightbox-bar-bg: rgba(20, 22, 28, 0.86);
+  --omd-lightbox-bar-border: rgba(255, 255, 255, 0.1);
+  --omd-lightbox-btn-hover: rgba(255, 255, 255, 0.14);
+  --omd-lightbox-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --omd-lightbox-hint-fg: rgba(243, 244, 246, 0.65);
+  --omd-lightbox-hint-bg: rgba(20, 22, 28, 0.72);
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
    fall back to inherited/initial values, so unthemed tokens stay correct. */
@@ -2186,7 +2205,7 @@ dialog.media-lightbox {
   max-width: none;
   max-height: none;
   background: transparent;
-  color: #f3f4f6;
+  color: var(--omd-lightbox-fg);
   overflow: hidden;
   user-select: none;
 }
@@ -2205,7 +2224,7 @@ dialog.media-lightbox:modal {
   overscroll-behavior: contain;
 }
 dialog.media-lightbox::backdrop {
-  background: rgba(10, 12, 16, 0.82);
+  background: var(--omd-lightbox-backdrop);
   backdrop-filter: blur(4px);
   overflow: hidden;
   overscroll-behavior: contain;
@@ -2225,8 +2244,8 @@ dialog.media-lightbox::backdrop {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 16px;
-  background: rgba(20, 22, 28, 0.86);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--omd-lightbox-bar-bg);
+  border-bottom: 1px solid var(--omd-lightbox-bar-border);
 }
 .media-lightbox-caption {
   min-width: 0;
@@ -2234,7 +2253,8 @@ dialog.media-lightbox::backdrop {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  color: rgba(243, 244, 246, 0.9);
+  color: var(--omd-lightbox-fg);
+  opacity: 0.9;
 }
 .media-lightbox-controls {
   display: flex;
@@ -2252,14 +2272,14 @@ dialog.media-lightbox::backdrop {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: #f3f4f6;
+  color: var(--omd-lightbox-fg);
   cursor: pointer;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   transition: background-color 0.12s, border-color 0.12s;
 }
 .media-lightbox-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--omd-lightbox-btn-hover);
 }
 .media-lightbox-btn:focus-visible {
   outline: 2px solid var(--omd-accent, #60a5fa);
@@ -2297,7 +2317,7 @@ dialog.media-lightbox::backdrop {
   max-width: none;
   max-height: none;
   border-radius: 4px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--omd-lightbox-shadow);
   transition: opacity 0.12s ease-out;
 }
 .media-lightbox-img.is-loading {
@@ -2319,7 +2339,7 @@ dialog.media-lightbox::backdrop {
   border-radius: 10px;
   background: var(--omd-bg, #ffffff);
   color: var(--omd-fg, #1f2328);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--omd-lightbox-shadow);
 }
 .media-lightbox-svg-frame svg {
   display: block;
@@ -2332,7 +2352,7 @@ dialog.media-lightbox::backdrop {
   padding: 8px 16px;
   text-align: center;
   font-size: 12px;
-  color: rgba(243, 244, 246, 0.65);
-  background: rgba(20, 22, 28, 0.72);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--omd-lightbox-hint-fg);
+  background: var(--omd-lightbox-hint-bg);
+  border-top: 1px solid var(--omd-lightbox-bar-border);
 }
