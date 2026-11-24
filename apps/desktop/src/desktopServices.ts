@@ -400,11 +400,9 @@ export const defaultServices: DesktopServices = {
   },
   revealInFinder: async path => {
     // Rejects by design: callers report via .catch → reportError — do not swallow like openExternal (best-effort).
-    const { revealItemInDir } = await import("@tauri-apps/plugin-opener")
-    // Windows：UI 展示用的 `/` 分隔符会把 `\\?\C:\…` 扩展路径变成 `//?/C:/…`，
-    // 插件因此无法简化，Shell 也解析不出 ITEMIDLIST(ILCreateFromPathW 失败)。
-    // 还原反斜杠后再交给插件的 dunce::simplified 处理。
-    await revealItemInDir(isWindows() ? path.replace(/\//g, "\\") : path)
+    // Windows UI paths use `/`, which turns `\\?\C:\…` into `//?/C:/…`; restoring the
+    // backslashes lets the shell parse the extended-length path again.
+    await invoke("reveal_in_finder", { path: isWindows() ? path.replace(/\//g, "\\") : path })
   },
   // Rust canonicalizes the parent, so create/rename results can come back as
   // verbatim (`\\?\C:\…`) paths on Windows or symlink-resolved (`/private/tmp`
@@ -677,8 +675,9 @@ export const defaultServices: DesktopServices = {
   },
   openExternal: async url => {
     try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener")
-      await openUrl(url)
+      // Rust only allows http(s)/mailto here, so a link in a document cannot
+      // become a `file:` or `javascript:` action.
+      await invoke("open_external_url", { url })
     } catch {
       // Opening the browser is best-effort; never block the editor on it.
     }

@@ -1,3 +1,4 @@
+use crate::auth_scope::AccessMode;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -74,6 +75,10 @@ pub enum DocumentStat {
 /// Spec 05b LARGE 档流式打开：内容按块经 Channel 推送，invoke 只回元数据。
 /// 单块大小是 Rust→前端负载整形参数，不与 TS 侧共享契约。
 pub const OPEN_CHUNK_BYTES: usize = 512 * 1024;
+
+/// Files at or above this UTF-8 byte size open read-only; must match
+/// `OPEN_READONLY_THRESHOLD_BYTES` in `apps/desktop/src/constants.ts`.
+pub const OPEN_READONLY_THRESHOLD_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -410,6 +415,41 @@ pub(crate) fn authorize_document_ipc(window_label: &str, path: &str) -> Result<(
     Ok(())
 }
 
+/// Write gate: the read authorization plus the host's own read-only verdict.
+///
+/// Saves go through this instead of `authorize_document_ipc`, so the read-only
+/// tier is enforced where the bytes land and not only in `view.state.readOnly`.
+pub(crate) fn authorize_document_write_ipc(
+    window_label: &str,
+    path: &str,
+) -> Result<(), DocumentError> {
+    let path_buf = validate_requested(path)?;
+    crate::auth_scope::assert_file_writable(Some(window_label), &path_buf)
+        .map_err(DocumentError::PermissionDenied)?;
+    Ok(())
+}
+
+/// Mirrors the host's own size verdict into the window's write gate.
+///
+/// Called after every stat/read, so a document's access mode always reflects
+/// the bytes the host just measured; a webview that skips the frontend open
+/// policy therefore still cannot write a huge document.
+fn sync_read_only_mode(
+    window_label: &str,
+    requested: &str,
+    resolved: Option<&str>,
+    size_bytes: u64,
+) {
+    let mode = if size_bytes >= OPEN_READONLY_THRESHOLD_BYTES {
+        AccessMode::ReadOnly
+    } else {
+        AccessMode::ReadWrite
+    };
+    for path in std::iter::once(requested).chain(resolved) {
+        crate::auth_scope::set_document_access_mode(window_label, Path::new(path), mode);
+    }
+}
+
 #[tauri::command]
 pub async fn read_document(
     window: tauri::WebviewWindow,
@@ -418,7 +458,13 @@ pub async fn read_document(
     authorize_document_ipc(window.label(), &path)?;
     let requested = path.clone();
     let snapshot = spawn_blocking_document(move || read_document_blocking(&path)).await?;
-    if let DiskSnapshot::Existing { version, .. } = &snapshot {
+    if let DiskSnapshot::Existing { version, stats, .. } = &snapshot {
+        sync_read_only_mode(
+            window.label(),
+            &requested,
+            Some(&version.resolved_path),
+            stats.byte_length,
+        );
         authorize_opened_document(window.label(), &requested, &version.resolved_path);
     }
     Ok(snapshot)
@@ -430,7 +476,15 @@ pub async fn stat_document(
     path: String,
 ) -> Result<DocumentStat, DocumentError> {
     authorize_document_ipc(window.label(), &path)?;
-    spawn_blocking_document(move || stat_document_blocking(&path)).await
+    let stat = spawn_blocking_document(move || stat_document_blocking(&path)).await?;
+    if let DocumentStat::Existing {
+        requested_path,
+        size_bytes,
+    } = &stat
+    {
+        sync_read_only_mode(window.label(), requested_path, None, *size_bytes);
+    }
+    Ok(stat)
 }
 
 /// Streaming read for the LARGE open tier: content is pushed in UTF-8-safe
@@ -450,7 +504,13 @@ pub async fn read_document_streaming(
         })
     })
     .await?;
-    if let DocumentOpenStream::Existing { version, .. } = &opened {
+    if let DocumentOpenStream::Existing { version, stats, .. } = &opened {
+        sync_read_only_mode(
+            window.label(),
+            &requested,
+            Some(&version.resolved_path),
+            stats.byte_length,
+        );
         authorize_opened_document(window.label(), &requested, &version.resolved_path);
     }
     Ok(opened)
@@ -571,7 +631,7 @@ pub async fn save_document(
     contents: String,
     expected: ExpectedDocumentVersion,
 ) -> Result<SaveDocumentResult, DocumentError> {
-    authorize_document_ipc(window.label(), &path)?;
+    authorize_document_write_ipc(window.label(), &path)?;
     let coordinator = coordinator.inner().clone();
     let requested = path.clone();
     let saved =

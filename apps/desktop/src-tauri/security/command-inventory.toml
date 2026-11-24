@@ -1,0 +1,124 @@
+# Tauri command inventory: the checked-in authority contract.
+#
+# Every command registered in `src/lib.rs` `tauri::generate_handler![...]` must
+# appear below exactly once, classified by the authority it needs:
+#
+#   pure       no filesystem and no OS mutation; request shape or static data
+#   scoped_io  accepts a renderer-supplied path (or path list) and must resolve
+#              it through `auth_scope`; today that still means a raw path
+#   system     mutates OS or app state the user sees (windows, native menu,
+#              dialogs, updater, lifecycle, log destination); no renderer path
+#   internal   app-owned state or in-memory bookkeeping (settings, session and
+#              recovery shards, flush acks, opaque ids); no renderer user path
+#
+# A command that accepts a renderer path is `scoped_io` even when it also
+# touches the OS.
+#
+# `src/command_inventory_tests.rs` compares this file with `generate_handler!`
+# and fails on an unclassified command, a ghost entry, a duplicate entry, an
+# invalid class, or a migration-allowlist entry that is not `scoped_io`.
+#
+# `[migration_allowlist]` is the migration debt described in
+# `docs/superpowers/specs/2026-11-24-security-model-design.md` §4.3: raw-path IO
+# that Phase 1-2 replaces with capability handles. It may only shrink. Removing
+# an entry is progress; adding one is a security review, not a code change.
+#
+# Entries are alphabetized so a drift diff stays readable.
+
+[commands]
+"allow_document_assets" = "scoped_io"
+"allow_workspace_dir" = "scoped_io"
+"app_lifecycle::quit_app" = "system"
+"app_lifecycle::restart_app" = "system"
+"app_version" = "pure"
+"build_info::app_build_date" = "pure"
+"clear_recovery" = "internal"
+"clear_snapshots" = "scoped_io"
+"create_dir" = "scoped_io"
+"create_editor_window" = "scoped_io"
+"create_markdown" = "scoped_io"
+"delete_path" = "scoped_io"
+"diagnostics::export_diagnostics" = "scoped_io"
+"dialogs::pick_custom_css" = "system"
+"dialogs::pick_export_path" = "system"
+"dialogs::pick_open_markdown" = "system"
+"dialogs::pick_save_markdown" = "system"
+"dialogs::pick_workspace_folder" = "system"
+"documents::read_document" = "scoped_io"
+"documents::read_document_streaming" = "scoped_io"
+"documents::read_document_version" = "scoped_io"
+"documents::save_document" = "scoped_io"
+"documents::stat_document" = "scoped_io"
+"export::cancel_export" = "internal"
+"export::export_preview" = "scoped_io"
+"fonts::list_system_fonts" = "system"
+"get_session_state" = "internal"
+"get_settings" = "internal"
+"list_dir" = "scoped_io"
+"list_markdown_files" = "scoped_io"
+"list_recoveries" = "internal"
+"list_snapshots" = "scoped_io"
+"logging::frontend::log_frontend" = "internal"
+"logging::log_state" = "internal"
+"logging::open_log_dir" = "system"
+"menu::set_menu_locale" = "system"
+"opener::open_external_url" = "system"
+"opener::reveal_in_finder" = "scoped_io"
+"paste_assets::commit_paste_assets" = "internal"
+"paste_assets::discard_paste_assets" = "internal"
+"paste_assets::write_paste_assets" = "scoped_io"
+"read_recovery" = "internal"
+"read_snapshot" = "scoped_io"
+"recents::get_recent_files" = "internal"
+"recents::save_recent_files" = "scoped_io"
+"rename_path" = "scoped_io"
+"save_session_state" = "internal"
+"save_settings" = "internal"
+"scoped_io::read_custom_css" = "scoped_io"
+"scoped_io::write_exported_html" = "scoped_io"
+"search_markdown" = "scoped_io"
+"session_flush_ack" = "internal"
+"set_recent_files" = "scoped_io"
+"set_view_menu_state" = "system"
+"set_window_theme" = "system"
+"snapshot_document" = "scoped_io"
+"take_pending_open_files" = "internal"
+"updates::prepare_update_restart" = "system"
+"updates::update_capability" = "pure"
+"watch_paths" = "scoped_io"
+"write_recovery" = "scoped_io"
+
+# Raw-path commands awaiting capability handles. If a new command needs an entry
+# here, the design is wrong: take a `GrantId`/`DocumentId`/`WorkspaceId` (or a
+# private `AuthorizedPath`) instead of widening this list.
+
+[migration_allowlist]
+"allow_document_assets" = true
+"allow_workspace_dir" = true
+"clear_snapshots" = true
+"create_dir" = true
+"create_editor_window" = true
+"create_markdown" = true
+"delete_path" = true
+"diagnostics::export_diagnostics" = true
+"documents::read_document" = true
+"documents::read_document_streaming" = true
+"documents::read_document_version" = true
+"documents::save_document" = true
+"documents::stat_document" = true
+"export::export_preview" = true
+"list_dir" = true
+"list_markdown_files" = true
+"list_snapshots" = true
+"opener::reveal_in_finder" = true
+"paste_assets::write_paste_assets" = true
+"read_snapshot" = true
+"recents::save_recent_files" = true
+"rename_path" = true
+"scoped_io::read_custom_css" = true
+"scoped_io::write_exported_html" = true
+"search_markdown" = true
+"set_recent_files" = true
+"snapshot_document" = true
+"watch_paths" = true
+"write_recovery" = true

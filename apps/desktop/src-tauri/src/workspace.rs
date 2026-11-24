@@ -7,7 +7,10 @@ use std::sync::Mutex;
 
 use regex::RegexBuilder;
 
-use crate::auth_scope::{assert_dir_authorized, canonical_parent_and_name, reject_traversal};
+use crate::auth_scope::{
+    assert_dir_authorized, assert_workspace_entry_mutable, canonical_parent_and_name,
+    has_markdown_extension, reject_traversal,
+};
 use crate::windows::WindowBounds;
 
 mod recovery;
@@ -355,6 +358,10 @@ fn validate_single_segment(name: &str) -> Result<&str, String> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err("name must be a single path segment".into());
     }
+    // `list_dir` hides dotfiles, and a recursive root grant must never reach one.
+    if name.starts_with('.') {
+        return Err("file or directory name must not start with '.'".into());
+    }
     if Path::new(name).components().count() != 1 {
         return Err("name must be a single path segment".into());
     }
@@ -510,24 +517,14 @@ pub fn rename_path(
 ) -> Result<String, String> {
     let to_name = validate_single_segment(&to_name)?;
     let (parent, current_name) = canonical_parent_and_name(Path::new(&from))?;
-    // Renames mutate the workspace tree, so they always need the workspace
-    // root grant — a single-document grant is version history, not folder
-    // management.
-    assert_dir_authorized(window_label.as_deref(), &parent)?;
-    let source = parent.join(current_name);
-    let source_metadata = fs::metadata(&source).map_err(|e| e.to_string())?;
-    if source_metadata.is_file()
-        && source
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case(MARKDOWN_FILE_EXTENSION))
-        && Path::new(to_name)
-            .extension()
-            .and_then(|extension| extension.to_str())
-            != Some(MARKDOWN_FILE_EXTENSION)
-    {
-        return Err("markdown files must keep a .md extension".into());
+    // Renames mutate the workspace tree, so they need the workspace root grant
+    // (a single-document grant is version history, not folder management) plus
+    // the entry gate: hidden, non-Markdown, and symlinked sources are refused.
+    let entry = assert_workspace_entry_mutable(window_label.as_deref(), &parent, current_name)?;
+    if entry.metadata.is_file() && !has_markdown_extension(Path::new(to_name)) {
+        return Err("markdown files must keep a markdown extension".into());
     }
+    let source = entry.target;
     let target = parent.join(to_name);
     if source == target {
         return Ok(source.to_string_lossy().into_owned());
@@ -543,13 +540,10 @@ pub fn rename_path(
 
 pub fn delete_path(path: String, window_label: Option<String>) -> Result<(), String> {
     let (parent, name) = canonical_parent_and_name(Path::new(&path))?;
-    assert_dir_authorized(window_label.as_deref(), &parent)?;
-    let name = name.to_string_lossy().into_owned();
-    let target = parent.join(name);
-    // Fail fast on a missing target so callers keep their not-found semantics.
-    fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
-    // Tree deletion moves to the OS Trash; the app never deletes permanently.
-    trash::delete(&target).map_err(|e| e.to_string())
+    // Refuses hidden names, non-Markdown files, symlinks, and the root itself;
+    // a missing target still fails here too. Trash, never unlink.
+    let entry = assert_workspace_entry_mutable(window_label.as_deref(), &parent, name)?;
+    trash::delete(&entry.target).map_err(|e| e.to_string())
 }
 
 pub async fn list_dir(path: String, window_label: Option<String>) -> Result<Vec<DirEntry>, String> {
@@ -844,6 +838,10 @@ fn collect_file_hits(
     }
     hits
 }
+
+#[cfg(test)]
+#[path = "workspace_mutation_tests.rs"]
+mod mutation_tests;
 
 #[cfg(test)]
 mod tests {

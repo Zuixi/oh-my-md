@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 const ASSETS_DIR_NAME: &str = "assets";
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
@@ -53,6 +54,7 @@ struct PasteAssetStateInner {
 }
 
 struct PendingBatch {
+    window_label: String,
     document_path: PathBuf,
     paths: Vec<PathBuf>,
 }
@@ -68,12 +70,11 @@ pub(crate) async fn write_paste_assets(
     document_path: String,
     assets: Vec<PasteAssetWrite>,
 ) -> Result<PasteAssetBatch, String> {
-    use tauri::Manager;
-
     // Pasted bytes land in `assets/` next to the document, so the document must
     // be a file this window already opened or saved — a pasted image must never
-    // become a way to create files next to an arbitrary path.
-    crate::auth_scope::assert_file_or_workspace_authorized(
+    // become a way to create files next to an arbitrary path, or to write beside
+    // a document the host opened read-only.
+    crate::auth_scope::assert_file_writable(
         Some(window.label()),
         std::path::Path::new(&document_path),
     )?;
@@ -104,6 +105,7 @@ pub(crate) async fn write_paste_assets(
             .insert(
                 batch_id.clone(),
                 PendingBatch {
+                    window_label: window.label().to_string(),
                     document_path: registered_document_path,
                     paths: written_paths,
                 },
@@ -115,21 +117,26 @@ pub(crate) async fn write_paste_assets(
 #[tauri::command]
 pub(crate) async fn commit_paste_assets(
     state: tauri::State<'_, PasteAssetState>,
+    window: tauri::WebviewWindow,
     batch_id: String,
 ) -> Result<(), String> {
-    finish_batch(&state, &batch_id, TerminalAction::Commit, false)
+    let label = window.label();
+    finish_batch(&state, label, &batch_id, TerminalAction::Commit, false)
 }
 
 #[tauri::command]
 pub(crate) async fn discard_paste_assets(
     state: tauri::State<'_, PasteAssetState>,
+    window: tauri::WebviewWindow,
     batch_id: String,
 ) -> Result<(), String> {
-    finish_batch(&state, &batch_id, TerminalAction::Discard, true)
+    let label = window.label();
+    finish_batch(&state, label, &batch_id, TerminalAction::Discard, true)
 }
 
 fn finish_batch(
     state: &PasteAssetState,
+    window_label: &str,
     batch_id: &str,
     action: TerminalAction,
     remove_files: bool,
@@ -145,11 +152,16 @@ fn finish_batch(
             Err("paste asset batch was already finalized differently".into())
         };
     }
+    let batch = inner
+        .pending
+        .get(batch_id)
+        .ok_or_else(|| "unknown paste asset batch".to_string())?;
+    // A batch belongs to the window that wrote it: a second window's webview must
+    // not commit or discard these files, even with a guessed batch id.
+    if batch.window_label != window_label {
+        return Err("paste asset batch belongs to another window".into());
+    }
     if remove_files {
-        let batch = inner
-            .pending
-            .get(batch_id)
-            .ok_or_else(|| "unknown paste asset batch".to_string())?;
         let assets_dir = batch
             .document_path
             .parent()
@@ -175,6 +187,7 @@ fn finish_batch(
                 inner.pending.insert(
                     batch_id.to_string(),
                     PendingBatch {
+                        window_label: batch.window_label,
                         document_path: batch.document_path,
                         paths: batch.paths[index..].to_vec(),
                     },
@@ -184,10 +197,64 @@ fn finish_batch(
         }
     }
     inner.terminal.push_back((batch_id.to_string(), action));
-    while inner.terminal.len() > TERMINAL_BATCH_LIMIT {
-        inner.terminal.pop_front();
-    }
+    trim_terminal(&mut inner.terminal);
     Ok(())
+}
+
+/// Keeps the finalized-id ring bounded; ids only exist for idempotent repeats.
+fn trim_terminal(terminal: &mut VecDeque<(String, TerminalAction)>) {
+    while terminal.len() > TERMINAL_BATCH_LIMIT {
+        terminal.pop_front();
+    }
+}
+
+/// Drains one window's pending batches, recording them as discarded so a late
+/// commit from the same (now gone) webview cannot resurrect them.
+fn take_window_batches(state: &PasteAssetState, window_label: &str) -> Vec<PendingBatch> {
+    let Ok(mut inner) = state.0.lock() else {
+        log::warn!("paste asset state lock poisoned during window cleanup");
+        return Vec::new();
+    };
+    let PasteAssetStateInner { pending, terminal } = &mut *inner;
+    let mut drained = Vec::new();
+    for (batch_id, batch) in std::mem::take(pending) {
+        if batch.window_label == window_label {
+            terminal.push_back((batch_id, TerminalAction::Discard));
+            drained.push(batch);
+        } else {
+            pending.insert(batch_id, batch);
+        }
+    }
+    trim_terminal(terminal);
+    drained
+}
+
+/// Deletes drained batches, refusing an `assets/` swapped for a symlink.
+fn remove_batch_files(batches: &[PendingBatch]) {
+    for batch in batches {
+        let dir = batch.document_path.parent().unwrap_or(Path::new(""));
+        if reject_symlink_directory(&dir.join(ASSETS_DIR_NAME)).is_err() {
+            log::warn!("skipping paste asset cleanup: assets directory is gone or a symlink");
+            continue;
+        }
+        for path in &batch.paths {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => log::warn!("failed to remove discarded paste asset: {error}"),
+            }
+        }
+    }
+}
+
+/// Called from `WindowEvent::Destroyed`; the unlink runs on the blocking pool so
+/// a window destroyed mid-paste never stalls the main thread on disk IO.
+pub(crate) fn discard_window_batches(state: &PasteAssetState, window_label: &str) {
+    let batches = take_window_batches(state, window_label);
+    if batches.is_empty() {
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || remove_batch_files(&batches));
 }
 
 fn write_paste_assets_impl(
@@ -473,27 +540,57 @@ mod tests {
     #[test]
     fn discard_is_exact_idempotent_and_conflicting_reuse_fails() {
         let directory = tempfile::tempdir().unwrap();
-        let document = directory.path().join("document.md");
-        std::fs::write(&document, "# document").unwrap();
-        let asset_path = directory
-            .path()
-            .join(ASSETS_DIR_NAME)
-            .join("pasted-test.png");
-        std::fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
-        std::fs::write(&asset_path, b"\x89PNG\r\n\x1a\n").unwrap();
         let state = PasteAssetState::default();
-        state.0.lock().unwrap().pending.insert(
-            "batch".into(),
-            PendingBatch {
-                document_path: document,
-                paths: vec![asset_path.clone()],
-            },
-        );
+        let asset_path = seed_batch(&state, "batch", "window-a", directory.path());
 
-        finish_batch(&state, "batch", TerminalAction::Discard, true).unwrap();
+        finish_batch(&state, "window-a", "batch", TerminalAction::Discard, true).unwrap();
         assert!(!asset_path.exists());
-        finish_batch(&state, "batch", TerminalAction::Discard, true).unwrap();
-        assert!(finish_batch(&state, "batch", TerminalAction::Commit, false).is_err());
-        assert!(finish_batch(&state, "unknown", TerminalAction::Discard, true).is_err());
+        finish_batch(&state, "window-a", "batch", TerminalAction::Discard, true).unwrap();
+        assert!(finish_batch(&state, "window-a", "batch", TerminalAction::Commit, false).is_err());
+        assert!(finish_batch(&state, "window-a", "gone", TerminalAction::Discard, true).is_err());
+    }
+
+    #[test]
+    fn a_foreign_window_neither_finalizes_nor_reaps_a_batch() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = PasteAssetState::default();
+        let mine = seed_batch(&state, "mine", "window-a", directory.path());
+        let other = seed_batch(&state, "other", "window-b", directory.path());
+
+        assert!(finish_batch(&state, "window-b", "mine", TerminalAction::Discard, true).is_err());
+        assert!(finish_batch(&state, "window-b", "mine", TerminalAction::Commit, false).is_err());
+        // A refused finalize touches neither the queue nor the disk; closing a
+        // window reaps only the bytes that window wrote.
+        assert!(mine.exists());
+        remove_batch_files(&take_window_batches(&state, "window-a"));
+        assert!(!mine.exists());
+        assert!(other.exists());
+        assert_eq!(pending_ids(&state), ["other".to_string()]);
+        // A drained batch stays finalized as discarded, so a late commit cannot
+        // un-delete anything, and the production entry point drains first.
+        assert!(finish_batch(&state, "window-a", "mine", TerminalAction::Commit, false).is_err());
+        seed_batch(&state, "leaked", "window-a", directory.path());
+        discard_window_batches(&state, "window-a");
+        assert_eq!(pending_ids(&state), ["other".to_string()]);
+    }
+
+    fn pending_ids(state: &PasteAssetState) -> Vec<String> {
+        state.0.lock().unwrap().pending.keys().cloned().collect()
+    }
+
+    /// Seeds a pending batch the way `write_paste_assets_impl` leaves it.
+    fn seed_batch(state: &PasteAssetState, batch_id: &str, window: &str, dir: &Path) -> PathBuf {
+        let assets_dir = dir.join(ASSETS_DIR_NAME);
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let asset_path = assets_dir.join(format!("pasted-{batch_id}.png"));
+        std::fs::write(&asset_path, b"\x89PNG\r\n\x1a\n").unwrap();
+        let batch = PendingBatch {
+            window_label: window.into(),
+            document_path: dir.join(format!("{batch_id}.md")),
+            paths: vec![asset_path.clone()],
+        };
+        let mut inner = state.0.lock().unwrap();
+        inner.pending.insert(batch_id.into(), batch);
+        asset_path
     }
 }

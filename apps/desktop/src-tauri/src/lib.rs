@@ -10,6 +10,7 @@ mod fonts;
 mod log_capture;
 mod logging;
 mod menu;
+mod opener;
 mod paste_assets;
 mod recents;
 mod scoped_io;
@@ -636,6 +637,9 @@ pub fn run() {
                     // A destroyed window's filesystem grants must not outlive
                     // it (SEC-04), nor its queued opens, watches, or View state.
                     auth_scope::revoke_window(window.label());
+                    // Unpasted bytes of a closed window never become a document.
+                    let paste_state = app.state::<paste_assets::PasteAssetState>();
+                    paste_assets::discard_window_batches(&paste_state, window.label());
                     windows::drop_pending(window.label());
                     watcher::drop_window_watches(app, window.label());
                     menu::drop_window_state(app, window.label());
@@ -675,6 +679,8 @@ pub fn run() {
             paste_assets::write_paste_assets,
             paste_assets::commit_paste_assets,
             paste_assets::discard_paste_assets,
+            opener::open_external_url,
+            opener::reveal_in_finder,
             allow_document_assets,
             list_dir,
             search_markdown,

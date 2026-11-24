@@ -27,6 +27,14 @@ const WORKSPACE_UNAUTHORIZED: &str = "workspace directory was not authorized by 
 const CSS_UNAUTHORIZED: &str = "custom CSS path is outside authorized scope";
 const EXPORT_UNAUTHORIZED: &str = "export path is outside authorized scope";
 const SESSION_UNAUTHORIZED: &str = "session state contains unauthorized path";
+const DOCUMENT_READ_ONLY: &str = "document is read-only";
+
+// Mutation-gate rejections (`assert_workspace_entry_mutable`).
+const HIDDEN_ENTRY: &str = "workspace entry name must not start with '.'";
+const SYMLINK_ENTRY: &str = "symbolic links cannot be modified in a workspace";
+const NON_MARKDOWN_ENTRY: &str = "only markdown files and folders can be modified in a workspace";
+const SPECIAL_ENTRY: &str = "special files cannot be modified in a workspace";
+const WORKSPACE_ROOT_ENTRY: &str = "the workspace root itself cannot be renamed or deleted";
 
 #[derive(Debug, Default)]
 struct WindowAuth {
@@ -34,6 +42,20 @@ struct WindowAuth {
     files: Vec<PathBuf>,
     css_files: Vec<PathBuf>,
     export_targets: Vec<PathBuf>,
+    /// Documents the host opened read-only (huge tier). Lives and dies with the
+    /// window, like every other grant.
+    read_only_files: Vec<PathBuf>,
+}
+
+/// Write access the host decided for one open document.
+///
+/// The renderer's `view.state.readOnly` only drives the UI: this value is set
+/// from the byte size the host measured itself, so bypassing the frontend
+/// policy cannot make a huge document writable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccessMode {
+    ReadOnly,
+    ReadWrite,
 }
 
 /// Which per-window list a grant/assert operates on (one code path, three scopes).
@@ -171,7 +193,7 @@ pub(crate) fn resolve_canonical_with_missing_tail(path: &Path) -> Result<PathBuf
     Err("path has no resolvable ancestor directory".into())
 }
 
-fn has_markdown_extension(path: &Path) -> bool {
+pub(crate) fn has_markdown_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
@@ -187,9 +209,7 @@ fn root_grants(root: &Path, target: &Path) -> bool {
         return false;
     };
     !relative.as_os_str().is_empty()
-        && !relative
-            .components()
-            .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
+        && has_visible_components(relative)
         && has_markdown_extension(target)
 }
 
@@ -283,13 +303,74 @@ pub fn revoke_window(window_label: &str) {
 }
 
 /// Requires `dir` to be inside one of this window's workspace roots.
+///
+/// Listing, search, create, rename, and delete all funnel through here, so
+/// refusing a hidden component once closes `/ws/.git` and `/ws/.env` for every
+/// caller instead of per command. The rejection reuses the out-of-scope message
+/// so a probe cannot tell "hidden" from "not granted".
 pub fn assert_dir_authorized(window_label: Option<&str>, dir: &Path) -> Result<PathBuf, String> {
     let canonical = canonical_directory(dir)?;
-    if is_inside_root(scope_label(window_label), &canonical) {
-        Ok(canonical)
-    } else {
-        Err(FILE_UNAUTHORIZED.into())
+    if !reaches_visible_root(scope_label(window_label), &canonical) {
+        return Err(FILE_UNAUTHORIZED.into());
     }
+    Ok(canonical)
+}
+
+/// An entry that passed the mutation gate: the entry's own path and the
+/// metadata taken without following a symlink. The parent is the canonical
+/// directory the caller already resolved.
+pub(crate) struct MutableEntry {
+    pub target: PathBuf,
+    pub metadata: std::fs::Metadata,
+}
+
+/// The one gate for rename and delete.
+///
+/// The parent must be an authorized workspace directory, and the entry itself a
+/// visible Markdown file or a visible subdirectory. Refusing symlinks stops a
+/// link planted in a workspace from turning a rename into a move of
+/// `~/.ssh/id_rsa`; refusing non-Markdown files stops
+/// `rename("/ws/.env", "leak.md")` from laundering a hidden secret into a
+/// readable document.
+pub(crate) fn assert_workspace_entry_mutable(
+    window_label: Option<&str>,
+    parent: &Path,
+    name: impl AsRef<Path>,
+) -> Result<MutableEntry, String> {
+    let name = name.as_ref();
+    let parent = assert_dir_authorized(window_label, parent)?;
+    if name.as_os_str().to_string_lossy().starts_with('.') {
+        return Err(HIDDEN_ENTRY.into());
+    }
+    let target = parent.join(name);
+    let metadata = std::fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err(SYMLINK_ENTRY.into());
+    }
+    if metadata.is_file() {
+        if !has_markdown_extension(&target) {
+            return Err(NON_MARKDOWN_ENTRY.into());
+        }
+        // A read-only document is not mutable either: rename and trash both
+        // detach the bytes the host classified (trash is a delete). Also check
+        // the already-fetched on-disk size so a renderer that skips stat/read
+        // cannot bypass the threshold by directly renaming or trashing.
+        if metadata.len() >= crate::documents::OPEN_READONLY_THRESHOLD_BYTES
+            || is_document_read_only(window_label, &target)
+        {
+            return Err(DOCUMENT_READ_ONLY.into());
+        }
+    } else if metadata.is_dir() {
+        // A visible folder may legitimately hold `.DS_Store` or images, so its
+        // contents are not inspected. Only the root itself is off limits:
+        // renaming or trashing it would detach every grant in the window.
+        if is_granted_root(scope_label(window_label), &canonical_directory(&target)?) {
+            return Err(WORKSPACE_ROOT_ENTRY.into());
+        }
+    } else {
+        return Err(SPECIAL_ENTRY.into());
+    }
+    Ok(MutableEntry { target, metadata })
 }
 
 /// A document this window may read or write: an explicit file grant, or a
@@ -320,6 +401,104 @@ pub fn assert_file_or_workspace_authorized(
     Ok((parent, name))
 }
 
+/// Records whether this window opened `file` read-only.
+///
+/// Crate-internal on purpose: a `#[tauri::command]` wrapper here would let a
+/// compromised renderer clear its own protection. Only the host's own
+/// stat/read results may call this.
+pub fn set_document_access_mode(window_label: &str, file: &Path, mode: AccessMode) {
+    let keys = access_mode_keys(file);
+    let mut scopes = scopes();
+    let auth = scopes.entry(window_label.to_string()).or_default();
+    for key in keys {
+        match mode {
+            AccessMode::ReadOnly => push_unique(&mut auth.read_only_files, key),
+            AccessMode::ReadWrite => auth.read_only_files.retain(|existing| existing != &key),
+        }
+    }
+}
+
+/// Whether this window opened `file` read-only; another window's verdict for
+/// the same file never applies here.
+pub fn is_document_read_only(window_label: Option<&str>, file_path: &Path) -> bool {
+    let keys = access_mode_keys(file_path);
+    let scopes = scopes();
+    scopes
+        .get(scope_label(window_label))
+        .is_some_and(|auth| keys.iter().any(|key| auth.read_only_files.contains(key)))
+}
+
+/// The path forms one document can be granted under: its canonical form and,
+/// for a symlinked node, the link itself. A path that cannot be resolved falls
+/// back to its literal form, so an unclassifiable path is still matchable
+/// rather than silently losing its read-only verdict.
+fn access_mode_keys(file: &Path) -> Vec<PathBuf> {
+    let mut keys = Vec::with_capacity(2);
+    match resolve_canonical_with_missing_tail(file) {
+        Ok(resolved) => keys.push(resolved),
+        Err(_) => keys.push(file.to_path_buf()),
+    }
+    if let Some(lexical) = lexical_path(file) {
+        keys.push(lexical);
+    }
+    keys
+}
+
+/// A document this window may write: authorized, not opened read-only, and not
+/// already at or above the read-only size threshold on disk.
+///
+/// Resolves the path and acquires the scope lock once, and checks the on-disk
+/// size directly so a renderer that skips `stat_document` / `read_document`
+/// cannot bypass the read-only tier by invoking write commands directly.
+/// Reads keep using `assert_file_or_workspace_authorized`, so a read-only
+/// document still opens, exports, and resolves its assets.
+pub fn assert_file_writable(
+    window_label: Option<&str>,
+    file_path: &Path,
+) -> Result<(PathBuf, OsString), String> {
+    let target = resolve_canonical_with_missing_tail(file_path)?;
+    let lexical = lexical_path(file_path);
+    let (authorized, read_only) = {
+        let scopes = scopes();
+        match scopes.get(scope_label(window_label)) {
+            Some(auth) => {
+                let explicit = auth.files.contains(&target)
+                    || lexical
+                        .as_ref()
+                        .is_some_and(|path| auth.files.contains(path));
+                let inside_root = auth.roots.iter().any(|root| root_grants(root, &target));
+                let read_only = auth.read_only_files.contains(&target)
+                    || lexical
+                        .as_ref()
+                        .is_some_and(|path| auth.read_only_files.contains(path));
+                (explicit || inside_root, read_only)
+            }
+            None => (false, false),
+        }
+    };
+    if !authorized {
+        return Err(FILE_UNAUTHORIZED.into());
+    }
+    if read_only || exceeds_read_only_threshold(&target) {
+        return Err(DOCUMENT_READ_ONLY.into());
+    }
+    let name = target
+        .file_name()
+        .ok_or_else(|| "path must include a file name".to_string())?
+        .to_os_string();
+    let parent = target
+        .parent()
+        .ok_or_else(|| "path must include a parent directory".to_string())?
+        .to_path_buf();
+    Ok((parent, name))
+}
+
+fn exceeds_read_only_threshold(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| {
+        meta.is_file() && meta.len() >= crate::documents::OPEN_READONLY_THRESHOLD_BYTES
+    })
+}
+
 fn is_inside_root(scope: &str, canonical: &Path) -> bool {
     let scopes = scopes();
     scopes.get(scope).is_some_and(|auth| {
@@ -329,11 +508,40 @@ fn is_inside_root(scope: &str, canonical: &Path) -> bool {
     })
 }
 
-/// A workspace root or a folder inside one. Existence is not required: a folder
-/// deleted while its tab is open must still validate its session shard.
+/// The root itself, or a descendant whose components relative to the root are
+/// all visible. Only the relative part is checked, so a grant whose own path
+/// lives under a hidden ancestor (`~/.worktrees/notes`) stays usable.
+fn reaches_visible_root(scope: &str, canonical: &Path) -> bool {
+    let scopes = scopes();
+    scopes.get(scope).is_some_and(|auth| {
+        auth.roots.iter().any(|root| {
+            canonical
+                .strip_prefix(root)
+                .is_ok_and(has_visible_components)
+        })
+    })
+}
+
+/// Whether every component of a root-relative path is visible. Dotfiles and
+/// dot-directories are never reached through a recursive grant.
+fn has_visible_components(relative: &Path) -> bool {
+    !relative
+        .components()
+        .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+fn is_granted_root(scope: &str, canonical: &Path) -> bool {
+    let scopes = scopes();
+    scopes
+        .get(scope)
+        .is_some_and(|auth| auth.roots.iter().any(|root| root == canonical))
+}
+
+/// A workspace root or a visible folder inside one. Existence is not required: a
+/// folder deleted while its tab is open must still validate its session shard.
 fn is_authorized_directory(window_label: Option<&str>, directory: &Path) -> bool {
     resolve_canonical_with_missing_tail(directory)
-        .is_ok_and(|target| is_inside_root(scope_label(window_label), &target))
+        .is_ok_and(|target| reaches_visible_root(scope_label(window_label), &target))
 }
 
 /// A watch target, only when it exists and belongs to this window's scope.
@@ -553,246 +761,5 @@ pub fn authorize_recovered_paths<'a>(window_label: &str, paths: impl IntoIterato
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tmp(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("omd-auth-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn write(path: &Path) {
-        std::fs::write(path, "x").unwrap();
-    }
-
-    fn canonical(path: &Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap()
-    }
-
-    #[test]
-    fn workspace_root_authorization_is_scoped_per_window() {
-        let root = tmp("per-window");
-        let doc = root.join("note.md");
-        write(&doc);
-
-        authorize_workspace_root("editor-1", &root).unwrap();
-        assert!(assert_dir_authorized(Some("editor-1"), &root).is_ok());
-        assert!(assert_file_or_workspace_authorized(Some("editor-1"), &doc).is_ok());
-        // A different window was never granted this root.
-        assert!(assert_dir_authorized(Some("editor-2"), &root).is_err());
-
-        revoke_window("editor-1");
-        assert!(assert_dir_authorized(Some("editor-1"), &root).is_err());
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn revoking_one_window_keeps_another_windows_grant() {
-        let first = tmp("revoke-first");
-        let second = tmp("revoke-second");
-        authorize_workspace_root("editor-a", &first).unwrap();
-        authorize_workspace_root("editor-b", &second).unwrap();
-
-        revoke_window("editor-a");
-
-        assert!(assert_dir_authorized(Some("editor-a"), &first).is_err());
-        assert!(assert_dir_authorized(Some("editor-b"), &second).is_ok());
-        std::fs::remove_dir_all(first).ok();
-        std::fs::remove_dir_all(second).ok();
-    }
-
-    #[test]
-    fn a_single_file_grant_does_not_open_its_directory() {
-        let root = tmp("single-file");
-        let doc = root.join("standalone.md");
-        let sibling = root.join("sibling.md");
-        write(&doc);
-        write(&sibling);
-
-        authorize_document_file("editor-file", &doc).unwrap();
-
-        assert!(assert_file_or_workspace_authorized(Some("editor-file"), &doc).is_ok());
-        // Siblings and the folder stay out of scope; the grant is that one file.
-        assert!(assert_file_or_workspace_authorized(Some("editor-file"), &sibling).is_err());
-        assert!(assert_dir_authorized(Some("editor-file"), &root).is_err());
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn a_file_that_does_not_exist_yet_is_authorizable_by_parent_and_name() {
-        let root = tmp("future-file");
-        let future = root.join("not-written-yet.md");
-
-        let resolved = authorize_document_file("editor-new", &future).unwrap();
-
-        assert_eq!(resolved, canonical(&root).join("not-written-yet.md"));
-        assert!(assert_file_or_workspace_authorized(Some("editor-new"), &future).is_ok());
-        // A deleted tail still resolves against its deepest existing ancestor,
-        // so an open tab whose folder vanished reads as missing, not forbidden.
-        let gone = root.join("gone/deep/note.md");
-        assert_eq!(
-            resolve_canonical_with_missing_tail(&gone).unwrap(),
-            canonical(&root).join("gone/deep/note.md")
-        );
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn paths_must_be_absolute_existing_and_free_of_traversal() {
-        let root = tmp("reject");
-        let doc = root.join("note.md");
-        write(&doc);
-        let base = std::env::temp_dir();
-
-        assert!(assert_dir_authorized(Some("editor-none"), &root).is_err());
-        assert!(assert_file_or_workspace_authorized(None, &doc).is_err());
-        assert!(resolve_canonical_with_missing_tail(Path::new("relative/x.md")).is_err());
-        for traversal in [root.join("../etc"), root.join("../note.md")] {
-            assert!(reject_traversal(&traversal).is_err());
-            assert!(canonical_parent_and_name(&traversal).is_err());
-            assert!(resolve_canonical_with_missing_tail(&traversal).is_err());
-        }
-        assert!(absolute_path(&base.join("notes")).is_ok());
-        assert!(absolute_path(Path::new("notes")).is_err());
-        assert!(absolute_path(&base.join(".").join("notes")).is_err());
-        assert!(absolute_path(&base.join("..").join("notes")).is_err());
-        assert_eq!(workspace_directory(&root).unwrap(), canonical(&root));
-        assert_eq!(
-            document_directory_for_assets(&doc).unwrap(),
-            canonical(&root)
-        );
-        assert!(workspace_directory(&root.join("..")).is_err());
-        assert!(document_directory_for_assets(Path::new("relative/document.md")).is_err());
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn authorized_watch_path_restricts_watches_to_window_scope() {
-        let workspace = tmp("watch-ws");
-        let outside = tmp("watch-outside");
-        let inside_doc = workspace.join("a.md");
-        let standalone_doc = outside.join("solo.md");
-        let sibling_doc = outside.join("other.md");
-        for path in [&inside_doc, &standalone_doc, &sibling_doc] {
-            write(path);
-        }
-
-        authorize_workspace_root("watch-w1", &workspace).unwrap();
-        authorize_document_file("watch-w1", &standalone_doc).unwrap();
-
-        assert_eq!(
-            authorized_watch_path("watch-w1", &workspace),
-            Some(canonical(&workspace))
-        );
-        assert_eq!(
-            authorized_watch_path("watch-w1", &inside_doc),
-            Some(canonical(&inside_doc))
-        );
-        assert_eq!(
-            authorized_watch_path("watch-w1", &standalone_doc),
-            Some(canonical(&standalone_doc))
-        );
-        assert_eq!(authorized_watch_path("watch-w1", &outside), None);
-        assert_eq!(authorized_watch_path("watch-w1", &sibling_doc), None);
-        assert_eq!(authorized_watch_path("watch-w2", &workspace), None);
-
-        revoke_window("watch-w1");
-        assert_eq!(authorized_watch_path("watch-w1", &workspace), None);
-        std::fs::remove_dir_all(workspace).ok();
-        std::fs::remove_dir_all(outside).ok();
-    }
-
-    #[test]
-    fn a_requested_workspace_dir_must_have_been_granted() {
-        let root = tmp("requested");
-        let doc = root.join("note.md");
-        write(&doc);
-
-        assert!(authorize_requested_workspace_dir("req-w", &root).is_err());
-
-        // A standalone file promotes its own folder once, which is how the tree
-        // reveals a lone document.
-        authorize_document_file("req-w", &doc).unwrap();
-        assert_eq!(
-            authorize_requested_workspace_dir("req-w", &root).unwrap().0,
-            canonical(&root)
-        );
-        // One-way and root-scoped: a sibling folder and `/` are both refused.
-        let sibling = tmp("requested-sibling");
-        assert!(authorize_requested_workspace_dir("req-w", &sibling).is_err());
-        assert!(authorize_requested_workspace_dir("req-w", Path::new("/")).is_err());
-        if let Some(home) = dirs::home_dir() {
-            if authorize_document_file("req-home", &home.join("omd-auth-probe.md")).is_ok() {
-                assert!(authorize_requested_workspace_dir("req-home", &home).is_err());
-            }
-        }
-        std::fs::remove_dir_all(root).ok();
-        std::fs::remove_dir_all(sibling).ok();
-    }
-
-    #[test]
-    fn session_and_settings_state_cannot_launder_an_unauthorized_path() {
-        let root = tmp("config-state");
-        let doc = root.join("note.md");
-        let css = root.join("theme.css");
-        write(&doc);
-        write(&css);
-        let session = format!(
-            r#"{{"folder":{:?},"openPaths":[{:?}],"hotExitTabs":[{{"path":{doc:?}}}]}}"#,
-            root.to_string_lossy(),
-            doc.to_string_lossy(),
-        );
-        let settings = format!(r#"{{"customCssPath":{:?}}}"#, css.to_string_lossy());
-
-        // Nothing is granted yet, so no persisted payload may claim these paths.
-        assert!(validate_session_json_for_save("state-w", &session, None).is_err());
-        assert!(validate_session_json_for_save("state-w", "{not json", None).is_err());
-        assert!(validate_settings_json_for_save("state-w", &settings, "{}").is_err());
-
-        authorize_from_session_json("state-w", &session);
-        authorize_from_settings_json("state-w", &settings);
-        validate_session_json_for_save("state-w", &session, None).unwrap();
-        validate_settings_json_for_save("state-w", &settings, "{}").unwrap();
-
-        // Laundering: state that names a path this window never had. It has to
-        // be outside the granted root — a Markdown file inside it is legitimate.
-        let other =
-            std::env::temp_dir().join(format!("omd-auth-laundered-{}.md", std::process::id()));
-        let laundered_session = format!(r#"{{"openPaths":[{:?}]}}"#, other.to_string_lossy());
-        let laundered_settings = format!(r#"{{"customCssPath":{:?}}}"#, other.to_string_lossy());
-        assert!(validate_session_json_for_save("state-w", &laundered_session, None).is_err());
-        assert!(validate_settings_json_for_save("state-w", &laundered_settings, "{}").is_err());
-        // ...unless that exact path is already on disk (keeps a flush alive).
-        let on_disk = Some(laundered_session.as_str());
-        validate_session_json_for_save("state-w", &laundered_session, on_disk).unwrap();
-        validate_settings_json_for_save("state-w", &laundered_settings, &laundered_settings)
-            .unwrap();
-        validate_settings_json_for_save("state-w", r#"{"fontSize":18}"#, "{}").unwrap();
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn a_window_handoff_copies_only_authorized_files() {
-        let root = tmp("handoff");
-        let doc = root.join("note.md");
-        let foreign = root.join("foreign.md");
-        write(&doc);
-        write(&foreign);
-        authorize_document_file("handoff-from", &doc).unwrap();
-
-        let copy =
-            |paths: &[String]| copy_authorized_files_to_window("handoff-from", "handoff-to", paths);
-        copy(&[doc.to_string_lossy().into_owned()]).unwrap();
-        assert!(assert_file_or_workspace_authorized(Some("handoff-to"), &doc).is_ok());
-
-        let foreign_paths = [foreign.to_string_lossy().into_owned()];
-        assert!(copy(&foreign_paths).is_err());
-        assert!(assert_file_or_workspace_authorized(Some("handoff-to"), &foreign).is_err());
-
-        authorize_recovered_paths("handoff-to", [foreign.to_string_lossy().as_ref()]);
-        assert!(assert_file_or_workspace_authorized(Some("handoff-to"), &foreign).is_ok());
-        assert!(!is_document_inside_workspace(Some("handoff-to"), &foreign));
-        std::fs::remove_dir_all(root).ok();
-    }
-}
+#[path = "auth_scope_tests.rs"]
+mod tests;

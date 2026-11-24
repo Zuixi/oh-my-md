@@ -31,6 +31,7 @@ import {
   MAX_RECENTS,
   MAX_SEARCH_HITS,
   MAX_SNAPSHOTS_PER_FILE,
+  OPEN_READONLY_THRESHOLD_BYTES,
   SAFE_MODE_LINES,
   SESSION_FLUSH_EVENT,
   SIDEBAR_DEFAULT_WIDTH,
@@ -61,6 +62,7 @@ const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf
 const MENU_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/menu.rs"), "utf8")
 const PASTE_ASSETS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/paste_assets.rs"), "utf8")
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
+const DOCUMENTS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/documents.rs"), "utf8")
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
 const LOGGING_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging.rs"), "utf8")
 const LOG_FIELDS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/logging/fields.rs"), "utf8")
@@ -107,6 +109,15 @@ describe("cross-layer constants (TS ↔ Rust)", () => {
 
   it("image size cap matches paste_assets.rs MAX_IMAGE_BYTES", () => {
     expect(MAX_IMAGE_BYTES).toBe(rustConstNumber(PASTE_ASSETS_RS, "MAX_IMAGE_BYTES"))
+  })
+
+  // Read-only is a host verdict, not the renderer's `view.state.readOnly`: Rust
+  // compares every open document against this threshold on its own. A drifted
+  // copy would read a 50 MB document as writable while the UI says read-only.
+  it("read-only open threshold matches documents.rs OPEN_READONLY_THRESHOLD_BYTES", () => {
+    expect(OPEN_READONLY_THRESHOLD_BYTES).toBe(
+      rustConstNumber(DOCUMENTS_RS, "OPEN_READONLY_THRESHOLD_BYTES"),
+    )
   })
 
   it("recent-files cap matches lib.rs MAX_RECENT_FILES", () => {
