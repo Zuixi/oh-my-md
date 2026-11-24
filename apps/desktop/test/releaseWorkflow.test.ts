@@ -148,12 +148,14 @@ describe("release workflow", () => {
     expect(body).toContain(`## What changed\n\n${notesOutput}`)
   })
 
-  it("tracks GitHub Actions, npm/pnpm, and Cargo updates with Dependabot", () => {
-    // Weekly bots are the only continuous vulnerability tracker for the pinned
-    // actions and the two lockfile ecosystems.
+  it("tracks GitHub Actions, npm/pnpm, and Cargo updates with grouped Dependabot rules", () => {
+    // Actions stay weekly; lockfile ecosystems are grouped monthly on minor/patch
+    // updates with major bumps ignored so Dependabot never floods the PR queue.
     const actions = dependabotUpdates("github-actions")
     expect(actions).toContain('directory: "/"')
     expect(actions).toContain("interval: weekly")
+    expect(actions).toContain("open-pull-requests-limit: 2")
+    expect(actions).toContain("groups:")
 
     for (const [ecosystem, directory] of [
       ["npm", "/"],
@@ -161,8 +163,10 @@ describe("release workflow", () => {
     ] as const) {
       const updates = dependabotUpdates(ecosystem)
       expect(updates).toContain(`directory: "${directory}"`)
-      expect(updates).toContain("interval: weekly")
-      expect(updates).toContain("open-pull-requests-limit: 10")
+      expect(updates).toContain("interval: monthly")
+      expect(updates).toContain("open-pull-requests-limit: 2")
+      expect(updates).toContain("groups:")
+      expect(updates).toContain("version-update:semver-major")
     }
   })
 
