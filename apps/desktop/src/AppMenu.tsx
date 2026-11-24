@@ -209,8 +209,11 @@ export function AppMenu(props: {
     )
   }
 
+  // Top-level triggers are standard `<button aria-haspopup="menu">` disclosure
+  // controls (not roving `role="menuitem"` nodes), so the strip is a WAI-ARIA
+  // `toolbar` rather than `menubar` (which forbids `role="button"` children).
   return (
-    <div className="app-menubar" role="menubar" aria-label={t("menu.aria.menubar")} ref={rootRef}>
+    <div className="app-menubar" role="toolbar" aria-label={t("menu.aria.menubar")} ref={rootRef}>
       {APP_MENU_TREE.map((section, index) => (
         <div className="app-menubar-menu" key={section.labelKey}>
           <button

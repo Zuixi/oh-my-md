@@ -253,14 +253,14 @@ test("passes structural WCAG/ARIA ergonomics invariants across the live App shel
   expect(audit.treeitems).toBeGreaterThan(0)
 })
 
-test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings modal, and media lightbox", async ({ page }) => {
+test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings modal, and media lightbox", async ({ page, browser }) => {
   // Every surface below is the real <App>: axe sees the shipped markup, tokens
   // and computed colors, so a token-level contrast regression fails here. The
   // surface label keeps a failure attributable on whichever host runs the suite.
-  const violationsOf = async (surface: string, builder: AxeBuilder) => {
+  const settleAndScan = async (targetPage: Page, surface: string, builder: AxeBuilder) => {
     // Wait for finite entrance transitions (e.g. .modal-backdrop / dialog fade-in)
     // to finish so axe samples steady-state opacity rather than an intermediate frame.
-    await page.evaluate(() =>
+    await targetPage.evaluate(() =>
       Promise.all(
         document
           .getAnimations()
@@ -270,6 +270,7 @@ test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings
     const { violations } = await wcagScan(builder)
     expect(violations, `${surface}\n${violationSummary(violations)}`).toEqual([])
   }
+  const violationsOf = (surface: string, builder: AxeBuilder) => settleAndScan(page, surface, builder)
 
   // Light shell. Only CodeMirror's contenteditable scroller is excluded: its
   // syntax tokens are engine-owned, the surrounding chrome is audited in full
@@ -307,4 +308,20 @@ test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings
   await page.locator(".topbar").getByRole("button", { name: "Preferences" }).click()
   await expect(page.getByRole("dialog", { name: "Preferences" })).toBeVisible()
   await violationsOf("dark settings modal", new AxeBuilder({ page }).include(".settings-modal"))
+
+  // Non-macOS in-app menubar (`AppMenu.tsx` hides itself on macOS): exercise it
+  // in a Linux UA context so macOS dev runs catch Windows/Linux menubar regressions.
+  const linuxContext = await browser.newContext({
+    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+  })
+  try {
+    const linuxPage = await linuxContext.newPage()
+    await openHarness(linuxPage)
+    await expect(linuxPage.locator(".app-menubar")).toBeVisible()
+    await linuxPage.locator(".app-menubar").getByRole("button", { name: "View" }).click()
+    await expect(linuxPage.getByRole("menu", { name: "View" })).toBeVisible()
+    await settleAndScan(linuxPage, "linux menubar + open menu", new AxeBuilder({ page: linuxPage }).exclude(".cm-editor"))
+  } finally {
+    await linuxContext.close()
+  }
 })
