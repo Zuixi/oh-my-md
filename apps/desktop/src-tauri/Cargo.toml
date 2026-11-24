@@ -43,7 +43,7 @@ tauri-plugin-single-instance = "2"
 log = "0.4"
 base64 = "0.23.1"
 blake3 = "1"
-dirs = "6"
+dirs = "7"
 # Export protocol tokens must be unguessable; 0.2.17 is already in Cargo.lock
 # through another dependency, so this adds no new transitive crates.
 getrandom = "0.2"
