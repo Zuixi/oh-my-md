@@ -197,6 +197,7 @@ export const zh: Record<string, string> = {
 
   "about.title": "关于 oh-my-md",
   "about.version": "版本 {version}",
+  "about.buildDate": "构建于 {date}",
   "about.platform.macos": "macOS",
   "about.platform.windows": "Windows",
   "about.platform.linux": "Linux",

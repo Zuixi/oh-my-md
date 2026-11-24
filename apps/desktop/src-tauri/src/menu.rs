@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::menu::{
-    CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItem, MenuItemBuilder,
-    PredefinedMenuItem, Submenu, SubmenuBuilder,
+    AboutMetadata, CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItem,
+    MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{App, AppHandle, Emitter, Manager, Runtime, State};
 
@@ -12,6 +12,11 @@ mod labels;
 pub use labels::{menu_strings, MenuLabels};
 
 const MENU_EVENT: &str = "menu-command";
+
+/// Project home page shown in the native About panel. Must match
+/// `PROJECT_URL` in `apps/desktop/src/constants.ts`; the cross-layer test
+/// pins both to the same repository slug.
+const PROJECT_URL: &str = "https://github.com/Zuixi/oh-my-md";
 
 /// View-mode toggles mirrored as checkable native menu items. Single-word fields
 /// so no serde field rename is needed on the wire.
@@ -336,8 +341,33 @@ pub fn set_menu_locale(
 }
 
 fn app_submenu<R: Runtime, M: Manager<R>>(app: &M, l: &MenuLabels) -> tauri::Result<Submenu<R>> {
+    // The native panel is the only About surface on macOS (`PredefinedMenuItem::about`
+    // ignores website/license there, so the URL and build date live in `credits`).
+    // No explicit `icon`: the panel falls back to NSApplication's app icon, which
+    // is the full-resolution bundle icon. `default_window_icon()` would be the
+    // first PNG in `bundle.icon` (32x32) and visibly soft.
+    let package = app.package_info();
+    let build_year = crate::build_info::BUILD_DATE
+        .split('-')
+        .next()
+        .unwrap_or("2026");
+    let metadata = AboutMetadata {
+        name: Some(package.name.clone()),
+        version: Some(package.version.to_string()),
+        copyright: Some(format!("© {build_year} oh-my-md Contributors")),
+        credits: Some(format!(
+            "{} {}\n{PROJECT_URL}",
+            l.build,
+            crate::build_info::BUILD_DATE
+        )),
+        ..Default::default()
+    };
     SubmenuBuilder::new(app, l.app_menu)
-        .item(&PredefinedMenuItem::about(app, Some(l.about), None)?)
+        .item(&PredefinedMenuItem::about(
+            app,
+            Some(l.about),
+            Some(metadata),
+        )?)
         .separator()
         .item(&item(app, "check-updates", l.check_updates, None)?)
         .item(&item(

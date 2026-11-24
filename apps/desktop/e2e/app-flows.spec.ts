@@ -325,3 +325,21 @@ test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings
     await linuxContext.close()
   }
 })
+
+test("opens the About dialog with icon, build date, and project link", async ({ page }) => {
+  await openHarness(page)
+  await runMenuCommand(page, "about")
+
+  const dialog = page.getByRole("dialog", { name: "About oh-my-md" })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator(".about-icon")).toBeVisible()
+  await expect(dialog).toContainText("Version 0.1.5")
+  await expect(dialog).toContainText("Built 2026-11-24")
+  await expect(
+    dialog.getByRole("button", { name: "github.com/Zuixi/oh-my-md" }),
+  ).toBeVisible()
+  await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused()
+
+  await dialog.getByRole("button", { name: "Close" }).click()
+  await expect(dialog).toHaveCount(0)
+})

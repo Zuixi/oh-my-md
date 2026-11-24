@@ -16,6 +16,7 @@ import {
   LOG_LEVEL_ENV_VAR,
   LOGGING_SETTINGS_KEY,
   LOGGING_GENERATION_SETTINGS_KEY,
+  PROJECT_URL,
   RELEASES_URL,
   REPO_SLUG,
   TROUBLESHOOTING_URL,
@@ -57,6 +58,7 @@ import {
  */
 
 const LIB_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/lib.rs"), "utf8")
+const MENU_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/menu.rs"), "utf8")
 const PASTE_ASSETS_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/paste_assets.rs"), "utf8")
 const WORKSPACE_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/workspace.rs"), "utf8")
 const SESSION_FLUSH_RS = readFileSync(resolve(process.cwd(), "src-tauri/src/session_flush.rs"), "utf8")
@@ -289,9 +291,26 @@ describe("dark mode coverage (styles.css ↔ SettingsModal.tsx)", () => {
 describe("user-facing URLs", () => {
   it("builds every fixed URL from the same repository slug", () => {
     expect(RELEASES_URL).toContain(REPO_SLUG)
+    expect(PROJECT_URL).toContain(REPO_SLUG)
     expect(TROUBLESHOOTING_URL).toContain(REPO_SLUG)
     expect(ISSUES_URL).toContain(REPO_SLUG)
     expect(TROUBLESHOOTING_URL.endsWith("/docs/guides/troubleshooting.md")).toBe(true)
+  })
+
+  it("keeps the native macOS About panel on the same project URL", () => {
+    expect(MENU_RS).toContain(`const PROJECT_URL: &str = "${PROJECT_URL}";`)
+  })
+
+  it("keeps the About dialog icon identical to the bundle icon", () => {
+    // The dialog imports a Vite asset, so it cannot reference src-tauri directly;
+    // this guard makes a regenerated icon fail loudly instead of drifting.
+    const dialogIcon = createHash("sha256")
+      .update(readFileSync(resolve(process.cwd(), "src/assets/app-icon.png")))
+      .digest("hex")
+    const bundleIcon = createHash("sha256")
+      .update(readFileSync(resolve(process.cwd(), "src-tauri/icons/128x128@2x.png")))
+      .digest("hex")
+    expect(dialogIcon).toBe(bundleIcon)
   })
 
   it("points the guide at a file the repository actually has", () => {

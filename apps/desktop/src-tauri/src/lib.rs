@@ -1,5 +1,6 @@
 mod app_lifecycle;
 mod auth_scope;
+mod build_info;
 mod diagnostics;
 mod dialogs;
 mod documents;
@@ -703,6 +704,7 @@ pub fn run() {
             app_lifecycle::quit_app,
             session_flush_ack,
             app_version,
+            build_info::app_build_date,
             create_editor_window,
             take_pending_open_files,
             diagnostics::export_diagnostics,

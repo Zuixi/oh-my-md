@@ -197,6 +197,7 @@ export const en: Record<string, string> = {
 
   "about.title": "About oh-my-md",
   "about.version": "Version {version}",
+  "about.buildDate": "Built {date}",
   "about.platform.macos": "macOS",
   "about.platform.windows": "Windows",
   "about.platform.linux": "Linux",

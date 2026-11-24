@@ -252,6 +252,8 @@ export interface DesktopServices {
   /** Restart to apply a startup-only setting (currently: logging opt-in). */
   restartApp?: () => Promise<void>
   appVersion?: () => Promise<string>
+  /** UTC build date (`YYYY-MM-DD`) of the running binary. */
+  appBuildDate?: () => Promise<string>
   /** Opens a fresh editor window (label assigned by Rust); optional paths open on mount. */
   createNewWindow?: (initialPaths?: string[]) => Promise<void>
   allowDocumentAssets: (path: string) => Promise<void>
@@ -513,6 +515,7 @@ export const defaultServices: DesktopServices = {
     await invoke("restart_app")
   },
   appVersion: () => invoke<string>("app_version"),
+  appBuildDate: () => invoke<string>("app_build_date"),
   createNewWindow: async initialPaths => {
     await invoke("create_editor_window", { initialPaths })
   },

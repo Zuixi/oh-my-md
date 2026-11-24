@@ -35,6 +35,15 @@ describe("setMenuLocale", () => {
   })
 })
 
+describe("appBuildDate", () => {
+  it("invokes app_build_date", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce("2026-11-24")
+    await expect(defaultServices.appBuildDate?.()).resolves.toBe("2026-11-24")
+    expect(invoke).toHaveBeenCalledWith("app_build_date")
+  })
+})
+
 describe("listSystemFonts", () => {
   it("invokes list_system_fonts with no arguments", async () => {
     invoke.mockClear()

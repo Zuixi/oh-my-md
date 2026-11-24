@@ -1097,7 +1097,7 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
 /* About dialog (in-app Help menu; macOS uses the native app menu). The
    dialog box itself reuses the settings surface, narrowed to a compact card. */
 .about-dialog {
-  width: min(320px, 90vw);
+  width: min(360px, 90vw);
   max-height: 85vh;
   background: var(--omd-bg);
   border: 1px solid var(--omd-border);
@@ -1111,19 +1111,40 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 28px 24px 20px;
+  gap: 7px;
+  padding: 26px 24px 18px;
+}
+.about-icon {
+  width: 88px;
+  height: 88px;
+  margin-bottom: 2px;
 }
 .about-name {
   margin: 0;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 700;
 }
 .about-version,
+.about-build,
 .about-platform {
   margin: 0;
   font-size: 13px;
   color: var(--omd-muted);
+}
+.about-link {
+  margin-top: 4px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--omd-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.about-link:hover {
+  opacity: 0.8;
 }
 .about-actions {
   display: flex;

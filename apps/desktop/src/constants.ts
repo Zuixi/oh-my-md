@@ -32,6 +32,10 @@ export const RELEASES_URL = "https://github.com/Zuixi/oh-my-md/releases/latest"
  *  `crossLayerConstants.test.ts` pins that every fixed URL uses it. */
 export const REPO_SLUG = "Zuixi/oh-my-md"
 
+/** Project home page shown in About; matches `PROJECT_URL` in
+ *  `src-tauri/src/menu.rs` for the native macOS panel. */
+export const PROJECT_URL = `https://github.com/${REPO_SLUG}`
+
 /** The troubleshooting guide: log locations, the diagnostics bundle, and how to
  *  report a problem. Settings → Logging links here; without it the feature ends
  *  at "turn on logging" with no next step. */

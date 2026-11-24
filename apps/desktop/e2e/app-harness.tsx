@@ -192,6 +192,9 @@ const services: DesktopServices = {
   confirmDiscard: () => true,
   confirmClose: () => true,
   confirmExternalChange: () => false,
+  appVersion: async () => "0.1.5",
+  appBuildDate: async () => "2026-11-24",
+  openExternal: async () => undefined,
   listenMenu: handler => {
     listeners.menu = handler
     return () => { listeners.menu = null }
