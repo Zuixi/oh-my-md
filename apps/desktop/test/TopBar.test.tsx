@@ -75,7 +75,7 @@ describe("TopBar", () => {
     expect(closeButtons).toHaveLength(3)
     fireEvent.click(closeButtons[0])
     expect(onCloseTab).toHaveBeenCalledWith(1)
-    expect(onFocusTab).toHaveBeenCalledTimes(1) // stopPropagation should prevent onFocusTab
+    expect(onFocusTab).toHaveBeenCalledTimes(1)
 
     const newTabButton = screen.getByRole("button", { name: "+" })
     fireEvent.click(newTabButton)
@@ -99,25 +99,6 @@ describe("TopBar", () => {
 
     expect(screen.getByLabelText("Unsaved")).toBeTruthy()
     expect(screen.getByLabelText("Conflict")).toBeTruthy()
-  })
-
-  it("renders workspace breadcrumb when workspace is provided", () => {
-    render(
-      <TopBar
-        workspace="/users/me/project"
-        filePath="/users/me/project/docs/guide.md"
-        tabs={sampleTabs}
-        activeId={1}
-        dirtyIds={[]}
-        conflictIds={[]}
-        onFocusTab={vi.fn()}
-        onCloseTab={vi.fn()}
-        onNewTab={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText("project")).toBeTruthy()
-    expect(screen.getByText("docs")).toBeTruthy()
   })
 
   it("renders sidebar expansion toggle when sidebar is collapsed", () => {
@@ -161,30 +142,7 @@ describe("TopBar", () => {
     expect(screen.queryByRole("button", { name: /show sidebar/i })).toBeNull()
   })
 
-  it("renders preferences button and triggers onOpenSettings when clicked", () => {
-    const onOpenSettings = vi.fn()
-    render(
-      <TopBar
-        workspace="/notes"
-        filePath="/notes/alpha.md"
-        tabs={sampleTabs}
-        activeId={1}
-        dirtyIds={[]}
-        conflictIds={[]}
-        onOpenSettings={onOpenSettings}
-        onFocusTab={vi.fn()}
-        onCloseTab={vi.fn()}
-        onNewTab={vi.fn()}
-      />,
-    )
-
-    const settingsBtn = screen.getByRole("button", { name: /preferences/i })
-    expect(settingsBtn).toBeTruthy()
-    fireEvent.click(settingsBtn)
-    expect(onOpenSettings).toHaveBeenCalledOnce()
-  })
-
-  it("shows macOS glyphs in sidebar and preferences tooltips on mac", () => {
+  it("shows macOS glyphs in sidebar tooltip on mac", () => {
     withUserAgent(MACOS_UA, () => {
       render(
         <TopBar
@@ -196,7 +154,6 @@ describe("TopBar", () => {
           conflictIds={[]}
           sidebarOpen={false}
           onToggleSidebar={vi.fn()}
-          onOpenSettings={vi.fn()}
           onFocusTab={vi.fn()}
           onCloseTab={vi.fn()}
           onNewTab={vi.fn()}
@@ -204,12 +161,10 @@ describe("TopBar", () => {
       )
       expect(screen.getByRole("button", { name: /show sidebar/i }).getAttribute("title"))
         .toBe("Show sidebar (⌘\\)")
-      expect(screen.getByRole("button", { name: /preferences/i }).getAttribute("title"))
-        .toBe("Preferences (⌘,)")
     })
   })
 
-  it("shows Ctrl forms in sidebar and preferences tooltips on windows", () => {
+  it("shows Ctrl forms in sidebar tooltip on windows", () => {
     withUserAgent(WINDOWS_UA, () => {
       render(
         <TopBar
@@ -221,7 +176,6 @@ describe("TopBar", () => {
           conflictIds={[]}
           sidebarOpen={false}
           onToggleSidebar={vi.fn()}
-          onOpenSettings={vi.fn()}
           onFocusTab={vi.fn()}
           onCloseTab={vi.fn()}
           onNewTab={vi.fn()}
@@ -229,8 +183,6 @@ describe("TopBar", () => {
       )
       expect(screen.getByRole("button", { name: /show sidebar/i }).getAttribute("title"))
         .toBe("Show sidebar (Ctrl+\\)")
-      expect(screen.getByRole("button", { name: /preferences/i }).getAttribute("title"))
-        .toBe("Preferences (Ctrl+,)")
     })
   })
 })

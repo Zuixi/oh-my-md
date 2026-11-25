@@ -305,7 +305,7 @@ test("passes axe-core WCAG 2.1 AA audit across light theme, dark theme, settings
 
   // Dark Settings modal: primary buttons flip to --omd-btn-primary-fg, so the
   // dark contrast floor is asserted on the real overlay rather than by token.
-  await page.locator(".topbar").getByRole("button", { name: "Preferences" }).click()
+  await page.locator(".statusbar").getByRole("button", { name: "Preferences" }).click()
   await expect(page.getByRole("dialog", { name: "Preferences" })).toBeVisible()
   await violationsOf("dark settings modal", new AxeBuilder({ page }).include(".settings-modal"))
 

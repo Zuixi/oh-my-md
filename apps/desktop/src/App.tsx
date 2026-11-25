@@ -365,7 +365,6 @@ export default function App(props: AppProps) {
         onFocusTab={tabs.activateTab}
         onCloseTab={tabs.requestCloseTab}
         onNewTab={tabs.newTab}
-        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="workspace-body">
         <AppSidebar
@@ -454,6 +453,16 @@ export default function App(props: AppProps) {
         }}
         normalizationReviewRequired={bannerKind === "normalization"}
         saveStatus={saveStatusLabel(activeSaveState)}
+        workspace={workspace.folder}
+        filePath={activeFilePath}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onRevealPath={services.revealInFinder
+          ? path => {
+              void services.revealInFinder?.(path)?.catch(error => {
+                services.reportError(errorMessage(t("error.revealFailed"), error))
+              })
+            }
+          : undefined}
       />
       <AppOverlays
         services={services}

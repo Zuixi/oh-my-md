@@ -1,13 +1,12 @@
 import { useEffect, useRef, type KeyboardEvent } from "react"
-import { ChevronRight, FileText, PanelLeft, Plus, Settings, X } from "lucide-react"
+import { FileText, PanelLeft, Plus, X } from "lucide-react"
 import { sessionLabel, sessionPath, type EditorSession } from "./session"
-import { baseName, pathWithinDir, relativeToDir } from "./workspace"
 import { shortcutFor } from "./shortcuts"
 import { useT } from "./i18n"
 
 export function TopBar(props: {
-  workspace: string | null
-  filePath: string | null
+  workspace?: string | null
+  filePath?: string | null
   tabs: EditorSession[]
   activeId: number
   dirtyIds: readonly number[]
@@ -17,7 +16,6 @@ export function TopBar(props: {
   onFocusTab: (id: number) => void
   onCloseTab: (id: number) => void
   onNewTab: () => void
-  onOpenSettings?: () => void
 }) {
   const t = useT()
   const activeTabRef = useRef<HTMLButtonElement | null>(null)
@@ -29,11 +27,6 @@ export function TopBar(props: {
       el.scrollIntoView({ block: "nearest", inline: "nearest" })
     }
   }, [props.activeId])
-  const workspaceName = props.workspace
-    ? props.workspace.replace(/\\/g, "/").split("/").pop() || t("topbar.workspaceFallback")
-    : null
-
-  const breadcrumb = buildBreadcrumb(props.workspace, props.filePath)
 
   // Arrow keys move the roving tab stop across the strip (WAI-ARIA tabs).
   // Focus is moved imperatively first: the button identities survive the
@@ -155,40 +148,6 @@ export function TopBar(props: {
           <Plus size={14} aria-hidden="true" />
         </button>
       </div>
-      <div className="topbar-actions" data-tauri-drag-region="">
-        {breadcrumb.length > 0 && workspaceName ? (
-          <div className="topbar-breadcrumb">
-            <span className="topbar-workspace">{workspaceName}</span>
-            {breadcrumb.map((segment, i) => (
-              <span key={i} className="topbar-segment">
-                <ChevronRight size={11} className="topbar-separator" aria-hidden="true" />
-                <span className="topbar-dir">{segment}</span>
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {props.onOpenSettings ? (
-          <button
-            type="button"
-            className="topbar-action-btn"
-            onClick={props.onOpenSettings}
-            aria-label={t("topbar.aria.preferences")}
-            title={t("topbar.title.preferences", { shortcut: shortcutFor("preferences") ?? "" })}
-          >
-            <Settings size={15} aria-hidden="true" />
-          </button>
-        ) : null}
-      </div>
     </header>
   )
-}
-
-function buildBreadcrumb(workspace: string | null, filePath: string | null): string[] {
-  if (!filePath) return []
-  // relativeToDir yields forward-slash segments only on Windows; a POSIX file
-  // name may contain a literal backslash, which must not become a segment.
-  if (workspace && pathWithinDir(filePath, workspace)) {
-    return relativeToDir(filePath, workspace).split("/")
-  }
-  return [baseName(filePath)]
 }

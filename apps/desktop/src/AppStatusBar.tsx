@@ -17,6 +17,10 @@ export function AppStatusBar(props: {
   readonly getActiveLines: () => number
   readonly normalizationReviewRequired: boolean
   readonly saveStatus: SaveStatus
+  readonly workspace: string | null
+  readonly filePath: string | null
+  readonly onOpenSettings: () => void
+  readonly onRevealPath?: (path: string) => void
 }) {
   const { stats, requestStats } = useDocumentStats({
     store: props.store,
@@ -31,6 +35,10 @@ export function AppStatusBar(props: {
       normalizationReviewRequired={props.normalizationReviewRequired}
       saveStatus={props.saveStatus}
       onRequestStats={stats === null ? requestStats : undefined}
+      workspace={props.workspace}
+      filePath={props.filePath}
+      onOpenSettings={props.onOpenSettings}
+      onRevealPath={props.onRevealPath}
     />
   )
 }
