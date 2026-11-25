@@ -1,6 +1,6 @@
 [package]
 name = "omd"
-version = "0.1.5"
+version = "0.1.6"
 description = "Cross-platform Markdown editor with CodeMirror 6 live preview"
 authors = ["zuixi"]
 license = "Apache-2.0"

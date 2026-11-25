@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here, generated from conventional commits.
 
+## v0.1.6 - 2026-11-24
+
+### Features
+
+- **Cross-platform paginated PDF export**: Added native paginated PDF export on Windows via WebView2 `PrintToPdf`, aligned macOS/Windows/Linux under a shared PDF page contract with HTML/PDF parity, supported custom print CSS page margin overrides, and added running headers and footers on Linux with WinAnsi, multi-script CJK, and wide-glyph layout.
+- **Full-screen image lightbox & Mermaid zoom/pan**: Inspect images in a full-screen lightbox with hardened gesture and SVG handling, and zoom/pan Mermaid diagrams backed by an LRU render cache (#65).
+- **Full hot-exit with per-tab autosave**: Extracted `DocumentStore` / `EditorRegistry` with per-tab recovery snapshots, multi-window recovery key isolation, and full dirty-tab persistence on session flush.
+- **Editor polish**: Added lossless rich copy, tight wrapped selection, single-transaction typewriter mode, and an enriched About dialog with app icon, build date, and project link.
+- **Accessibility (WCAG 2.1 AA)**: Passed axe-core WCAG 2.1 AA audits, added listbox keyboard navigation to Command Palette and Quick Open, aligned ARIA roles across dialogs, file tree, tabs, and non-macOS menus, and accepted shifted Command Palette shortcuts.
+
+### Performance
+
+- **Large-document live preview**: Optimized incremental decoration updates to `O(log N + window)` with viewport windowing above 2,000 lines, computed ordered-list labels once per build with narrowed scans, debounced document materialization, and tuned decoration/widget hot paths.
+
+### Security & Bug Fixes
+
+- **IPC authorization & host security**: Enforced per-window authorization across document, paste-asset, workspace-mutation, and export IPC commands; added opener scope checks, host-enforced read-only guards, command inventory verification, and overwrite confirmation for appended extensions (#67, #90).
+- **Export sanitization**: Unified sanitization across tables, rich HTML, links, images, and raw anchors.
+- **Stability & cross-platform fixes**: Hardened cross-layer IO, watcher isolation, HiDPI window bounds, snapshot durability, and Windows directory-safe `replace_existing`; isolated native menus behind dialogs; fixed autolink emphasis swallowing, open `$$` paragraph handling, source-mode table toolbar placement, and StrictMode document materialization (#66).
+- **Dependencies & CI**: Updated npm minor/patch dependencies and GitHub Actions, added automated changelog extraction for releases, and added full App E2E and widget heap audits (#88, #89).
+
+---
+
+### 新功能 (Features)
+
+- **全平台分页 PDF 导出**：新增 Windows 原生 WebView2 `PrintToPdf` 分页 PDF 导出，统一 macOS / Windows / Linux 的分页排版契约并与 HTML 导出对齐，支持自定义打印 CSS 页边距覆盖，并在 Linux PDF 上新增页眉/页脚与多语种 CJK / 宽字符排版。
+- **全屏图片灯箱与 Mermaid 缩放平移**：点击图片可进入全屏灯箱预览（加固手势与 SVG 安全处理），Mermaid 图表支持缩放与平移并配备 LRU 缓存 (#65)。
+- **完整热退出与分标签自动保存**：抽离 `DocumentStore` / `EditorRegistry`，支持分标签恢复快照、多窗口恢复键隔离以及会话刷新时持久化全部脏标签。
+- **编辑体验增强**：新增无损富文本复制、紧凑折行选区、单事务打字机模式，以及包含应用图标、构建日期与项目链接的新版 About 对话框。
+- **无障碍体验（WCAG 2.1 AA）**：通过 axe-core WCAG 2.1 AA 审计，为命令面板与快速打开新增列表键盘导航，补齐对话框、文件树、标签页与非 macOS 菜单的 ARIA 语义，并兼容带 Shift 的命令面板快捷键。
+
+### 性能优化 (Performance)
+
+- **大文档实时预览加速**：增量装饰更新优化至 `O(log N + window)`，超过 2,000 行自动启用视口窗口化；收窄有序列表扫描并在单次构建内复用编号计算；防抖文档物化并优化装饰与组件热路径。
+
+### 安全加固与问题修复 (Security & Bug Fixes)
+
+- **IPC 权限边界与宿主机安全**：在文档、粘贴资源、工作区变更与导出 IPC 上强制执行按窗口授权校验；新增 opener 范围限制、宿主机只读强制校验、命令清单审计以及自动补全扩展名时的覆盖确认 (#67, #90)。
+- **导出内容清洗**：统一表格、富文本 HTML、链接、图片与原始锚点的导出安全清洗逻辑。
+- **跨平台稳定性修复**：加固跨层 IO、文件监听隔离、HiDPI 窗口边界、快照持久性与 Windows `replace_existing` 目录防护；弹窗打开时隔离原生菜单；修复自动链接吞掉强调符、未闭合 `$$` 段落边界、源码模式表格工具栏错位以及 StrictMode 下的文档物化恢复问题 (#66)。
+- **依赖与工程化**：更新 npm 小版本依赖与 GitHub Actions，接入发版日志自动提取，并补齐完整应用 E2E 与组件内存审计 (#88, #89)。
+
 ## v0.1.5 - 2026-11-11
 
 ### Chores
