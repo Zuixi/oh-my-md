@@ -13,6 +13,7 @@
 | When you need...                                                | Read…                                        |
 | --------------------------------------------------------------- | -------------------------------------------- |
 | Architecture / product decisions                                | `superpowers/specs/`                         |
+| Security model / capability grants / renderer trust             | `superpowers/specs/2026-11-24-security-model-design.md` |
 | Implementation steps / task breakdown                            | `superpowers/plans/`                         |
 | Known traps (index) and the per-domain `gotchas-*.md` deep files  | `memory/known-gotchas.md`                    |
 | Pre-release manual verification matrix                          | `manual-qa.md`                               |

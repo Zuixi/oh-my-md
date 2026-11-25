@@ -18,6 +18,16 @@
 4. **Targeted window events (`emit_to`):** When emitting window-scoped events (`menu-command`, `open-file`, `workspace-changed`, `session-flush`), the frontend listener in `desktopServices.ts` must use `listenTarget()` (`EventTarget::AnyLabel`), because Tauri's default `listen()` matches `Any` and fires in every window.
 5. **Cross-layer constants:** Use the root named-value policy; `apps/desktop/test/crossLayerConstants.test.ts` guards native/TS contract drift.
 
+## Security & Authority Contract
+
+- **Host delta:** new IO commands must take the target `GrantId`/`DocumentId`/`WorkspaceId` (or a private `AuthorizedPath`) once those types exist. Until then, use the documented `auth_scope` API, add a negative authorization test, and state the grant origin in the PR; do not add a second path-checking helper.
+- **Grants come from native consent only.** Mint them in Rust-owned dialogs (`dialogs.rs`), OS open/open-with, native drag-drop, or a Rust-written authority manifest. Never accept a renderer path as proof of consent; `allow_*` commands must not expand authority from caller input.
+- **One resolver.** Canonicalization, containment, and identity checks stay in `auth_scope`/the target `authority` module. Do not re-implement `canonicalize` + `starts_with` in a command or helper.
+- **Interim systems are explicit.** The global Tauri asset scope and path-based document/workspace commands are migration debt, not authorization patterns. The target replaces them with revocable tokens and capability handles.
+- **Fail closed with typed errors.** Authorization rejection must not be converted to success, cached as resolved, or hidden behind a fallback path. A missing window label must never mean "anything".
+
+The per-window `auth_scope` contract in *Subsystem Contracts* below is the current interim implementation; the target capability model, current-vs-target matrix, and migration phases are in [`docs/superpowers/specs/2026-11-24-security-model-design.md`](../../../docs/superpowers/specs/2026-11-24-security-model-design.md). The Phase 0 command inventory manifest (`security/command-inventory.toml`) and its drift test (`src/command_inventory_tests.rs`) are live — update the manifest whenever adding, removing, or reclassifying a Tauri command.
+
 ## Subsystem Contracts
 
 - **Guarded document IO (`documents.rs`, `documents/save.rs`, `scoped_io.rs`):** Editor documents must use `stat_document`, `read_document`, `read_document_streaming`, `read_document_version`, and `save_document` (double-compare atomic write; regular-file reads open via `scoped_io::open_regular_file` using `O_NONBLOCK` + `fstat` on Unix so `/dev/zero` and writerless POSIX FIFOs fail immediately without blocking or racing; `DocumentVersionCache` stat-first `(mtime_ns, size)` fingerprint). The only other file commands are `scoped_io::read_custom_css` (`.css`, <=1 MiB) and `scoped_io::write_exported_html` (`.html`/`.htm`, <=`MAX_EXPORT_HTML_BYTES`): there is no general-purpose `read_file`/`write_file`, and adding one back re-opens arbitrary-path read/replace from the webview.

@@ -1,6 +1,11 @@
 # Window Lifecycle, Authorization & Durability Hardening (Design)
 
 > **Status:** implemented (`fix/wave1-stability`, Mission 3)
+> **Superseded in part (2026-11-24):** the capability/authority target model in
+> [`2026-11-24-security-model-design.md`](./2026-11-24-security-model-design.md)
+> replaces the residual assumption that document commands may accept any
+> renderer-supplied path. This document remains the record of the per-window
+> scope implementation.
 > **Scope:** `apps/desktop/src-tauri` (Rust host) plus the four TS/engine call
 > sites that had to move with it.
 > **Supersedes:** the process-global authorization model in `workspace.rs` and
@@ -176,11 +181,18 @@ link). Both growth-frozen files shrank: `lib.rs` 1 624 → 965 lines,
   directory handle); NTFS metadata ordering is relied on instead.
 - Snapshot directory accounting is a readdir sum, not a lock-protected quota: a
   concurrent snapshot for the same document can exceed the cap transiently.
-- `read_document` still accepts any path the frontend asks for; opening is the
-  user's dialog/CLI/drag-drop capability, and only the *stored* grant is scoped.
+- **Superseded (2026-11-24):** `read_document` used to accept any path the
+  frontend asked for on the assumption that opening was itself the user's
+  dialog/CLI/drag-drop capability. The target model rejects that assumption:
+  authority is minted only by Rust-owned consent origins and consumed through
+  one resolver. See
+  [`2026-11-24-security-model-design.md`](./2026-11-24-security-model-design.md).
 
 ## Related
 
+- [`2026-11-24-security-model-design.md`](./2026-11-24-security-model-design.md)
+  — target capability/authority model that supersedes this document's residual
+  path assumption.
 - [`../../memory/gotchas-rust.md`](../../memory/gotchas-rust.md) — the traps this
   design removes (auxiliary windows, prevented closes, unit mixing, per-window
   grants, hash-pinned CSP).

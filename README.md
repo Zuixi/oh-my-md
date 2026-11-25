@@ -18,7 +18,7 @@
 
 </div>
 
-![oh-my-md live demo: real-time Markdown folding, instant ⌘E live⇄source toggle, Typora-style in-cell table editing, and live KaTeX math popup](docs/images/demo.gif)
+![oh-my-md live demo: real-time Markdown folding, instant ⌘E live⇄source toggle, in-cell table editing, and live KaTeX math popup](docs/images/demo.gif)
 
 <table>
   <tr>
@@ -33,35 +33,23 @@
 
 ## Why oh-my-md?
 
-Typora proved that a Markdown editor can feel like a modern word processor — then went closed-source and paid. MarkText kept the faith but hasn't shipped a release since 2022. And today, anyone can spin up a prototype Markdown editor in a weekend — until a real 50,000-line file, a complex table, a CJK IME, or an external edit exposes every crack.
+Markdown editors usually pick one of two compromises: a split pane that separates source from output, or a rich-text document that renders beautifully and quietly rewrites your bytes on save. And a prototype is easy to build in a weekend — until a real 50,000-line file, a complex table, a CJK IME, or an external edit exposes every crack.
 
-**oh-my-md is built for the hard 5% that makes a daily-driver editor trustworthy:** free, Apache-2.0, wrapped in a lightweight Tauri 2 shell, and engineered from day one for source fidelity, data safety, and very large documents.
+**oh-my-md refuses both compromises:** free, Apache-2.0, wrapped in a lightweight Tauri 2 shell, and engineered from day one for source fidelity, data safety, and very large documents.
 
 - **Pure source fidelity (clean Git diffs)** — Live preview is a projection over your raw `.md` bytes, not a rich-text AST that silently reformats lists, escapes, or tables on save. Even in-cell table edits apply byte-minimal syntax-range patches.
 - **Data-safe by architecture** — Rust double-compare atomic saving, external-change & symlink conflict detection, multi-draft crash recovery, per-window session restore, and local version snapshots.
 - **Proven large-document speed** — Viewport-windowed live rendering, streaming open, and zero O(doc) hot-path work: **2 ms p95 typing on a 20 MB / 750k-line file (source mode)**, verifiable with the built-in benchmark.
-- **The hard UX edges, actually solved** — Typora-style in-cell table editing, tight selection geometry (exact Markdown copy across rendered blocks), Smart Paste from Notion/Word/web (including `rowspan`/`colspan` tables), live KaTeX popup editing, and first-class CJK IME handling.
+- **The hard UX edges, actually solved** — direct in-cell editing on the rendered table, tight selection geometry (exact Markdown copy across rendered blocks), Smart Paste from Notion/Word/web (including `rowspan`/`colspan` tables), live KaTeX popup editing, and first-class CJK IME handling.
 - **Print-grade export on every OS** — Self-contained HTML (local images and styles inlined; remote images keep their URL), **paginated native PDF**, and **1x/2x/3x high-DPI PNG** on macOS, Windows, and Linux — matching live preview 1:1.
-
-|  | oh-my-md | Typora | MarkText |
-| --- | --- | --- | --- |
-| Open source | ✅ Apache-2.0 | ❌ | ✅ MIT |
-| Price | Free | $14.99 | Free |
-| Live preview, no split pane | ✅ | ✅ | ✅ |
-| Source-faithful (no AST rewrite) | ✅ raw Markdown projection | — | — |
-| Responsive on 100k+ lines¹ | ✅ measured (`bench`) | — | — |
-| Export (macOS · Windows · Linux) | HTML · paginated PDF · 3x PNG | HTML · PDF · DOCX … | HTML · PDF |
-| App shell | Tauri 2 (native WebView, ~7 MB Win installer) | Electron | Electron |
-| Platforms | macOS · Windows · Linux | macOS · Windows · Linux | macOS · Windows · Linux |
-
-¹ "—" means no published figures or different architecture, not a judgment on those editors.
+- **Small footprint** — Tauri 2 runs in the system WebView instead of bundling a browser engine: the Windows installer is ~7 MB.
 
 ## Features
 
 **Writing & Live Preview**
 - **True live preview** — Markdown marks fade into rendered content as you type; `⌘E` flips to plain source mode in under 1 ms on typical notes (a cursor-seed build, ~6 ms p95 at 20 MB) without touching your bytes
 - **Full CommonMark + GFM** — tables, task lists, footnotes (click to jump/return), strikethrough, `==highlights==`, `<mark>`, `<u>`, `:gemoji:` completion
-- **Typora-style tables & Smart Paste** — click directly into rendered table cells to edit with byte-minimal range patches, or paste rich HTML from browsers/Notion/Feishu/Word (including complex `rowspan`/`colspan` tables)
+- **In-cell tables & Smart Paste** — click directly into a rendered table cell to edit with byte-minimal range patches, or paste rich HTML from browsers/Notion/Feishu/Word (including complex `rowspan`/`colspan` tables)
 - **Rich blocks** — live **KaTeX math** with an inline CodeMirror LaTeX popup editor, **Mermaid diagrams**, and **Shiki** syntax highlighting
 - **Writing polish** — configurable auto-pairing (brackets, quotes, Markdown), Typewriter & Focus modes, and first-class **CJK IME** & underscore flanking (`__粗体__`) support
 
@@ -105,7 +93,7 @@ Figures come from the built-in advisory benchmark on an M-series machine (run-to
 
 1.0 is a **single-machine desktop Markdown editor**, on purpose:
 
-- **In scope** — Typora-class live editing over raw Markdown, conflict-safe local files (atomic saves, external-change and symlink detection, crash recovery, version snapshots), native HTML / paginated PDF / PNG export on macOS, Windows and Linux, and a workspace that stays responsive on very large documents.
+- **In scope** — true live editing over raw Markdown, conflict-safe local files (atomic saves, external-change and symlink detection, crash recovery, version snapshots), native HTML / paginated PDF / PNG export on macOS, Windows and Linux, and a workspace that stays responsive on very large documents.
 - **Explicitly out of scope for 1.0** — plugin runtimes, cloud sync and real-time collaboration, mobile apps, and AI writing assistants. These are deferred rather than half-built: no hidden sync, no background upload, no assistant surfaces in the shell.
 
 The bet behind that scope: local, source-faithful editing is the part worth being excellent at. If you need plugins, sync, or an AI assistant today, a general-purpose editor is the better tool.

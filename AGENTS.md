@@ -15,6 +15,7 @@
 | Lezer Markdown dialect extensions, `chars.ts`, `inVerbatim` | [`packages/engine/src/parse/AGENTS.md`](./packages/engine/src/parse/AGENTS.md) |
 | React shell, CodeMirror host (`Editor.ts`), CSS, shortcuts, save/update flows | [`apps/desktop/AGENTS.md`](./apps/desktop/AGENTS.md) |
 | Tauri Rust commands, guarded IO, native menu, asset scope, installer bitmaps | [`apps/desktop/src-tauri/AGENTS.md`](./apps/desktop/src-tauri/AGENTS.md) |
+| Security model, capability grants, renderer trust, asset tokens | [`docs/superpowers/specs/2026-11-24-security-model-design.md`](./docs/superpowers/specs/2026-11-24-security-model-design.md) |
 | Quality gates, scripts, Git hooks, CI | `scripts/check-module-size.mjs`, `.githooks/classify.py`, `.github/workflows/ci.yml` |
 | Product scope or architecture decisions | [`docs/superpowers/specs/2026-08-10-oh-my-md-design.md`](./docs/superpowers/specs/2026-08-10-oh-my-md-design.md) |
 | Logging, opt-in diagnostics bundle, session markers, redaction | [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md) + [`docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md`](./docs/superpowers/specs/2026-10-03-logging-and-diagnostics-design.md) |
@@ -69,6 +70,7 @@ pnpm verify                                                        # full test +
 5. **Preserve source text.** Preview is a projection of the Markdown document; decorations and widgets must not silently rewrite user content.
 6. **IPC changes span both sides.** Any change to a Tauri command's arguments or return type must update the Rust command, `desktopServices.ts`, all TS consumers, and a Rust `serde_json::to_string` field-casing assertion in the same change.
 7. **Shared constants have named homes and drift guards.** Cross-layer limits/keys live in `apps/desktop/src/constants.ts` ↔ Rust (`crossLayerConstants.test.ts`); ASCII parser codes live in `packages/engine/src/parse/chars.ts`; shortcuts live in engine keymaps and `apps/desktop/src/shortcuts.ts` (`crossLayerMenu.test.ts`).
+8. **Rust owns filesystem authority (target contract).** Rust owns document/workspace identity and paths; the renderer owns only UI and content. Capabilities are minted only by trusted native origins (Rust-owned dialogs, OS open/open-with, native drag-drop, Rust-written authority manifests) and consumed through one resolver. Do not add a new raw-path IO command outside the documented interim `auth_scope` path, a new `allow_*` grant, or a rejection-to-success fallback. Existing path-based commands are migration debt: keep them behind `auth_scope`, never copy the pattern, and record the migration in [`docs/superpowers/specs/2026-11-24-security-model-design.md`](./docs/superpowers/specs/2026-11-24-security-model-design.md). The current interim host contract is [`apps/desktop/src-tauri/AGENTS.md`](./apps/desktop/src-tauri/AGENTS.md); the target replaces raw paths with capability handles.
 
 ## Code & Module Style
 
@@ -113,4 +115,5 @@ Before finishing a task, check whether updates are needed in:
 - [ ] Nearest `AGENTS.md` (routing, module layout, or recurring invariants)
 - [ ] `docs/memory/known-gotchas.md` + `gotchas-engine/desktop/rust.md` (new reusable traps)
 - [ ] `docs/superpowers/specs/` or `docs/superpowers/plans/` (architecture or milestone changes)
+- [ ] [`docs/superpowers/specs/2026-11-24-security-model-design.md`](./docs/superpowers/specs/2026-11-24-security-model-design.md) + affected domain `AGENTS.md` (capability, IPC authority, or trust-boundary changes)
 - [ ] `docs/manual-qa.md` or `docs/guides/` (user-visible interaction or shortcut changes)

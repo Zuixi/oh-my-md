@@ -45,6 +45,7 @@ src-tauri/gen/
 .env.*.local
 *.pem
 *.key
+.agents/
 
 # IDEs & Editors
 .vscode/*
@@ -60,6 +61,7 @@ src-tauri/gen/
 .cursor/
 
 # Tools / Local state
+.agents/
 .pi/
 .pnpm-store/
 .turbo/
@@ -68,14 +70,12 @@ src-tauri/gen/
 .mimosa/
 .zcode/
 
-# Local competitor analysis (not committed / pushed)
+# Local competitor analysis & scratch notes (not committed / pushed)
 docs/competitors/
+docs/process/
+.notes/
 
 # Benchmarks
 packages/engine/bench/.last-run.json
 
 .plan
-docs/process/
-solution.md
-board.md
-Todo.md

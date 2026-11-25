@@ -404,19 +404,20 @@ the cross-layer key: `crossLayerConstants.test.ts` pins the Rust
 key set contains it. Sanitization is total (non-integer → 0), so a hand-edited
 settings file degrades to "no generation known", never to a parse failure.
 
-## Document/export IPC paths are not authorization
+## Path parameters are not authorization
 
-`read_document`, `read_document_streaming`, `read_document_version`,
-`stat_document`, and `save_document` accept any absolute path and only *record*
-a file grant after a successful IO (the frontend got the path from a native
-dialog or the OS). That is the app's trust model, but it means the document
-commands are a general read/replace surface for a compromised webview, exactly
-what `scoped_io` removed `read_file`/`write_file` for. Do not describe them as
-authorized. Closing this needs Rust-owned dialogs/OS-open grants that record
-consent before the path reaches the webview; until then, every auxiliary sink
-(`allow_document_assets`, export, diagnostics) must check for an existing grant
-or pin its own shape. `allow_document_assets` now calls
-`authorized_document_directory` before widening recursive asset scope.
+A command that accepts an absolute path is not automatically authorized. The
+interim document/export commands now call `auth_scope` before IO and the native
+pickers record consent in Rust, but the path still crosses IPC. Never treat that
+as a general read/replace surface, and never add a new path-taking IO command:
+the target model makes the renderer hold `DocumentId`/`WorkspaceId`/`GrantId`
+handles and resolves them through one authority layer
+([security model](../superpowers/specs/2026-11-24-security-model-design.md)).
+Every auxiliary sink (`allow_document_assets`, export, diagnostics, recents,
+session/settings) must validate against an existing grant or the persisted
+payload before widening scope. `allow_document_assets` still calls
+`authorized_document_directory` before changing asset scope; do not bypass it
+with a renderer-supplied path.
 
 ## Non-regular files must fail before a buffered read
 

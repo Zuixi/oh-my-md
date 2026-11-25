@@ -134,7 +134,7 @@
 
 ## Rust & IPC wire contracts ([full file](./gotchas-rust.md))
 
-- **Document/export IPC paths are not authorization** — document commands only record a grant after IO; auxiliary sinks must check for one or pin their own shape.
+- **Path parameters are not authorization** — check `auth_scope` before IO, never add a new raw-path IO command outside the interim API, and keep auxiliary sinks pinned to an existing grant.
 - **Non-regular files must fail before a buffered read** — `/dev/zero`/FIFOs need `is_file()` after canonicalization.
 - **A completed window-close flush round can poison the next quit** — clear the stale `flushed` flag when editor windows survive.
 - **Diagnostics/export artifacts need their own path contract** — absolute, extension, symlink, atomic staging, `spawn_blocking`.
