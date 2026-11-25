@@ -170,53 +170,6 @@ export function fitScale(
   return clampScale(ratio)
 }
 
-export interface PreparedSvg {
-  readonly markup: string
-  readonly width: number | null
-  readonly height: number | null
-}
-
-/** Attributes that can carry an internal `#id` reference. `<text>`/`<tspan>`
- *  content is deliberately absent: a diagram label may read exactly like an id
- *  and must never be rewritten. */
-const SVG_REFERENCE_ATTRIBUTES = [
-  "href", "xlink:href", "marker-start", "marker-mid", "marker-end", "clip-path",
-  "mask", "fill", "stroke", "filter", "aria-labelledby", "aria-describedby", "style",
-]
-const SVG_DANGEROUS_ELEMENTS = [
-  "script", "iframe", "object", "embed", "applet", "meta", "link", "base",
-  "form", "input", "button", "select", "textarea", "video", "audio", "source",
-  "animate", "animatemotion", "animatetransform", "set",
-]
-/** Attributes that can navigate or submit a request without any script. */
-const SVG_CONTROL_ATTRIBUTES = new Set(["srcdoc", "formaction", "action", "ping"])
-/** Attributes that fetch a resource; only fragments and inline raster may stay. */
-const SVG_URL_ATTRIBUTES = new Set(["href", "xlink:href", "src", "data", "poster"])
-const SVG_SAFE_DATA_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i
-
-/**
- * Strip network fetches from diagram CSS. Comments and CSS Syntax L3 backslash
- * escapes (`\75 rl(...)`, `@\69 mport`, `u\rl(...)`) are normalized first so
- * obfuscated tokens resolve to their real keywords before `@import` removal and
- * `url(...)` allowlisting (only in-document `#id` fragments may stay).
- */
-function sanitizeSvgCss(css: string): string {
-  const unescaped = css
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\\([0-9a-f]{1,6})\s?/gi, (_m, hex: string) => {
-      const cp = Number.parseInt(hex, 16)
-      return cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff)
-        ? String.fromCodePoint(cp)
-        : "\ufffd"
-    })
-    .replace(/\\([\s\S])/g, (_m, ch: string) => (ch === "\n" || ch === "\r" || ch === "\f" ? "" : ch))
-  return unescaped
-    .replace(/@import\b[^;{}]*(?:;|$)/gi, "")
-    .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (full, _quote, rawUrl: string) =>
-      /^#[A-Za-z0-9_.:-]+$/.test(rawUrl.trim()) ? full : "none",
-    )
-}
-
 function parseSvgLength(raw: string | null): number | null {
   if (!raw) return null
   const trimmed = raw.trim()
@@ -225,7 +178,7 @@ function parseSvgLength(raw: string | null): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-function parseViewBoxSize(raw: string | null): { width: number; height: number } | null {
+function parseViewBoxSize(raw: string | null): BoxSize | null {
   if (!raw) return null
   const parts = raw.trim().split(/[\s,]+/).map(Number)
   if (parts.length !== 4 || parts.some(v => !Number.isFinite(v))) return null
@@ -233,106 +186,13 @@ function parseViewBoxSize(raw: string | null): { width: number; height: number }
   return width > 0 && height > 0 ? { width, height } : null
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-/** Sanitizes one parsed SVG subtree and namespaces its ids in place. */
-function sanitizeSvg(root: Element, idPrefix: string): void {
-  // Match on `localName` so HTML inside `foreignObject` is caught regardless of
-  // the namespace or tag-name case the parser reports.
-  for (const element of [...root.querySelectorAll("*")]) {
-    if (SVG_DANGEROUS_ELEMENTS.includes(element.localName.toLowerCase())) element.remove()
-  }
-  for (const element of [root, ...root.querySelectorAll("*")]) {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase()
-      if (name.startsWith("on") || SVG_CONTROL_ATTRIBUTES.has(name)) {
-        element.removeAttribute(attribute.name)
-        continue
-      }
-      if (SVG_URL_ATTRIBUTES.has(name)) {
-        const value = attribute.value.trim()
-        if (!value.startsWith("#") && !SVG_SAFE_DATA_URL.test(value)) {
-          element.removeAttribute(attribute.name)
-        }
-        continue
-      }
-      if (name === "style") {
-        const cleaned = sanitizeSvgCss(attribute.value)
-        if (cleaned.trim()) element.setAttribute(attribute.name, cleaned)
-        else element.removeAttribute(attribute.name)
-      }
-    }
-  }
-  for (const style of root.querySelectorAll("style")) {
-    const css = style.textContent
-    if (css) style.textContent = sanitizeSvgCss(css)
-  }
-
-  // Collect ids by DOM traversal (never by rewriting serialized text): a label
-  // such as `<text>omd-mmd-1</text>` is content, not a reference.
-  const renamed = new Map<string, string>()
-  const idOwners = [...(root.hasAttribute("id") ? [root] : []), ...root.querySelectorAll("[id]")]
-  for (const element of idOwners) {
-    const oldId = element.getAttribute("id")
-    if (!oldId) continue
-    const newId = `${idPrefix}-${oldId}`
-    renamed.set(oldId, newId)
-    element.setAttribute("id", newId)
-  }
-  if (renamed.size === 0) return
-
-  // One pass over the longest ids first, with an exact id-character boundary so
-  // `omd-mmd-1` never rewrites `omd-mmd-10`.
-  const pattern = new RegExp(
-    `#(${[...renamed.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?![A-Za-z0-9_-])`,
-    "g",
-  )
-  const rewrite = (text: string): string => text.replace(pattern, (match, id: string) => {
-    const next = renamed.get(id)
-    return next ? `#${next}` : match
-  })
-  for (const element of [root, ...root.querySelectorAll("*")]) {
-    for (const attribute of SVG_REFERENCE_ATTRIBUTES) {
-      const value = element.getAttribute(attribute)
-      if (value?.includes("#")) element.setAttribute(attribute, rewrite(value))
-    }
-  }
-  for (const style of root.querySelectorAll("style")) {
-    const css = style.textContent
-    if (css?.includes("#")) style.textContent = rewrite(css)
-  }
-}
-
 /**
- * Prepare a Mermaid SVG snapshot for crisp full-screen zoom/pan:
- * - Rejects markup that cannot be parsed as an SVG document (`markup: ""`), so
- *   the lightbox renders its broken state instead of injecting raw text.
- * - Strips scriptable/active elements, event-handler and control attributes,
- *   non-fragment URLs (only inline raster `data:` images survive), and network
- *   fetches in CSS (`@import`, external `url(...)`), so an untrusted diagram
- *   cannot run script, submit a form, or beacon out while `htmlLabels` keep
- *   working.
- * - Namespaces every id (with digit-boundary guard so `omd-mmd-1` never
- *   rewrites `omd-mmd-10`) so the modal copy never collides with inline editor defs.
- * - Extracts intrinsic dimensions from `viewBox` (or width/height attributes)
- *   and removes Mermaid's inline `max-width` cap so scaling stays sharp.
+ * Prepare a live Mermaid SVG element mounted inside the lightbox for crisp
+ * zoom/pan: removes Mermaid's inline `max-width` cap and materializes explicit
+ * `width`/`height` attributes from `viewBox` (when available) so the diagram
+ * never collapses inside flex containers.
  */
-export function prepareLightboxSvg(svgMarkup: string, idPrefix: string): PreparedSvg {
-  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
-    return { markup: "", width: null, height: null }
-  }
-  const doc = new DOMParser().parseFromString(svgMarkup, "image/svg+xml")
-  const svg = doc.documentElement
-  if (!svg || svg.tagName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) {
-    return { markup: "", width: null, height: null }
-  }
-
-  const vb = parseViewBoxSize(svg.getAttribute("viewBox"))
-  const width = vb?.width ?? parseSvgLength(svg.getAttribute("width"))
-  const height = vb?.height ?? parseSvgLength(svg.getAttribute("height"))
-
+export function normalizeLightboxSvgElement(svg: Element): BoxSize | null {
   const rawStyle = svg.getAttribute("style")
   if (rawStyle) {
     const cleaned = rawStyle
@@ -343,9 +203,21 @@ export function prepareLightboxSvg(svgMarkup: string, idPrefix: string): Prepare
     if (cleaned) svg.setAttribute("style", cleaned)
     else svg.removeAttribute("style")
   }
+  const vb = parseViewBoxSize(svg.getAttribute("viewBox"))
+  const width = vb?.width ?? parseSvgLength(svg.getAttribute("width"))
+  const height = vb?.height ?? parseSvgLength(svg.getAttribute("height"))
   if (width !== null) svg.setAttribute("width", String(width))
   if (height !== null) svg.setAttribute("height", String(height))
+  return width !== null && height !== null ? { width, height } : null
+}
 
-  sanitizeSvg(svg, idPrefix)
-  return { markup: new XMLSerializer().serializeToString(svg), width, height }
+/**
+ * Serialize a live `<svg>` element into well-formed standalone XML for clipboard
+ * export (preserving XHTML self-closing `<br />` inside `<foreignObject>`).
+ */
+export function serializeSvgForClipboard(svg: Element): string {
+  if (typeof XMLSerializer === "function") {
+    return new XMLSerializer().serializeToString(svg)
+  }
+  return svg.outerHTML
 }

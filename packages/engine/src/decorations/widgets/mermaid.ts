@@ -2,36 +2,55 @@ import type { EditorView } from "@codemirror/view"
 import { BlockWidget } from "../blockWidget"
 import { isInspectPointerEvent, mediaInspectHandler, trackInspectClick } from "../mediaInspect"
 import { MERMAID_ESTIMATE_PX } from "../widgetHeights"
-import { createMermaidSvgCache, instantiateCachedMermaidSvg } from "./mermaidSvgCache"
+import {
+  clearMermaidSvgCache,
+  getCachedMermaidSvg,
+  nextMermaidId,
+  renderMermaidSvg,
+  subscribeDocumentMermaidTheme,
+  type MermaidTheme,
+} from "../../mermaid/renderer"
+import { instantiateCachedMermaidSvg } from "./mermaidSvgCache"
 
-// spec 性能底线：mermaid 重编译 debounce。widget 只在文本稳定后渲染；
-// 若渲染前 widget 已被 CM 销毁（继续打字 → 回到源码态），直接放弃。
-const RENDER_DEBOUNCE_MS = 500
-
-const svgCache = createMermaidSvgCache()
+// Short settle window so rapid cursor sweeps across blocks skip redundant
+// Mermaid parses, while document open and scroll render responsively.
+const RENDER_DEBOUNCE_MS = 80
 
 export function clearMermaidSvgCacheForTest(): void {
-  svgCache.clear()
+  clearMermaidSvgCache()
 }
-
-let mermaidPromise: Promise<typeof import("mermaid").default> | null = null
-function getMermaid() {
-  return mermaidPromise ??= import("mermaid").then(m => {
-    m.default.initialize({ startOnLoad: false, securityLevel: "strict" })
-    return m.default
-  })
-}
-
-let counter = 0
 
 export class MermaidWidget extends BlockWidget {
+  private unsubTheme: (() => void) | null = null
+  private renderVersion = 0
+
   protected get cssClass() { return "omd-mermaid" }
 
-  // 滚动性能：SVG 高度差异极大，取中位量级压过绘冲击；异步渲染完成后实测修正
-  //（见 widgetHeights.ts 头注）。
+  // SVG heights vary widely across diagram types; use a median estimate until
+  // async rendering completes and triggers a real height measure.
   override get estimatedHeight() { return MERMAID_ESTIMATE_PX }
 
   protected override enterSourceOnClick(): boolean { return false }
+
+  override toDOM(view: EditorView) {
+    const wrap = super.toDOM(view)
+    this.unsubTheme?.()
+    this.unsubTheme = subscribeDocumentMermaidTheme(theme => {
+      if (!this.isActive() || this.currentDom !== wrap || !wrap.isConnected) return
+      const body = wrap.querySelector<HTMLElement>(".omd-block-body")
+      if (!body) return
+      void this.rerenderForTheme(view, wrap, body, theme)
+    })
+    return wrap
+  }
+
+  override destroy(dom?: HTMLElement) {
+    super.destroy(dom)
+    if (!this.isActive()) {
+      this.unsubTheme?.()
+      this.unsubTheme = null
+    }
+  }
 
   protected override onWrapClick(view: EditorView, wrap: HTMLElement, event: MouseEvent): void {
     const handler = view.state?.facet(mediaInspectHandler) ?? null
@@ -48,7 +67,6 @@ export class MermaidWidget extends BlockWidget {
         }
         handler({
           kind: "mermaid",
-          svg: currentSvg.outerHTML,
           source: this.src,
           editSource,
         })
@@ -59,9 +77,9 @@ export class MermaidWidget extends BlockWidget {
   }
 
   protected renderPlaceholder(el: HTMLElement): boolean | void {
-    const cached = svgCache.get(this.src)
+    const cached = getCachedMermaidSvg(this.src)
     if (cached) {
-      el.innerHTML = instantiateCachedMermaidSvg(cached, `omd-mmd-${++counter}`)
+      el.innerHTML = instantiateCachedMermaidSvg(cached, nextMermaidId())
       el.dataset.omdRender = "svg"
       return true
     }
@@ -73,18 +91,47 @@ export class MermaidWidget extends BlockWidget {
   }
 
   protected async renderInto(el: HTMLElement) {
-    // spec 性能底线：mermaid 重编译 debounce 500ms。widget 只在文本稳定后渲染；
-    // 若渲染前 widget 已被 CM 销毁（继续打字 → 回到源码态），直接放弃。
+    const version = ++this.renderVersion
     await new Promise(r => setTimeout(r, RENDER_DEBOUNCE_MS))
-    if (!this.isActive(el)) return
-    const mermaid = await getMermaid()
-    if (!this.isActive(el)) return
-    const id = `omd-mmd-${++counter}`
-    const { svg } = await mermaid.render(id, this.src)
-    svgCache.set(this.src, { id, svg })
-    if (this.isActive(el)) {
-      el.innerHTML = svg
-      el.dataset.omdRender = "svg"
+    if (!this.isActive(el) || this.renderVersion !== version) return
+    const id = nextMermaidId()
+    const rendered = await renderMermaidSvg(this.src, { id, useCache: true })
+    if (!this.isActive(el) || this.renderVersion !== version) return
+    el.innerHTML = rendered.id === id
+      ? rendered.svg
+      : instantiateCachedMermaidSvg({ id: rendered.id, svg: rendered.svg }, id)
+    rendered.bindFunctions?.(el)
+    el.dataset.omdRender = "svg"
+  }
+
+  private async rerenderForTheme(
+    view: EditorView,
+    wrap: HTMLElement,
+    body: HTMLElement,
+    theme: MermaidTheme,
+  ): Promise<void> {
+    const version = ++this.renderVersion
+    const cached = getCachedMermaidSvg(this.src, theme)
+    if (cached) {
+      body.classList.remove("omd-block-error")
+      body.innerHTML = instantiateCachedMermaidSvg(cached, nextMermaidId())
+      body.dataset.omdRender = "svg"
+      view.requestMeasure()
+      return
+    }
+    try {
+      const id = nextMermaidId()
+      const rendered = await renderMermaidSvg(this.src, { id, theme, useCache: true })
+      if (!this.isActive(body) || this.currentDom !== wrap || this.renderVersion !== version) return
+      body.classList.remove("omd-block-error")
+      body.innerHTML = rendered.id === id
+        ? rendered.svg
+        : instantiateCachedMermaidSvg({ id: rendered.id, svg: rendered.svg }, id)
+      rendered.bindFunctions?.(body)
+      body.dataset.omdRender = "svg"
+      view.requestMeasure()
+    } catch {
+      // Keep the existing diagram visible if a background theme re-render fails.
     }
   }
 }

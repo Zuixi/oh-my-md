@@ -5,6 +5,7 @@
  * source text; none may throw into the export pipeline.
  */
 
+import { nextMermaidId, renderMermaidSvg } from "../mermaid/renderer"
 import { createMathHtmlCache } from "./mathHtmlCache"
 import { escapeHtml } from "./primitives"
 
@@ -24,20 +25,10 @@ export async function renderMathHtml(tex: string, displayMode: boolean): Promise
   }
 }
 
-let mermaidCounter = 0
-
 export async function renderMermaidHtml(src: string, theme: "light" | "dark"): Promise<string> {
   try {
-    const mermaid = (await import("mermaid")).default
-    // Mermaid's global config must be re-applied per export; alternating light
-    // and dark exports would otherwise reuse the previous palette.
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: theme === "dark" ? "dark" : "default",
-    })
-    const id = `omd-export-mmd-${++mermaidCounter}`
-    const { svg } = await mermaid.render(id, src)
+    const id = nextMermaidId("omd-export-mmd")
+    const { svg } = await renderMermaidSvg(src, { id, theme, useCache: false })
     return svg
   } catch {
     return `<pre>${escapeHtml(src)}</pre>`

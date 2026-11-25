@@ -21,7 +21,7 @@ const DEFAULT_DOC = [
   "",
   "```mermaid",
   "graph LR",
-  "  A[Editor] --> B[Mermaid Widget]",
+  '  A["Editor<br>Multi-line"] --> B["Mermaid Widget<br>HTML Labels"]',
   "  B --> C[Full-screen Lightbox]",
   "  C --> D[Zoom & Pan]",
   "```",

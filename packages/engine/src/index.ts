@@ -64,6 +64,14 @@ export {
   type MediaInspectTarget,
 } from "./decorations/mediaInspect"
 export {
+  renderMermaidSvg,
+  resolveDocumentMermaidTheme,
+  subscribeDocumentMermaidTheme,
+  type MermaidTheme,
+  type RenderMermaidOptions,
+  type RenderedMermaid,
+} from "./mermaid/renderer"
+export {
   classifyLink,
   headingPositionForAnchor,
   headingSlug,

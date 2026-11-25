@@ -13,7 +13,6 @@ export type MediaInspectTarget =
     }
   | {
       readonly kind: "mermaid"
-      readonly svg: string
       readonly source: string
       readonly editSource?: () => void
     }

@@ -12,8 +12,9 @@ import {
   clampPan,
   clampScale,
   fitScale,
+  normalizeLightboxSvgElement,
   panBy,
-  prepareLightboxSvg,
+  serializeSvgForClipboard,
   wheelZoomScale,
   zoomAtPoint,
 } from "../src/lightboxTransform"
@@ -154,110 +155,29 @@ describe("lightboxTransform", () => {
     expect(fitScale(0, 100, 1096, 896)).toBe(1)
   })
 
-  it("prepares Mermaid SVG by extracting viewBox size, removing max-width, and namespacing ids safely", () => {
-    const raw = '<svg id="omd-mmd-1" style="max-width: 600px;" viewBox="0 0 1200 400"><defs><marker id="omd-mmd-1-arrow"/></defs><style>#omd-mmd-1 .node { fill: red; }</style><path marker-end="url(#omd-mmd-1-arrow)"/><text>omd-mmd-10</text></svg>'
-    const prepared = prepareLightboxSvg(raw, "omd-lb-test")
-    expect(prepared.width).toBe(1200)
-    expect(prepared.height).toBe(400)
-    expect(prepared.markup).not.toContain("max-width")
-    expect(prepared.markup).toContain('id="omd-lb-test-omd-mmd-1"')
-    expect(prepared.markup).toContain("#omd-lb-test-omd-mmd-1 .node")
-    expect(prepared.markup).toContain("url(#omd-lb-test-omd-mmd-1-arrow)")
-    expect(prepared.markup).toContain("<text>omd-mmd-10</text>")
+  it("normalizes a live Mermaid SVG element by stripping max-width and applying viewBox dimensions", () => {
+    const host = document.createElement("div")
+    host.innerHTML = '<svg id="omd-lb-1" style="max-width: 600px; background: transparent;" viewBox="0 0 1200 400"><foreignObject><div>Line 1<br>Line 2<hr></div></foreignObject></svg>'
+    const svg = host.querySelector("svg")!
+
+    const size = normalizeLightboxSvgElement(svg)
+    expect(size).toEqual({ width: 1200, height: 400 })
+    expect(svg.getAttribute("width")).toBe("1200")
+    expect(svg.getAttribute("height")).toBe("400")
+    expect(svg.getAttribute("style")).not.toContain("max-width")
+    expect(svg.getAttribute("style")).toContain("background: transparent")
+
+    // Clipboard export produces standalone XML with self-closing XHTML void tags.
+    const exported = serializeSvgForClipboard(svg)
+    expect(exported).toContain('width="1200"')
+    expect(exported).toContain('height="400"')
+    expect(exported).not.toContain("max-width")
   })
 
-  it("rewrites ids by DOM traversal, never by matching label text", () => {
-    // `omd-mmd-1` is both the root id and the exact text of a diagram label. Only
-    // the id and its references may change; the label is user content.
-    const raw = [
-      '<svg id="omd-mmd-1" viewBox="0 0 10 10">',
-      '<defs><marker id="omd-mmd-1-arrow"/></defs>',
-      '<style>#omd-mmd-1 .node { fill: red; } #omd-mmd-10 .node { fill: blue; } #omd-mmd-1x .node { fill: green; }</style>',
-      '<path id="omd-mmd-10" marker-end="url(#omd-mmd-1-arrow)" clip-path="url(#omd-mmd-1)" fill="#omd-mmd-1"/>',
-      '<text>omd-mmd-1</text><tspan>omd-mmd-1</tspan>',
-      '</svg>',
-    ].join("")
-    const markup = prepareLightboxSvg(raw, "omd-lb").markup
-    expect(markup).toContain('id="omd-lb-omd-mmd-1"')
-    expect(markup).toContain('id="omd-lb-omd-mmd-1-arrow"')
-    expect(markup).toContain('id="omd-lb-omd-mmd-10"')
-    expect(markup).toContain("#omd-lb-omd-mmd-1 .node")
-    expect(markup).toContain("#omd-lb-omd-mmd-10 .node")
-    expect(markup).toContain("url(#omd-lb-omd-mmd-1-arrow)")
-    expect(markup).toContain("clip-path=\"url(#omd-lb-omd-mmd-1)\"")
-    expect(markup).toContain('fill="#omd-lb-omd-mmd-1"')
-    // Boundary guard: a longer id sharing the prefix (and an id-like token that
-    // is not an element id) is left exactly as-is.
-    expect(markup).toContain("#omd-mmd-1x .node")
-    expect(markup).toContain("<text>omd-mmd-1</text>")
-    expect(markup).toContain("<tspan>omd-mmd-1</tspan>")
-  })
-
-  it("strips scriptable elements, event handlers, and unsafe URLs", () => {
-    const raw = [
-      '<svg id="d" viewBox="0 0 10 10">',
-      '<script>alert(1)</script>',
-      '<iframe src="https://evil.test"/>',
-      '<object data="x"/><embed src="x"/>',
-      '<rect width="10" height="10" onload="alert(1)" onclick="alert(2)"/>',
-      '<a href="javascript:alert(1)"><text>link</text></a>',
-      '<image href="data:text/html;base64,PHNjcmlwdD4="/>',
-      '<use href="#d"/>',
-      '</svg>',
-    ].join("")
-    const markup = prepareLightboxSvg(raw, "omd-lb").markup
-    for (const forbidden of ["<script", "<iframe", "<object", "<embed", "onload", "onclick", "javascript:", "data:text/html"]) {
-      expect(markup).not.toContain(forbidden)
-    }
-    // Safe in-document references survive sanitization.
-    expect(markup).toContain('href="#omd-lb-d"')
-    expect(markup).toContain('id="omd-lb-d"')
-  })
-
-  it("strips active/form/media HTML in foreignObject, external URLs, and CSS fetches", () => {
-    const raw = [
-      '<svg id="d" viewBox="0 0 10 10">',
-      '<defs><style>@import "https://evil.test/a.css"; .n { fill: url(#d); background: url("https://evil.test/b.png"); }</style></defs>',
-      '<foreignObject><div>Mermaid HTML label</div><img src="https://evil.test/1.png"/>',
-      '<form action="https://evil.test"><input type="text"/><button>go</button></form>',
-      '<meta http-equiv="refresh"/><video poster="https://evil.test/p.png"/></foreignObject>',
-      '<set attributeName="href" to="javascript:alert(1)"/><animate attributeName="href" values="javascript:alert(1)"/>',
-      '<image href="data:image/svg+xml;base64,PHN2Zz4="/>',
-      '<image href="data:image/png;base64,iVBORw0KGgo="/>',
-      '<rect style="fill: url(#d); background-image: \\75rl(https://evil.test/c.png)"/>',
-      '</svg>',
-    ].join("")
-    const markup = prepareLightboxSvg(raw, "omd-lb").markup
-    // Mermaid `htmlLabels` content and internal references keep working.
-    expect(markup).toContain("<div>Mermaid HTML label</div>")
-    expect(markup).toContain("url(#omd-lb-d)")
-    expect(markup).toContain('id="omd-lb-d"')
-    // Inline raster images are the one non-fragment URL that still works.
-    expect(markup).toContain("data:image/png;base64,iVBORw0KGgo=")
-    for (const forbidden of [
-      "<form",
-      "<input",
-      "<button",
-      "<meta",
-      "<video",
-      "<set",
-      "<animate",
-      "https://evil.test",
-      "data:image/svg+xml",
-      "@import",
-    ]) {
-      expect(markup).not.toContain(forbidden)
-    }
-  })
-
-  it("falls back cleanly on malformed SVG markup", () => {
-    // Never echo unparsed markup: the lightbox renders its broken state instead.
-    for (const malformed of ["<not-svg", "<svg><unclosed"]) {
-      expect(prepareLightboxSvg(malformed, "prefix")).toEqual({
-        markup: "",
-        width: null,
-        height: null,
-      })
-    }
+  it("returns null intrinsic size when viewBox and numeric dimensions are missing", () => {
+    const host = document.createElement("div")
+    host.innerHTML = '<svg width="100%" height="100%"></svg>'
+    const svg = host.querySelector("svg")!
+    expect(normalizeLightboxSvgElement(svg)).toBeNull()
   })
 })

@@ -58,7 +58,12 @@ test.describe("Image Lightbox & Mermaid Zoom/Pan", () => {
     const dialog = page.locator("dialog.media-lightbox")
     await expect(dialog).toBeVisible()
     const modalSvg = dialog.locator(".media-lightbox-svg-frame svg")
-    await expect(modalSvg).toBeVisible()
+    await expect(modalSvg).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator(".media-lightbox-broken")).toHaveCount(0)
+    const svgBox = await modalSvg.boundingBox()
+    expect(svgBox).toBeTruthy()
+    expect(svgBox!.width).toBeGreaterThan(100)
+    expect(svgBox!.height).toBeGreaterThan(40)
 
     // Wheel zoom changes scale
     const readout = dialog.locator(".media-lightbox-zoom-readout")

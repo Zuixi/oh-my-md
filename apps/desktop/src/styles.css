@@ -2811,6 +2811,9 @@ dialog.media-lightbox::backdrop {
   color: var(--omd-fg, #1f2328);
   box-shadow: var(--omd-lightbox-shadow);
 }
+.media-lightbox-svg-frame[hidden] {
+  display: none;
+}
 .media-lightbox-svg-frame svg {
   display: block;
   max-width: none;

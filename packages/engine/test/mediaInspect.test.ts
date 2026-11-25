@@ -172,7 +172,6 @@ describe("media inspection (ImageWidget & MermaidWidget)", () => {
       expect(inspected).toHaveLength(1)
       expect(inspected[0].kind).toBe("mermaid")
       if (inspected[0].kind === "mermaid") {
-        expect(inspected[0].svg).toContain("omd-mermaid-svg")
         expect(inspected[0].source).toContain("graph LR")
       }
       expect(view.dom.querySelector(".omd-mermaid")).toBeTruthy()
@@ -329,5 +328,55 @@ describe("media inspection (ImageWidget & MermaidWidget)", () => {
     dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }))
     expect(dispatched).toBe(true)
     widget.destroy(dom)
+  })
+
+  it("re-renders mounted MermaidWidget live on light/dark theme toggle and cleans up on destroy", async () => {
+    clearMermaidSvgCacheForTest()
+    document.documentElement.dataset.theme = "light"
+    const { default: mermaid } = await import("mermaid")
+    vi.mocked(mermaid.render).mockClear()
+
+    let measures = 0
+    const fakeView = {
+      requestMeasure: () => { measures += 1 },
+      posAtDOM: () => 0,
+      dispatch: () => {},
+      focus: () => {},
+      state: { facet: () => null, readOnly: false },
+    } as unknown as EditorView
+
+    const widget = new MermaidWidget("graph LR\n  ThemeA --> ThemeB", 0)
+    const dom = widget.toDOM(fakeView)
+    document.body.appendChild(dom)
+    try {
+      await new Promise(resolve => setTimeout(resolve, 160))
+      expect(vi.mocked(mermaid.render)).toHaveBeenCalledTimes(1)
+      const lightId = dom.querySelector("svg.omd-mermaid-svg")?.id
+      expect(lightId).toBeTruthy()
+
+      // Flip to dark mode -> already-mounted widget re-renders automatically.
+      document.documentElement.dataset.theme = "dark"
+      await new Promise(resolve => setTimeout(resolve, 40))
+      expect(vi.mocked(mermaid.render)).toHaveBeenCalledTimes(2)
+      const darkId = dom.querySelector("svg.omd-mermaid-svg")?.id
+      expect(darkId).toBeTruthy()
+      expect(darkId).not.toBe(lightId)
+      expect(measures).toBeGreaterThanOrEqual(2)
+
+      // Flip back to light -> hits the light theme cache synchronously (no 3rd mermaid.render call).
+      document.documentElement.dataset.theme = "light"
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(vi.mocked(mermaid.render)).toHaveBeenCalledTimes(2)
+
+      // After destroy, further theme switches must not trigger renders.
+      widget.destroy(dom)
+      document.documentElement.dataset.theme = "dark"
+      await new Promise(resolve => setTimeout(resolve, 40))
+      expect(vi.mocked(mermaid.render)).toHaveBeenCalledTimes(2)
+    } finally {
+      widget.destroy(dom)
+      dom.remove()
+      document.documentElement.removeAttribute("data-theme")
+    }
   })
 })

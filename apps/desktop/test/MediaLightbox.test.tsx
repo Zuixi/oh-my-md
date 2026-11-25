@@ -1,14 +1,31 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach } from "vitest"
-import { MediaLightbox, useMediaLightbox } from "../src/MediaLightbox"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+
+const mockRenderMermaidSvg = vi.fn()
+
+vi.mock("@omd/engine", async () => {
+  const actual = await vi.importActual<typeof import("@omd/engine")>("@omd/engine")
+  return {
+    ...actual,
+    renderMermaidSvg: (...args: Parameters<typeof actual.renderMermaidSvg>) => mockRenderMermaidSvg(...args),
+  }
+})
+
+const { MediaLightbox, useMediaLightbox } = await import("../src/MediaLightbox")
 
 const MERMAID_TARGET = {
   kind: "mermaid" as const,
-  svg: '<svg id="omd-mmd-9" viewBox="0 0 800 300"><rect width="800" height="300"/></svg>',
-  source: "graph LR; A-->B",
+  source: "graph LR\n  A[Line 1<br>Line 2] --> B[Done]",
 }
+
+beforeEach(() => {
+  document.documentElement.removeAttribute("data-theme")
+  mockRenderMermaidSvg.mockReset().mockImplementation(async (source: string, opts?: { id?: string; theme?: string }) => ({
+    id: opts?.id ?? "omd-lb-1",
+    svg: `<svg id="${opts?.id ?? "omd-lb-1"}" data-theme="${opts?.theme ?? "light"}" style="max-width: 600px;" viewBox="0 0 800 300"><foreignObject><div><span>${source}</span><br><hr></div></foreignObject></svg>`,
+  }))
+})
 
 afterEach(() => cleanup())
 
@@ -57,23 +74,21 @@ describe("MediaLightbox", () => {
     expect(editSource).toHaveBeenCalledTimes(1)
   })
 
-  it("renders a Mermaid SVG diagram and supports keyboard zoom, pan, and Escape close", () => {
+  it("renders a Mermaid diagram with HTML <br>/<hr> foreignObject labels from source and supports zoom, pan, copy, and Escape", async () => {
     const onClose = vi.fn()
-    render(
-      <MediaLightbox
-        target={{
-          kind: "mermaid",
-          svg: '<svg id="omd-mmd-9" viewBox="0 0 800 300"><rect width="800" height="300"/></svg>',
-          source: "graph LR; A-->B",
-        }}
-        onClose={onClose}
-      />,
-    )
+    render(<MediaLightbox target={MERMAID_TARGET} onClose={onClose} />)
 
     const dialog = document.querySelector<HTMLDialogElement>("dialog.media-lightbox")!
-    const svg = dialog.querySelector(".media-lightbox-svg-frame svg")
-    expect(svg).toBeTruthy()
-    expect(svg!.id).not.toBe("omd-mmd-9")
+    await waitFor(() => {
+      const frame = dialog.querySelector<HTMLElement>(".media-lightbox-svg-frame")
+      expect(frame?.hidden).toBe(false)
+      expect(frame?.querySelector("svg")).toBeTruthy()
+    })
+
+    const svg = dialog.querySelector(".media-lightbox-svg-frame svg")!
+    expect(svg.id).toMatch(/^omd-lb-/)
+    expect(svg.querySelector("foreignObject br")).toBeTruthy()
+    expect(dialog.querySelector(".media-lightbox-broken")).toBeNull()
     expect(screen.queryByLabelText("Edit source")).toBeNull()
 
     // Keyboard zoom in (+) and reset (1)
@@ -90,7 +105,7 @@ describe("MediaLightbox", () => {
     expect(screen.getByText("100%")).toBeTruthy()
     expect(content.style.transform).toContain("translate3d(0px, 0px, 0) scale(1)")
 
-    // Copy SVG writes cleaned SVG markup (explicit dimensions, no max-width) to clipboard
+    // Copy SVG writes normalized SVG markup (explicit dimensions, no max-width) to clipboard
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
     fireEvent.click(screen.getByLabelText("Copy SVG"))
@@ -113,15 +128,13 @@ describe("MediaLightbox", () => {
     }
   })
 
-  it("keeps the native modal open across parent re-renders with a fresh onClose", () => {
+  it("keeps the native modal open across parent re-renders with a fresh onClose", async () => {
     const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal")
     const close = vi.spyOn(HTMLDialogElement.prototype, "close")
     try {
       const { rerender } = render(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
       expect(showModal).toHaveBeenCalledTimes(1)
 
-      // A fresh inline `onClose` identity on every parent render used to tear the
-      // native modal down and rebuild it (losing zoom state, SVG DOM, and focus).
       rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
       rerender(<MediaLightbox target={MERMAID_TARGET} onClose={() => {}} />)
       expect(showModal).toHaveBeenCalledTimes(1)
@@ -150,7 +163,6 @@ describe("MediaLightbox", () => {
       const closeBtn = screen.getByLabelText("Close (Esc)")
       expect(document.activeElement).toBe(closeBtn)
 
-      // Escape closes the native dialog, which reports the close to React.
       fireEvent.keyDown(document.querySelector("dialog.media-lightbox")!, { key: "Escape" })
       expect(onClose).toHaveBeenCalledTimes(1)
       expect(document.activeElement).toBe(opener)
@@ -163,17 +175,21 @@ describe("MediaLightbox", () => {
     }
   })
 
-  it("renders the broken state instead of injecting malformed Mermaid SVG", () => {
+  it("renders the broken state and disables Copy SVG when Mermaid rendering fails", async () => {
+    mockRenderMermaidSvg.mockRejectedValueOnce(new Error("syntax error"))
     render(
       <MediaLightbox
-        target={{ kind: "mermaid", svg: "<svg><unclosed", source: "graph LR" }}
+        target={{ kind: "mermaid", source: "!!!bad mermaid!!!" }}
         onClose={() => {}}
       />,
     )
-    const broken = document.querySelector(".media-lightbox-broken")
-    expect(broken?.getAttribute("role")).toBe("status")
-    expect(document.querySelector(".media-lightbox-svg-frame")).toBeNull()
-    expect(document.querySelector("dialog.media-lightbox")!.innerHTML).not.toContain("unclosed")
+    await waitFor(() => {
+      const broken = document.querySelector(".media-lightbox-broken")
+      expect(broken?.getAttribute("role")).toBe("status")
+    })
+    const copyBtn = screen.getByLabelText("Copy SVG") as HTMLButtonElement
+    expect(copyBtn.disabled).toBe(true)
+    expect(document.querySelector<HTMLElement>(".media-lightbox-svg-frame")?.hidden).toBe(true)
   })
 
   it("auto-dismisses when active tab or document identity changes (useMediaLightbox)", () => {
@@ -210,16 +226,11 @@ describe("MediaLightbox", () => {
     const stage = document.querySelector<HTMLElement>(".media-lightbox-stage")!
     const content = document.querySelector<HTMLElement>(".media-lightbox-content")!
 
-    // Small pixel deltas are a two-finger trackpad scroll: pan, never zoom.
     fireEvent.wheel(stage, { deltaX: 0, deltaY: -10, clientX: 0, clientY: 0 })
-    // Wheel/wheel-pan writes coalesce into one rAF frame; zoom readout is synchronous.
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     expect(screen.getByText("100%")).toBeTruthy()
     expect(content.style.transform).toContain("translate3d(0px, 10px, 0)")
 
-    // Cmd+scroll zooms even with a small delta. happy-dom's WheelEvent extends
-    // UIEvent (real browsers extend MouseEvent), so `metaKey` must be attached
-    // explicitly to exercise the host's pass-through.
     const cmdScroll = new WheelEvent("wheel", { deltaY: -10, bubbles: true, cancelable: true })
     Object.defineProperty(cmdScroll, "metaKey", { value: true })
     fireEvent(stage, cmdScroll)
@@ -244,18 +255,15 @@ describe("MediaLightbox", () => {
     const stage = document.querySelector<HTMLElement>(".media-lightbox-stage")!
     const content = document.querySelector<HTMLElement>(".media-lightbox-content")!
 
-    // Wheel zoom in
     fireEvent.wheel(stage, { deltaY: -120, clientX: 0, clientY: 0 })
     expect(screen.queryByText("100%")).toBeNull()
 
-    // Drag pan (> 4px threshold) must NOT close on pointerup
     fireEvent.pointerDown(stage, { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
     fireEvent.pointerMove(stage, { pointerId: 1, clientX: 150, clientY: 130 })
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 150, clientY: 130 })
     expect(onClose).not.toHaveBeenCalled()
     expect(content.style.transform).toContain("translate3d(50px, 30px, 0)")
 
-    // Plain click on empty stage closes the lightbox
     fireEvent.pointerDown(stage, { button: 0, pointerId: 2, clientX: 10, clientY: 10 })
     fireEvent.pointerUp(stage, { pointerId: 2, clientX: 10, clientY: 10 })
     expect(onClose).toHaveBeenCalledTimes(1)

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, Code, Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react"
-import type { MediaInspectTarget } from "@omd/engine"
+import {
+  renderMermaidSvg,
+  resolveDocumentMermaidTheme,
+  subscribeDocumentMermaidTheme,
+  type MediaInspectTarget,
+  type MermaidTheme,
+} from "@omd/engine"
 import { useT } from "./i18n"
 import {
   IDENTITY_TRANSFORM,
@@ -13,8 +19,9 @@ import {
   applyWheelGesture,
   clampPan,
   fitScale,
+  normalizeLightboxSvgElement,
   panBy,
-  prepareLightboxSvg,
+  serializeSvgForClipboard,
   zoomAtPoint,
   type BoxSize,
   type LightboxTransform,
@@ -38,7 +45,7 @@ interface ZoomUiState {
   readonly atMax: boolean
 }
 
-type ImageLoadState = "loading" | "ready" | "error"
+type MediaLoadState = "loading" | "ready" | "error"
 
 function zoomUiOf(scale: number): ZoomUiState {
   return {
@@ -50,6 +57,14 @@ function zoomUiOf(scale: number): ZoomUiState {
 
 function formatTransform(t: LightboxTransform): string {
   return `translate3d(${t.x}px, ${t.y}px, 0) scale(${t.scale})`
+}
+
+function measureSvgUnscaled(content: HTMLElement | null, svg: Element): BoxSize | null {
+  const prevTransform = content?.style.transform ?? ""
+  if (content) content.style.transform = "none"
+  const rect = svg.getBoundingClientRect()
+  if (content) content.style.transform = prevTransform
+  return rect.width > 0 && rect.height > 0 ? { width: rect.width, height: rect.height } : null
 }
 
 /**
@@ -87,6 +102,7 @@ function MediaLightboxDialog(props: {
   onCloseRef.current = onClose
   const stageRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const svgFrameRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const contentSizeRef = useRef<BoxSize | null>(null)
@@ -94,16 +110,14 @@ function MediaLightboxDialog(props: {
   const userAdjustedRef = useRef(false)
   const rafRef = useRef<number | null>(null)
   const copyTimerRef = useRef<number | null>(null)
+  const mermaidSeqRef = useRef(0)
 
   const [zoomUi, setZoomUi] = useState<ZoomUiState>(() => zoomUiOf(1))
   const [dragging, setDragging] = useState(false)
   const [copiedSvg, setCopiedSvg] = useState(false)
-  const [imgState, setImgState] = useState<ImageLoadState>("loading")
-
-  const preparedSvg = useMemo(
-    () => (target.kind === "mermaid" ? prepareLightboxSvg(target.svg, svgPrefix) : null),
-    [target, svgPrefix],
-  )
+  const [imgState, setImgState] = useState<MediaLoadState>("loading")
+  const [mermaidState, setMermaidState] = useState<MediaLoadState>("loading")
+  const [mermaidTheme, setMermaidTheme] = useState<MermaidTheme>(resolveDocumentMermaidTheme)
 
   const viewportSize = useCallback((): BoxSize | null => {
     const stage = stageRef.current
@@ -163,7 +177,6 @@ function MediaLightboxDialog(props: {
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
-    // Captured before `showModal()` moves focus into the top layer.
     openerRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null
@@ -200,20 +213,60 @@ function MediaLightboxDialog(props: {
     }
   }, [])
 
-  // Initialize intrinsic dimensions and fit transform for Mermaid or already-cached images.
+  // Track `data-theme` changes so an open Mermaid lightbox re-renders in the new theme.
+  useEffect(() => {
+    if (target.kind !== "mermaid") return
+    setMermaidTheme(resolveDocumentMermaidTheme())
+    return subscribeDocumentMermaidTheme(setMermaidTheme)
+  }, [target.kind])
+
+  // Render Mermaid directly from source through the shared engine pipeline (fresh id,
+  // Mermaid's strict DOMPurify sanitization, HTML5 DOM mount — no XML round-trip), or
+  // initialize intrinsic dimensions for already-cached images.
   useEffect(() => {
     setCopiedSvg(false)
     userAdjustedRef.current = false
     if (target.kind === "mermaid") {
-      if (preparedSvg && preparedSvg.width && preparedSvg.height) {
-        contentSizeRef.current = { width: preparedSvg.width, height: preparedSvg.height }
-        commitTransform(computeFitTransform(), true)
-      } else {
+      let cancelled = false
+      const frame = svgFrameRef.current
+      if (frame) frame.replaceChildren()
+      contentSizeRef.current = null
+      setMermaidState("loading")
+      commitTransform(IDENTITY_TRANSFORM, true)
+
+      const renderId = `${svgPrefix}-${++mermaidSeqRef.current}`
+      void renderMermaidSvg(target.source, {
+        id: renderId,
+        theme: mermaidTheme,
+        useCache: false,
+      }).then(rendered => {
+        if (cancelled) return
+        const currentFrame = svgFrameRef.current
+        if (!currentFrame) return
+        currentFrame.innerHTML = rendered.svg
+        rendered.bindFunctions?.(currentFrame)
+        const svg = currentFrame.querySelector("svg")
+        if (!svg) {
+          currentFrame.replaceChildren()
+          contentSizeRef.current = null
+          setMermaidState("error")
+          return
+        }
+        const intrinsic = normalizeLightboxSvgElement(svg)
+        setMermaidState("ready")
+        const measured = intrinsic ?? measureSvgUnscaled(contentRef.current, svg)
+        contentSizeRef.current = measured
+        commitTransform(measured ? computeFitTransform() : IDENTITY_TRANSFORM, true)
+      }, () => {
+        if (cancelled) return
+        svgFrameRef.current?.replaceChildren()
         contentSizeRef.current = null
+        setMermaidState("error")
         commitTransform(IDENTITY_TRANSFORM, true)
-      }
-      return
+      })
+      return () => { cancelled = true }
     }
+
     const img = imgRef.current
     if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
       contentSizeRef.current = { width: img.naturalWidth, height: img.naturalHeight }
@@ -224,7 +277,7 @@ function MediaLightboxDialog(props: {
     contentSizeRef.current = null
     setImgState("loading")
     commitTransform(IDENTITY_TRANSFORM, true)
-  }, [preparedSvg, target, computeFitTransform, commitTransform])
+  }, [target, mermaidTheme, svgPrefix, computeFitTransform, commitTransform])
 
   // Keep fit/clamping accurate when the desktop window is resized while inspecting.
   useEffect(() => {
@@ -304,10 +357,11 @@ function MediaLightboxDialog(props: {
   }, [target, closeDialog])
 
   const handleCopySvg = useCallback(() => {
-    if (target.kind !== "mermaid") return
+    if (target.kind !== "mermaid" || mermaidState !== "ready") return
+    const svg = svgFrameRef.current?.querySelector("svg")
     const write = navigator.clipboard?.writeText
-    if (!write) return
-    const payload = preparedSvg?.markup ?? target.svg
+    if (!svg || !write) return
+    const payload = serializeSvgForClipboard(svg)
     void write.call(navigator.clipboard, payload).then(() => {
       setCopiedSvg(true)
       if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
@@ -316,7 +370,7 @@ function MediaLightboxDialog(props: {
         setCopiedSvg(false)
       }, COPY_FEEDBACK_MS)
     }, () => {})
-  }, [target, preparedSvg])
+  }, [target, mermaidState])
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
     // Isolate modal keyboard input so App-level window shortcuts never fire behind the lightbox.
@@ -503,6 +557,7 @@ function MediaLightboxDialog(props: {
               type="button"
               className="media-lightbox-btn"
               onClick={handleCopySvg}
+              disabled={mermaidState !== "ready"}
               aria-label={copiedSvg ? t("lightbox.copiedSvg") : t("lightbox.copySvg")}
               title={copiedSvg ? t("lightbox.copiedSvg") : t("lightbox.copySvg")}
             >
@@ -571,17 +626,19 @@ function MediaLightboxDialog(props: {
                 onError={() => setImgState("error")}
               />
             )
-          ) : preparedSvg && preparedSvg.markup !== "" ? (
-            <div
-              className="media-lightbox-svg-frame"
-              // Sanitized (and id-namespaced) by `prepareLightboxSvg`; a rejected
-              // SVG yields empty markup and renders the broken state below.
-              dangerouslySetInnerHTML={{ __html: preparedSvg.markup }}
-            />
           ) : (
-            <div className="media-lightbox-broken" role="status">
-              {t("lightbox.mermaidTitle")}
-            </div>
+            <>
+              <div
+                ref={svgFrameRef}
+                className="media-lightbox-svg-frame"
+                hidden={mermaidState !== "ready"}
+              />
+              {mermaidState === "error" ? (
+                <div className="media-lightbox-broken" role="status">
+                  {t("lightbox.mermaidTitle")}
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </div>
