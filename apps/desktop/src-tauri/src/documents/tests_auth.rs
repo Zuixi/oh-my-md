@@ -118,6 +118,63 @@ fn a_missing_document_is_authorized_so_reads_report_missing() {
 }
 
 #[test]
+fn the_host_derives_read_only_from_the_byte_size_not_from_the_renderer() {
+    let root = tmp("read-only-threshold");
+    let doc = root.join("huge.md");
+    write(&doc);
+    crate::auth_scope::authorize_document_file("doc-ro", &doc).unwrap();
+    let requested = path_string(&doc);
+
+    // One byte under the threshold: an ordinary writable document.
+    sync_read_only_mode(
+        "doc-ro",
+        &requested,
+        None,
+        OPEN_READONLY_THRESHOLD_BYTES - 1,
+    );
+    assert!(authorize_document_write_ipc("doc-ro", &requested).is_ok());
+
+    // At the threshold the host itself refuses writes while reads stay open.
+    sync_read_only_mode("doc-ro", &requested, None, OPEN_READONLY_THRESHOLD_BYTES);
+    assert!(authorize_document_ipc("doc-ro", &requested).is_ok());
+    assert!(matches!(
+        authorize_document_write_ipc("doc-ro", &requested),
+        Err(DocumentError::PermissionDenied(_))
+    ));
+
+    // A shrunken file (or a reload) clears the verdict again.
+    sync_read_only_mode("doc-ro", &requested, None, 0);
+    assert!(authorize_document_write_ipc("doc-ro", &requested).is_ok());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn a_read_only_document_is_refused_by_the_save_gate_but_not_the_read_gate() {
+    let root = tmp("read-only-save");
+    let doc = root.join("note.md");
+    write(&doc);
+    crate::auth_scope::authorize_workspace_root("doc-ro-save", &root).unwrap();
+    let requested = path_string(&doc);
+
+    crate::auth_scope::set_document_access_mode(
+        "doc-ro-save",
+        &doc,
+        crate::auth_scope::AccessMode::ReadOnly,
+    );
+
+    assert!(authorize_document_ipc("doc-ro-save", &requested).is_ok());
+    assert!(matches!(
+        authorize_document_write_ipc("doc-ro-save", &requested),
+        Err(DocumentError::PermissionDenied(_))
+    ));
+    // A sibling in the same root is unaffected.
+    let sibling = root.join("other.md");
+    write(&sibling);
+    assert!(authorize_document_write_ipc("doc-ro-save", &path_string(&sibling)).is_ok());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn revoking_a_window_closes_its_documents() {
     let root = tmp("revoked");
     let doc = root.join("note.md");

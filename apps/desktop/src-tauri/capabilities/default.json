@@ -5,7 +5,6 @@
   "windows": ["main", "editor-*"],
   "permissions": [
     "core:default",
-    "opener:default",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",

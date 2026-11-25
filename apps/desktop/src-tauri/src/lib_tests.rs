@@ -124,3 +124,7 @@ fn startup_window_theme_reads_persisted_theme_tolerantly() {
     assert!(startup_window_theme("not json").is_none());
     assert!(startup_window_theme("").is_none());
 }
+
+/// The command registry drift guard; reads the shipped manifest and `lib.rs`.
+#[path = "command_inventory_tests.rs"]
+mod command_inventory_tests;

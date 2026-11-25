@@ -2,13 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { errorMessage, toDocumentCommandError } from "../src/desktopServices"
 import type { LogRecord } from "../src/logger"
 
-const { invoke, revealItemInDir, toast } = vi.hoisted(() => ({
+const { invoke, toast } = vi.hoisted(() => ({
   invoke: vi.fn(),
-  revealItemInDir: vi.fn(),
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
-vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }))
 vi.mock("react-toastify", () => ({ toast }))
 
 import { defaultServices } from "../src/desktopServices"
@@ -62,7 +60,7 @@ describe("revealInFinder", () => {
   const MACOS_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
   const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
-  /** happy-dom 的默认 UA 是 X11(→ linux)，平台分支用例必须显式钉住 UA 再还原。 */
+  /** happy-dom defaults to an X11 UA (→ linux); platform branches pin one and restore it. */
   async function withUserAgent(userAgent: string, run: () => Promise<void>): Promise<void> {
     const original = Object.getOwnPropertyDescriptor(window.navigator, "userAgent")
     Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true })
@@ -74,30 +72,52 @@ describe("revealInFinder", () => {
     }
   }
 
-  it("delegates to the official plugin-opener binding with the path", async () => {
-    revealItemInDir.mockResolvedValueOnce(undefined)
+  it("invokes reveal_in_finder with the path", async () => {
     invoke.mockClear()
+    invoke.mockResolvedValueOnce(undefined)
     await defaultServices.revealInFinder?.("/tmp/notes.md")
-    expect(revealItemInDir).toHaveBeenCalledWith("/tmp/notes.md")
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith("reveal_in_finder", { path: "/tmp/notes.md" })
   })
 
-  it("hands the Windows shell a backslash path (the plugin can then simplify \\\\?\\…)", async () => {
+  it("hands the Windows shell a backslash path (Rust can then simplify \\\\?\\…)", async () => {
     await withUserAgent(WINDOWS_UA, async () => {
-      revealItemInDir.mockClear()
-      revealItemInDir.mockResolvedValueOnce(undefined)
+      invoke.mockClear()
+      invoke.mockResolvedValueOnce(undefined)
       await defaultServices.revealInFinder?.("//?/E:/note/中文 文档.md")
-      expect(revealItemInDir).toHaveBeenCalledWith("\\\\?\\E:\\note\\中文 文档.md")
+      expect(invoke).toHaveBeenCalledWith("reveal_in_finder", {
+        path: "\\\\?\\E:\\note\\中文 文档.md",
+      })
     })
   })
 
   it("leaves non-Windows paths untouched", async () => {
     await withUserAgent(MACOS_UA, async () => {
-      revealItemInDir.mockClear()
-      revealItemInDir.mockResolvedValueOnce(undefined)
+      invoke.mockClear()
+      invoke.mockResolvedValueOnce(undefined)
       await defaultServices.revealInFinder?.("//?/notes/doc.md")
-      expect(revealItemInDir).toHaveBeenCalledWith("//?/notes/doc.md")
+      expect(invoke).toHaveBeenCalledWith("reveal_in_finder", { path: "//?/notes/doc.md" })
     })
+  })
+
+  it("propagates a rejection so the caller can report it", async () => {
+    invoke.mockClear()
+    invoke.mockRejectedValueOnce(new Error("path is not authorized for this window"))
+    await expect(defaultServices.revealInFinder?.("/etc/passwd")).rejects.toThrow(/not authorized/)
+  })
+})
+
+describe("openExternal", () => {
+  it("invokes open_external_url with the url", async () => {
+    invoke.mockClear()
+    invoke.mockResolvedValueOnce(undefined)
+    await defaultServices.openExternal?.("https://example.com/docs")
+    expect(invoke).toHaveBeenCalledWith("open_external_url", { url: "https://example.com/docs" })
+  })
+
+  it("swallows a rejection so a bad link never blocks the editor", async () => {
+    invoke.mockClear()
+    invoke.mockRejectedValueOnce(new Error("URL scheme must be http, https, or mailto"))
+    await expect(defaultServices.openExternal?.("javascript:alert(1)")).resolves.toBeUndefined()
   })
 })
 
