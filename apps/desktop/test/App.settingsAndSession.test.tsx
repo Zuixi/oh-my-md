@@ -94,7 +94,8 @@ describe("App Settings & Session Restore integration", () => {
 
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeTruthy()
 
-    // Change font size input
+    // Switch to Editor tab and change font size input
+    fireEvent.click(screen.getByRole("tab", { name: "Editor" }))
     const fontSizeInput = screen.getByLabelText("Font Size") as HTMLInputElement
     fireEvent.change(fontSizeInput, { target: { value: "20" } })
 
@@ -120,6 +121,7 @@ describe("App Settings & Session Restore integration", () => {
     expect(views.length).toBe(2)
 
     fireEvent.keyDown(window, { key: ",", metaKey: true })
+    fireEvent.click(screen.getByRole("tab", { name: "Editor" }))
     fireEvent.click(screen.getByLabelText("Auto pair quotes"))
 
     const expected: AutoPairOptions = { brackets: true, quotes: false, markdownSyntax: true }
@@ -284,6 +286,7 @@ it("waits for the settings save before restarting to apply logging", async () =>
   await act(async () => { await Promise.resolve() })
 
   fireEvent.keyDown(window, { key: ",", metaKey: true })
+  fireEvent.click(screen.getByRole("tab", { name: "Logging" }))
   fireEvent.click(screen.getByLabelText("Save diagnostic logs"))
   fireEvent.click(screen.getByRole("button", { name: "Restart now to apply" }))
 

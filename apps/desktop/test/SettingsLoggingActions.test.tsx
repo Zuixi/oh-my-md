@@ -17,7 +17,7 @@ function renderPanel(overrides: {
   openUrl?: (url: string) => void
   onRestartToApplyLogging?: () => void
 } = {}) {
-  return render(
+  const result = render(
     <SettingsModal
       isOpen={true}
       settings={{ ...DEFAULT_SETTINGS, loggingEnabled: overrides.loggingEnabled ?? false }}
@@ -28,6 +28,8 @@ function renderPanel(overrides: {
       onRestartToApplyLogging={overrides.onRestartToApplyLogging}
     />,
   )
+  fireEvent.click(screen.getByRole("tab", { name: "Logging" }))
+  return result
 }
 
 // Without these links the feature ends at "logging is on": the guide (where the

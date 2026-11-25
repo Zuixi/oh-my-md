@@ -99,7 +99,7 @@ describe("App native window theme sync", () => {
     })
 
     fireEvent.keyDown(window, { key: ",", metaKey: true })
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "system" } })
+    fireEvent.click(screen.getByRole("radio", { name: "Follow System" }))
     fireEvent.click(screen.getByRole("button", { name: "Done" }))
 
     await waitFor(() => {

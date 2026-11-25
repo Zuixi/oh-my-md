@@ -6,6 +6,10 @@ import { DEFAULT_SETTINGS, FONT_FAMILY_PRESETS, type UserSettings } from "../src
 import { initLocale } from "../src/i18n"
 import type { LogStateView } from "../src/logging"
 
+function openTab(name: "General" | "Editor" | "Export" | "Logging") {
+  fireEvent.click(screen.getByRole("tab", { name }))
+}
+
 describe("SettingsModal", () => {
   afterEach(() => initLocale("en"))
 
@@ -21,7 +25,7 @@ describe("SettingsModal", () => {
     expect(screen.queryByRole("dialog", { name: "Preferences" })).toBeNull()
   })
 
-  it("renders when open with all settings inputs", () => {
+  it("renders a two-pane category nav and switches panels via click and keyboard", () => {
     render(
       <SettingsModal
         isOpen={true}
@@ -31,15 +35,27 @@ describe("SettingsModal", () => {
       />,
     )
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeTruthy()
-    expect(screen.getByLabelText("Theme")).toBeTruthy()
+    const generalTab = screen.getByRole("tab", { name: "General" })
+    expect(generalTab.getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByRole("radiogroup", { name: "Theme" })).toBeTruthy()
+    expect(screen.getByLabelText("Language")).toBeTruthy()
+    expect(screen.getByRole("radiogroup", { name: "Default Mode" })).toBeTruthy()
+
+    // ArrowDown moves to Editor; End jumps to Logging; Home returns to General.
+    fireEvent.keyDown(generalTab, { key: "ArrowDown" })
+    expect(screen.getByRole("tab", { name: "Editor" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByLabelText("Font Size")).toBeTruthy()
     expect(screen.getByLabelText("Line Height")).toBeTruthy()
-    expect(screen.getByLabelText("Tab Size")).toBeTruthy()
-    expect(screen.getByLabelText("Default Mode")).toBeTruthy()
+    expect(screen.getByRole("radiogroup", { name: "Tab Size" })).toBeTruthy()
     expect(screen.getByLabelText("Spellcheck")).toBeTruthy()
-    expect(screen.getByLabelText("Export Width")).toBeTruthy()
-    expect(screen.getByLabelText("Quality")).toBeTruthy()
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Editor" }), { key: "End" })
+    expect(screen.getByRole("tab", { name: "Logging" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByLabelText("Enable verbose logging")).toBeTruthy()
+
+    openTab("Export")
+    expect(screen.getByLabelText("Export Width")).toBeTruthy()
+    expect(screen.getByRole("radiogroup", { name: "Quality" })).toBeTruthy()
   })
 
   it("saves the verbose-logging toggle", () => {
@@ -52,7 +68,7 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
-
+    openTab("Logging")
     fireEvent.click(screen.getByLabelText("Enable verbose logging"))
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ verboseLogging: true }),
@@ -60,7 +76,7 @@ describe("SettingsModal", () => {
   })
 
   // The restart note is the honest half of the toggle: `effective_level()` runs
-  // once, when the plugin is built during startup, so flipping the checkbox
+  // once, when the plugin is built during startup, so flipping the switch
   // cannot change this session's level.
   it("tells the user the verbose toggle applies after a restart", () => {
     render(
@@ -71,13 +87,12 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
+    openTab("Logging")
     expect(
       screen.getByText("Only applies when logging is on. Takes effect after restarting oh-my-md."),
     ).toBeTruthy()
   })
 
-  // The real directory answered the probe: there is nothing to warn about, and
-  // a warning here would be noise on every normal launch.
   it("shows no logging warning when logging writes to the real directory", () => {
     render(
       <SettingsModal
@@ -88,12 +103,10 @@ describe("SettingsModal", () => {
         logState={{ degraded: false, dir: "/Users/me/Library/Logs/oh-my-md", destination: { kind: "directory" } }}
       />,
     )
+    openTab("Logging")
     expect(screen.queryByText("Logging is degraded")).toBeNull()
   })
 
-  // Fallback: records really do land in the temp directory, so the copy names
-  // it — and says why, since the fix is usually filesystem permissions on the
-  // real log directory.
   it("names the temp directory when logging degraded to the fallback", () => {
     render(
       <SettingsModal
@@ -104,6 +117,7 @@ describe("SettingsModal", () => {
         logState={{ degraded: true, dir: "/tmp", destination: { kind: "fallback" } }}
       />,
     )
+    openTab("Logging")
     expect(screen.getByText("Logging is degraded")).toBeTruthy()
     expect(
       screen.getByText("The log folder was not writable; logs are going to:"),
@@ -111,10 +125,6 @@ describe("SettingsModal", () => {
     expect(screen.getByText("/tmp")).toBeTruthy()
   })
 
-  // Both registrations failed, so there is no file and — because the `Stdout`
-  // target lives inside the same plugin dispatch — no console stream either.
-  // Promising a directory here would send the user to a path nothing writes, so
-  // the warning must say so and must not print a path at all.
   it("warns that nothing is being logged when file logging is disabled", () => {
     const { container } = render(
       <SettingsModal
@@ -125,6 +135,7 @@ describe("SettingsModal", () => {
         logState={{ degraded: true, dir: "", destination: { kind: "disabled" } }}
       />,
     )
+    openTab("Logging")
     expect(screen.getByText("Logging is degraded")).toBeTruthy()
     expect(
       screen.getByText(
@@ -134,7 +145,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-warning-path")).toBeNull()
   })
 
-  it("renders the three auto pair checkboxes checked by default", () => {
+  it("renders the three auto pair switches checked by default", () => {
     render(
       <SettingsModal
         isOpen={true}
@@ -143,6 +154,7 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
+    openTab("Editor")
 
     const contractIds: Array<[string, string]> = [
       ["Auto pair brackets", "setting-auto-pair-brackets"],
@@ -166,7 +178,7 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Auto pair quotes"))
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
@@ -174,7 +186,7 @@ describe("SettingsModal", () => {
     }))
   })
 
-  it("calls onSave when changing settings", () => {
+  it("calls onSave when changing theme cards, default mode, font size, and tab size", () => {
     const onSave = vi.fn()
     render(
       <SettingsModal
@@ -185,14 +197,21 @@ describe("SettingsModal", () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "dark" }))
+
+    fireEvent.click(screen.getByRole("radio", { name: "Source Mode" }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ defaultMode: "source" }))
+
+    openTab("Editor")
     fireEvent.change(screen.getByLabelText("Font Size"), { target: { value: "18" } })
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 18 }))
 
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "dark" } })
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "dark" }))
+    fireEvent.click(screen.getByRole("radio", { name: "4 spaces" }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ tabSize: 4 }))
   })
 
-  it("closes when clicking close button or pressing Escape", () => {
+  it("closes when clicking close button, Done, or pressing Escape", () => {
     const onClose = vi.fn()
     render(
       <SettingsModal
@@ -204,12 +223,13 @@ describe("SettingsModal", () => {
     )
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }))
-    expect(onClose).toHaveBeenCalledOnce()
+    expect(onClose).toHaveBeenCalledTimes(1)
 
-    // Key events reach the dialog through the document, exactly like a real
-    // keypress on the focused control inside it.
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
     expect(onClose).toHaveBeenCalledTimes(2)
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    expect(onClose).toHaveBeenCalledTimes(3)
   })
 
   it("resets to defaults when clicking Reset", () => {
@@ -279,8 +299,7 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
-    // DEFAULT_SETTINGS.fontFamily is the System Default preset value; the row
-    // label names the trigger, whose text shows the active preset label.
+    openTab("Editor")
     const trigger = screen.getByLabelText("Font Family")
     expect(trigger.tagName).toBe("BUTTON")
     expect(trigger.textContent).toBe("System Default")
@@ -297,7 +316,7 @@ describe("SettingsModal", () => {
         listSystemFonts={vi.fn(async () => ["Arial", "Menlo"])}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Font Family"))
     const search = await screen.findByPlaceholderText("Search fonts…")
     await screen.findByRole("option", { name: "Arial" })
@@ -321,7 +340,7 @@ describe("SettingsModal", () => {
         listSystemFonts={vi.fn(async () => ["Arial", "Menlo"])}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Font Family"))
     await screen.findByRole("option", { name: "Arial" })
     fireEvent.click(screen.getByRole("option", { name: "Serif" }))
@@ -342,7 +361,7 @@ describe("SettingsModal", () => {
         listSystemFonts={vi.fn(async () => null)}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Font Family"))
     expect(await screen.findByText("Failed to load system fonts")).toBeTruthy()
     fireEvent.click(screen.getByRole("option", { name: "Monospace" }))
@@ -361,7 +380,7 @@ describe("SettingsModal", () => {
         onClose={vi.fn()}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Font Family"))
     expect(screen.getByRole("option", { name: "Serif" })).toBeTruthy()
     expect(screen.queryByText("Failed to load system fonts")).toBeNull()
@@ -380,7 +399,7 @@ describe("SettingsModal", () => {
         listSystemFonts={vi.fn(async () => ["Arial", "Menlo"])}
       />,
     )
-
+    openTab("Editor")
     fireEvent.click(screen.getByLabelText("Font Family"))
     const search = await screen.findByPlaceholderText("Search fonts…")
     fireEvent.keyDown(search, { key: "Escape" })
@@ -391,9 +410,6 @@ describe("SettingsModal", () => {
   })
 })
 
-// PNG export size: width × scale is the exported bitmap's pixel width. Both
-// selects drive the same draft-save path as every other row, so each change
-// commits through onSave immediately.
 describe("export settings", () => {
   it("shows the current export width and scale", () => {
     render(
@@ -404,8 +420,9 @@ describe("export settings", () => {
         onClose={vi.fn()}
       />,
     )
+    openTab("Export")
     expect(screen.getByLabelText("Export Width")).toHaveProperty("value", "1200")
-    expect(screen.getByLabelText("Quality")).toHaveProperty("value", "3")
+    expect(screen.getByRole("radio", { name: "3x" }).getAttribute("aria-checked")).toBe("true")
     expect(screen.getByText("Resulting image width: 3600 px")).toBeTruthy()
   })
 
@@ -426,15 +443,15 @@ describe("export settings", () => {
       )
     }
     render(<ExportHarness />)
+    openTab("Export")
 
     const widthSelect = screen.getByLabelText("Export Width")
-    const scaleSelect = screen.getByLabelText("Quality")
     expect(widthSelect).toHaveProperty("value", "800")
-    expect(scaleSelect).toHaveProperty("value", "2")
+    expect(screen.getByRole("radio", { name: "2x" }).getAttribute("aria-checked")).toBe("true")
     expect(screen.getByText("Resulting image width: 1600 px")).toBeTruthy()
 
     fireEvent.change(widthSelect, { target: { value: "1920" } })
-    fireEvent.change(scaleSelect, { target: { value: "3" } })
+    fireEvent.click(screen.getByRole("radio", { name: "3x" }))
 
     expect(screen.getByText("Resulting image width: 5760 px")).toBeTruthy()
     expect(onSave).toHaveBeenLastCalledWith(
@@ -452,13 +469,14 @@ describe("export settings", () => {
         onClose={vi.fn()}
       />,
     )
+    openTab("Export")
     expect(screen.getByRole("heading", { name: "Image (PNG)" })).toBeTruthy()
     expect(screen.getByRole("heading", { name: "PDF & Print" })).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText("Paper"), { target: { value: "letter" } })
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportPaper: "letter" }))
 
-    fireEvent.change(screen.getByLabelText("Orientation"), { target: { value: "landscape" } })
+    fireEvent.click(screen.getByRole("radio", { name: "Landscape" }))
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportOrientation: "landscape" }))
 
     fireEvent.change(screen.getByLabelText("Heading page breaks"), { target: { value: "h1-h2" } })
@@ -485,21 +503,19 @@ describe("export settings", () => {
       )
     }
     render(<MarginHarness />)
+    openTab("Export")
 
     const top = screen.getByLabelText("Top margin") as HTMLInputElement
     expect(top.value).toBe("16")
 
-    // Clearing the field keeps an empty draft without snapping to 0.
     fireEvent.change(top, { target: { value: "" } })
     expect(top.value).toBe("")
     expect(onSave).not.toHaveBeenCalled()
 
-    // Blurring an empty draft restores the previous committed margin.
     fireEvent.blur(top)
     expect(top.value).toBe("16")
     expect(onSave).not.toHaveBeenCalled()
 
-    // Decimal in-progress input ("12.") is preserved, then committed once complete.
     fireEvent.change(top, { target: { value: "12." } })
     expect(top.value).toBe("12.")
     expect(onSave).not.toHaveBeenCalled()
@@ -507,7 +523,6 @@ describe("export settings", () => {
     fireEvent.change(top, { target: { value: "12.5" } })
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ exportMarginTopMm: 12.5 }))
 
-    // Out-of-range drafts commit clamped on blur.
     fireEvent.change(top, { target: { value: "200" } })
     expect(top.value).toBe("200")
     fireEvent.blur(top)
@@ -539,6 +554,7 @@ describe("export settings", () => {
         const { unmount } = render(
           <SettingsModal isOpen={true} settings={DEFAULT_SETTINGS} onSave={vi.fn()} onClose={vi.fn()} />,
         )
+        openTab("Export")
         expect(screen.queryByText(/single continuous page/i)).toBeNull()
         expect(screen.queryByText(/not available on Linux/i)).toBeNull()
         unmount()
@@ -547,27 +563,29 @@ describe("export settings", () => {
   })
 })
 
-// Logging is opt-in, and the default install must say so plainly. The "off"
-// state is the user's own choice, so it must not borrow the degraded wording —
-// nothing failed, and telling a user their logging is "degraded" before they
-// ever enabled it is a false alarm on every fresh install.
 describe("logging opt-in", () => {
-  const renderWithSettings = (settings: UserSettings, logState?: LogStateView) => render(
-    <SettingsModal
-      isOpen={true}
-      settings={settings}
-      onSave={vi.fn()}
-      onClose={vi.fn()}
-      logState={logState}
-    />,
-  )
+  const renderWithSettings = (settings: UserSettings, logState?: LogStateView) => {
+    const result = render(
+      <SettingsModal
+        isOpen={true}
+        settings={settings}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        logState={logState}
+      />,
+    )
+    openTab("Logging")
+    return result
+  }
 
-  it("is off by default and explains how to turn it on", () => {
-    renderWithSettings(DEFAULT_SETTINGS, { degraded: false, dir: "", destination: { kind: "off" } })
+  it("is off by default and explains how to turn it on using a neutral info banner", () => {
+    const { container } = renderWithSettings(DEFAULT_SETTINGS, { degraded: false, dir: "", destination: { kind: "off" } })
     expect(screen.getByLabelText("Save diagnostic logs")).toHaveProperty("checked", false)
     expect(screen.getByText("Logging is off")).toBeTruthy()
     expect(screen.getByText(/Turn on "Save diagnostic logs" and restart/)).toBeTruthy()
     expect(screen.queryByText("Logging is degraded")).toBeNull()
+    expect(container.querySelector(".settings-info-box")).toBeTruthy()
+    expect(container.querySelector(".settings-warning")).toBeNull()
   })
 
   it("saves the logging toggle", () => {
@@ -581,6 +599,7 @@ describe("logging opt-in", () => {
         logState={{ degraded: false, dir: "", destination: { kind: "off" } }}
       />,
     )
+    openTab("Logging")
     fireEvent.click(screen.getByLabelText("Save diagnostic logs"))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ loggingEnabled: true }))
   })
@@ -599,23 +618,23 @@ describe("logging opt-in", () => {
   })
 })
 
-// The checkbox and the engine disagree for exactly one session, because
-// `install()` runs at startup. Reporting only the engine's answer told a user
-// who had just enabled logging to "turn on Save diagnostic logs" — an
-// instruction that contradicts the control directly above it.
 describe("logging status follows the pending change", () => {
   const off: LogStateView = { degraded: false, dir: "", destination: { kind: "off" } }
   const running: LogStateView = { degraded: false, dir: "/logs", destination: { kind: "directory" } }
 
-  const renderStatus = (loggingEnabled: boolean, logState: LogStateView) => render(
-    <SettingsModal
-      isOpen={true}
-      settings={{ ...DEFAULT_SETTINGS, loggingEnabled }}
-      onSave={vi.fn()}
-      onClose={vi.fn()}
-      logState={logState}
-    />,
-  )
+  const renderStatus = (loggingEnabled: boolean, logState: LogStateView) => {
+    const result = render(
+      <SettingsModal
+        isOpen={true}
+        settings={{ ...DEFAULT_SETTINGS, loggingEnabled }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        logState={logState}
+      />,
+    )
+    openTab("Logging")
+    return result
+  }
 
   it("says logging starts after a restart when it was just enabled", () => {
     renderStatus(true, off)
@@ -636,7 +655,7 @@ describe("logging status follows the pending change", () => {
     expect(screen.getByText("This session is still writing logs. Restart oh-my-md to stop.")).toBeTruthy()
   })
 
-  it("stays quiet when the checkbox and the engine agree that logging runs", () => {
+  it("stays quiet when the switch and the engine agree that logging runs", () => {
     renderStatus(true, running)
     expect(screen.queryByText("Logging is off")).toBeNull()
     expect(screen.queryByText("Logging is degraded")).toBeNull()

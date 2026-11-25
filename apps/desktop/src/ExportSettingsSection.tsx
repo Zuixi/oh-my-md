@@ -7,10 +7,12 @@ import {
   EXPORT_PAPERS,
   EXPORT_SCALE_OPTIONS,
   EXPORT_WIDTH_PRESETS,
+  type ExportOrientation,
   type ExportScale,
   type UserSettings,
 } from "./settings"
 import { useT } from "./i18n"
+import { SettingsRow, SettingsSegmented, SettingsSwitch } from "./SettingsControls"
 
 interface ExportSettingsSectionProps {
   settings: UserSettings
@@ -95,138 +97,145 @@ function MarginNumberInput({ id, value, onCommit }: MarginNumberInputProps) {
 export function ExportSettingsSection({ settings, onUpdate }: ExportSettingsSectionProps) {
   const t = useT()
 
+  const scaleOptions = EXPORT_SCALE_OPTIONS.map(scale => ({
+    value: scale as ExportScale,
+    label: t(`settings.export.scale.${scale}`),
+  }))
+
+  const orientationOptions = EXPORT_ORIENTATIONS.map(orientation => ({
+    value: orientation as ExportOrientation,
+    label: t(`settings.export.orientation.${orientation}`),
+  }))
+
   return (
     <div className="settings-section">
       <h3 className="settings-section-title">{t("settings.section.export")}</h3>
 
       <h4 className="settings-subheading">{t("settings.export.group.image")}</h4>
-      <div className="settings-row">
-        <label htmlFor="setting-export-width" className="settings-label">
-          {t("settings.label.exportWidth")}
-        </label>
-        <select
-          id="setting-export-width"
-          className="settings-select"
-          value={settings.exportWidth}
-          onChange={e => onUpdate({ exportWidth: Number(e.target.value) })}
-        >
-          {EXPORT_WIDTH_PRESETS.map(preset => (
-            <option key={preset.value} value={preset.value}>
-              {t(preset.labelKey)}
-            </option>
-          ))}
-        </select>
-      </div>
+      <div className="settings-card">
+        <SettingsRow
+          htmlFor="setting-export-width"
+          label={t("settings.label.exportWidth")}
+          control={(
+            <select
+              id="setting-export-width"
+              className="settings-select"
+              value={settings.exportWidth}
+              onChange={e => onUpdate({ exportWidth: Number(e.target.value) })}
+            >
+              {EXPORT_WIDTH_PRESETS.map(preset => (
+                <option key={preset.value} value={preset.value}>
+                  {t(preset.labelKey)}
+                </option>
+              ))}
+            </select>
+          )}
+        />
 
-      <div className="settings-row">
-        <label htmlFor="setting-export-scale" className="settings-label">
-          {t("settings.label.exportScale")}
-        </label>
-        <select
-          id="setting-export-scale"
-          className="settings-select"
-          value={settings.exportScale}
-          onChange={e => onUpdate({ exportScale: Number(e.target.value) as ExportScale })}
-        >
-          {EXPORT_SCALE_OPTIONS.map(scale => (
-            <option key={scale} value={scale}>
-              {t(`settings.export.scale.${scale}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <p className="settings-note">
-        {t("settings.export.pixelWidth", { width: settings.exportWidth * settings.exportScale })}
-      </p>
-
-      <h4 className="settings-subheading">{t("settings.export.group.pdf")}</h4>
-
-      <div className="settings-row">
-        <label htmlFor="setting-export-paper" className="settings-label">
-          {t("settings.label.exportPaper")}
-        </label>
-        <select
-          id="setting-export-paper"
-          className="settings-select"
-          value={settings.exportPaper}
-          onChange={e => onUpdate({ exportPaper: e.target.value as UserSettings["exportPaper"] })}
-        >
-          {EXPORT_PAPERS.map(paper => (
-            <option key={paper} value={paper}>
-              {t(`settings.export.paper.${paper}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="settings-row">
-        <label htmlFor="setting-export-orientation" className="settings-label">
-          {t("settings.label.exportOrientation")}
-        </label>
-        <select
-          id="setting-export-orientation"
-          className="settings-select"
-          value={settings.exportOrientation}
-          onChange={e => onUpdate({
-            exportOrientation: e.target.value as UserSettings["exportOrientation"],
-          })}
-        >
-          {EXPORT_ORIENTATIONS.map(orientation => (
-            <option key={orientation} value={orientation}>
-              {t(`settings.export.orientation.${orientation}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {MARGIN_FIELDS.map(([key, id, label]) => (
-        <div className="settings-row" key={key}>
-          <label htmlFor={id} className="settings-label">{t(label)}</label>
-          <div className="settings-field-group">
-            <MarginNumberInput
-              id={id}
-              value={settings[key]}
-              onCommit={mm => onUpdate({ [key]: mm })}
+        <SettingsRow
+          labelId="setting-export-scale-label"
+          label={t("settings.label.exportScale")}
+          note={t("settings.export.pixelWidth", { width: settings.exportWidth * settings.exportScale })}
+          control={(
+            <SettingsSegmented
+              labelledBy="setting-export-scale-label"
+              value={settings.exportScale}
+              options={scaleOptions}
+              onChange={exportScale => onUpdate({ exportScale })}
             />
-            <span className="settings-unit">{t("settings.unit.mm")}</span>
-          </div>
-        </div>
-      ))}
-
-      <div className="settings-row">
-        <label htmlFor="setting-export-heading-break" className="settings-label">
-          {t("settings.label.exportHeadingBreak")}
-        </label>
-        <select
-          id="setting-export-heading-break"
-          className="settings-select"
-          value={settings.exportHeadingPageBreak}
-          onChange={e => onUpdate({
-            exportHeadingPageBreak: e.target.value as UserSettings["exportHeadingPageBreak"],
-          })}
-        >
-          {EXPORT_HEADING_BREAKS.map(mode => (
-            <option key={mode} value={mode}>
-              {t(`settings.export.headingBreak.${mode}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="settings-row">
-        <label htmlFor="setting-export-header-footer" className="settings-label">
-          {t("settings.label.exportHeaderFooter")}
-        </label>
-        <input
-          id="setting-export-header-footer"
-          type="checkbox"
-          className="settings-checkbox"
-          checked={settings.exportHeaderFooter}
-          onChange={e => onUpdate({ exportHeaderFooter: e.target.checked })}
+          )}
         />
       </div>
-      <p className="settings-note">{t("settings.export.headerFooterNote")}</p>
+
+      <h4 className="settings-subheading">{t("settings.export.group.pdf")}</h4>
+      <div className="settings-card">
+        <SettingsRow
+          htmlFor="setting-export-paper"
+          label={t("settings.label.exportPaper")}
+          control={(
+            <select
+              id="setting-export-paper"
+              className="settings-select"
+              value={settings.exportPaper}
+              onChange={e => onUpdate({ exportPaper: e.target.value as UserSettings["exportPaper"] })}
+            >
+              {EXPORT_PAPERS.map(paper => (
+                <option key={paper} value={paper}>
+                  {t(`settings.export.paper.${paper}`)}
+                </option>
+              ))}
+            </select>
+          )}
+        />
+
+        <SettingsRow
+          labelId="setting-export-orientation-label"
+          label={t("settings.label.exportOrientation")}
+          control={(
+            <SettingsSegmented
+              labelledBy="setting-export-orientation-label"
+              value={settings.exportOrientation}
+              options={orientationOptions}
+              onChange={exportOrientation => onUpdate({ exportOrientation })}
+            />
+          )}
+        />
+
+        <div className="settings-row settings-row-stacked">
+          <span className="settings-label">{t("settings.label.exportMargins")}</span>
+          <div className="settings-margin-grid">
+            {MARGIN_FIELDS.map(([key, id, labelKey]) => (
+              <div className="settings-margin-cell" key={key}>
+                <label htmlFor={id} className="settings-margin-label">
+                  {t(labelKey)}
+                </label>
+                <div className="settings-field-group">
+                  <MarginNumberInput
+                    id={id}
+                    value={settings[key]}
+                    onCommit={mm => onUpdate({ [key]: mm })}
+                  />
+                  <span className="settings-unit">{t("settings.unit.mm")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <SettingsRow
+          htmlFor="setting-export-heading-break"
+          label={t("settings.label.exportHeadingBreak")}
+          control={(
+            <select
+              id="setting-export-heading-break"
+              className="settings-select"
+              value={settings.exportHeadingPageBreak}
+              onChange={e => onUpdate({
+                exportHeadingPageBreak: e.target.value as UserSettings["exportHeadingPageBreak"],
+              })}
+            >
+              {EXPORT_HEADING_BREAKS.map(mode => (
+                <option key={mode} value={mode}>
+                  {t(`settings.export.headingBreak.${mode}`)}
+                </option>
+              ))}
+            </select>
+          )}
+        />
+
+        <SettingsRow
+          htmlFor="setting-export-header-footer"
+          label={t("settings.label.exportHeaderFooter")}
+          note={t("settings.export.headerFooterNote")}
+          control={(
+            <SettingsSwitch
+              id="setting-export-header-footer"
+              checked={settings.exportHeaderFooter}
+              onChange={exportHeaderFooter => onUpdate({ exportHeaderFooter })}
+            />
+          )}
+        />
+      </div>
     </div>
   )
 }
