@@ -90,11 +90,17 @@ function markedInner(node: SyntaxNode, source: string, markName: string): { from
   return { from: node.from, to: node.to, text: source.slice(node.from, node.to) }
 }
 
+export interface EditableCellSelection {
+  readonly from: number
+  readonly to: number
+}
+
 export function renderEditableCell(
   parent: HTMLElement,
   source: string,
   caret: number,
   options?: CellParseOptions,
+  selection?: EditableCellSelection,
 ): void {
   parent.replaceChildren()
   const bounded = caret < 0 ? -1 : Math.min(Math.max(caret, 0), source.length)
@@ -107,7 +113,11 @@ export function renderEditableCell(
   const top = parser().parse(source).topNode
   if (top.from > 0) appendText(parent, source.slice(0, top.from), 0, top.from)
   renderChildren(parent, top, ctx, source.length)
-  placeCaret(parent, Math.max(0, bounded))
+  if (selection && selection.to > selection.from) {
+    paintCellSelection(parent, selection.from, selection.to)
+  } else {
+    placeCaret(parent, Math.max(0, bounded))
+  }
 }
 
 export function cellSourceOffsetAt(root: HTMLElement, clientX: number, clientY: number): number | null {
@@ -166,9 +176,33 @@ export function syncEditableCell(
   input: HTMLInputElement,
   options?: CellParseOptions,
 ): void {
-  const caret = input.selectionStart ?? trimmedCellCaret(input.value)
-  renderEditableCell(projection, input.value, caret, options)
+  const start = input.selectionStart ?? trimmedCellCaret(input.value)
+  const end = input.selectionEnd ?? start
+  const hasSelection = end > start
+  const caret = hasSelection ? -1 : start
+  renderEditableCell(
+    projection,
+    input.value,
+    caret,
+    options,
+    hasSelection ? { from: start, to: end } : undefined,
+  )
   positionTableCellInput(cell, input)
+}
+
+function wordRangeAt(text: string, offset: number): { from: number; to: number } {
+  if (text.length === 0) return { from: 0, to: 0 }
+  const clamped = Math.min(Math.max(offset, 0), text.length)
+  const isWord = (ch: string) => /[\p{L}\p{N}_]/u.test(ch)
+  const isSpace = (ch: string) => /\s/.test(ch)
+  const pivot = clamped < text.length ? clamped : clamped - 1
+  const kind = isWord(text[pivot]) ? isWord : isSpace(text[pivot]) ? isSpace : null
+  if (!kind) return { from: pivot, to: pivot + 1 }
+  let from = pivot
+  let to = pivot + 1
+  while (from > 0 && kind(text[from - 1])) from--
+  while (to < text.length && kind(text[to])) to++
+  return { from, to }
 }
 
 export function focusEditableCell(
@@ -179,6 +213,7 @@ export function focusEditableCell(
   clientY: number | undefined,
   options?: CellParseOptions,
   cellCaret?: number,
+  clickDetail = 1,
 ): void {
   if (projection.childNodes.length === 0) {
     const start = trimmedCellCaret(input.value)
@@ -196,19 +231,25 @@ export function focusEditableCell(
   const hit = clientX !== undefined && clientY !== undefined
     ? cellSourceOffsetAt(projection, clientX, clientY)
     : null
-  // 优先级：点击坐标 > 显式落点偏移（外来跳转保留位置）> 格首。
   const caret = hit ?? (cellCaret !== undefined ? Math.min(Math.max(cellCaret, 0), input.value.length) : null) ?? trimmedCellCaret(input.value)
-  input.setSelectionRange(caret, caret)
+  if (clickDetail >= 3) {
+    input.setSelectionRange(0, input.value.length)
+  } else if (clickDetail === 2) {
+    const { from, to } = wordRangeAt(input.value, caret)
+    input.setSelectionRange(from, to)
+  } else {
+    input.setSelectionRange(caret, caret)
+  }
   syncEditableCell(projection, cell, input, options)
 }
 
 function positionTableCellInput(cell: HTMLElement, input: HTMLInputElement): void {
-  const caret = cell.querySelector<HTMLElement>(".omd-table-caret")
-  if (!caret) return
+  const anchor = cell.querySelector<HTMLElement>(".omd-table-caret, .omd-table-cell-selected")
+  if (!anchor) return
   const cellRect = cell.getBoundingClientRect()
-  const caretRect = caret.getBoundingClientRect()
-  input.style.left = `${caretRect.left - cellRect.left}px`
-  input.style.top = `${caretRect.top - cellRect.top}px`
+  const anchorRect = anchor.getBoundingClientRect()
+  input.style.left = `${anchorRect.left - cellRect.left}px`
+  input.style.top = `${anchorRect.top - cellRect.top}px`
 }
 
 function nearestOffsetHost(hit: Element, root: HTMLElement): HTMLElement | null {
@@ -254,6 +295,54 @@ function placeCaret(root: HTMLElement, caret: number): void {
     }
   }
   root.appendChild(caretEl)
+}
+
+function paintCellSelection(root: HTMLElement, selFrom: number, selTo: number): void {
+  const spans = [...root.querySelectorAll<HTMLElement>("[data-from]")]
+  for (const span of spans) {
+    const from = Number(span.dataset.from)
+    const to = Number(span.dataset.to)
+    if (!Number.isInteger(from) || !Number.isInteger(to) || to <= selFrom || from >= selTo) continue
+    if (span.tagName === "BR" || span.tagName === "HR" || span.tagName === "IMG") {
+      span.classList.add("omd-table-cell-selected")
+      continue
+    }
+    const text = span.textContent ?? ""
+    if (selFrom <= from && selTo >= to) {
+      span.classList.add("omd-table-cell-selected")
+      continue
+    }
+    const spanLen = to - from
+    // Unspellable / decoded tokens (entities, emoji) highlight as a whole unit.
+    if (spanLen !== text.length) {
+      span.classList.add("omd-table-cell-selected")
+      continue
+    }
+    const cutStart = Math.max(0, selFrom - from)
+    const cutEnd = Math.min(text.length, selTo - from)
+    const parts: HTMLElement[] = []
+    if (cutStart > 0) {
+      const before = document.createElement("span")
+      before.dataset.from = String(from)
+      before.dataset.to = String(from + cutStart)
+      before.textContent = text.slice(0, cutStart)
+      parts.push(before)
+    }
+    const mid = document.createElement("span")
+    mid.className = "omd-table-cell-selected"
+    mid.dataset.from = String(from + cutStart)
+    mid.dataset.to = String(from + cutEnd)
+    mid.textContent = text.slice(cutStart, cutEnd)
+    parts.push(mid)
+    if (cutEnd < text.length) {
+      const after = document.createElement("span")
+      after.dataset.from = String(from + cutEnd)
+      after.dataset.to = String(to)
+      after.textContent = text.slice(cutEnd)
+      parts.push(after)
+    }
+    span.replaceWith(...parts)
+  }
 }
 
 function renderChildren(parent: HTMLElement, node: SyntaxNode, ctx: RenderCtx, end: number): void {
@@ -470,6 +559,12 @@ type RenderedTableCellOpener = (
 ) => void
 
 let renderedTableCellOpener: RenderedTableCellOpener | null = null
+let tableSelectionDragActive = false
+
+/** Called by `tableSelection.ts` while a rendered-table pointer drag owns the window listeners. */
+export function setTableSelectionDragActive(active: boolean): void {
+  tableSelectionDragActive = active
+}
 
 /** Click and keyboard entry share `table.ts`'s cell opener. */
 export function bindRenderedTableCellOpener(opener: RenderedTableCellOpener): void {
@@ -505,7 +600,7 @@ function renderedTableBody(view: EditorView, tableFrom: number): HTMLElement | n
 /** Collapsed caret strictly inside a rendered table, with no live cell session. */
 function caretInsideUnrevealedTable(view: EditorView) {
   const state = view.state
-  if (state.readOnly) return null
+  if (state.readOnly || tableSelectionDragActive) return null
   const selection = state.selection.main
   if (!selection.empty || getTableEditSession(state)) return null
   // Cheap `Table` node probe before `cellAt`, which builds `TableData` (one

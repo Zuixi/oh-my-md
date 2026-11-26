@@ -14,7 +14,7 @@ import { nextCell, tableAt, type TableContext } from "../../tables/navigate"
 import { applyTableToolAt } from "../../tables/sourceToolbar"
 import { TABLE_TOOL_BUTTONS } from "../../tables/tools"
 import { revealTableSource } from "../../tables/sourceReveal"
-import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
+import { BlockWidget, applyBlockEmbed, type BlockEmbed, type BlockSourceRange } from "../blockWidget"
 import {
   bindRenderedTableCellOpener,
   focusEditableCell,
@@ -24,40 +24,34 @@ import {
 } from "./tableCellEdit"
 import {
   pressCaretOffset,
+  renderedCellSourceOffset,
+  renderedTableOffsetAtPoint,
   renderedTablePointerOffset,
   startTableSelectionDrag,
   tableCellSlotAt,
   type TableSelectionDragHandle,
 } from "./tableSelection"
+import { renderedTableSelectionRects } from "./tableSelectionRects"
 import { registerBlockWidget, unregisterBlockWidget } from "../blockSelectionOverlay"
 import { estimateTableHeightPx } from "../widgetHeights"
 import { icon } from "../icons"
 // cell 的 DOM 投影独立成文件（table.ts 已到增长上限）：这里只保留兼容再导出，
 // 既有调用方（tables.test.ts 等）继续从 table.ts 取 renderTableCellContent。
-import { renderCellSlot, renderTableCellContent, type ResolveSrc } from "./tableCell"
+import {
+  renderCellSlot,
+  renderTableCellContent,
+  sameTableShape,
+  tableCellDataRows,
+  tableCellElements,
+  tableEqualityKey,
+  type ResolveSrc,
+} from "./tableCell"
 
-export { renderTableCellContent }
+export { renderTableCellContent, tableEqualityKey }
 export type { ResolveSrc }
 
 /** 表格外的引用定义解析器（来自 EditorState 的 reference context，见 blocks.ts）。 */
 export type ResolveReference = CellParseOptions["resolveReference"]
-
-/**
- * 渲染输入 → 结构键（表头/表体每个单元格的 source + 行列数 + 对齐）。
- * 旧实现是 `JSON.stringify(table)`：装饰重建（选区在表格附近移动也会重建 specs）
- * 每次都做整表序列化和转义。这里按 source 直接拼接，覆盖同样的渲染输入但不做转义；
- * 调用点还改成惰性求值 —— eq 先比 src，提交热路径 src 必变，结构键整段跳过。
- * `null`（ragged 行缺失源码槽）与空 source 是两种不同渲染，用独立标记区分。
- */
-export function tableEqualityKey(table: TableData): string {
-  const parts: string[] = []
-  const encode = (cells: readonly (TableCellData | null)[]) =>
-    cells.map(cell => (cell === null ? "\u0002" : cell.source)).join("\u0000")
-  parts.push(encode(table.header.cells))
-  for (const row of table.rows) parts.push(encode(row.cells))
-  parts.push(table.aligns.join(","))
-  return parts.join("\u0001")
-}
 
 /**
  * DOM 事件监听器是旧实例在 toDOM/renderInto 里挂上的，而 CM 的 pass-1 复用会保留新实例：
@@ -87,7 +81,7 @@ interface TableInputController {
   /** Session revision this controller last saw; a mismatch means history moved the doc. */
   revision: number
   paint(): void
-  focusAt(clientX?: number, clientY?: number, cellCaret?: number): void
+  focusAt(clientX?: number, clientY?: number, cellCaret?: number, clickDetail?: number): void
   destroy(): void
 }
 
@@ -98,17 +92,6 @@ let tableInputControllerCount = 0
 
 export function activeTableInputControllerCountForTest(): number {
   return tableInputControllerCount
-}
-
-function tableCellElements(body: HTMLElement): HTMLElement[][] {
-  const head = Array.from(body.querySelectorAll<HTMLElement>("thead th"))
-  const rows = Array.from(body.querySelectorAll<HTMLElement>("tbody tr"))
-    .map(tr => Array.from(tr.children) as HTMLElement[])
-  return head.length > 0 ? [head, ...rows] : rows
-}
-
-function tableCellDataRows(table: TableData): readonly (readonly (TableCellData | null)[])[] {
-  return [table.header.cells, ...table.rows.map(row => row.cells)]
 }
 
 function restoreTableCell(host: HTMLElement, row: number, column: number): void {
@@ -251,9 +234,11 @@ function createTableInputController(
     committing: false,
     revision: 0,
     paint: repaint,
-    focusAt(clientX?: number, clientY?: number, cellCaret?: number) {
+    focusAt(clientX?: number, clientY?: number, cellCaret?: number, clickDetail?: number) {
       if (destroyed) return
-      focusEditableCell(projection, cellEl, input, clientX, clientY, editingCellOptions(host), cellCaret)
+      focusEditableCell(
+        projection, cellEl, input, clientX, clientY, editingCellOptions(host), cellCaret, clickDetail,
+      )
     },
     destroy() {
       if (destroyed) return
@@ -293,6 +278,7 @@ function activateTableCellInput(
   clientX?: number,
   clientY?: number,
   cellCaret?: number,
+  clickDetail?: number,
 ): TableInputController | null {
   if (view.state.readOnly) return null
   const cell = tableCellDataRows(table.data)[row]?.[column]
@@ -300,7 +286,7 @@ function activateTableCellInput(
   if (!cell || !cellEl) return null
   const existing = viewInputControllers.get(view) ?? tableInputControllers.get(host)
   if (existing && existing.host === host && existing.row === row && existing.column === column) {
-    existing.focusAt(clientX, clientY, cellCaret)
+    existing.focusAt(clientX, clientY, cellCaret, clickDetail)
     return existing
   }
   if (existing) {
@@ -308,6 +294,7 @@ function activateTableCellInput(
     restoreTableCell(existing.host, existing.row, existing.column)
   }
   view.dispatch({
+    selection: view.state.selection.main.empty ? undefined : { anchor: table.from },
     effects: beginTableEdit({
       tableFrom: table.from,
       tableTo: table.to,
@@ -318,7 +305,7 @@ function activateTableCellInput(
   })
   const controller = createTableInputController(view, host, cellEl, row, column, cell.source)
   controller.revision = getTableEditSession(view.state)?.revision ?? 0
-  controller.focusAt(clientX, clientY, cellCaret)
+  controller.focusAt(clientX, clientY, cellCaret, clickDetail)
   return controller
 }
 
@@ -338,14 +325,6 @@ function releaseDom(widget: TableWidget, dom: HTMLElement): void {
   if (body && domOwner.get(body) === widget) domOwner.delete(body)
 }
 
-/** 结构未变才能走 updateDOM 原地补丁；行列数变化一律返回 false 交给 toDOM 全量重建。 */
-function sameTableShape(a: TableData, b: TableData): boolean {
-  return a.header.cells.length === b.header.cells.length
-    && a.rows.length === b.rows.length
-    && a.aligns.length === b.aligns.length
-    && a.rows.every((row, index) => row.cells.length === b.rows[index].cells.length)
-}
-
 /** 对齐按钮的 active 高亮必须跟着目标列的对齐方式走（渲染态与原地补丁态共用）。 */
 function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): void {
   for (const act of ["align-left", "align-center", "align-right"] as const) {
@@ -355,12 +334,8 @@ function applyAlignActive(toolbar: HTMLElement, currentAlign: TableAlignment): v
 }
 
 /**
- * 表格的**渲染态**：光标在表外时的投影 + 结构工具栏。
- *
- * 表格只有两个状态（见 plan D1/D2）：光标进表即整表变源码网格（`omd-table-src`
- * 行装饰），本 widget 连同其工具栏一起卸载。所以这里**没有**编辑态、没有输入框、
- * 也不持有"正在编辑哪一格"——渲染态唯一需要知道的行/列来自鼠标 hover，
- * 只为让工具栏按钮有明确目标。
+ * Rendered GFM table widget in Live Preview: supports in-cell direct editing,
+ * source-backed rendered text selection, and explicit `</>` source reveal.
  */
 export class TableWidget extends BlockWidget {
   readonly table: TableData
@@ -529,15 +504,44 @@ export class TableWidget extends BlockWidget {
 
   override destroy(dom?: HTMLElement) {
     const host = (dom ?? this.currentDom)?.querySelector<HTMLElement>(".omd-block-body")
-    // A gesture that already committed a selection legitimately outlives the widget (the
-    // reveal IS the unmount); only a press that never moved would otherwise keep window
-    // listeners bound to this widget's cell session.
+    // A gesture that already committed a selection may outlive an unrelated unmount; only a
+    // press that never moved would otherwise keep window listeners bound to this widget.
     const drag = host ? hostDragHandles.get(host) : undefined
     if (drag && !drag.dragging) drag.cancel()
     if (host) hostDragHandles.delete(host)
     if (host) tableInputControllers.get(host)?.destroy()
     if (dom) releaseDom(this, dom)
     super.destroy(dom)
+  }
+
+  override sourceOffsetAtPoint(
+    _view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    clientX: number,
+    clientY: number,
+  ): number | null {
+    const host = dom.querySelector<HTMLElement>(".omd-block-body") ?? dom
+    const owner = domOwner.get(host) ?? this
+    return renderedTableOffsetAtPoint(
+      host,
+      blockRange.from,
+      (row, column) => owner.cellDataAt(row, column),
+      clientX,
+      clientY,
+      owner.resolveReference,
+    )
+  }
+
+  override selectionRects(
+    _view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    selRange: BlockSourceRange,
+  ): DOMRect[] {
+    const host = dom.querySelector<HTMLElement>(".omd-block-body") ?? dom
+    const owner = domOwner.get(host) ?? this
+    return renderedTableSelectionRects(owner.table, dom, blockRange, selRange, owner.resolveReference)
   }
 
   override ignoreEvent(event: Event) {
@@ -563,28 +567,57 @@ export class TableWidget extends BlockWidget {
     if (!slot || !host || !owner || !owner.directEdit || !view) return false
     const table = tableAt(view.state, owner.livePos())
     const cell = table ? owner.cellDataAt(slot.row, slot.column) : null
-    // A ragged row's synthesized cell has no source slot: no session and no selection bytes.
     if (!table || !cell) return false
     event.preventDefault()
-    // Press keeps the click: the cell session opens exactly as before. Only a pointer that
-    // keeps travelling becomes a source-backed selection (tableSelection.ts).
+    const hostWrap = host.closest<HTMLElement>(".omd-table") ?? host
+    const closeActiveInput = () => {
+      const active = tableInputControllers.get(host)
+      if (!active) return
+      active.destroy()
+      restoreTableCell(active.host, active.row, active.column)
+    }
+    const renderedOffset = (move: MouseEvent) => renderedTablePointerOffset(
+      move, host, table, (row, column) => owner.cellDataAt(row, column), owner.resolveReference,
+    )
+    if (event.shiftKey) {
+      const active = viewInputControllers.get(view)
+      const activeStart = active ? activeCellStart(view.state, active.row, active.column) : null
+      const anchor = active && activeStart !== null
+        ? activeStart + (active.input.selectionStart ?? 0)
+        : view.state.selection.main.anchor
+      if (active) {
+        active.destroy()
+        restoreTableCell(active.host, active.row, active.column)
+      }
+      const head = table.from + cell.from
+        + renderedCellSourceOffset(cell, slot.element, event.clientX, event.clientY, owner.resolveReference)
+      view.dispatch({ selection: { anchor, head }, effects: [closeTableEdit()], scrollIntoView: false })
+      view.focus()
+      const drag = startTableSelectionDrag({
+        view, event, anchor, initialHead: head, startImmediately: true,
+        renderedOffset, promoteEffects: [], hostWrap,
+      })
+      if (drag) hostDragHandles.set(host, drag)
+      else hostDragHandles.delete(host)
+      return true
+    }
     const controller = view.state.readOnly
       ? null
       : activateTableCellInput(
-        view, host, slot.row, slot.column, table, event.clientX, event.clientY,
+        view, host, slot.row, slot.column, table, event.clientX, event.clientY, undefined, event.detail,
       )
     const drag = startTableSelectionDrag({
       view,
       event,
       anchor: table.from + cell.from
-        + pressCaretOffset(cell, slot.element, controller?.input ?? null, event),
-      renderedOffset: move => renderedTablePointerOffset(move, table, (row, column) =>
-        owner.cellDataAt(row, column)),
-      revealEffects: [closeTableEdit(), revealTableSource.of(null)],
+        + pressCaretOffset(cell, slot.element, controller?.input ?? null, event, owner.resolveReference),
+      renderedOffset,
+      onPromote: closeActiveInput,
+      promoteEffects: [closeTableEdit()],
+      hostWrap,
     })
     if (drag) hostDragHandles.set(host, drag)
     else hostDragHandles.delete(host)
-    // Read-only views have no input to hold focus, so the selection gesture focuses the editor.
     if (view.state.readOnly) view.focus()
     return true
   }

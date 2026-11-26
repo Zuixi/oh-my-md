@@ -16,14 +16,14 @@ CodeMirror's `Decoration.replace` hides a source range behind widget DOM. Its se
 
 | Gesture | Result |
 | --- | --- |
-| Drag across ordinary lines and fully covered blocks | One CodeMirror range; visible block content stays readable; copy is `doc.sliceString(from, to)` |
-| Drag a subset of rendered fenced code | Selection reaches the intended code content offsets; copying returns only those original bytes |
-| Click rendered code | Enters the existing numbered source editing state without changing bytes |
-| Click a rendered table cell | Opens its existing direct-edit session |
-| Drag over table text | Selects source-backed text instead of opening a cell editor; copy returns source bytes, including markup in the selected range |
+| Drag across ordinary lines and fully covered blocks | One CodeMirror range; visible block content stays readable (`.omd-block-covered`); copy is `doc.sliceString(from, to)` |
+| Drag a subset of rendered fenced code (or drag into it from outside) | Keeps `CodeWidget` mounted, maps endpoints to source offsets, paints `.omd-widget-selected-text` over selected glyphs; copying returns exact source bytes |
+| Click rendered code | Enters the numbered source editing state (`codeEditingField` + `styleEditingCodeblock`) without changing bytes |
+| Click a rendered table cell | Opens its existing direct-edit session (double-click selects word, triple-click selects cell, keyboard selections paint `.omd-table-cell-selected`) |
+| Drag over table text (or drag into it / Shift+Click from outside) | Closes any active cell input, keeps `TableWidget` mounted, maps endpoints to source offsets, and paints `.omd-widget-selected-text` over selected glyphs; copy returns exact source bytes including markup. Explicit source editing stays on the `</>` button |
 | Select all / Shift+navigation / source mode | Existing CodeMirror selection and Markdown copy behavior |
 
-Click and drag may resolve to different interaction modes, but the resulting copy range must always live in `EditorState.selection`. A table press may open its existing cell input immediately; once pointer movement establishes a drag, close that session and reveal source rows without changing document bytes. If a rendered projection cannot provide exact source offsets (for example, a synthesized missing table cell), select the containing real source-backed cell or table boundary, or leave the selection unchanged when there is no source slot; do not invent text or silently copy an unrelated caret. Keep accessibility and read-only selection working.
+Click and drag resolve to different interaction modes, while the resulting copy range always lives in `EditorState.selection`. Both `TableWidget` and `CodeWidget` implement `BlockWidget.sourceOffsetAtPoint` and `BlockWidget.selectionRects` so partial selections stay rendered and paint per-glyph highlights via `blockWidgetSelectionExtension` (`blockSelectionLayer.ts`) instead of flipping the block into Markdown source rows. A table press opens its cell input immediately; once pointer movement establishes a drag, that session closes cleanly without revealing source rows or changing document bytes. If a rendered projection cannot provide exact source offsets (for example, a synthesized missing table cell or padding gap), hold the previous valid head or leave the selection unchanged when there is no source slot; do not invent text or silently copy an unrelated caret. Keep accessibility and read-only selection working.
 
 ## Delivery and acceptance
 

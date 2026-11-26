@@ -126,6 +126,8 @@ interface FakeViewSpec {
    * differ from a wrapped block's actual row pitch, so this must be
    * independently configurable rather than derived from LINE_H.
    */
+  /** 1-based line numbers modeled as replaced block widgets (`BlockType.WidgetRange`). */
+  widgetLines?: number[]
   defaultLineHeight?: number
 }
 
@@ -208,7 +210,7 @@ function makeFakeView(spec: FakeViewSpec): EditorView {
     top: blockTops[line.number - 1],
     bottom: blockTops[line.number - 1] + rowsOf(line.number) * rowHeightOf(line.number),
     height: rowsOf(line.number) * rowHeightOf(line.number),
-    type: BlockType.Text,
+    type: spec.widgetLines?.includes(line.number) ? BlockType.WidgetRange : BlockType.Text,
     widgetLineBreaks: 0,
   }))
   // Cell of the glyph at index `glyph` within the line; glyph == length is
@@ -675,6 +677,21 @@ describe("tightSelection geometry (fake view)", () => {
       extensions: [tightSelection({ drawRangeCursor: false })],
     }))
     expect(noRangeCursor).toHaveLength(0)
+
+    // Selections spanning or ending inside a block widget skip widget bands and range cursors.
+    const acrossWidget = tightSelectionMarkers(makeFakeView({
+      doc: "above\n| a | b |\nbelow",
+      anchor: 0,
+      head: 21,
+      widgetLines: [2],
+    }))
+    expect(acrossWidget.some(m => m.top >= rowTop(1) && m.top < rowTop(2))).toBe(false)
+    expect(tightCursorMarkers(makeFakeView({
+      doc: "above\n| a | b |",
+      anchor: 0,
+      head: 9,
+      widgetLines: [2],
+    }))).toHaveLength(0)
   })
 
   it("composes with a real EditorView without exceptions and mounts both layers", async () => {

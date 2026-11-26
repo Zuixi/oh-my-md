@@ -10,6 +10,7 @@ import {
   tableCellSlotAt,
   TABLE_POINTER_DRIFT_PX,
 } from "../src/decorations/widgets/tableSelection"
+import { cellVisibleSelectionRuns } from "../src/decorations/widgets/tableSelectionRects"
 import { editorExtensions } from "../src/index"
 import { getTableEditSession } from "../src/tables/directEdit"
 import { tableAt } from "../src/tables/navigate"
@@ -228,7 +229,47 @@ describe("table pointer gestures", () => {
     expect(anchor).toBeGreaterThanOrEqual(table.from + headerCell.from)
     expect(anchor).toBeLessThanOrEqual(table.from + headerCell.to)
     expect(view.state.doc.toString()).toBe(TABLE)
-    expect(view.dom.querySelector(".omd-table-src")).not.toBeNull()
+    // Selection stays on the rendered table without flipping into Markdown source rows.
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).not.toBeNull()
+    cleanup()
+  })
+
+  it("editable drag closes the cell input and keeps the rendered table mounted", async () => {
+    const { view, cleanup } = mount(TABLE)
+    const cell = await renderedCell(view, ".omd-table td")
+    press(cell, 10, 10)
+    expect(view.dom.querySelector(".omd-table-cell-input")).not.toBeNull()
+    move(10 + TABLE_POINTER_DRIFT_PX + 2, 10)
+    release()
+    expect(view.dom.querySelector(".omd-table-cell-input")).toBeNull()
+    expect(getTableEditSession(view.state)).toBeNull()
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
+    expect(view.dom.querySelector(".omd-table table")).not.toBeNull()
+    expect(view.state.doc.toString()).toBe(TABLE)
+    cleanup()
+  })
+
+  it("clicking a cell collapses an existing non-empty selection", async () => {
+    const { view, cleanup } = mount(TABLE)
+    const cell = await renderedCell(view, ".omd-table td")
+    view.dispatch({ selection: { anchor: 2, head: 10 } })
+    expect(view.state.selection.main.empty).toBe(false)
+    press(cell, 10, 10)
+    release()
+    expect(view.state.selection.main.empty).toBe(true)
+    expect(view.dom.querySelector(".omd-table-cell-input")).not.toBeNull()
+    cleanup()
+  })
+
+  it("read-only click without travel collapses an existing non-empty selection", async () => {
+    const { view, cleanup } = mount(TABLE, [EditorState.readOnly.of(true)])
+    const cell = await renderedCell(view, ".omd-table td")
+    view.dispatch({ selection: { anchor: 2, head: 10 } })
+    press(cell, 10, 10)
+    release()
+    expect(view.state.selection.main.empty).toBe(true)
+    expect(view.dom.querySelector(".omd-table-src")).toBeNull()
     cleanup()
   })
 
@@ -313,5 +354,47 @@ describe("cellVisibleSourceOffset markup shadowing", () => {
     expect(cellVisibleSourceOffset("![alt](https://e.test/a.png)alt", projected("![alt](https://e.test/a.png)alt"), 0)).toBe(28)
     expect(cellVisibleSourceOffset(":smile::x", projected(":smile::x"), 2)).toBe(7)
     expect(cellVisibleSourceOffset("&lt;&", projected("&lt;&"), 1)).toBe(4)
+  })
+})
+
+describe("cellVisibleSelectionRuns", () => {
+  it("projects partial source intervals onto visible glyph runs", () => {
+    expect(cellVisibleSelectionRuns("**bold**", "bold", 2, 6)).toEqual([{ start: 0, end: 4 }])
+    expect(cellVisibleSelectionRuns("**bold**", "bold", 3, 5)).toEqual([{ start: 1, end: 3 }])
+    expect(cellVisibleSelectionRuns("a\\|b", "a|b", 0, 3)).toEqual([{ start: 0, end: 2 }])
+    expect(cellVisibleSelectionRuns("[label](https://e.test)", "label", 1, 6)).toEqual([{ start: 0, end: 5 }])
+    expect(cellVisibleSelectionRuns("😀x", "😀x", 0, 2)).toEqual([{ start: 0, end: 2 }])
+  })
+
+  it("bridges unspellable emoji shortcodes and HTML entities without leaving visual gaps", () => {
+    const emojiSource = "a :smile: b"
+    const emojiVisible = projected(emojiSource)
+    expect(cellVisibleSelectionRuns(emojiSource, emojiVisible, 0, emojiSource.length))
+      .toEqual([{ start: 0, end: emojiVisible.length }])
+    // Starting right after `&hellip;` selects only `hello`, not the leading ellipsis.
+    const entitySource = "&hellip;hello"
+    const entityVisible = projected(entitySource)
+    expect(cellVisibleSelectionRuns(entitySource, entityVisible, 8, entitySource.length))
+      .toEqual([{ start: 1, end: entityVisible.length }])
+    expect(cellVisibleSelectionRuns(entitySource, entityVisible, 0, entitySource.length))
+      .toEqual([{ start: 0, end: entityVisible.length }])
+  })
+
+  it("uses external reference resolution for reference links inside cells", () => {
+    const source = "[ref][id] tail"
+    const resolveReference = (label: string) =>
+      label.toLowerCase() === "[id]" ? { href: "https://e.test", title: null } : null
+    const root = document.createElement("div")
+    renderTableCellContent(root, source, undefined, { pipeEscapes: "gfm-table", resolveReference })
+    const visible = root.textContent ?? ""
+    expect(visible).toBe("ref tail")
+    expect(cellVisibleSelectionRuns(source, visible, 1, 4, resolveReference))
+      .toEqual([{ start: 0, end: 3 }])
+  })
+
+  it("returns empty for collapsed or non-overlapping source intervals", () => {
+    expect(cellVisibleSelectionRuns("**bold**", "bold", 3, 3)).toEqual([])
+    expect(cellVisibleSelectionRuns("**bold**", "bold", 0, 2)).toEqual([])
+    expect(cellVisibleSelectionRuns("", "", 0, 0)).toEqual([])
   })
 })

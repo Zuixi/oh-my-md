@@ -21,7 +21,7 @@
 
 - **Unconditional fold:** Paired emphasis (`**`, `*`, `~~`, `==`, `<u>`, `<kbd>`, `~`, `^`, `` ` ``), ATX/Setext heading marks, and list indent/marks fold unconditionally — never reveal them on caret entry.
 - **Node-level `cursorInside` reveal (`sf === st && sf >= from && sf < to`):** Used only for syntax whose source is the sole editing entry (`Link`, `Autolink`, `Image`, `InlineMath`, `FootnoteReference`, `FootnoteMark`, `QuoteMark`, `QuoteIndent`, fence `CodeMark`/`CodeInfo`, `Entity`, `Emoji`, `Escape`, `HardBreak`). Gate `Link` at the whole node, never per child (`LinkMark` vs `URL`).
-- **Selection is visual, caret is editing:** Non-empty selections never trigger `cursorInside`. A block is editable (`blockSelected`) when selection overlaps `[from, to]` (inclusive) **and does not fully cover it** (`!(sel.from <= from && sel.to >= to)`). Fully covering selections keep the widget mounted with `.omd-block-covered` (`blockSelectionOverlay.ts`).
+- **Selection is visual, caret is editing:** Non-empty selections never trigger `cursorInside`. A block is editable (`blockSelected`) when selection overlaps `[from, to]` (inclusive) **and does not fully cover it** (`!(sel.from <= from && sel.to >= to)`). Fully covering selections keep the widget mounted with `.omd-block-covered` (`blockSelectionOverlay.ts`). Widgets that stay rendered under partial selection implement `BlockWidget.sourceOffsetAtPoint` / `selectionRects`, which `blockSelectionLayer.ts` (`blockWidgetSelectionExtension`) projects into `.omd-widget-selected-text` overlay rectangles and wires into `EditorView.mouseSelectionStyle` for outside-in drags.
 - **Quotes & lists (`blocks.ts`):** Emit one `omd-blockquote-N` per line from the innermost `Blockquote` (capped at `MAX_QUOTE_DEPTH`). List indent inside a quote starts after `> `. List-in-quote uses `omd-li`; quote-in-list uses `omd-quote-in-li`; both pass real depth via `--omd-list-depth` (`tag: line:omd-li-${depth}`).
 - **Fenced code (`fencedCode.ts::styleFencedCode`):** Keep exact branch order: single-line typing fence (plain text) → `mermaid` widget (`!blockSelected`) → `blockSelected` editing chrome (`styleEditingCodeblock` with `CodeChromeWidget` on opening line and real closing `CodeMark` lookup, never `lineAt(node.to)`) → language-less `styleCodeblockLines` → `CodeWidget`.
 
@@ -29,7 +29,7 @@
 
 Every `block: true` widget (`widgets/*.ts`) must wire all five:
 
-1. **Selection rebuild (`build.ts::SELECTION_BLOCKS`):** Register the syntax node name so caret entry/exit rebuilds the block range.
+1. **Selection rebuild (`build.ts::SELECTION_BLOCKS` / `UNREVEALED_SELECTION_BLOCKS`):** Register the syntax node name so caret entry/exit rebuilds the block range; nodes that stay rendered under partial selection unless explicitly revealed (currently `Table`) are excluded from `UNREVEALED_SELECTION_BLOCKS` so selection-only moves skip unnecessary rebuilds.
 2. **Height estimation (`widgetHeights.ts`):** Declare a positive `estimatedHeight` (guarded by `test/widgetHeights.test.ts`).
 3. **Spec identity reuse (`build.ts` `removedByKey` + `WidgetType.eq`):** Implement `eq` comparing `src`, `embed`, and render-affecting inputs (`lang`, `title`, `tableEqualityKey`) — never `pos`. Preserving spec identity prevents CodeMirror from resetting measured heights to estimates on `measureBlockWidget`.
 4. **Keyboard entry (`navigation/blockEntry.ts`):** ArrowUp/ArrowDown enters the next rendered block (`blockEntryPosition`), skipping the blank gap before it. Non-table blocks place the selection inside and unmount the widget. A rendered table that is not source-revealed opens a cell session instead (`Prec.highest`, ahead of caret clamp).
@@ -37,6 +37,6 @@ Every `block: true` widget (`widgets/*.ts`) must wire all five:
 
 ## Widget-Specific Invariants
 
-- **`CodeWidget` (`widgets/code.ts`):** Lazy single-flight Shiki via `shiki/codeHighlighter.ts`; bounded LRU cache via `codeHtmlCache.ts` (128 entries / 8 MiB). Body click enters source at clicked `span.line` with 4px drift guard.
+- **`CodeWidget` (`widgets/code.ts`):** Lazy single-flight Shiki via `shiki/codeHighlighter.ts`; bounded LRU cache via `codeHtmlCache.ts` (128 entries / 8 MiB). Body click enters source at clicked `span.line` (`codeEditingField` / `isCodeShownAsSource`) with 4px drift guard; pointer drags (in-block, cross-block, or Shift+Click) keep `CodeWidget` mounted and paint `.omd-widget-selected-text` via `codeSelectionRects.ts`.
 - **`MathBlockWidget` (`widgets/math.ts`):** `enterSourceOnClick` is `false`; click opens `.omd-math-popup` hosting an inner CM6 view (`__omdMathPopupView` on DOM, never on widget fields). Re-sync in `updateDOM` via `mathEditorTexOf`, skip while `view.composing` or when `liveRange` is stale, and guard close with `closed` flag to avoid synchronous `focusout` double-destroy.
 - **`TableWidget` (`widgets/table.ts`):** Live Preview uses render / in-cell session / explicit source (see [`../tables/AGENTS.md`](../tables/AGENTS.md)); projection and caret live in `widgets/tableCellEdit.ts`.

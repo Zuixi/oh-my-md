@@ -10,6 +10,7 @@ import {
   type DecoSpec,
 } from "./types"
 import { blockSelected, type BlockEmbed } from "./blockWidget"
+import { isCodeShownAsSource } from "./codeReveal"
 import { CodeChromeWidget, CodeWidget } from "./widgets/code"
 import { MermaidWidget } from "./widgets/mermaid"
 import { parseFenceInfo } from "../fenceInfo"
@@ -157,9 +158,15 @@ export function styleFencedCode(
     })
     return true
   }
-  // Keep `selected` ahead of `!langToken` so language-less blocks also get `CodeChromeWidget`
+  // Keep editing ahead of `!langToken` so language-less blocks also get `CodeChromeWidget`
   // while editing (allowing the user to pick a language without hand-editing raw fences).
-  if (selected) {
+  // Syntax-highlighted `CodeWidget` blocks stay rendered under non-empty pointer drags and
+  // paint their selection overlay; only caret entry (or a drag inside an already-editing
+  // code block) reveals `styleEditingCodeblock`.
+  const showSource = isMermaid || !langToken
+    ? selected
+    : isCodeShownAsSource(state, node.from, node.to)
+  if (showSource) {
     if (!isMermaid) {
       styleEditingCodeblock(node, state, out, langToken, title, embed)
     } else {

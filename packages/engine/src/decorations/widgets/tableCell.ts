@@ -1,5 +1,5 @@
 import { parseCell, type CellNode, type CellParseOptions } from "../../parse/cell"
-import type { TableCellData } from "../../tables/model"
+import type { TableCellData, TableData } from "../../tables/model"
 
 export type ResolveSrc = (src: string) => string
 
@@ -128,4 +128,34 @@ export function renderCellSlot(
   // The table layer already consumed the `\|` shielding backslash, so the cell source is GFM
   // table semantics; reference definitions come from outside the table.
   renderTableCellContent(el, cell.text, resolveSrc, { pipeEscapes: "gfm-table", resolveReference })
+}
+
+/** Structural key (cell sources + shape + alignments) for lazy `TableWidget.eq`. */
+export function tableEqualityKey(table: TableData): string {
+  const parts: string[] = []
+  const encode = (cells: readonly (TableCellData | null)[]) =>
+    cells.map(cell => (cell === null ? "\u0002" : cell.source)).join("\u0000")
+  parts.push(encode(table.header.cells))
+  for (const row of table.rows) parts.push(encode(row.cells))
+  parts.push(table.aligns.join(","))
+  return parts.join("\u0001")
+}
+
+export function tableCellElements(body: HTMLElement): HTMLElement[][] {
+  const head = Array.from(body.querySelectorAll<HTMLElement>("thead th"))
+  const rows = Array.from(body.querySelectorAll<HTMLElement>("tbody tr"))
+    .map(tr => Array.from(tr.children) as HTMLElement[])
+  return head.length > 0 ? [head, ...rows] : rows
+}
+
+export function tableCellDataRows(table: TableData): readonly (readonly (TableCellData | null)[])[] {
+  return [table.header.cells, ...table.rows.map(row => row.cells)]
+}
+
+/** Only unchanged row/column shapes qualify for in-place `updateDOM` patching. */
+export function sameTableShape(a: TableData, b: TableData): boolean {
+  return a.header.cells.length === b.header.cells.length
+    && a.rows.length === b.rows.length
+    && a.aligns.length === b.aligns.length
+    && a.rows.every((row, index) => row.cells.length === b.rows[index].cells.length)
 }

@@ -1,4 +1,4 @@
-import { BlockWidget, applyBlockEmbed, type BlockEmbed } from "../blockWidget"
+import { BlockWidget, applyBlockEmbed, type BlockEmbed, type BlockSourceRange } from "../blockWidget"
 import { LANGUAGE_LOADERS, resolveCodeLanguage, supportedLanguages } from "../../shiki/languages"
 import { getCodeHighlighter } from "../../shiki/codeHighlighter"
 import { createCodeLangPicker } from "./codeLangPicker"
@@ -15,8 +15,12 @@ import { measureBlockWidget } from "../widgetMeasure"
 import { icon } from "../icons"
 import { blockPrefixOf } from "../../format/blockPrefix"
 import {
-  CODE_POINTER_DRIFT_PX, startCodeSelectionDrag, type CodeSelectionDragHandle,
+  CODE_POINTER_DRIFT_PX,
+  renderedCodeOffsetAtPoint,
+  startCodeSelectionDrag,
+  type CodeSelectionDragHandle,
 } from "./codeSelection"
+import { renderedCodeSelectionRects } from "./codeSelectionRects"
 
 const RENDER_DEBOUNCE_MS = 150
 const DEFAULT_TITLE_PLACEHOLDER = "Code block"
@@ -209,7 +213,9 @@ export class CodeWidget extends BlockWidget {
       if (!down) return
       const range = blockWidgetRange(this, view, wrap)
       if (range) {
-        const drag = startCodeSelectionDrag({ view, body, src: this.opts.src, range, event: e })
+        const drag = startCodeSelectionDrag({
+          view, body, src: this.opts.src, range, event: e, hostWrap: wrap,
+        })
         if (drag) wrapDragHandles.set(wrap, drag)
         else wrapDragHandles.delete(wrap)
       }
@@ -301,6 +307,27 @@ export class CodeWidget extends BlockWidget {
     })
     header.querySelector(".omd-code-tools")?.appendChild(copyBtn)
     return header
+  }
+
+  override sourceOffsetAtPoint(
+    view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    clientX: number,
+    clientY: number,
+  ): number | null {
+    const body = dom.querySelector<HTMLElement>(".omd-code-body")
+    if (!body) return null
+    return renderedCodeOffsetAtPoint(view, body, this.opts.src, blockRange, clientX, clientY)
+  }
+
+  override selectionRects(
+    view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    selRange: BlockSourceRange,
+  ): DOMRect[] {
+    return renderedCodeSelectionRects(view.state, this.opts.src, dom, blockRange, selRange)
   }
 
   override ignoreEvent(event: Event) {

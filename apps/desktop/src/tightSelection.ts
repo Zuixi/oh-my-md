@@ -254,7 +254,7 @@ function tightRectanglesForRange(
       if (startBandBottom - top.bottom > BAND_EPSILON_PX)
         between.push(piece(leftSide, top.bottom, rightSide, startBandBottom))
       for (let block of view.viewportLineBlocks)
-        if (block.from >= startTo && block.to <= endFrom)
+        if (block.type == BlockType.Text && block.from >= startTo && block.to <= endFrom)
           between.push(...tightDrawWholeBlock(block))
       // When the selection stays inside one soft-wrapped block, both remainder
       // spans describe the same rows. `startBandBottom` in the lower bound
@@ -414,6 +414,8 @@ export function tightCursorMarkers(view: EditorView): RectangleMarker[] {
   for (let r of state.selection.ranges) {
     let prim = r == state.selection.main
     if (r.empty || conf.drawRangeCursor) {
+      if (!r.empty && blockAt(view, r.head, r.assoc || 1).type != BlockType.Text)
+        continue
       let className = prim ? "cm-cursor cm-cursor-primary" : "cm-cursor cm-cursor-secondary"
       let cursor = r.empty ? r : EditorSelection.cursor(r.head, r.assoc)
       for (let piece of markersForRange(view, className, cursor))

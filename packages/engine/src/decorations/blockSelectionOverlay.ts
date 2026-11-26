@@ -62,6 +62,13 @@ export function blockWidgetRange(widget: BlockWidget, view: EditorView, dom?: HT
 
 const COVERED = "omd-block-covered"
 
+export interface MountedBlockWidget {
+  readonly widget: BlockWidget
+  readonly dom: HTMLElement
+  readonly from: number
+  readonly to: number
+}
+
 // 装饰重建会产生新 widget 实例（CM 按 eq() 复用 DOM，toDOM 不再调用），
 // 注册表按实例存 DOM，查找时先试精确命中、再退回 eq() 匹配（同一渲染块），
 // 并以 used 集合保证一对一（两个同 src 块不能共享同一个 wrap）。
@@ -73,6 +80,25 @@ function findWrap(widget: BlockWidget, used: Set<HTMLElement>): HTMLElement | un
     if (w.eq(widget) || widget.eq(w)) return dom
   }
   return undefined
+}
+
+/** Mounted block widgets paired with their current `livePreviewField` document ranges. */
+export function mountedBlockWidgets(view: EditorView): MountedBlockWidget[] {
+  const state = (view as EditorView & { state?: EditorView["state"] }).state
+  if (!state || typeof state.field !== "function") return []
+  const specs = state.field(livePreviewField, false)?.specs ?? []
+  const used = new Set<HTMLElement>()
+  const mounted: MountedBlockWidget[] = []
+  for (const spec of specs) {
+    if (!spec.tag.startsWith("widget:block:")) continue
+    const widget = (spec.deco.spec as { widget?: BlockWidget }).widget
+    if (!widget) continue
+    const dom = findWrap(widget, used)
+    if (!dom) continue
+    used.add(dom)
+    mounted.push({ widget, dom, from: spec.from, to: spec.to })
+  }
+  return mounted
 }
 
 function refresh(view: EditorView, docChanged: boolean) {

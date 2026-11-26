@@ -20,7 +20,7 @@ import {
   type RebuildRange,
 } from "./ranges"
 import { measureBlockWidget } from "./widgetMeasure"
-import { revealTableSource } from "../tables/sourceReveal"
+import { isTableSourceRevealed, revealTableSource } from "../tables/sourceReveal"
 import { editorReferenceContext } from "../semantic/references"
 import { collectOrderedListLabels } from "../lists/ordered"
 
@@ -157,6 +157,7 @@ export function seedLiveDecorations(state: EditorState): LiveDeco {
 // re-exported above for existing callers.
 
 const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HTMLBlock", "HorizontalRule", "FrontMatter"])
+const UNREVEALED_SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "HTMLBlock", "HorizontalRule", "FrontMatter"])
 
 function expandRange(
   state: EditorState,
@@ -224,14 +225,20 @@ function rebuildRanges(tr: Transaction) {
   }
 
   if (!tr.startState.selection.eq(tr.newSelection)) {
+    // Rendered tables do not toggle decorations on selection changes unless a table is
+    // explicitly revealed as source; skipping `Table` avoids re-parsing the table on every
+    // drag move frame.
+    const selectionBlocks = isTableSourceRevealed(tr.startState) || isTableSourceRevealed(tr.state)
+      ? SELECTION_BLOCKS
+      : UNREVEALED_SELECTION_BLOCKS
     const oldSelection = tr.startState.selection.main
     const newSelection = tr.newSelection.main
-    const oldRange = expandRange(tr.startState, oldSelection.from, oldSelection.to, SELECTION_BLOCKS)
+    const oldRange = expandRange(tr.startState, oldSelection.from, oldSelection.to, selectionBlocks)
     ranges.push({
       from: tr.changes.mapPos(oldRange.from, -1),
       to: tr.changes.mapPos(oldRange.to, 1),
     })
-    ranges.push(expandRange(tr.state, newSelection.from, newSelection.to, SELECTION_BLOCKS))
+    ranges.push(expandRange(tr.state, newSelection.from, newSelection.to, selectionBlocks))
   }
 
   return mergeRanges(ranges)

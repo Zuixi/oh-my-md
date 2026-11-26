@@ -92,4 +92,15 @@ describe("renderEditableCell", () => {
     expect(root.querySelector("a.omd-link")?.textContent).toBe("a")
     root.remove()
   })
+
+  it("paints .omd-table-cell-selected spans and hides the caret when a cell selection is active", () => {
+    const root = mount()
+    renderEditableCell(root, "hello **world**", -1, undefined, { from: 2, to: 13 })
+    expect(root.querySelector(".omd-table-caret")).toBeNull()
+    const selectedText = [...root.querySelectorAll(".omd-table-cell-selected")]
+      .map(el => el.textContent)
+      .join("")
+    expect(selectedText).toBe("llo world")
+    root.remove()
+  })
 })

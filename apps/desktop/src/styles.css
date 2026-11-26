@@ -136,6 +136,21 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; background: var(-
 .editor-host .cm-selectionLayer .cm-selectionBackground {
   background-color: var(--omd-selection-bg-unfocused);
 }
+.editor-host .omd-widget-selection-layer {
+  pointer-events: none;
+}
+.editor-host .cm-editor.cm-focused > .cm-scroller > .omd-widget-selection-layer .omd-widget-selected-text {
+  background-color: color-mix(in srgb, var(--omd-selection-bg) 65%, transparent);
+  border-radius: 2px;
+}
+.editor-host .omd-widget-selection-layer .omd-widget-selected-text {
+  background-color: color-mix(in srgb, var(--omd-selection-bg-unfocused) 65%, transparent);
+  border-radius: 2px;
+}
+.editor-host .omd-table-cell-selected {
+  background-color: var(--omd-selection-bg);
+  border-radius: 2px;
+}
 /* tightSelection suppresses native ::selection inside .cm-line (its layer is
    the only painter there), but block-widget DOM (tables, code blocks) sits
    outside .cm-line and keeps native selection painting — theme it too, and

@@ -14,6 +14,11 @@ export interface BlockEmbed {
   quoteInList: boolean
 }
 
+export interface BlockSourceRange {
+  readonly from: number
+  readonly to: number
+}
+
 const EMPTY_EMBED: BlockEmbed = { quoteDepth: 0, listDepth: 0, quoteInList: false }
 const EMBED_CLASS = /^omd-blockquote(-\d+)?$/
 
@@ -111,6 +116,31 @@ export abstract class BlockWidget extends WidgetType {
   }
   /** 点击不进源码的块（代码块、数学弹窗）由此钩子接管后续交互；默认保持聚焦编辑器。 */
   protected onWrapClick(view: EditorView, _wrap: HTMLElement, _event: MouseEvent): void { view.focus() }
+
+  /**
+   * Optional rendered-selection contract: map a viewport pointer position inside this
+   * widget's mounted DOM onto an absolute document source offset, or `null` when the
+   * pointer is not over a selectable slot of this widget.
+   */
+  sourceOffsetAtPoint?(
+    view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    clientX: number,
+    clientY: number,
+  ): number | null
+
+  /**
+   * Optional rendered-selection contract: project a partial document selection range
+   * intersecting `blockRange` into viewport-space rectangles clipped to any inner scroll
+   * container. Fully covered blocks are painted by `.omd-block-covered` instead.
+   */
+  selectionRects?(
+    view: EditorView,
+    dom: HTMLElement,
+    blockRange: BlockSourceRange,
+    selRange: BlockSourceRange,
+  ): DOMRect[]
   // public：renderBudget 的 flush 需要检查挂起块是否已被销毁。
   isActive(_el?: HTMLElement) { return this.alive }
 

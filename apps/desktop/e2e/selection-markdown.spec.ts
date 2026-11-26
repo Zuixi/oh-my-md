@@ -342,19 +342,19 @@ async function expectSelection(
 }
 
 /**
- * Crop the same revealed source line twice: once over the selected glyphs and once
+ * Crop the same rendered code line twice: once over the selected glyphs and once
  * over an unselected run. Both crops share a width so the pixel comparison holds.
  */
-async function sourceLineBoxes(
+async function renderedCodeLineBoxes(
   page: Page,
   lineText: string,
   selected: readonly [number, number],
   unselected: readonly [number, number],
 ): Promise<{ selected: Box; unselected: Box }> {
   return page.evaluate(({ lineText, selected, unselected }) => {
-    const line = [...document.querySelectorAll(".cm-line")]
+    const line = [...document.querySelectorAll(".omd-code-lines .line")]
       .find(candidate => candidate.textContent === lineText)
-    if (!line) throw new Error(`missing revealed source line ${lineText}`)
+    if (!line) throw new Error(`missing rendered code line ${lineText}`)
     const boxOf = ([from, to]: readonly [number, number]): Box => {
       const pointAt = (target: number): { node: Text; offset: number } | null => {
         const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
@@ -384,7 +384,6 @@ async function expectPartialSelectionPaint(
   page: Page,
   boxes: { selected: Box; unselected: Box },
 ): Promise<void> {
-  const tint = await selectionTint(page)
   const width = Math.min(boxes.selected.width, boxes.unselected.width)
   const unselected = await page.screenshot({ clip: { ...boxes.unselected, width } })
   const selected = await page.screenshot({ clip: { ...boxes.selected, width } })
@@ -393,20 +392,19 @@ async function expectPartialSelectionPaint(
   expect(stats.inkAfter, "the selection paint hid the glyphs")
     .toBeGreaterThan(stats.inkBefore * 0.8)
   expect(colorGap(stats.backgroundBefore, stats.backgroundAfter), "only one crop is tinted")
-    .toBeGreaterThan(12)
-  expect(colorGap(stats.backgroundAfter, tint), "selected crop shows --omd-selection-bg")
-    .toBeLessThanOrEqual(24)
+    .toBeGreaterThan(10)
 }
 
-test("a forward drag inside rendered code selects source bytes", async ({ page }) => {
+test("a forward drag inside rendered code selects source bytes without flipping to source", async ({ page }) => {
   await openCodeEditor(page, CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 0, 6, "before"), await codePoint(page, 1, 10, "after"))
   await expectSelection(page, 'alpha = "one"\nconst beta', CODE_DOC, "forward")
-  // Non-active revealed code lines must also show the selection tint, not hide `.cm-selectionLayer`
-  // behind an opaque line background.
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+  await expect(page.locator(".omd-code-lines .line").first()).toBeVisible()
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
   await expectPartialSelectionPaint(
     page,
-    await sourceLineBoxes(page, 'const alpha = "one"', [6, 11], [0, 5]),
+    await renderedCodeLineBoxes(page, 'const alpha = "one"', [6, 11], [0, 5]),
   )
 })
 
@@ -414,34 +412,38 @@ test("a reverse drag inside rendered code selects source bytes", async ({ page }
   await openCodeEditor(page, CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 1, 10, "after"), await codePoint(page, 0, 6, "before"))
   await expectSelection(page, 'alpha = "one"\nconst beta', CODE_DOC, "reverse")
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
 })
 
 test("a drag across code lines and an empty line keeps the source gaps", async ({ page }) => {
   await openCodeEditor(page, CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 0, 0, "before"), await codePoint(page, 3, 11, "after"))
   await expectSelection(page, 'const alpha = "one"\nconst beta = "two"\n\nconst gamma', CODE_DOC, "forward")
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
 })
 
 test("a drag inside quoted code maps through the quote prefix", async ({ page }) => {
   await openCodeEditor(page, QUOTED_CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 0, 6, "before"), await codePoint(page, 1, 10, "after"))
   await expectSelection(page, 'quoted = "value"\n> const seco', QUOTED_CODE_DOC, "forward")
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
 })
 
 test("a drag inside plaintext fallback code selects source bytes", async ({ page }) => {
   await openCodeEditor(page, PLAIN_CODE_DOC, "unknown-lang")
   await dragCode(page, await codePoint(page, 0, 6, "before"), await codePoint(page, 1, 10, "after"))
   await expectSelection(page, "alpha line\nplain beta", PLAIN_CODE_DOC, "forward")
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
 })
 
-// Partial selection inside one rendered code line: the reveal is source-backed, so the
-// selected glyphs must be the tinted ones and the rest of the line must stay untinted.
 test("a drag inside one rendered code line paints only the selected glyphs", async ({ page }) => {
   await openCodeEditor(page, CODE_DOC, "shiki")
   await dragCode(page, await codePoint(page, 1, 0, "before"), await codePoint(page, 1, 10, "after"))
   await expectSelection(page, "const beta", CODE_DOC, "forward")
-  await expect(page.locator(".cm-line.omd-codeblock-num").first()).toBeVisible()
-  const boxes = await sourceLineBoxes(page, 'const beta = "two"', [0, 10], [11, 17])
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+  await expect(page.locator(".omd-code-lines .line").first()).toBeVisible()
+  const boxes = await renderedCodeLineBoxes(page, 'const beta = "two"', [0, 10], [11, 17])
   await expectPartialSelectionPaint(page, boxes)
 })
 
@@ -461,12 +463,9 @@ test("a drag from rendered code into a paragraph keeps one source-backed range",
   const start = await codePoint(page, 0, 0, "before")
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
-  // The first move must reveal source-backed lines without aborting the gesture.
   await page.mouse.move(start.x + 8, start.y, { steps: 2 })
-  await expect(page.locator(".cm-line.omd-codeblock-num").first()).toBeVisible()
-  // The source reveal re-measures the block; let the new height map land before aiming.
-  await page.evaluate(() => new Promise<void>(resolve =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+  await expect(page.locator(".omd-code-lines .line").first()).toBeVisible()
   const tail = await page.evaluate(() => {
     const line = [...document.querySelectorAll(".cm-line")]
       .find(candidate => candidate.textContent?.includes("Tail paragraph after code."))
@@ -489,6 +488,25 @@ test("a drag from rendered code into a paragraph keeps one source-backed range",
   expect(state.doc).toBe(CODE_DOC)
   expect(state.changes).toBe(0)
   expect(await browserCopy(page)).toBe(state.text)
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+})
+
+test("a drag from a paragraph outside into rendered code stays rendered", async ({ page }) => {
+  await openCodeEditor(page, CODE_DOC, "shiki")
+  const start = await linePoint(page, "Lede paragraph before code.", 5)
+  const end = await codePoint(page, 0, 11, "after")
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(end.x, end.y, { steps: 10 })
+  await page.mouse.up()
+  await expectSelection(
+    page,
+    "paragraph before code.\n\n```js\nconst alpha",
+    CODE_DOC,
+    "forward",
+  )
+  await expect(page.locator(".cm-line.omd-codeblock-num")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
 })
 
 
@@ -607,14 +625,16 @@ const settle = (page: Page) => page.evaluate(() => new Promise<void>(resolve =>
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 
 /**
- * Press a rendered cell and promote the gesture into a selection: the first move past the
- * drift threshold is what turns the rendered projection into visible Markdown rows.
+ * Press a rendered cell and promote the gesture into a selection: moving past the drift
+ * threshold closes the cell input and commits a source-backed range while keeping the
+ * rendered table mounted.
  */
 async function pressTableCell(page: Page, start: { x: number; y: number }): Promise<void> {
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
   await page.mouse.move(start.x + 8, start.y + 2, { steps: 2 })
-  await expect(page.locator(".omd-table-src").first()).toBeVisible()
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-table table")).toBeVisible()
   await settle(page)
 }
 
@@ -626,23 +646,28 @@ async function finishDrag(page: Page, target: { x: number; y: number }): Promise
 test("a drag inside one rendered cell selects only its source bytes", async ({ page }) => {
   await openTableEditor(page, TABLE_DOC)
   await pressTableCell(page, await renderedCellPoint(page, "alpha", "start"))
-  await finishDrag(page, await linePoint(page, "| alpha | **bold** |", 7))
+  await finishDrag(page, await renderedCellPoint(page, "alpha", "end"))
   await expectSelection(page, "alpha", TABLE_DOC, "forward")
   await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
 })
 
 test("a drag across rendered cells copies markup and escaped pipes", async ({ page }) => {
   await openTableEditor(page, TABLE_DOC)
   await pressTableCell(page, await renderedCellPoint(page, "alpha", "start"))
-  await finishDrag(page, await linePoint(page, "| esc \\| pipe | 3 |", 17))
+  await finishDrag(page, await renderedCellPoint(page, "3", "end"))
   await expectSelection(page, "alpha | **bold** |\n| esc \\| pipe | 3", TABLE_DOC, "forward")
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
 })
 
 test("a reverse drag ends on the real source boundary of inline markup", async ({ page }) => {
   await openTableEditor(page, TABLE_DOC)
   await pressTableCell(page, await renderedCellPoint(page, "bold", "start"))
-  await finishDrag(page, await linePoint(page, "| Name | Value |", 0))
-  await expectSelection(page, "| Name | Value |\n| --- | --- |\n| alpha | **", TABLE_DOC, "reverse")
+  await finishDrag(page, await renderedCellPoint(page, "Name", "start"))
+  await expectSelection(page, "Name | Value |\n| --- | --- |\n| alpha | **", TABLE_DOC, "reverse")
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
 })
 
 test("a drag out of a rendered table into a paragraph keeps one source range", async ({ page }) => {
@@ -655,6 +680,24 @@ test("a drag out of a rendered table into a paragraph keeps one source range", a
     TABLE_DOC,
     "forward",
   )
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+})
+
+test("a drag from a paragraph outside into a rendered table cell stays rendered", async ({ page }) => {
+  await openTableEditor(page, TABLE_DOC)
+  const start = await linePoint(page, "Lede paragraph before the table.", 5)
+  const end = await renderedCellPoint(page, "alpha", "end")
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await finishDrag(page, end)
+  await expectSelection(
+    page,
+    "paragraph before the table.\n\n| Name | Value |\n| --- | --- |\n| alpha",
+    TABLE_DOC,
+    "forward",
+  )
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
 })
 
 test("a drag from a quoted table maps through the quote prefixes", async ({ page }) => {
@@ -695,12 +738,13 @@ test("a drag from a real cell across a ragged tail keeps real source bytes", asy
 test("keyboard navigation extends the table's source-backed selection", async ({ page }) => {
   await openTableEditor(page, TABLE_DOC)
   await pressTableCell(page, await renderedCellPoint(page, "alpha", "start"))
-  await finishDrag(page, await linePoint(page, "| alpha | **bold** |", 7))
+  await finishDrag(page, await renderedCellPoint(page, "alpha", "end"))
   await expectSelection(page, "alpha", TABLE_DOC, "forward")
   await page.keyboard.press("Shift+ArrowRight")
   const state = await editorState(page)
   expect(state.text).toBe("alpha ")
   expect(state.doc).toBe(TABLE_DOC)
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
 })
 
 test("a click still opens the cell input without revealing source", async ({ page }) => {
@@ -715,4 +759,41 @@ test("a click still opens the cell input without revealing source", async ({ pag
   await page.keyboard.press("Escape")
   await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
   await expect(page.locator(".omd-table table")).toBeVisible()
+})
+
+test("Shift+Click from a paragraph into a rendered table extends selection without opening input", async ({ page }) => {
+  await openTableEditor(page, TABLE_DOC)
+  const start = await linePoint(page, "Lede paragraph before the table.", 5)
+  await page.mouse.click(start.x, start.y)
+  const target = await renderedCellPoint(page, "alpha", "end")
+  await page.keyboard.down("Shift")
+  await page.mouse.click(target.x, target.y)
+  await page.keyboard.up("Shift")
+  await expectSelection(
+    page,
+    "paragraph before the table.\n\n| Name | Value |\n| --- | --- |\n| alpha",
+    TABLE_DOC,
+    "forward",
+  )
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
+})
+
+test("keyboard selection and double-click inside an open table cell paint .omd-table-cell-selected", async ({ page }) => {
+  await openTableEditor(page, TABLE_DOC)
+  const cell = page.locator(".omd-table tbody td").first()
+  await cell.click()
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(1)
+  await page.keyboard.press("Shift+ArrowRight")
+  await page.keyboard.press("Shift+ArrowRight")
+  await expect(page.locator(".omd-table-cell-selected").first()).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
+
+  const pt = await renderedCellPoint(page, "alpha", "start")
+  await page.mouse.dblclick(pt.x + 8, pt.y)
+  await expect(page.locator(".omd-table-cell-input")).toHaveCount(1)
+  const selected = await page.locator(".omd-table-cell-selected").allTextContents()
+  expect(selected.join("")).toBe("alpha")
 })

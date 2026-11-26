@@ -1,6 +1,7 @@
 import type { EditorState, Line } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
 import { blockPrefixOf } from "../../format/blockPrefix"
+import { widgetPointerTargetAtPoint } from "../blockSelectionLayer"
 
 /** Pointer travel below which a press stays a click (source entry) instead of a drag. */
 export const CODE_POINTER_DRIFT_PX = 4
@@ -353,6 +354,34 @@ export interface CodeSelectionDragOptions {
   readonly src: string
   readonly range: CodeSourceRange
   readonly event: MouseEvent
+  /** Outer `.omd-code` wrap used to suppress boundary snaps over header/padding gaps. */
+  readonly hostWrap?: HTMLElement
+}
+
+/**
+ * Resolve a viewport point inside a mounted `CodeWidget`'s `.omd-code-body` onto an
+ * absolute document offset, or `null` when the point lies outside the code body.
+ */
+export function renderedCodeOffsetAtPoint(
+  view: EditorView,
+  body: HTMLElement,
+  src: string,
+  range: CodeSourceRange,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const bodyRect = body.getBoundingClientRect()
+  if (
+    clientX < bodyRect.left || clientX > bodyRect.right
+    || clientY < bodyRect.top || clientY > bodyRect.bottom
+  ) {
+    return null
+  }
+  const scrollRect = view.scrollDOM.getBoundingClientRect()
+  const geometry = captureCodeGeometry(body, src, scrollRect.top, scrollRect.bottom)
+  if (!geometry) return null
+  const target = codePointerTargetFromGeometry(geometry, clientX, clientY)
+  return codeSourceOffset(view.state, range, src, target.lineIndex, target.column)
 }
 
 export interface CodeSelectionDragHandle {
@@ -377,28 +406,36 @@ let activeDrag: (() => void) | null = null
 export function startCodeSelectionDrag(
   options: CodeSelectionDragOptions,
 ): CodeSelectionDragHandle | null {
-  const { view, body, src, range, event } = options
+  const { view, body, src, range, event, hostWrap } = options
   if (event.button !== 0 || !view.dom.isConnected) return null
   const scrollRect = view.scrollDOM.getBoundingClientRect()
   const geometry = captureCodeGeometry(body, src, scrollRect.top, scrollRect.bottom)
   if (!geometry) return null
   const pressed = codePointerTargetFromGeometry(geometry, event.clientX, event.clientY)
-  const anchor = codeSourceOffset(view.state, range, src, pressed.lineIndex, pressed.column)
+  const pressedOffset = codeSourceOffset(view.state, range, src, pressed.lineIndex, pressed.column)
+  const shiftExtend = event.shiftKey
+  const anchor = shiftExtend ? view.state.selection.main.anchor : pressedOffset
   const document = view.state.doc
   const origin = { x: event.clientX, y: event.clientY }
-  let dragging = false
-  let head = anchor
+  let dragging = shiftExtend
+  let head = pressedOffset
   let disposed = false
 
   // A destroyed view (or a document that changed under the gesture) invalidates both
   // the captured layout and every source offset: stop instead of retargeting.
   const stale = (): boolean => view.state.doc !== document || !view.dom.isConnected
 
-  const pointerPos = (move: MouseEvent): number => {
+  const pointerPos = (move: MouseEvent): number | null => {
     if (isInsideCodeGeometry(geometry, move.clientX, move.clientY)) {
       const target = codePointerTargetFromGeometry(geometry, move.clientX, move.clientY)
       return codeSourceOffset(view.state, range, src, target.lineIndex, target.column)
     }
+    if (hostWrap && typeof hostWrap.ownerDocument.elementFromPoint === "function") {
+      const hit = hostWrap.ownerDocument.elementFromPoint(move.clientX, move.clientY)
+      if (hit && hostWrap.contains(hit)) return null
+    }
+    const widget = widgetPointerTargetAtPoint(view, move.clientX, move.clientY)
+    if (widget.insideWidget) return widget.offset
     return posAtPointer(view, move.clientX, move.clientY)
   }
 
@@ -417,12 +454,16 @@ export function startCodeSelectionDrag(
       if (drift <= CODE_POINTER_DRIFT_PX) return
       dragging = true
       move.preventDefault()
-      commit(pointerPos(move))
+      const pos = pointerPos(move)
+      // Never dispatch a collapsed `{ anchor, head: anchor }` on promotion: vertical/diagonal
+      // travel can cross the 4px drift threshold before reaching the next column or line,
+      // and a collapsed caret inside `FencedCode` would trigger `codeEditingField`.
+      if (pos !== null && pos !== anchor) commit(pos)
       return
     }
     move.preventDefault()
     const pos = pointerPos(move)
-    if (pos !== head) commit(pos)
+    if (pos !== null && pos !== head) commit(pos)
   }
 
   const cancel = (): void => {
@@ -436,9 +477,11 @@ export function startCodeSelectionDrag(
   }
 
   const onUp = (up: MouseEvent): void => {
-    // The last mousemove already committed the head. Re-mapping on mouseup would
-    // shrink the range whenever the reveal reflowed another line under the cursor.
-    if (dragging) up.preventDefault()
+    if (dragging) {
+      up.preventDefault()
+    } else if (!stale() && view.state.readOnly && !view.state.selection.main.empty) {
+      view.dispatch({ selection: { anchor: pressedOffset }, scrollIntoView: false })
+    }
     cancel()
   }
 
@@ -453,6 +496,7 @@ export function startCodeSelectionDrag(
   event.preventDefault()
   event.stopPropagation()
   view.focus()
+  if (shiftExtend) commit(pressedOffset)
   window.addEventListener("mousemove", onMove, true)
   window.addEventListener("mouseup", onUp, true)
   window.addEventListener("blur", onDismiss, true)

@@ -210,16 +210,17 @@ Tail paragraph.`
 test("read-only: a drag inside a rendered cell copies exactly its source bytes", async ({ page }) => {
   await mountReadOnly(page, READ_ONLY_DOC)
   await pressCell(page, await cellPoint(page, "alpha", "start"))
-  // Read-only presses have no cell session to open: the drift threshold itself promotes the
-  // rendered table into Markdown rows.
+  // Read-only presses have no cell session and keep the table rendered during drag selection.
   await expect(page.locator(".omd-table-cell-input")).toHaveCount(0)
-  await expect(page.locator(".omd-table-src").first()).toBeVisible()
-  await dragTo(page, await linePoint(page, "| alpha | **bold** |", 7))
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-table table")).toBeVisible()
+  await dragTo(page, await cellPoint(page, "alpha", "end"))
 
   const state = await editorState(page, "__roView")
   expect(state.readOnly).toBe(true)
   expect(state.text).toBe("alpha")
   expect(state.doc).toBe(READ_ONLY_DOC)
+  await expect(page.locator(".omd-widget-selected-text").first()).toBeVisible()
   // Promotion focuses the editor: a read-only gesture has no input to hold focus.
   await expect(page.locator(".cm-content")).toBeFocused()
   expect(state.changes, "document mutations").toBe(0)
@@ -330,7 +331,8 @@ test("a table inside a list item selects its nested source bytes", async ({ page
   // The table is genuinely nested: its cells render under the list item's line.
   await expect(page.locator(".omd-table tbody td")).toHaveCount(2)
   await pressCell(page, await cellPoint(page, "alpha", "start"))
-  await expect(page.locator(".omd-table-src").first()).toBeVisible()
+  await expect(page.locator(".omd-table-src")).toHaveCount(0)
+  await expect(page.locator(".omd-table table")).toBeVisible()
   await dragTo(page, await linePoint(page, "Tail paragraph.", 4))
   await expectSelection(page, "alpha | 1 |\n\nTail", LIST_TABLE_DOC)
 })

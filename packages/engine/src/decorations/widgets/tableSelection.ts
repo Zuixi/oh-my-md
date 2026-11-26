@@ -1,29 +1,29 @@
 import type { StateEffect } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
-import { CELL_HIDDEN_NODES, cellHtmlBreakTag, cellLanguage } from "../../parse/cell"
+import { CELL_HIDDEN_NODES, cellHtmlBreakTag, cellLanguage, type CellParseOptions } from "../../parse/cell"
 import { decodeHtmlEntity } from "../../parse/entities"
 import { escapeParts } from "../../semantic/breaks"
 import { imageParts } from "../../semantic/image"
 import { linkParts } from "../../semantic/link"
-import { stringReferenceContext } from "../../semantic/references"
+import { stringReferenceContext, type MarkdownReferenceContext } from "../../semantic/references"
 import type { TableCellData } from "../../tables/model"
 import type { TableContext } from "../../tables/navigate"
-import { trimmedCellCaret } from "./tableCellEdit"
+import { widgetPointerTargetAtPoint } from "../blockSelectionLayer"
+import { setTableSelectionDragActive, trimmedCellCaret } from "./tableCellEdit"
 
 /**
  * Pointer selection inside a rendered GFM table.
  *
- * The widget's press used to open the cell input immediately and stop there, so a drag over
- * rendered cells never reached `EditorState.selection` and the browser copied the previous
- * caret. A press must still keep the click behavior (the cell session opens unchanged), but
- * once the pointer travels past the drift threshold the gesture becomes a source-backed
- * CodeMirror range: the pressed cell maps to a real source offset (see
- * `cellVisibleSourceOffset`) and the first promoted move reveals the Markdown rows so every
- * later position comes from `posAtDOM`/`posAtCoords` on the document itself.
+ * A press still keeps its click behavior (opening the cell session unchanged), but once the
+ * pointer travels past the drift threshold the gesture closes the cell input and commits a
+ * source-backed CodeMirror range while keeping the rendered table mounted. The selection
+ * layer (`blockSelectionLayer.ts`) paints the range over the rendered cells so `EditorState.selection`
+ * remains the single clipboard truth without flipping the table into pipe rows.
  */
 
 /** Pointer travel (px) below which a table press stays a click on the cell session. */
 export const TABLE_POINTER_DRIFT_PX = 4
+const MAX_ALIGN_CACHE_ENTRIES = 256
 
 export interface TableCellSlot {
   readonly element: HTMLTableCellElement
@@ -65,15 +65,18 @@ export function tableCellSlotAt(target: EventTarget | null): TableCellSlot | nul
  *   never selected. The characters *inside* an entity or shortcode are markup too, so the
  *   search never claims them as the rendered glyph.
  */
-export function cellVisibleSourceOffset(source: string, visible: string, index: number): number {
+export function cellVisibleSourceOffset(
+  source: string,
+  visible: string,
+  index: number,
+  resolveReference?: CellParseOptions["resolveReference"],
+): number {
   const target = Math.max(0, Math.min(index, visible.length))
-  const glyphs = alignVisibleGlyphs(source, visible)
+  const glyphs = alignVisibleGlyphs(source, visible, resolveReference)
   // Glyphs entirely before the requested boundary, so a boundary inside a surrogate pair
   // reads as the boundary in front of that glyph.
   let before = 0
-  let consumed = 0
-  while (consumed < target && before < glyphs.length) {
-    consumed += glyphAt(visible, consumed).length
+  while (before < glyphs.length && glyphs[before].visibleStart < target) {
     before++
   }
   for (let at = before - 1; at >= 0; at--) {
@@ -84,29 +87,67 @@ export function cellVisibleSourceOffset(source: string, visible: string, index: 
   return first?.start ?? 0
 }
 
-interface VisibleGlyph {
+export interface VisibleGlyph {
+  /** UTF-16 start index in `visible`. */
+  readonly visibleStart: number
+  /** UTF-16 end index in `visible` (exclusive). */
+  readonly visibleEnd: number
   /** Source index where this visible glyph starts, undefined when the source cannot spell it. */
   readonly start: number | undefined
   /** Source index just past it, undefined for the same reason. */
   readonly end: number | undefined
 }
 
+const defaultAlignCache = new Map<string, readonly VisibleGlyph[]>()
+const refAlignCaches = new WeakMap<
+  NonNullable<CellParseOptions["resolveReference"]>,
+  Map<string, readonly VisibleGlyph[]>
+>()
+
+function alignCacheFor(
+  resolveReference?: CellParseOptions["resolveReference"],
+): Map<string, readonly VisibleGlyph[]> {
+  if (!resolveReference) return defaultAlignCache
+  let cache = refAlignCaches.get(resolveReference)
+  if (!cache) {
+    cache = new Map()
+    refAlignCaches.set(resolveReference, cache)
+  }
+  return cache
+}
+
 /** Visible glyphs in order, each matched to the next place the source spells it. */
-function alignVisibleGlyphs(source: string, visible: string): VisibleGlyph[] {
+export function alignVisibleGlyphs(
+  source: string,
+  visible: string,
+  resolveReference?: CellParseOptions["resolveReference"],
+): readonly VisibleGlyph[] {
+  const cache = alignCacheFor(resolveReference)
+  const key = `${source}\u0000${visible}`
+  const cached = cache.get(key)
+  if (cached) return cached
+
   const glyphs: VisibleGlyph[] = []
-  const markup = unspellableSpans(source)
+  const markup = unspellableSpans(source, resolveReference)
   let search = 0
   for (let at = 0; at < visible.length;) {
     const glyph = glyphAt(visible, at)
     const found = spellingIndex(source, glyph, search, markup)
     glyphs.push(found < 0
-      ? { start: undefined, end: undefined }
-      : { start: found, end: found + glyph.length })
+      ? { visibleStart: at, visibleEnd: at + glyph.length, start: undefined, end: undefined }
+      : {
+          visibleStart: at,
+          visibleEnd: at + glyph.length,
+          start: found,
+          end: found + glyph.length,
+        })
     // A match only ever moves the search forward, so skipping an unspellable glyph can never
     // pull a later match back onto bytes an earlier glyph already claimed.
     if (found >= 0) search = found + glyph.length
     at += glyph.length
   }
+  if (cache.size >= MAX_ALIGN_CACHE_ENTRIES) cache.clear()
+  cache.set(key, glyphs)
   return glyphs
 }
 
@@ -117,9 +158,18 @@ function alignVisibleGlyphs(source: string, visible: string): VisibleGlyph[] {
  * HTML entities. Matching a visible glyph inside these spans would anchor a selection to
  * hidden markup instead of the text the user actually pointed at.
  */
-function unspellableSpans(source: string): readonly (readonly [number, number])[] {
+function unspellableSpans(
+  source: string,
+  resolveReference?: CellParseOptions["resolveReference"],
+): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = []
-  const references = stringReferenceContext(source)
+  const baseRefs = stringReferenceContext(source)
+  const references: MarkdownReferenceContext = resolveReference
+    ? {
+        sliceString: (from, to) => baseRefs.sliceString(from, to),
+        resolveReference: label => resolveReference(label) ?? baseRefs.resolveReference(label),
+      }
+    : baseRefs
   // The cell parser owns what counts as an entity/shortcode; never re-detect the syntax here.
   cellLanguage().parser.parse(source).iterate({
     enter: node => {
@@ -185,34 +235,49 @@ export function renderedCellSourceOffset(
   element: HTMLElement,
   clientX: number,
   clientY: number,
+  resolveReference?: CellParseOptions["resolveReference"],
 ): number {
   const visible = element.textContent ?? ""
   const point = caretPoint(element.ownerDocument, clientX, clientY)
   if (point && element.contains(point.node)) {
-    return cellVisibleSourceOffset(cell.source, visible, visiblePrefixLength(element, point))
+    return cellVisibleSourceOffset(cell.source, visible, visiblePrefixLength(element, point), resolveReference)
   }
   // A press on cell padding or a textless glyph (image/`<br>`) has no rendered column:
   // pick the nearer cell edge instead of guessing a character inside the content.
   const rect = element.getBoundingClientRect()
   const near = rect.width <= 0 || clientX < rect.left + rect.width / 2 ? 0 : visible.length
-  return cellVisibleSourceOffset(cell.source, visible, near)
+  return cellVisibleSourceOffset(cell.source, visible, near, resolveReference)
 }
 
 /**
- * Document offset under a pointer while the rendered table is still on screen (the
- * promotion move). The reveal re-flows the table into Markdown rows, so mapping this move
- * against the layout the user actually pointed at avoids a one-row jump at the threshold.
+ * Document offset under a viewport point inside a specific rendered table container.
+ * Checking `host.contains(hit.element)` prevents a drag over a second table in the same
+ * document from indexing into the starting table's `TableContext`.
  */
+export function renderedTableOffsetAtPoint(
+  host: HTMLElement,
+  tableFrom: number,
+  cellAt: (row: number, column: number) => TableCellData | null,
+  clientX: number,
+  clientY: number,
+  resolveReference?: CellParseOptions["resolveReference"],
+): number | null {
+  const hit = tableCellSlotAt(host.ownerDocument.elementFromPoint(clientX, clientY))
+  if (!hit || !host.contains(hit.element)) return null
+  const cell = cellAt(hit.row, hit.column)
+  if (!cell) return null
+  const offset = renderedCellSourceOffset(cell, hit.element, clientX, clientY, resolveReference)
+  return tableFrom + cell.from + offset
+}
+
 export function renderedTablePointerOffset(
   event: MouseEvent,
+  host: HTMLElement,
   table: TableContext,
   cellAt: (row: number, column: number) => TableCellData | null,
+  resolveReference?: CellParseOptions["resolveReference"],
 ): number | null {
-  const hit = tableCellSlotAt(document.elementFromPoint(event.clientX, event.clientY))
-  const cell = hit ? cellAt(hit.row, hit.column) : null
-  if (!hit || !cell) return null
-  const offset = renderedCellSourceOffset(cell, hit.element, event.clientX, event.clientY)
-  return table.from + cell.from + offset
+  return renderedTableOffsetAtPoint(host, table.from, cellAt, event.clientX, event.clientY, resolveReference)
 }
 
 /**
@@ -225,10 +290,11 @@ export function pressCaretOffset(
   element: HTMLElement,
   input: HTMLInputElement | null,
   event: MouseEvent,
+  resolveReference?: CellParseOptions["resolveReference"],
 ): number {
   const offset = input
     ? input.selectionStart ?? trimmedCellCaret(cell.source)
-    : renderedCellSourceOffset(cell, element, event.clientX, event.clientY)
+    : renderedCellSourceOffset(cell, element, event.clientX, event.clientY, resolveReference)
   return Math.max(0, Math.min(offset, cell.source.length))
 }
 
@@ -295,16 +361,30 @@ export interface TableSelectionDragOptions {
   /** Source offset of the press: fixed selection anchor for the whole gesture. */
   readonly anchor: number
   /**
-   * Maps the promotion move against the still-rendered table (null when it left the table).
-   * Without it, the head would be read after the reveal re-flowed the rows and could land on
-   * a neighbouring line.
+   * Maps a pointer move against the rendered table (null when the pointer left this table).
+   * The rendered table stays mounted during selection, so this mapping stays valid for the
+   * entire drag.
    */
   readonly renderedOffset: (event: MouseEvent) => number | null
   /**
-   * Dispatched with the first promoted selection. The table's own reveal/close effects
-   * belong here so the visible Markdown rows and the committed range are one transaction.
+   * Called once on promotion before mapping the pointer move, so the caller can tear down
+   * any active cell `<input>` and restore the rendered cell DOM before `renderedOffset` reads it.
    */
-  readonly revealEffects: readonly StateEffect<unknown>[]
+  readonly onPromote?: () => void
+  /**
+   * Dispatched with the first promoted selection (e.g. `closeTableEdit()`).
+   */
+  readonly promoteEffects: readonly StateEffect<unknown>[]
+  /**
+   * Outer `.omd-table` container. When the pointer stays inside this container over a
+   * non-selectable gap (padding, borders, toolbar, ragged missing cell), keep the previous
+   * head instead of snapping to the widget boundary via `pointerOffset`.
+   */
+  readonly hostWrap?: HTMLElement
+  /** Start already promoted (used by Shift+Click / Shift+Drag extension). */
+  readonly startImmediately?: boolean
+  /** Initial head when `startImmediately` is true (defaults to `anchor`). */
+  readonly initialHead?: number
 }
 
 export interface TableSelectionDragHandle {
@@ -321,29 +401,50 @@ let activeDrag: (() => void) | null = null
  * Own a drag that starts on a rendered table cell.
  *
  * The press keeps its click meaning (the caller already opened the cell session), so nothing
- * is dispatched until the pointer exceeds the drift threshold. The first promoted move
- * commits the anchor together with `revealEffects`; from then on the table is real Markdown
- * in the document DOM and every pointer position is a document offset. Copy therefore always
- * reads `EditorState.selection`, never a stale caret or a whole-table guess.
+ * is dispatched until the pointer exceeds the drift threshold. The first promoted move runs
+ * `onPromote` to restore the rendered cell DOM, then commits a source-backed selection while
+ * keeping the rendered table mounted. Copy always reads `EditorState.selection`.
  */
 export function startTableSelectionDrag(
   options: TableSelectionDragOptions,
 ): TableSelectionDragHandle | null {
-  const { view, event, anchor, renderedOffset, revealEffects } = options
+  const {
+    view,
+    event,
+    anchor,
+    renderedOffset,
+    onPromote,
+    promoteEffects,
+    hostWrap,
+    startImmediately = false,
+    initialHead = anchor,
+  } = options
   if (event.button !== 0 || !view.dom.isConnected) return null
   const document = view.state.doc
   const origin = { x: event.clientX, y: event.clientY }
-  let dragging = false
-  let head = anchor
+  let dragging = startImmediately
+  let head = initialHead
   let disposed = false
 
-  // A destroyed view (or a document that changed under the gesture) invalidates the
-  // revealed rows and every mapped offset: stop instead of retargeting a new document.
+  // A destroyed view (or a document that changed under the gesture) invalidates every mapped
+  // offset: stop instead of retargeting a new document.
   const stale = (): boolean => view.state.doc !== document || !view.dom.isConnected
 
   const select = (pos: number, effects?: readonly StateEffect<unknown>[]): void => {
     head = pos
     view.dispatch({ selection: { anchor, head: pos }, effects, scrollIntoView: false })
+  }
+
+  const resolvePos = (move: MouseEvent): number | null => {
+    const direct = renderedOffset(move)
+    if (direct !== null) return direct
+    if (hostWrap && typeof hostWrap.ownerDocument.elementFromPoint === "function") {
+      const hit = hostWrap.ownerDocument.elementFromPoint(move.clientX, move.clientY)
+      if (hit && hostWrap.contains(hit)) return null
+    }
+    const widget = widgetPointerTargetAtPoint(view, move.clientX, move.clientY)
+    if (widget.insideWidget) return widget.offset
+    return pointerOffset(view, move.clientX, move.clientY)
   }
 
   const onMove = (move: MouseEvent): void => {
@@ -356,20 +457,15 @@ export function startTableSelectionDrag(
       if (drift <= TABLE_POINTER_DRIFT_PX) return
       dragging = true
       move.preventDefault()
-      const rendered = renderedOffset(move)
-      select(rendered ?? anchor, revealEffects)
-      // The reveal replaced the rendered widget, so focus the editor (the removed input
-      // must not keep it) and only then map a pointer that left the table's rendered box.
+      // Destroy the cell input and restore the rendered cell DOM before reading hit rects.
+      onPromote?.()
+      select(resolvePos(move) ?? head, promoteEffects)
       view.focus()
-      if (rendered === null) {
-        const pos = pointerOffset(view, move.clientX, move.clientY)
-        if (pos !== head) select(pos)
-      }
       return
     }
     move.preventDefault()
-    const pos = pointerOffset(view, move.clientX, move.clientY)
-    if (pos !== head) select(pos)
+    const pos = resolvePos(move)
+    if (pos !== null && pos !== head) select(pos)
   }
 
   const cancel = (): void => {
@@ -378,16 +474,22 @@ export function startTableSelectionDrag(
     window.removeEventListener("mousemove", onMove, true)
     window.removeEventListener("mouseup", onUp, true)
     // No capture: a capturing `blur` listener also sees every element blur, and this
-    // gesture's own cell input loses focus on promotion (`view.focus()` + widget removal).
+    // gesture's own cell input loses focus on promotion (`view.focus()`).
     window.removeEventListener("blur", onDismiss)
     window.removeEventListener("keydown", onKeyDown, true)
-    if (activeDrag === cancel) activeDrag = null
+    if (activeDrag === cancel) {
+      activeDrag = null
+      setTableSelectionDragActive(false)
+    }
   }
 
   const onUp = (up: MouseEvent): void => {
-    // The last mousemove already committed the head; re-mapping on mouseup would shrink the
-    // range whenever the reveal re-laid out a row under the cursor.
-    if (dragging) up.preventDefault()
+    if (dragging) {
+      up.preventDefault()
+    } else if (!stale() && view.state.readOnly && !view.state.selection.main.empty) {
+      // Read-only presses have no cell session to collapse an existing rendered selection.
+      view.dispatch({ selection: { anchor }, scrollIntoView: false })
+    }
     cancel()
   }
 
@@ -404,5 +506,6 @@ export function startTableSelectionDrag(
   window.addEventListener("blur", onDismiss)
   window.addEventListener("keydown", onKeyDown, true)
   activeDrag = cancel
+  setTableSelectionDragActive(true)
   return { cancel, get dragging() { return dragging } }
 }
