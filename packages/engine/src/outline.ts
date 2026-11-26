@@ -1,6 +1,7 @@
 import { syntaxTree } from "@codemirror/language"
 import type { EditorState } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
+import { isEffectiveHeading } from "./semantic/heading"
 
 const HEADING_LEVEL: Record<string, number> = {
   ATXHeading1: 1, ATXHeading2: 2, ATXHeading3: 3,
@@ -31,7 +32,7 @@ export function collectOutline(state: EditorState): OutlineItem[] {
   syntaxTree(state).iterate({
     enter(node) {
       const level = HEADING_LEVEL[node.name]
-      if (!level) return
+      if (!level || !isEffectiveHeading(node.node)) return
       items.push({ level, text: headingText(node.node, state), from: node.from })
       return false
     },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { collectDecorationSpecs } from "../src/decorations/build"
+import { buildLiveDecorations, collectDecorationSpecs, livePreviewField } from "../src/decorations/build"
 import { makeState } from "./helpers"
 
 describe("headings", () => {
@@ -59,13 +59,50 @@ describe("headings", () => {
     expect(t.some(tag => tag.startsWith("line:omd-h1"))).toBe(true)
   })
 
-  it("keeps the Setext underline hidden when the cursor is on the underline", () => {
+  it("keeps the Setext underline line editable (not block-collapsed) when the cursor is on the underline", () => {
     const doc = "Title\n====="
     let state = makeState(doc)
     state = state.update({ selection: { anchor: 6 } }).state
     const t = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
-    expect(t).toContain("replace:HeaderMark")
+    expect(t).not.toContain("replace:HeaderMark")
     expect(t.some(tag => tag.startsWith("line:omd-h1"))).toBe(true)
+  })
+
+  it("does not project a single-character '-' or '=' underline as a Setext heading", () => {
+    for (const doc of ["nvp的启动时机：\n-", "Title\n="]) {
+      let state = makeState(doc)
+      state = state.update({ selection: { anchor: 0 } }).state
+      const tags = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
+      expect(tags).toEqual([])
+    }
+
+    for (const [doc, expectedLine] of [["Title\n--", "line:omd-h2 omd-h-active"], ["Title\n==", "line:omd-h1 omd-h-active"]] as const) {
+      let state = makeState(doc)
+      state = state.update({ selection: { anchor: 0 } }).state
+      const tags = collectDecorationSpecs(state, 0, state.doc.length).map(d => d.tag)
+      expect(tags).toContain(expectedLine)
+      expect(tags).toContain("replace:HeaderMark")
+    }
+  })
+
+  it("incrementally toggles Setext underline collapse and active badge when cursor moves across lines", () => {
+    const doc = "Title\n=====\n\nbody"
+    let state = makeState(doc, [livePreviewField], { anchor: doc.length })
+    expect(state.field(livePreviewField).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+      .toEqual(buildLiveDecorations(state).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+
+    // Move onto the Setext underline line: underline unfolds, title gets active badge.
+    state = state.update({ selection: { anchor: 8 } }).state
+    expect(state.field(livePreviewField).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+      .toEqual(buildLiveDecorations(state).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+    expect(state.field(livePreviewField).specs.map(s => s.tag)).not.toContain("replace:HeaderMark")
+
+    // Move back to body: underline folds again and title active badge clears.
+    state = state.update({ selection: { anchor: doc.length } }).state
+    expect(state.field(livePreviewField).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+      .toEqual(buildLiveDecorations(state).specs.map(s => `${s.tag}@${s.from}-${s.to}`))
+    expect(state.field(livePreviewField).specs.map(s => s.tag)).toContain("replace:HeaderMark")
+    expect(state.field(livePreviewField).specs.map(s => s.tag)).not.toContain("line:omd-h1 omd-h-active")
   })
 })
 

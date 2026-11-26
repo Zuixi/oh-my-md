@@ -2,6 +2,7 @@ import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language"
 import type { ChangeSpec, EditorState, Line } from "@codemirror/state"
 import type { SyntaxNode } from "@lezer/common"
 import { VERBATIM_NODES } from "../parse/verbatim"
+import { isEffectiveSetextHeading } from "../semantic/heading"
 import {
   blockPrefixOf,
   lineContentStart,
@@ -216,7 +217,7 @@ export function lineSyntax(state: EditorState, line: Line): LineSyntax | null {
         heading = node.node
         headingLevel = Number(atx[1])
       }
-      if (SETEXT_HEADING.test(node.name)) setext = true
+      if (SETEXT_HEADING.test(node.name) && isEffectiveSetextHeading(node.node)) setext = true
     },
   })
   const prefix = blockPrefixOf(state, line)

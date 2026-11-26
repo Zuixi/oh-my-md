@@ -156,8 +156,14 @@ export function seedLiveDecorations(state: EditorState): LiveDeco {
 // the closed-interval algebra shared with the build driver); `mergeRanges` is
 // re-exported above for existing callers.
 
-const SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "Table", "HTMLBlock", "HorizontalRule", "FrontMatter"])
-const UNREVEALED_SELECTION_BLOCKS = new Set(["FencedCode", "MathBlock", "HTMLBlock", "HorizontalRule", "FrontMatter"])
+const SELECTION_BLOCKS = new Set([
+  "FencedCode", "MathBlock", "Table", "HTMLBlock", "HorizontalRule", "FrontMatter",
+  "SetextHeading1", "SetextHeading2",
+])
+const UNREVEALED_SELECTION_BLOCKS = new Set([
+  "FencedCode", "MathBlock", "HTMLBlock", "HorizontalRule", "FrontMatter",
+  "SetextHeading1", "SetextHeading2",
+])
 
 function expandRange(
   state: EditorState,

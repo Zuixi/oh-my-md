@@ -88,6 +88,7 @@
 - **Front-matter stats must mirror the parser's line rule** — `\n---` prefix matching miscounts `----`, `---text`, and unclosed blocks.
 - **Fence language tokens keep the author's case** — compare `toLowerCase()` for `mermaid`, or preview and export disagree.
 - **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
+- **Empty bullet items under paragraphs and single-dash Setext underlines** — CommonMark keeps `para\n- ` inside the paragraph and turns `para\n-` into `SetextHeading2`; `parse/emptyBulletItem.ts` (`endLeaf` on `[-+*]` + mandatory horizontal space), `semantic/heading.ts` (`MIN_SETEXT_UNDERLINE_CHARS = 2` across preview, outline, format, and export — never replace `DefaultLeafBlocks.SetextHeading` in Lezer), and skipping `DECO_REPLACE_BLOCK` when selection overlaps a Setext underline line (`SetextHeading1/2` in `SELECTION_BLOCKS`) prevent H2 hijacking, `0px` carets, and `inlineDOMNearPos` cursor jumps onto line 1.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
 - **An unassigned no-op ref silently drops a side effect** — `expandToPathRef` was never wired; assign coordinator refs next to the other `*Ref.current = …` lines.

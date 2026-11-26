@@ -54,5 +54,20 @@ describe("heading level badge (live preview)", () => {
       parent.remove()
     }
   })
+
+  it("turns '- ' directly under a paragraph into a bullet item without promoting the paragraph to H2", () => {
+    const { view, parent } = mount("dasfdas\n")
+    try {
+      view.dispatch({ changes: { from: 8, to: 8, insert: "-" }, selection: { anchor: 9 } })
+      expect(parent.querySelector(".cm-line.omd-h2")).toBeNull()
+
+      view.dispatch({ changes: { from: 9, to: 9, insert: " " }, selection: { anchor: 10 } })
+      expect(parent.querySelector(".cm-line.omd-h2")).toBeNull()
+      expect(parent.querySelector(".cm-line.omd-li .omd-bullet")).not.toBeNull()
+    } finally {
+      view.destroy()
+      parent.remove()
+    }
+  })
 })
 

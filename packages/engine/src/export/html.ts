@@ -5,6 +5,7 @@ import { resolveEmoji } from "../parse/emoji"
 import { decodeHtmlEntity } from "../parse/entities"
 import { parseFenceInfo } from "../fenceInfo"
 import { linkParts, type LinkParts } from "../semantic/link"
+import { isEffectiveHeading, isEffectiveSetextHeading } from "../semantic/heading"
 import { imageParts } from "../semantic/image"
 import { escapeParts } from "../semantic/breaks"
 import {
@@ -92,15 +93,30 @@ function labelHtml(
   return children(node, state, ctx, parts.labelFrom, parts.labelTo)
 }
 
+function skippedMarkHtml(node: SyntaxNode, state: EditorState): string | null {
+  if (!SKIP.has(node.name)) return null
+  if (node.name === "HeaderMark" && node.parent && !isEffectiveHeading(node.parent)) {
+    return escapeHtml(state.doc.sliceString(node.from, node.to))
+  }
+  return ""
+}
+
 function render(node: SyntaxNode, state: EditorState, ctx: ExportContext): string {
-  if (SKIP.has(node.name)) return ""
+  const skipped = skippedMarkHtml(node, state)
+  if (skipped !== null) return skipped
   switch (node.name) {
     case "Document": return children(node, state, ctx)
     case "FrontMatter": return ""
-    case "ATXHeading1":
-    case "SetextHeading1": return headingTag(1, node, state, ctx, inline(node, state, ctx))
-    case "ATXHeading2":
-    case "SetextHeading2": return headingTag(2, node, state, ctx, inline(node, state, ctx))
+    case "ATXHeading1": return headingTag(1, node, state, ctx, inline(node, state, ctx))
+    case "SetextHeading1":
+      return isEffectiveSetextHeading(node)
+        ? headingTag(1, node, state, ctx, inline(node, state, ctx))
+        : `<p>${inline(node, state, ctx)}</p>`
+    case "ATXHeading2": return headingTag(2, node, state, ctx, inline(node, state, ctx))
+    case "SetextHeading2":
+      return isEffectiveSetextHeading(node)
+        ? headingTag(2, node, state, ctx, inline(node, state, ctx))
+        : `<p>${inline(node, state, ctx)}</p>`
     case "ATXHeading3": return headingTag(3, node, state, ctx, inline(node, state, ctx))
     case "ATXHeading4": return headingTag(4, node, state, ctx, inline(node, state, ctx))
     case "ATXHeading5": return headingTag(5, node, state, ctx, inline(node, state, ctx))
@@ -273,7 +289,8 @@ function renderRich(
   opts: ExportRichHtmlOptions,
   ctx: ExportContext,
 ): string | Promise<string> {
-  if (SKIP.has(node.name)) return ""
+  const skipped = skippedMarkHtml(node, state)
+  if (skipped !== null) return skipped
   switch (node.name) {
     case "FrontMatter": return ""
     case "InlineMath": {
@@ -322,10 +339,14 @@ function renderRich(
         s => `<section class="omd-fn-def" id="fn-${slug}"><span class="omd-fn-label">${escapeHtml(id)}.</span> ${s.trim()}</section>`,
       )
     }
-    case "ATXHeading1":
-    case "SetextHeading1": return richChildren(node, state, opts, ctx).then(s => headingTag(1, node, state, ctx, s))
-    case "ATXHeading2":
-    case "SetextHeading2": return richChildren(node, state, opts, ctx).then(s => headingTag(2, node, state, ctx, s))
+    case "ATXHeading1": return richChildren(node, state, opts, ctx).then(s => headingTag(1, node, state, ctx, s))
+    case "SetextHeading1":
+      return richChildren(node, state, opts, ctx).then(s =>
+        isEffectiveSetextHeading(node) ? headingTag(1, node, state, ctx, s) : `<p>${s}</p>`)
+    case "ATXHeading2": return richChildren(node, state, opts, ctx).then(s => headingTag(2, node, state, ctx, s))
+    case "SetextHeading2":
+      return richChildren(node, state, opts, ctx).then(s =>
+        isEffectiveSetextHeading(node) ? headingTag(2, node, state, ctx, s) : `<p>${s}</p>`)
     case "ATXHeading3": return richChildren(node, state, opts, ctx).then(s => headingTag(3, node, state, ctx, s))
     case "ATXHeading4": return richChildren(node, state, opts, ctx).then(s => headingTag(4, node, state, ctx, s))
     case "ATXHeading5": return richChildren(node, state, opts, ctx).then(s => headingTag(5, node, state, ctx, s))

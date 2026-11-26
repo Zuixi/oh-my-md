@@ -270,6 +270,7 @@ describe("extension drift", () => {
     BareAutolink: { context: "paragraph", value: "https://example.dev/a", expected: "https\\://example.dev/a" },
     GFM: { context: "paragraph", value: "~~gone~~", expected: "\\~\\~gone\\~\\~" },
     FrontMatter: { context: "lineStart", value: "---\ntitle: x", expected: "\\---\ntitle: x" },
+    EmptyBulletItem: { context: "lineStart", value: "para\n- ", expected: "para\n\\- " },
     Footnotes: { context: "paragraph", value: "[^note]", expected: "\\[^note]" },
     Math: { context: "paragraph", value: "$x$", expected: "\\$x\\$" },
     Rise: { context: "paragraph", value: "H~2~O", expected: "H\\~2\\~O" },

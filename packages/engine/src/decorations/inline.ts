@@ -5,6 +5,7 @@ import { cursorInside, type DecoSpec } from "./types"
 import { EntityWidget, EmojiWidget } from "./widgets"
 import { InlineMathWidget } from "./widgets/math"
 import { imageResolver, ImageWidget } from "./widgets/image"
+import { isEffectiveHeading } from "../semantic/heading"
 import { imageParts } from "../semantic/image"
 import { editorReferenceContext } from "../semantic/references"
 import { escapeParts, hardBreakParts } from "../semantic/breaks"
@@ -113,11 +114,12 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
   }
 
   const headingClass = HEADING_CLASS[node.name]
-  if (headingClass) {
-    // 光标在标题内时行首 gutter 叠 H1..H6 级别徽标（styles.css 的 .omd-h-active::before）；
-    // 折叠的 `#` 是唯一等级线索，徽标只在编辑态回答“这是几级”，阅读态零噪音。
-    // 末尾 inclusive：点击标题常落在末字符之后（head === node.to），仍在编辑该标题
-    //（标题标记本就无条件折叠，这里不像 cursorInside 的折叠语义那样需要排斥边界）。
+  if (headingClass && isEffectiveHeading(node.node)) {
+    // Overlay an H1..H6 level badge in the left gutter while the cursor is inside
+    // the heading (`.omd-h-active::before` in styles.css); folded `#` marks leave
+    // no other level cue, so the badge answers "which level?" only during editing.
+    // Inclusive end (`node.to + 1`): clicking at the end of a heading (`head === node.to`)
+    // still edits that heading.
     const active = cursorInside(state, node.from, node.to + 1)
     const classes = active ? `${headingClass} omd-h-active` : headingClass
     const lineDecos = headingLineDecos(headingClass)
@@ -132,14 +134,20 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
         if (cursor.name === "HeaderMark") {
           const line = state.doc.lineAt(cursor.from)
           const end = Math.min(cursor.to + 1, line.to)  // ATX: include trailing space after '#'
-          // 路线 A：标题标记无条件折叠（含 Setext 下划线行）。
-          // Setext underline is its own line; include the trailing newline so the empty
-          // row collapses (replace across a line break must be block: true).
+          // ATX heading marks stay unconditionally folded; Setext underlines fold as a
+          // block (including trailing newline) only when no selection overlaps the
+          // underline line — block-replacing an active line collapses its DOM height to
+          // 0px and forces CodeMirror's `inlineDOMNearPos` onto the title line.
           if (line.from > node.from) {
-            const to = Math.min(state.doc.length, line.to + 1)
-            out.push({
-              from: line.from, to, tag: "replace:HeaderMark", deco: DECO_REPLACE_BLOCK,
-            })
+            const overlapsUnderline = state.selection.ranges.some(
+              r => r.from <= line.to && r.to >= line.from,
+            )
+            if (!overlapsUnderline) {
+              const to = Math.min(state.doc.length, line.to + 1)
+              out.push({
+                from: line.from, to, tag: "replace:HeaderMark", deco: DECO_REPLACE_BLOCK,
+              })
+            }
           } else {
             out.push({ from: cursor.from, to: end, tag: "replace:HeaderMark", deco: DECO_REPLACE_EMPTY })
           }
@@ -148,6 +156,7 @@ export function inlineRules(node: SyntaxNodeRef, state: EditorState, out: DecoSp
     }
     return
   }
+  if (headingClass) return
 
   switch (node.name) {
     // 链接/图片/行内公式/脚注引用保留“光标进入 span 展开”（cursorInside，节点级）：

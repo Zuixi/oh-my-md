@@ -2,6 +2,7 @@ import { markdown } from "@codemirror/lang-markdown"
 import { GFM } from "@lezer/markdown"
 import { CjkUnderscore } from "./cjkUnderscore"
 import { Emoji } from "./emoji"
+import { EmptyBulletItem } from "./emptyBulletItem"
 import { Footnotes } from "./footnotes"
 import { FrontMatter } from "./frontMatter"
 import { Highlight } from "./highlight"
@@ -17,6 +18,7 @@ export function markdownLanguageSupport() {
       { parseInline: [BareAutolink] },
       GFM,
       FrontMatter,
+      EmptyBulletItem,
       Footnotes,
       Math,
       Rise,
