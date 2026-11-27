@@ -96,8 +96,9 @@ describe("release workflow", () => {
   it("gates every platform builder and the draft on pre-release verification", () => {
     const verify = jobBlock("verify", "macos")
     expect(verify).toContain("pnpm check:quality")
-    expect(verify).toContain("pnpm test")
-    expect(verify).toContain("pnpm --filter @omd/desktop test")
+    expect(verify).toContain("pnpm test:engine")
+    expect(verify).toContain("pnpm test:desktop")
+    expect(verify).toContain("pnpm build:web")
     expect(verify).toContain("cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml")
 
     // The gate is only useful if the builders wait for it.

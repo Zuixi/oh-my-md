@@ -82,7 +82,7 @@ jobs:
               - ".github/actions/**"
               - "package.json"
               - "pnpm-lock.yaml"
-              - "scripts/*.sh"
+              - "scripts/**"
 
   engine:
     name: Engine (tsc + Vitest)
@@ -93,7 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-pnpm
-      - run: pnpm test
+      - run: pnpm test:engine
 
   # Blocking performance gate (PERF-01/PERF-03). Separate from the unit suite so
   # the 1 000+ test files never share the CPU with the timed scenarios
@@ -120,8 +120,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-pnpm
-      - run: pnpm --filter @omd/desktop test
-      - run: pnpm --filter @omd/desktop build
+      - run: pnpm test:desktop
+      - run: pnpm build:web
 
   # Real-browser layout invariants (Playwright + Chromium). The visual class of
   # regressions this catches (zero-height rows, container seams, collapsed blank
@@ -194,9 +194,10 @@ jobs:
       # instead of a suggestion. Runs on every matrix OS (cfg-specific lints differ).
       - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-      # cargo test (test profile) never links the app binary; build.sh is the
-      # link gate that catches stale-target/toolchain link failures.
-      - run: bash scripts/build.sh
+      # cargo test (test profile) never links the app binary; the build mode is
+      # the link gate that catches stale-target/toolchain link failures. Same
+      # command on all three matrix OSes — no Git Bash dependency.
+      - run: node scripts/task.mjs build
       # Runtime proof, not just compilation: the real WebView must produce a
       # 1600x1200 PNG for 800 CSS px at 2x on every platform.
       - name: Install Xvfb

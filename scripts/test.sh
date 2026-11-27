@@ -1,26 +1,9 @@
 #!/usr/bin/env bash
-# Run every test suite in the workspace: engine (tsc + vitest), desktop
-# (tsc + vitest), and Rust (cargo test).
+# Thin shim kept for CI steps, docs, and muscle memory: the cross-platform
+# sequences live in scripts/task.mjs. Do not add commands here.
 #
-# Note: cargo test alone never links the app binary. To verify the bin links
-# (and catch link-stage failures), run build.sh or `pnpm verify` instead.
+# Note: cargo test alone never links the app binary. `pnpm verify` or
+# `node scripts/task.mjs build` is the gate for link-stage failures.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-echo "==> quality (module-size gate + behavior tests)"
-pnpm check:quality
-
-echo "==> engine (tsc --noEmit + vitest)"
-pnpm test
-
-echo "==> desktop (tsc + vitest)"
-pnpm --filter @omd/desktop test
-
-echo "==> rust (cargo fmt + clippy + test)"
-cargo fmt --all --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-
-echo "==> tests OK"
+exec node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/task.mjs" test all

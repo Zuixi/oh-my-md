@@ -65,8 +65,8 @@ packages/engine/
 ## Testing
 
 ```sh
-pnpm test
-pnpm --filter @omd/desktop test
+pnpm test:engine
+pnpm test:desktop
 pnpm --filter @omd/engine bench
 pnpm --filter @omd/engine perf:gate   # blocking PERF-01/PERF-03 budget gate (own config, one worker)
 ```

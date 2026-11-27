@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# Build the whole workspace without launching the app: frontend production
-# build plus the Rust app binary link (the same profile `tauri dev` runs).
-# This is the gate that catches link-stage failures such as stale
-# src-tauri/target artifacts after a toolchain upgrade (see known-gotchas).
+# Thin shim kept for CI steps, docs, and muscle memory: the cross-platform
+# sequences live in scripts/task.mjs. Do not add commands here.
 #
-# A packaged desktop build is a separate, slower step:
-#   pnpm --filter @omd/desktop tauri build
+# Builds the whole workspace without launching the app: frontend production
+# build plus the Rust app binary link (the same profile `tauri dev` runs), which
+# is the gate that catches link-stage failures such as stale src-tauri/target
+# artifacts after a toolchain upgrade.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-echo "==> desktop (tsc + vite build)"
-pnpm --filter @omd/desktop build
-
-echo "==> rust app binary link (matches tauri dev)"
-cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features
-
-echo "==> build OK"
+exec node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/task.mjs" build app

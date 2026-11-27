@@ -1126,8 +1126,8 @@ matching caret-at-the-end-boundary case (see "verbatim 结束边界").
 `noUnusedParameters`, while `apps/desktop/tsconfig.json` sets both — and type-checks the
 engine sources transitively, because the workspace `@omd/engine` import resolves to
 `packages/engine/src/index.ts`. A dead parameter or unused local added inside the engine
-therefore passes `pnpm test` (engine `tsc --noEmit` + Vitest) and fails
-`pnpm --filter @omd/desktop build`. This blocked a whole round on the auto pair work:
+therefore passes `pnpm test:engine` (engine `tsc --noEmit` + Vitest) and fails
+`pnpm build:web`. This blocked a whole round on the auto pair work:
 `rangeAccepts` kept an `options: AutoPairOptions` argument it no longer read, and only the
 desktop build caught it. When touching engine sources, run the desktop build (or
 `pnpm verify`) before concluding — the engine's own green gate is not sufficient

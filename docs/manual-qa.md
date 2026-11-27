@@ -444,7 +444,7 @@ Live Preview 打开含跳号有序列表（如 `1.` / `3.` / `7.`）时会改写
 - [ ] **真实浏览器套件**：`PW_PORT=9435 pnpm --filter @omd/desktop test:e2e e2e/a11y-ergonomics.spec.ts e2e/ime-and-inline-boundaries.spec.ts` 全绿（焦点陷阱、inert、IME Enter 守卫、树导航、菜单夹取、IME 合成与行内边界）。
 
 ## 自动化验证命令
-- 引擎单测：`pnpm test`
+- 引擎单测：`pnpm test:engine`（`pnpm test` 现在跑全部套件）
 - Desktop 类型检查与自动化：`pnpm --filter @omd/desktop test`
 - 前端构建：`pnpm --filter @omd/desktop build`
 - Rust 测试：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`

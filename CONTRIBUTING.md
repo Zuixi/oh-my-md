@@ -20,14 +20,17 @@ pnpm dev          # launch the Tauri dev window
 | Command | What it does |
 | --- | --- |
 | `pnpm dev` | Tauri dev window with hot reload |
+| `pnpm dev:web` | Vite dev server only, in the browser |
+| `pnpm build` | Frontend production bundle + Rust app binary link |
+| `pnpm build:web` | Frontend `tsc` + Vite bundle only (fast loop) |
+| `pnpm test` | Everything: quality gate, engine, desktop, Rust |
+| `pnpm test engine` | One suite only — `quality`, `engine`, `desktop`, `rust`, or `e2e` |
 | `pnpm check:quality` | Module-size gate + its behavior tests |
-| `pnpm test` | Engine checks: `tsc --noEmit` + Vitest |
-| `pnpm --filter @omd/desktop test` | Desktop checks: `tsc --noEmit` + Vitest |
-| `pnpm --filter @omd/desktop build` | Desktop `tsc` + Vite production bundle |
-| `pnpm --filter @omd/desktop test:e2e` | Playwright real-browser layout & interaction suite |
-| `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` | Rust unit tests |
+| `pnpm test:e2e` | Playwright real-browser layout & interaction suite |
 | `pnpm --filter @omd/engine bench` | Advisory large-document benchmark (warns on budget misses, never blocks) |
-| `pnpm verify` | `scripts/test.*` + `scripts/build.*` — everything, including linking the Rust app binary |
+| `pnpm verify` | `pnpm test` + `pnpm build` — everything, including linking the Rust app binary |
+
+`node scripts/task.mjs --help` lists every mode and target. Those sequences are declared once, in `scripts/task.mjs`; `scripts/*.sh` and `scripts/*.ps1` are thin shims kept for CI and habit — do not add commands to them.
 
 Run the checks matching the domains you touched; cross-layer changes need both sides. **Open a PR only after `pnpm verify` passes** — `cargo test` alone never links the app binary, so it cannot catch link-stage failures such as stale `src-tauri/target` artifacts after a toolchain upgrade.
 
@@ -56,7 +59,7 @@ Commits follow `<type>: <why>` with types `feat | fix | refactor | docs | test |
 ## Releasing (maintainers)
 
 - The single source of version truth is `version` in `apps/desktop/src-tauri/tauri.conf.json`, kept in sync across both `package.json` files, `Cargo.toml`, and the local `omd` entry in `Cargo.lock`. For each release, `pnpm release:version <x.y.z>` synchronizes the source declarations. Generate release notes with `pnpm release:changelog` (requires a local [git-cliff](https://git-cliff.ch/)).
-- Local packaged build: `pnpm --filter @omd/desktop tauri build`; the generated package format depends on the host platform.
+- Local packaged build: `pnpm package` (or `pnpm --filter @omd/desktop tauri build` for the bare bundle); the generated package format depends on the host platform.
 - Pushing an unused matching `v<x.y.z>` tag builds an unsigned macOS Universal DMG, Windows x64 NSIS installer (`-setup.exe`; MSI is self-build only via `--bundles msi`, see `docs/guides/windows-installer.md`), Linux x64 AppImage/deb packages, **minisign-signed updater artifacts** (`.app.tar.gz(.sig)`, `-setup.exe.sig`, `.AppImage(.sig)`), and the **candidate updater manifest** `latest.json`, then creates exactly one Draft in GitHub Releases. Review every package, updater artifact, `latest.json`, and `SHA256SUMS.txt`, complete the packaging checklist in `docs/manual-qa.md`, and publish the Draft manually. A manual workflow run (`workflow_dispatch`) exercises the same builders/signing but stops at downloadable workflow artifacts — it does not create a Release. Releases are immutable: never reuse or move a tag, and promotion requires a strictly greater version.
 - **Stable-channel promotion is separate from publication.** Publishing a Draft does not push any update. After the human publishes, the *protected manual* `promote-update.yml` (and `withdraw-update.yml`) workflows move the candidate to the GitHub Pages stable endpoint `https://zuixi.github.io/oh-my-md/updates/stable/latest.json`. They verify a public, non-Draft, non-prerelease Release at the exact tag, download only the manifest + signed updater artifacts, verify each with the committed minisign public key, require a strict version increase, deploy `updates/stable/*` through Pages, and re-fetch the public endpoint to compare its SHA-256. Withdrawal restores the previous known-good manifest and never deletes or edits a Release, tag, or asset; a defective version is fixed by a higher release, never a downgrade.
 - **Repository settings are external prerequisites (not automated by the workflows):** GitHub Pages source must be **GitHub Actions**, and the `stable-updates` GitHub Environment must have **required reviewers** configured. Promotion/withdrawal runs fail closed until a maintainer configures both.

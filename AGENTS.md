@@ -43,16 +43,20 @@ oh-my-md/
 ## Commands and Verification
 
 ```sh
-pnpm dev
+pnpm dev                                                           # native window + hot reload
+pnpm dev:web                                                       # Vite dev server only (browser)
+pnpm build                                                         # frontend bundle + Rust app binary link
+pnpm build:web                                                     # frontend bundle only (fast loop)
+pnpm test                                                          # every suite: quality + engine + desktop + rust
+pnpm test engine                                                   # one suite: quality|engine|desktop|rust|e2e
 pnpm check:quality                                                 # module-size gate + its behavior tests
-pnpm test                                                          # engine tsc --noEmit + Vitest
 pnpm --filter @omd/engine bench                                    # advisory large-doc benchmarks
-pnpm --filter @omd/desktop test                                    # desktop Vitest suite
-pnpm --filter @omd/desktop build                                   # desktop tsc + Vite bundle
-pnpm --filter @omd/desktop test:e2e                                # Playwright real-browser layout suite
+pnpm test:e2e                                                      # Playwright real-browser layout suite
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml       # Rust unit tests
 pnpm verify                                                        # full test + Rust binary link check
 ```
+
+- Every sequence above is declared once in `scripts/task.mjs` (`node scripts/task.mjs --help` lists modes and targets). `scripts/*.sh` and `scripts/*.ps1` are thin shims for CI and muscle memory — never add commands to them.
 
 - Run the checks matching the changed domains; cross-layer changes require both frontend/engine and Rust checks.
 - Add a focused regression test for changed behavior; for bug fixes, observe it fail before the fix and pass afterwards. Test observable outcomes, stale/error paths, and relevant boundaries, not private implementation text or arbitrary coverage percentages.

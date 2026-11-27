@@ -16,8 +16,8 @@ COMMANDS = {
         ["pnpm", "check:modules", "--staged"],
         ["pnpm", "test:quality"],
     ],
-    "engine": [["pnpm", "test"]],
-    "desktop": [["pnpm", "--filter", "@omd/desktop", "test"]],
+    "engine": [["pnpm", "test:engine"]],
+    "desktop": [["pnpm", "test:desktop"]],
     "rust": [
         [
             "cargo",

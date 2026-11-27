@@ -27,10 +27,10 @@ jobs:
           toolchain: 1.87.0
       - uses: ./.github/actions/setup-pnpm
       - run: pnpm check:quality
-      - run: pnpm test
-      - run: pnpm --filter @omd/desktop test
+      - run: pnpm test:engine
+      - run: pnpm test:desktop
       # `tauri::generate_context!` embeds `frontendDist`; build it so cargo test compiles.
-      - run: pnpm --filter @omd/desktop build
+      - run: pnpm build:web
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   macos:

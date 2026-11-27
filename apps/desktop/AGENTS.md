@@ -114,12 +114,12 @@ The shared principle and target contract live in the root guide and [`docs/super
 ## Verification
 
 ```sh
-pnpm --filter @omd/desktop test
-pnpm --filter @omd/desktop build
-PW_PORT=9431 pnpm --filter @omd/desktop test:e2e
+pnpm test:desktop
+pnpm build:web
+PW_PORT=9431 pnpm test:e2e
 ```
 
-- `pnpm build` must finish with zero Rollup warnings: `viteChunks.ts` keeps the eager graph (`index`, `vendor-react`, `vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) under the 700 kB budget and leaves Shiki grammars, CodeMirror language packs and KaTeX's inlined fonts lazy (`test/viteChunks.test.ts`).
+- `pnpm build:web` must finish with zero Rollup warnings: `viteChunks.ts` keeps the eager graph (`index`, `vendor-react`, `vendor-codemirror`, `vendor-tauri`, `vendor-toastify`) under the 700 kB budget and leaves Shiki grammars, CodeMirror language packs and KaTeX's inlined fonts lazy (`test/viteChunks.test.ts`).
 - Keyboard, overlay, IME and full-shell user journeys have real-browser coverage: `e2e/app-flows.spec.ts` (`e2e/app-harness.html` mounting the real `<App>` for open/edit/save, external conflict diffing, snapshot restore via `Mod+Shift+P`, `MediaLightbox` top-layer modal inspection, structural WCAG/ARIA checks, and `@axe-core/playwright` WCAG 2.1 AA audits across light/dark shells, Settings modal, and `MediaLightbox`), `e2e/a11y-ergonomics.spec.ts` (focus trap, `inert`, palette IME Enter guard, tree navigation, menu clamping), `e2e/topbar-tabs.spec.ts` (tablist semantics, sibling close button geometry, arrow navigation) and `e2e/ime-and-inline-boundaries.spec.ts` (CJK composition inside a heading/bold, caret geometry and Backspace across inline marks).
 
 - Let Playwright start and stop Vite in the foreground (use a free `PW_PORT` per worktree; never run `pkill chrome`). The `webServer` command starts `node ./node_modules/vite/bin/vite.js` directly — an intermediate `pnpm dev` wrapper is one more process a group kill has to infer.

@@ -87,7 +87,7 @@
 - **Empty `text/plain` is not an empty clipboard** — image-only HTML must take the structured path; `plainText === ""` is not `document.blocks.length === 0`.
 - **Front-matter stats must mirror the parser's line rule** — `\n---` prefix matching miscounts `----`, `---text`, and unclosed blocks.
 - **Fence language tokens keep the author's case** — compare `toLowerCase()` for `mermaid`, or preview and export disagree.
-- **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test` and fails `pnpm --filter @omd/desktop build`.
+- **Engine and desktop tsconfigs disagree about dead code** — the engine has no `noUnusedLocals`/`noUnusedParameters` but the desktop build type-checks engine sources; a dead engine parameter passes `pnpm test:engine` and fails `pnpm build:web`.
 - **Empty bullet items under paragraphs and single-dash Setext underlines** — CommonMark keeps `para\n- ` inside the paragraph and turns `para\n-` into `SetextHeading2`; `parse/emptyBulletItem.ts` (`endLeaf` on `[-+*]` + mandatory horizontal space), `semantic/heading.ts` (`MIN_SETEXT_UNDERLINE_CHARS = 2` across preview, outline, format, and export — never replace `DefaultLeafBlocks.SetextHeading` in Lezer), and skipping `DECO_REPLACE_BLOCK` when selection overlaps a Setext underline line (`SetextHeading1/2` in `SELECTION_BLOCKS`) prevent H2 hijacking, `0px` carets, and `inlineDOMNearPos` cursor jumps onto line 1.
 
 ## Desktop — React host, CSS, IPC callers ([full file](./gotchas-desktop.md))
@@ -175,6 +175,29 @@
 - **The app `.setup()` hook runs on the event loop's `Ready` event, and a non-`Ok` return becomes `panic!("Failed to setup app: {e}")`** — that is what makes late plugin registration possible *and* what makes an error from setup fatal.
 
 ## Tooling and process
+
+## Build/test sequences have exactly one home
+
+`scripts/task.mjs` declares every `dev`/`build`/`test`/`verify`/`package` step; the
+`scripts/*.sh` and `scripts/*.ps1` files are shims that only delegate to it. Adding a
+command to a shim re-forks the contract and the pair drifts (the pre-runner
+`package.ps1` already collected more artifacts than `package.sh`, and CI only ever ran
+the bash side). Two traps were paid for once:
+
+- **Windows cannot spawn `pnpm` directly.** Node refuses `.cmd`/`.bat` with
+  `shell: false`, so Windows goes through `cmd.exe /d /s /c` with every argument quoted
+  by `quoteWindowsArg`. POSIX spawns the binary directly.
+- **Interrupting only the direct child orphans the dev server.** `pnpm -> tauri ->
+  cargo/vite` keeps port 9420 and the `target/` lock. `descendantsOf` walks `ps` and
+  signals the subtree deepest-first (`taskkill /t /f` on Windows), and a grace timer
+  guarantees the runner exits even if a child ignores the signal. `kill -0` on a reaped
+  process still succeeds, so "is it hung?" must be answered with `ps -o stat=`.
+
+## Never recurse a whole-repo grep from the root
+
+`apps/desktop/src-tauri/target/`, `node_modules/`, and `.worktrees/` hold hundreds of
+thousands of files; `grep -rn <pat> .` takes minutes and gets killed. Use `git grep`
+(tracked files only) or scope with `--include` plus an explicit path list.
 
 ## Playwright only cleans up processes it owns
 
