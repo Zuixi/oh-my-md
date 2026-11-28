@@ -7,6 +7,7 @@ export interface WorkspaceSearchState {
   query: string
   hits: SearchHit[]
   truncated: boolean
+  searching: boolean
   caseSensitive: boolean
   setOpen(open: boolean): void
   setQuery(query: string): void
@@ -35,6 +36,7 @@ export function useWorkspaceSearch(options: {
   const [query, setQuery] = useState("")
   const [hits, setHits] = useState<SearchHit[]>([])
   const [truncated, setTruncated] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [caseSensitive, setCaseSensitive] = useState(false)
 
   const requestRef = useRef(0)
@@ -45,18 +47,22 @@ export function useWorkspaceSearch(options: {
     if (!open || !folder || query === "" || !search) {
       setHits(prev => prev.length === 0 ? prev : [])
       setTruncated(false)
+      setSearching(false)
       return () => { requestRef.current += 1 }
     }
     const request = ++requestRef.current
+    setSearching(true)
     const timer = window.setTimeout(() => {
       void search(folder, query, caseSensitive).then(response => {
         if (requestRef.current !== request) return
         setHits(response.hits)
         setTruncated(response.truncated)
+        setSearching(false)
       }).catch(error => {
         if (requestRef.current !== request) return
         setHits([])
         setTruncated(false)
+        setSearching(false)
         reportErrorRef.current(error)
       })
     }, debounceMs)
@@ -71,10 +77,11 @@ export function useWorkspaceSearch(options: {
     setQuery("")
     setHits([])
     setTruncated(false)
+    setSearching(false)
   }
 
   return {
-    open, query, hits, truncated, caseSensitive,
+    open, query, hits, truncated, searching, caseSensitive,
     setOpen, setQuery, setCaseSensitive, clear,
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react"
 
 /**
  * File-tree context menu: `role="menu"` with roving ArrowUp/ArrowDown focus,
@@ -17,6 +17,8 @@ const IME_COMPOSING_KEYCODE = 229
 export interface FileTreeMenuItem {
   readonly label: string
   readonly disabled?: boolean
+  readonly danger?: boolean
+  readonly separatorBefore?: boolean
   readonly onSelect: () => void
 }
 
@@ -90,44 +92,27 @@ export function FileTreeContextMenu(props: FileTreeContextMenuProps) {
     <div
       ref={menuRef}
       role="menu"
+      className="filetree-menu"
       aria-label={props.label}
-      style={{
-        position: "fixed",
-        top: position.top,
-        left: position.left,
-        zIndex: 50,
-        display: "grid",
-        gap: 4,
-        minWidth: 160,
-        padding: 6,
-        border: "1px solid var(--omd-border)",
-        borderRadius: 8,
-        background: "var(--omd-panel-bg)",
-        boxShadow: "0 8px 24px rgba(15, 23, 42, 0.16)",
-      }}
+      style={{ top: position.top, left: position.left }}
       onClick={event => event.stopPropagation()}
       onKeyDown={handleKeyDown}
     >
       {props.items.map(item => (
-        <button
-          key={item.label}
-          type="button"
-          role="menuitem"
-          disabled={item.disabled}
-          onClick={item.onSelect}
-          style={{
-            border: 0,
-            background: "transparent",
-            borderRadius: 6,
-            padding: "6px 8px",
-            textAlign: "left",
-            font: "inherit",
-            color: "inherit",
-            cursor: "pointer",
-          }}
-        >
-          {item.label}
-        </button>
+        <Fragment key={item.label}>
+          {item.separatorBefore ? (
+            <div className="filetree-menu-separator" role="separator" />
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            className={item.danger ? "filetree-menu-item is-danger" : "filetree-menu-item"}
+            disabled={item.disabled}
+            onClick={item.onSelect}
+          >
+            {item.label}
+          </button>
+        </Fragment>
       ))}
     </div>
   )

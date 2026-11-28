@@ -1,11 +1,12 @@
-import type { CSSProperties } from "react"
+import { useMemo, type CSSProperties } from "react"
 import { FileTree } from "./FileTree"
-import { SearchPanel } from "./SearchPanel"
+import { SearchPanel, type SearchHit } from "./SearchPanel"
 import { SidebarResizer } from "./SidebarResizer"
 import type { TreeEntry, VisibleRow } from "./fileTreeState"
 import type { DesktopServices } from "./desktopServices"
 import type { WorkspaceSearchState } from "./useWorkspaceSearch"
-import type { SearchHit } from "./SearchPanel"
+import { sessionPath, type EditorSession } from "./session"
+import { comparablePath } from "./workspace"
 
 /**
  * Primary sidebar: the workspace search panel, or the file tree, plus its
@@ -17,6 +18,8 @@ export function AppSidebar(props: {
   readonly width: number
   readonly folder: string | null
   readonly rows: VisibleRow[]
+  readonly tabs?: readonly EditorSession[]
+  readonly dirtyIds?: readonly number[]
   readonly activePath: string | null
   readonly activeTabId: number
   readonly search: WorkspaceSearchState
@@ -25,6 +28,7 @@ export function AppSidebar(props: {
   readonly onResetWidth: () => void
   readonly onOpenHit: (hit: SearchHit) => void
   readonly onOpenFile: (path: string) => void
+  readonly onOpenFolder?: () => void
   readonly onToggleDir: (path: string) => void
   readonly onSearch: () => void
   readonly onCreateFile?: (dir: string, name: string) => Promise<string>
@@ -36,7 +40,21 @@ export function AppSidebar(props: {
   readonly onReveal: (path: string) => void
   readonly onCollapse: () => void
 }) {
-  const { search } = props
+  const { search, tabs, dirtyIds } = props
+  // Derived only when `tabs` or `dirtyIds` reference changes; `dirtyIds` keeps
+  // the same reference while an already-dirty tab keeps receiving edits.
+  const dirtyPaths = useMemo<ReadonlySet<string>>(() => {
+    if (!tabs || !dirtyIds || dirtyIds.length === 0) return new Set()
+    const dirtySet = new Set(dirtyIds)
+    const paths = new Set<string>()
+    for (const tab of tabs) {
+      if (!dirtySet.has(tab.id)) continue
+      const path = sessionPath(tab)
+      if (path) paths.add(comparablePath(path))
+    }
+    return paths
+  }, [tabs, dirtyIds])
+
   return (
     <>
       <aside
@@ -48,14 +66,17 @@ export function AppSidebar(props: {
       >
         {search.open ? (
           <SearchPanel
+            folder={props.folder}
             query={search.query}
             hits={search.hits}
             truncated={search.truncated}
+            searching={search.searching}
             caseSensitive={search.caseSensitive}
             onQuery={search.setQuery}
             onCaseSensitive={search.setCaseSensitive}
             onClose={() => search.setOpen(false)}
             onOpen={props.onOpenHit}
+            onOpenFolder={props.onOpenFolder}
           />
         ) : (
           <FileTree
@@ -64,7 +85,9 @@ export function AppSidebar(props: {
             activePath={props.activePath}
             activeTabId={props.activeTabId}
             visible={props.open}
+            dirtyPaths={dirtyPaths}
             onOpenFile={props.onOpenFile}
+            onOpenFolder={props.onOpenFolder}
             onToggleDir={props.onToggleDir}
             onSearch={props.onSearch}
             onCreateFile={props.onCreateFile}

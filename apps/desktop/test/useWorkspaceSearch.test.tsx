@@ -451,4 +451,37 @@ describe("useWorkspaceSearch", () => {
       vi.useRealTimers()
     }
   })
+
+  it("tracks searching state across debounce, resolution, and cancellation", async () => {
+    vi.useFakeTimers()
+    try {
+      const first = deferred<SearchResponse>()
+      const search = vi.fn().mockReturnValueOnce(first.promise)
+      const { result } = renderHook(() => useWorkspaceSearch({
+        folder: "/notes",
+        search,
+        reportError: vi.fn(),
+        debounceMs: 200,
+      }))
+      expect(result.current.searching).toBe(false)
+
+      act(() => {
+        result.current.setOpen(true)
+        result.current.setQuery("a")
+      })
+      expect(result.current.searching).toBe(true)
+
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(result.current.searching).toBe(true)
+
+      await act(async () => {
+        first.resolve({ hits: [hit("ok")], truncated: false })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(result.current.searching).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

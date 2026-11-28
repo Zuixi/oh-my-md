@@ -147,4 +147,78 @@ describe("file tree WAI-ARIA tree navigation", () => {
     expect(menu.style.left).toBe(`${expectedLeft}px`)
     expect(menu.style.top).toBe(`${expectedTop}px`)
   })
+
+  it("hides search bar and offers Open Folder CTA when no folder is open", () => {
+    const onOpenFolder = vi.fn()
+    render(
+      <FileTree
+        folder={null}
+        rows={[]}
+        activePath={null}
+        onOpenFile={vi.fn()}
+        onToggleDir={vi.fn()}
+        onSearch={vi.fn()}
+        onOpenFolder={onOpenFolder}
+      />,
+    )
+    expect(document.querySelector(".filetree-search-bar")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Open Folder" }))
+    expect(onOpenFolder).toHaveBeenCalledTimes(1)
+  })
+
+  it("renders dirty dots and indent guides without changing treeitem accessible names", () => {
+    const props = treeProps([drafts(true), child("a.md"), file("doc.md")])
+    render(
+      <FileTree
+        {...props}
+        dirtyPaths={new Set(["/notes/drafts/a.md"])}
+      />,
+    )
+    const nested = row("a.md")
+    expect(nested.querySelector(".filetree-guides")).not.toBeNull()
+    expect(nested.querySelector(".filetree-dirty-dot")).not.toBeNull()
+    expect(row("doc.md").querySelector(".filetree-guides")).toBeNull()
+    expect(row("doc.md").querySelector(".filetree-dirty-dot")).toBeNull()
+  })
+
+  it("starts inline create from header quick-action buttons", async () => {
+    const props = treeProps([drafts(false), file("doc.md")])
+    render(
+      <FileTree
+        {...props}
+        onCreateFile={vi.fn(async () => "/notes/Untitled.md")}
+        onCreateFolder={vi.fn(async () => "/notes/New Folder")}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "New file" }))
+    expect(await screen.findByRole("textbox", { name: "New file name" })).toBeTruthy()
+  })
+
+  it("highlights only the active document after clicking a file and switching tabs", () => {
+    const props = treeProps([file("1.md"), file("2.md"), file("4.md")])
+    const { rerender } = render(
+      <FileTree {...props} activePath="/notes/4.md" activeTabId={4} />,
+    )
+
+    // Clicking 4.md in the tree must not leave a stale `is-selected` highlight
+    // behind once the user switches to 2.md from the tab bar.
+    fireEvent.click(row("4.md"))
+    expect(row("4.md").className).toContain("is-active")
+    expect(row("4.md").className).not.toContain("is-selected")
+
+    rerender(<FileTree {...props} activePath="/notes/2.md" activeTabId={2} />)
+    expect(row("2.md").className).toContain("is-active")
+    expect(row("4.md").className).not.toContain("is-active")
+    expect(row("4.md").className).not.toContain("is-selected")
+
+    // Clicking a directory sets the subtle tree cursor, which clears on tab switch.
+    const propsWithDir = treeProps([drafts(false), file("2.md"), file("4.md")])
+    rerender(<FileTree {...propsWithDir} activePath="/notes/2.md" activeTabId={2} />)
+    fireEvent.click(row("drafts"))
+    expect(row("drafts").className).toContain("is-selected")
+
+    rerender(<FileTree {...propsWithDir} activePath="/notes/4.md" activeTabId={4} />)
+    expect(row("drafts").className).not.toContain("is-selected")
+    expect(row("4.md").className).toContain("is-active")
+  })
 })

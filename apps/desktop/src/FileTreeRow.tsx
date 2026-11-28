@@ -1,7 +1,7 @@
 import { memo, type CSSProperties, type MouseEvent } from "react"
 import { DEPTH_INDENT, ROW_HEIGHT, ROW_INSET, type VisibleRow } from "./fileTreeState"
 import { samePath } from "./workspace"
-import type { Translator } from "./i18n"
+import { useT, type Translator } from "./i18n"
 import { TreeIcons } from "./TreeEditRow"
 import type { TreeEdit } from "./useTreeEditSession"
 
@@ -73,8 +73,10 @@ export const TreeRow = memo(function TreeRow(props: {
   active: boolean
   selected: boolean
   focusable: boolean
+  dirty?: boolean
   actions: RowActions
 }) {
+  const t = useT()
   const { entry, depth, expanded } = props.row
   const className = [
     "filetree-item",
@@ -100,8 +102,22 @@ export const TreeRow = memo(function TreeRow(props: {
       }}
       onContextMenu={event => props.actions.contextMenu(entry, depth, expanded, event)}
     >
+      {depth > 0 ? (
+        <span
+          className="filetree-guides"
+          style={{ width: depth * DEPTH_INDENT }}
+          aria-hidden="true"
+        />
+      ) : null}
       <TreeIcons isDirectory={entry.is_dir} expanded={expanded} />
       <span className="filetree-name" title={entry.name}>{entry.name}</span>
+      {props.dirty ? (
+        <span
+          className="filetree-dirty-dot"
+          title={t("topbar.aria.unsaved")}
+          aria-hidden="true"
+        />
+      ) : null}
     </button>
   )
 }, (prev, next) =>
@@ -110,5 +126,6 @@ export const TreeRow = memo(function TreeRow(props: {
   prev.row.expanded === next.row.expanded &&
   prev.active === next.active &&
   prev.selected === next.selected &&
-  prev.focusable === next.focusable,
+  prev.focusable === next.focusable &&
+  Boolean(prev.dirty) === Boolean(next.dirty),
 )

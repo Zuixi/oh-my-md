@@ -1,5 +1,5 @@
 import { EditorView } from "@codemirror/view"
-import { PanelLeft, PanelLeftClose } from "lucide-react"
+import { ListTree } from "lucide-react"
 import { useEffect } from "react"
 import { useWorkspace, type DocumentStore } from "./documentStore"
 import type { EditorRegistry } from "./editorRegistry"
@@ -83,7 +83,7 @@ export function AppOutlinePanel(props: {
             ? t("outline.title.toggleHide", { shortcut: shortcutFor("outline") ?? "" })
             : t("outline.title.toggleShow", { shortcut: shortcutFor("outline") ?? "" })}
         >
-          {props.outlineOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+          <ListTree size={16} aria-hidden="true" />
         </button>
         {!props.outlineOpen && hover ? (
           <div className="outline-hover-popover" role="dialog" aria-label={t("outline.aria.preview")}>

@@ -1,12 +1,13 @@
 import {
-  useEffect, useId, useMemo, useRef, useState, type KeyboardEvent,
+  useEffect, useId, useImperativeHandle, useMemo, useRef, useState,
+  type KeyboardEvent, type Ref,
 } from "react"
 import { createPortal } from "react-dom"
 import {
   ROW_HEIGHT, draftRowIndex,
   type CreateKind, type VisibleRow,
 } from "./fileTreeState"
-import { parentDir, pathWithinDir, samePath } from "./workspace"
+import { comparablePath, parentDir, pathWithinDir, samePath } from "./workspace"
 import { useT } from "./i18n"
 import { TreeEditRow } from "./TreeEditRow"
 import { useTreeEditSession } from "./useTreeEditSession"
@@ -47,12 +48,18 @@ const KEYBOARD_MENU_ANCHOR_Y_PX = 2
  * `aria-level`/`aria-expanded`/`aria-selected`, arrow-key navigation, and
  * Shift+F10 / ContextMenu for the row menu.
  */
+export interface FileTreeTreeHandle {
+  beginCreate(kind: CreateKind): void
+}
+
 export function FileTreeTree(props: {
+  ref?: Ref<FileTreeTreeHandle>
   folder: string
   rows: VisibleRow[]
   activePath: string | null
   activeTabId?: number
   visible?: boolean
+  dirtyPaths?: ReadonlySet<string>
   onOpenFile: (path: string) => void
   onToggleDir: (path: string) => void
   onCreateFile?: (dir: string, name: string) => Promise<string>
@@ -126,7 +133,7 @@ export function FileTreeTree(props: {
         session.dismiss()
         revealRef.current = null
         setFocusedPath(path)
-        setSelectedPath(path)
+        setSelectedPath(null)
         props.onOpenFile(path)
       },
       toggleDir: path => {
@@ -185,6 +192,20 @@ export function FileTreeTree(props: {
     if (exists(props.activePath)) return props.activePath
     return props.rows[0]?.entry.path ?? null
   }, [focusedPath, props.activePath, props.rows])
+
+  // Clear a stale tree cursor whenever the editor switches to a different
+  // document or tab, so a previously clicked/created item never stays
+  // highlighted alongside the newly active document. Preserves selection when
+  // the newly active path is the selected item itself (e.g. just-created file).
+  const activeNavRef = useRef({ path: props.activePath, tabId: props.activeTabId })
+  useEffect(() => {
+    const prev = activeNavRef.current
+    if (prev.path === props.activePath && prev.tabId === props.activeTabId) return
+    activeNavRef.current = { path: props.activePath, tabId: props.activeTabId }
+    setSelectedPath(current =>
+      current && props.activePath && samePath(current, props.activePath) ? current : null,
+    )
+  }, [props.activePath, props.activeTabId])
 
   // Drop the tree cursor once the selected node is gone for real (collapsing
   // an ancestor only hides it, mirroring the rename-draft rule). A node that
@@ -279,6 +300,32 @@ export function FileTreeTree(props: {
     session.beginCreate(kind, target.dir, target.depth)
   }
 
+  useImperativeHandle(props.ref, () => ({
+    beginCreate(kind: CreateKind) {
+      const anchorPath = selectedPath ?? focusedPath
+      const anchorRow = anchorPath
+        ? props.rows.find(row => samePath(row.entry.path, anchorPath))
+        : undefined
+      let dir = props.folder
+      let depth = 0
+      let expandDir = false
+      if (anchorRow) {
+        if (anchorRow.entry.is_dir) {
+          dir = anchorRow.entry.path
+          depth = anchorRow.depth + 1
+          expandDir = !anchorRow.expanded
+        } else {
+          dir = parentDir(anchorRow.entry.path) ?? props.folder
+          depth = anchorRow.depth
+        }
+      }
+      setMenu(null)
+      revealRef.current = null
+      if (expandDir) props.onToggleDir(dir)
+      session.beginCreate(kind, dir, depth)
+    },
+  }))
+
   const closeMenu = (restoreFocus: boolean) => {
     const returnPath = menu?.returnPath ?? null
     setMenu(null)
@@ -308,6 +355,8 @@ export function FileTreeTree(props: {
       },
       {
         label: t("filetree.menu.delete"),
+        danger: true,
+        separatorBefore: true,
         onSelect: () => {
           const entry = target.entry
           setMenu(null)
@@ -317,6 +366,7 @@ export function FileTreeTree(props: {
     ] : []),
     {
       label: t("filetree.menu.reveal"),
+      separatorBefore: true,
       onSelect: () => {
         setMenu(null)
         props.onReveal?.(target.entry?.path ?? props.folder)
@@ -395,6 +445,10 @@ export function FileTreeTree(props: {
                   selected={selectedPath !== null && samePath(row.entry.path, selectedPath)}
                   focusable={effectiveFocusedPath !== null
                     && samePath(row.entry.path, effectiveFocusedPath)}
+                  dirty={Boolean(
+                    props.dirtyPaths && !row.entry.is_dir
+                    && props.dirtyPaths.has(comparablePath(row.entry.path)),
+                  )}
                   actions={rowActions}
                 />
               )}

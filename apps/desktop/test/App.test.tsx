@@ -924,8 +924,8 @@ describe("App product shell", () => {
     fireEvent.change(screen.getByPlaceholderText("Find in folder…"), {
       target: { value: "found" },
     })
-    await waitFor(() => expect(screen.getByText(/hit.md:2/)).toBeTruthy())
-    fireEvent.click(screen.getByText(/hit.md:2/))
+    await waitFor(() => expect(screen.getByText("hit.md")).toBeTruthy())
+    fireEvent.click(screen.getByText("2").closest("button")!)
     await waitFor(() => expect(harness.services.readDocument).toHaveBeenCalledWith("/notes/hit.md"))
   })
 
@@ -999,8 +999,8 @@ describe("App product shell", () => {
     const harness = makeAppHarness()
     harness.renderApp()
     expect(screen.getByText(/Open a folder from the File menu/)).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Open folder" })).toBeNull()
-    expect(screen.getByRole("button", { name: /Search in folder…/ })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Open Folder" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /Search in folder…/ })).toBeNull()
     expect(screen.getByText("Outline")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Export HTML" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull()

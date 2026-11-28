@@ -198,7 +198,7 @@ export default function App(props: AppProps) {
   })
   const {
     conflictSave, openCoordinator, treeActions, commands, commandsRef,
-    acceptNormalization, keepOriginalNumbers, openRecent, pollFileTabs,
+    acceptNormalization, keepOriginalNumbers, openRecent, chooseFolder, pollFileTabs,
     search, findReplace, history,
   } = coordinators
 
@@ -373,6 +373,8 @@ export default function App(props: AppProps) {
           width={sidebarWidth}
           folder={workspace.folder}
           rows={treeRows}
+          tabs={workspace.tabs}
+          dirtyIds={dirtyIds}
           activePath={activeFilePath}
           activeTabId={workspace.activeId}
           search={search}
@@ -384,6 +386,7 @@ export default function App(props: AppProps) {
             void openCoordinator.openPath(hit.path, true)
           }}
           onOpenFile={path => void openCoordinator.openPath(path, true)}
+          onOpenFolder={() => void chooseFolder()}
           onToggleDir={path => void treeActions.toggleDir(path)}
           onSearch={() => search.setOpen(true)}
           onCreateFile={services.createMarkdown ? treeActions.createTreeFile : undefined}

@@ -56,6 +56,12 @@ html[data-theme="light"] {
   --omd-lightbox-hint-bg: rgba(20, 22, 28, 0.72);
   /* Primary action button foreground: white on the light-theme link blue. */
   --omd-btn-primary-fg: #ffffff;
+  /* Sidebar row states, tree indent guides, and search highlight tokens. */
+  --omd-row-hover: rgba(0, 0, 0, 0.05);
+  --omd-row-active: rgba(9, 105, 218, 0.10);
+  --omd-indent-guide: rgba(0, 0, 0, 0.08);
+  --omd-indent-guide-hover: rgba(0, 0, 0, 0.18);
+  --omd-search-mark-bg: rgba(9, 105, 218, 0.16);
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -104,6 +110,11 @@ html[data-theme="dark"] {
   /* The dark link token is a light blue, so primary buttons need dark text to
      clear 4.5:1 (white on it is only ~2.9:1). */
   --omd-btn-primary-fg: #111111;
+  --omd-row-hover: rgba(255, 255, 255, 0.06);
+  --omd-row-active: rgba(121, 184, 255, 0.14);
+  --omd-indent-guide: rgba(255, 255, 255, 0.08);
+  --omd-indent-guide-hover: rgba(255, 255, 255, 0.18);
+  --omd-search-mark-bg: rgba(121, 184, 255, 0.24);
 }
 /* Dual-theme shiki: light inline, dark via --shiki-dark* vars. Missing vars
    fall back to inherited/initial values, so unthemed tokens stay correct. */
@@ -1152,11 +1163,11 @@ h6 低于正文仍可读作标题：bold + 降饱和（Typora 同款手法）。
   color: var(--omd-muted);
   transition: background 0.15s, color 0.15s;
 }
-.outline-toggle-btn:hover { background: var(--omd-border); color: var(--omd-fg); }
+.outline-toggle-btn:hover { background: var(--omd-row-hover); color: var(--omd-fg); }
 .outline-toggle-btn:focus-visible {
   outline: 2px solid var(--omd-link); outline-offset: 1px;
 }
-.outline-toggle-btn.is-active { color: var(--omd-fg); }
+.outline-toggle-btn.is-active { background: var(--omd-row-hover); color: var(--omd-fg); }
 
 /* Hover popover for quick outline inspection */
 .outline-hover-popover {
@@ -1618,17 +1629,25 @@ html[data-theme="dark"] .tab-slot:hover .tab {
   border-right-color: transparent;
   overflow: hidden;
 }
-/* Drag sash on the file sidebar's edge; flex sibling so it stays full-height
-   and never scrolls with the tree. Painted chrome like the sidebars it
-   separates — a transparent sash would show --omd-bg as a bright seam. */
+/* Zero-layout-width overlay sash on the primary sidebar's right border.
+   Negative horizontal margins center the 6px pointer target over the border
+   without occupying layout space, preventing both a white seam between chrome
+   sidebars and a 4px gray overhang when the outline panel is collapsed. */
 .sidebar-resizer {
-  flex: none; width: 4px; cursor: col-resize; position: relative; z-index: 5;
-  background: var(--omd-chrome);
+  flex: none;
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+  background: transparent;
 }
 .sidebar-resizer::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
   width: 2px; transform: translateX(-50%); border-radius: 1px;
   background: transparent;
+  transition: background 0.12s ease;
 }
 .sidebar-resizer:hover::after,
 .sidebar-resizer:focus-visible::after {
@@ -1688,32 +1707,48 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 .filetree-tree {
   flex: 1; min-height: 0; overflow: auto; position: relative;
 }
-.outline { width: 100%; flex: 1; min-height: 0; overflow: auto; }
+.outline { width: 100%; flex: 1; min-height: 0; overflow: auto; padding-bottom: 8px; }
 .search-panel {
-  width: 100%; overflow: auto;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .sidebar-title {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 8px 10px; font-weight: 600; color: var(--omd-muted);
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 8px 8px 6px; font-size: 12px; font-weight: 600; color: var(--omd-muted);
+  flex-shrink: 0;
 }
 .sidebar-title-left {
-  display: flex; align-items: center; gap: 6px; min-width: 0;
+  display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto;
 }
 .sidebar-title-text {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--omd-fg);
 }
+.sidebar-header-actions {
+  display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+}
+.sidebar-header-btn,
 .sidebar-collapse-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: var(--omd-tool-btn-size); height: var(--omd-tool-btn-size);
-  border: none; background: transparent;
-  color: var(--omd-muted); border-radius: 4px; cursor: pointer;
-  transition: background 0.12s, color 0.12s; flex-shrink: 0;
+  border: none; background: transparent; padding: 0;
+  color: var(--omd-muted); border-radius: 5px; cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease; flex-shrink: 0;
 }
-.sidebar-collapse-btn:hover {
-  background: var(--omd-border); color: var(--omd-fg);
+.sidebar-collapse-btn:hover,
+.sidebar-header-btn:hover {
+  background: var(--omd-row-hover); color: var(--omd-fg);
+}
+.sidebar-collapse-btn:focus-visible,
+.sidebar-header-btn:focus-visible {
+  outline: 2px solid var(--omd-link); outline-offset: -1px;
 }
 .filetree-search-bar {
-  padding: 0 10px 8px 10px;
+  padding: 2px 8px 8px;
+  flex-shrink: 0;
 }
 .filetree-search-btn {
   width: 100%; box-sizing: border-box;
@@ -1725,41 +1760,91 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   color: var(--omd-muted);
   font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
 .filetree-search-btn:hover {
-  border-color: var(--omd-muted);
+  border-color: var(--omd-bar);
   color: var(--omd-fg);
+}
+.filetree-search-btn:focus-visible {
+  outline: 2px solid var(--omd-link); outline-offset: 1px;
 }
 .filetree-search-icon {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: 0.72;
 }
 .filetree-search-btn kbd {
   margin-left: auto;
   font-size: 10px;
+  font-family: inherit;
   color: var(--omd-muted);
 }
 .sidebar-actions { display: flex; gap: 6px; font-weight: 400; }
-.sidebar-actions button, .search-panel .sidebar-title button {
+.sidebar-actions button {
   border: none; background: transparent; color: var(--omd-link); cursor: pointer; padding: 0;
 }
-.sidebar-empty { margin: 0; padding: 8px 10px; color: var(--omd-muted); }
+.sidebar-empty { margin: 0; padding: 8px 10px; color: var(--omd-muted); font-size: 12px; }
+.sidebar-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--omd-muted);
+}
+.sidebar-empty-icon {
+  opacity: 0.45;
+}
+.sidebar-empty-state .sidebar-empty {
+  padding: 0;
+  line-height: 1.5;
+}
+.sidebar-empty-cta {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--omd-link);
+  color: var(--omd-btn-primary-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.sidebar-empty-cta:hover { opacity: 0.9; }
+.sidebar-empty-cta:focus-visible {
+  outline: 2px solid var(--omd-link);
+  outline-offset: 2px;
+}
+/* Unified sidebar row language (FileTree / Outline / Search): inset rounded
+   pills matching TopBar tabs, light neutral hover (--omd-row-hover), and soft
+   accent tint (--omd-row-active) with a 2px left accent bar for current items. */
 .filetree-item, .outline-item, .search-hit {
-  display: block; width: 100%; text-align: left; border: none;
-  background: transparent; color: var(--omd-fg); padding: 4px 10px; cursor: pointer;
+  position: relative;
+  display: block;
+  width: calc(100% - 12px);
+  margin: 0 6px;
+  text-align: left;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--omd-fg);
+  padding: 4px 8px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.1s ease, color 0.1s ease;
 }
 .filetree-item {
-  display: flex; align-items: center; gap: 6px; padding-right: 10px;
+  display: flex; align-items: center; gap: 6px; padding-right: 8px;
   /* Fixed height so virtualization can derive row positions from ROW_HEIGHT. */
-  height: 26px; box-sizing: border-box;
+  height: 26px;
 }
-/* 侧栏行状态语言（filetree / outline / search 共用）：hover = --omd-bar 中性
-灰底；当前项 = 同灰底 + 2px 左缘 --omd-link 竖条（见 .outline-item.is-current
-注释）。现状曾用 --omd-border 作 active 底，比 hover 更淡，状态强度倒置。 */
 .search-hit:hover,
 .filetree-item:hover {
-  background: var(--omd-bar);
+  background: var(--omd-row-hover);
   color: var(--omd-fg);
 }
 .search-hit:focus-visible,
@@ -1767,15 +1852,60 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
   outline: 2px solid var(--omd-link);
   outline-offset: -2px;
 }
-/* The tree cursor (reveal after create/rename) and the file open in the
-   editor share the current-row language; a row can be both at once. */
-.filetree-item.is-selected,
-.filetree-item.is-active {
-  background: var(--omd-bar);
+/* Tree cursor (folder click / newly created node): subtle neutral tint so it
+   never competes visually with the single active document highlight below. */
+.filetree-item.is-selected {
+  background: var(--omd-row-hover);
   color: var(--omd-fg);
-  box-shadow: inset 2px 0 0 var(--omd-link);
 }
-.filetree-item svg { flex: none; color: var(--omd-muted); }
+/* Active document open in the editor: sole primary accent highlight. */
+.filetree-item.is-active {
+  background: var(--omd-row-active);
+  color: var(--omd-fg);
+  font-weight: 500;
+}
+.filetree-item.is-active::before,
+.outline-item.is-current::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--omd-link);
+}
+.filetree-item svg { flex: none; color: var(--omd-muted); transition: color 0.1s ease; }
+.filetree-item.is-active svg { color: var(--omd-fg); }
+/* CSS-only vertical indent guides: repeating 1px hairlines spaced by
+   DEPTH_INDENT (14px), aligned with each ancestor's chevron center. */
+.filetree-guides {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 15px;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--omd-indent-guide) 0 1px,
+    transparent 1px 14px
+  );
+}
+.filetree-tree:hover .filetree-guides {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--omd-indent-guide-hover) 0 1px,
+    transparent 1px 14px
+  );
+}
+.filetree-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--omd-link);
+  flex: none;
+  margin-left: auto;
+}
 /* Single-line names: min-width 0 lets the flex child shrink so the ellipsis
    tracks the sidebar's live width (resize / window changes) with no JS. */
 .filetree-name {
@@ -1786,7 +1916,7 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 .filetree-edit-input {
   flex: 1 1 auto; min-width: 0; width: 100%; height: 22px;
   box-sizing: border-box; padding: 0 4px;
-  border: 1px solid var(--omd-link); border-radius: 3px;
+  border: 1px solid var(--omd-link); border-radius: 4px;
   outline: none; font: inherit; color: var(--omd-fg);
   background: var(--omd-panel-bg);
 }
@@ -1797,29 +1927,80 @@ body.omd-resizing-sidebar .sidebar-primary { transition: none; }
 .filetree-edit-feedback {
   position: sticky; bottom: 0; z-index: 2;
   padding: 6px 10px; background: var(--omd-panel-bg);
+  border-top: 1px solid var(--omd-border);
   color: var(--omd-muted); font-size: 11px; overflow-wrap: anywhere;
 }
 .filetree-edit-feedback:empty { display: none; }
 .filetree-edit-feedback.is-error { color: var(--omd-error-fg); }
+/* File-tree context menu: shares surface, border, radius, and hover language
+   with AppMenu while staying portalled for fixed viewport clamping. */
+.filetree-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 172px;
+  padding: 4px;
+  border: 1px solid var(--omd-border);
+  border-radius: 8px;
+  background: var(--omd-bg);
+  color: var(--omd-fg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
+  animation: omd-fade-in 0.1s ease-out;
+}
+.filetree-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: 6px 10px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.filetree-menu-item:hover:not(:disabled),
+.filetree-menu-item:focus-visible:not(:disabled) {
+  background: var(--omd-row-hover);
+  outline: none;
+}
+.filetree-menu-item:focus-visible:not(:disabled) {
+  box-shadow: inset 0 0 0 1.5px var(--omd-link);
+}
+.filetree-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.filetree-menu-item.is-danger {
+  color: var(--omd-error-fg);
+}
+.filetree-menu-item.is-danger:hover:not(:disabled),
+.filetree-menu-item.is-danger:focus-visible:not(:disabled) {
+  background: var(--omd-error-bg);
+}
+.filetree-menu-separator {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--omd-border);
+}
 .outline-item {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.45;
 }
-/* Hover/focus feedback so the hovered heading stands out from the rest of
-   the list. --omd-bar is a full step darker than the panel background
-   (--omd-chrome) — --omd-border was tried first and was visually
-   indistinguishable from the panel. */
-/* 侧栏行状态语言（filetree / outline / search 共用，见 .filetree-item 规则）：
-hover 与当前项同用 --omd-bar 灰底，当前项再加 2px 左缘 --omd-link 竖条区分
-层级（与 blockquote 左缘条的视觉母题一致），不为一级灰底再发明 token。
---omd-bar 比 --omd-chrome 面板底深一档（--omd-border 曾试过，与面板不可分）。 */
 .outline-item:hover {
-  background: var(--omd-bar);
+  background: var(--omd-row-hover);
   color: var(--omd-fg);
 }
 .outline-item.is-current {
-  background: var(--omd-bar);
+  background: var(--omd-row-active);
   color: var(--omd-fg);
-  box-shadow: inset 2px 0 0 var(--omd-link);
+  font-weight: 500;
 }
 .outline-item:focus-visible {
   outline: 2px solid var(--omd-link);
@@ -1828,15 +2009,17 @@ hover 与当前项同用 --omd-bar 灰底，当前项再加 2px 左缘 --omd-lin
 .filetree-chevron {
   width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none;
 }
+.filetree-chevron svg { transition: transform 0.14s ease; }
 .filetree-chevron svg.is-open { transform: rotate(90deg); }
 .outline-item.level-2 { padding-left: 18px; }
-.outline-item.level-3 { padding-left: 26px; }
+.outline-item.level-3 { padding-left: 28px; }
+.outline-item.level-4 { padding-left: 38px; }
 .palette-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35);
   display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
 }
 .palette { width: min(520px, 90vw); background: var(--omd-bg); border: 1px solid var(--omd-border); border-radius: 8px; }
-.palette-input, .search-panel input {
+.palette-input {
   width: 100%; box-sizing: border-box; border: none; border-bottom: 1px solid var(--omd-border);
   padding: 10px 12px; background: var(--omd-bg); color: var(--omd-fg);
 }
@@ -2602,10 +2785,178 @@ html[data-focus="on"] .cm-line:not(.cm-activeLine) { opacity: 0.35; }
   font-size: 12px;
   color: var(--omd-muted);
 }
-.search-panel .find-replace-case { padding: 0 10px; }
-.search-hit-location { color: var(--omd-link); }
-.search-hit-mark { background: var(--omd-border); color: var(--omd-fg); }
-.search-truncated-note { margin: 0; padding: 4px 10px; color: var(--omd-muted); font-size: 12px; }
+.search-input-wrapper {
+  padding: 2px 8px 6px;
+  flex-shrink: 0;
+}
+.search-input-box {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--omd-border);
+  border-radius: 6px;
+  background: var(--omd-bg);
+  transition: border-color 0.12s ease;
+}
+.search-input-box:focus-within {
+  border-color: var(--omd-link);
+}
+.search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--omd-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 0;
+  outline: none;
+}
+.search-input-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--omd-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.search-input-btn:hover {
+  background: var(--omd-row-hover);
+  color: var(--omd-fg);
+}
+.search-input-btn:focus-visible {
+  outline: 2px solid var(--omd-link);
+  outline-offset: -1px;
+}
+.search-input-btn.is-active {
+  background: var(--omd-row-active);
+  color: var(--omd-link);
+}
+.search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 10px 6px;
+  font-size: 11px;
+  color: var(--omd-muted);
+  flex-shrink: 0;
+}
+.search-truncated-note {
+  margin: 0;
+  padding: 0 10px 6px;
+  color: var(--omd-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.search-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 10px;
+}
+.search-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+  margin-bottom: 4px;
+}
+.search-group-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: calc(100% - 12px);
+  margin: 0 6px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--omd-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.1s ease;
+}
+.search-group-header:hover {
+  background: var(--omd-row-hover);
+}
+.search-group-header:focus-visible {
+  outline: 2px solid var(--omd-link);
+  outline-offset: -2px;
+}
+.search-group-header svg {
+  flex: none;
+  color: var(--omd-muted);
+}
+.search-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.search-group-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--omd-muted);
+}
+.search-group-count {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--omd-row-hover);
+  color: var(--omd-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.search-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px 4px 26px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.search-hit-line {
+  flex: none;
+  min-width: 24px;
+  text-align: right;
+  font-family: var(--omd-font-family-mono);
+  font-size: 11px;
+  color: var(--omd-muted);
+}
+.search-hit-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-hit-mark {
+  background: var(--omd-search-mark-bg);
+  color: var(--omd-fg);
+  border-radius: 2px;
+  padding: 0 1px;
+}
 .find-replace-status {
   font-size: 12px;
   color: var(--omd-muted);
